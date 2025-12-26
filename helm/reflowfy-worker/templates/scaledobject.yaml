@@ -1,0 +1,22 @@
+{{- if .Values.keda.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "reflowfy-worker.fullname" . }}
+  labels:
+    app: reflowfy-worker
+spec:
+  scaleTargetRef:
+    name: {{ include "reflowfy-worker.fullname" . }}
+  minReplicaCount: {{ .Values.keda.minReplicaCount }}
+  maxReplicaCount: {{ .Values.keda.maxReplicaCount }}
+  pollingInterval: {{ .Values.keda.pollingInterval }}
+  cooldownPeriod: {{ .Values.keda.cooldownPeriod }}
+  triggers:
+  - type: kafka
+    metadata:
+      bootstrapServers: {{ .Values.kafka.bootstrapServers }}
+      consumerGroup: {{ .Values.kafka.groupId }}
+      topic: {{ .Values.kafka.topic }}
+      lagThreshold: "{{ .Values.keda.lagThreshold }}"
+{{- end }}

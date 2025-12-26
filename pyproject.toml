@@ -1,0 +1,77 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reflowfy"
+version = "0.1.0"
+description = "A horizontally scalable data movement and transformation framework"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Reflowfy Contributors"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "fastapi>=0.105.0",
+    "uvicorn[standard]>=0.25.0",
+    "pydantic>=2.5.0",
+    "confluent-kafka>=2.3.0",
+    "httpx>=0.24.0",
+    "Jinja2>=3.1.2",
+    "python-multipart>=0.0.6",
+    "elasticsearch>=8.10.0,<9.0.0",  # Pin to 8.x to match Elasticsearch 8.11 server
+    "psycopg2-binary>=2.9.9",
+    "sqlalchemy>=2.0.23",
+    "structlog>=23.2.0",
+    "tenacity>=8.2.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.11.0",
+    "ruff>=0.1.6",
+    "mypy>=1.7.0",
+    "testcontainers>=3.7.1",
+]
+
+[project.scripts]
+reflowfy-api = "reflowfy.api.app:main"
+reflowfy-worker = "reflowfy.worker.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["reflowfy*"]
+
+[tool.black]
+line-length = 100
+target-version = ['py310', 'py311', 'py312']
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"

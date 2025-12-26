@@ -1,0 +1,49 @@
+replicaCount: 2
+
+image:
+  repository: reflowfy-api
+  pullPolicy: IfNotPresent
+  tag: "0.1.0"
+
+service:
+  type: ClusterIP
+  port: 8000
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: reflowfy-api.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+
+kafka:
+  bootstrapServers: "kafka:9092"
+  topic: "reflow.jobs"
+
+env:
+  - name: KAFKA_BOOTSTRAP_SERVERS
+    value: "kafka:9092"
+  - name: KAFKA_TOPIC
+    value: "reflow.jobs"
+  - name: API_HOST
+    value: "0.0.0.0"
+  - name: API_PORT
+    value: "8000"

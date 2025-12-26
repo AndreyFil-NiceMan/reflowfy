@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "reflowfy-worker.fullname" . }}
+  labels:
+    app: reflowfy-worker
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: reflowfy-worker
+  template:
+    metadata:
+      labels:
+        app: reflowfy-worker
+    spec:
+      containers:
+      - name: worker
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        env:
+        {{- toYaml .Values.env | nindent 8 }}
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        terminationGracePeriodSeconds: 30
