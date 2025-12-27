@@ -178,7 +178,7 @@ source = elastic_source(
         ],
     },
     scroll="2m",
-    size=100,  # 100 docs per scroll page
+    size=1,  # 100 docs per scroll page
 )
 
 # Configure console destination (prints to stdout)

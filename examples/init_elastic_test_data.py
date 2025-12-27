@@ -99,9 +99,9 @@ def generate_test_documents(count=1000, start_date=None, end_date=None):
         Dictionary representing a test document
     """
     if start_date is None:
-        start_date = datetime(2024, 1, 1)
+        start_date = datetime(2025, 1, 1)
     if end_date is None:
-        end_date = datetime(2024, 12, 31)
+        end_date = datetime(2025, 12, 31)
     
     # Calculate time delta for random timestamps
     time_delta = (end_date - start_date).total_seconds()

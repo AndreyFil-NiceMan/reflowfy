@@ -100,8 +100,10 @@ services:
       PIPELINE_MODULE: pipelines
       HOST: 0.0.0.0
       PORT: 8001
+      ELASTICSEARCH_URL: http://reflofy-elasticsearch:9200
     networks:
       - reflowfy-network
+      - reflofy-elastic-network
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8001/health" ]
       interval: 10s
