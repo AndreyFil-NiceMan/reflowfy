@@ -34,6 +34,9 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 # Copy application code
 COPY reflowfy/ reflowfy/
 
+# Copy pipelines directory (workers need transformation definitions)
+COPY pipelines/ pipelines/
+
 # Environment variables
 ENV PYTHONUNBUFFERED=1
 
@@ -42,3 +45,4 @@ STOPSIGNAL SIGTERM
 
 # Run worker
 CMD ["python", "-m", "reflowfy.worker.main"]
+
