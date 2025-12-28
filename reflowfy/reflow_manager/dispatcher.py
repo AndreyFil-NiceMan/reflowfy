@@ -82,7 +82,6 @@ class JobDispatcher:
         try:
             producer.produce(
                 topic=self.kafka_topic,
-                key=job_payload["execution_id"].encode("utf-8"),
                 value=json.dumps(job_payload).encode("utf-8"),
                 callback=self._delivery_callback,
             )
@@ -124,7 +123,6 @@ class JobDispatcher:
             try:
                 producer.produce(
                     topic=self.kafka_topic,
-                    key=job["execution_id"].encode("utf-8"),
                     value=json.dumps(job).encode("utf-8"),
                     callback=self._delivery_callback,
                 )

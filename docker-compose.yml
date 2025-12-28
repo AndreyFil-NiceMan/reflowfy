@@ -138,6 +138,28 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  # Reflowfy Worker - Scalable job processor
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    depends_on:
+      kafka:
+        condition: service_healthy
+      reflow-manager:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC: reflow.jobs
+      KAFKA_GROUP_ID: reflowfy-workers
+      REFLOW_MANAGER_URL: http://reflow-manager:8001
+    networks:
+      - reflowfy-network
+    restart: unless-stopped
+    deploy:
+      replicas: 1
+
 networks:
   reflowfy-network:
     driver: bridge
