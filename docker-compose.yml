@@ -79,6 +79,21 @@ services:
       timeout: 5s
       retries: 5
 
+  # pgAdmin - PostgreSQL Web UI
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: reflowfy-pgadmin
+    depends_on:
+      - postgres
+    ports:
+      - "5050:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    networks:
+      - reflowfy-network
+
   # ReflowManager - Rate limiting and state management service
   reflow-manager:
     build:

@@ -34,6 +34,9 @@ class Execution(Base):
     # Relationship to checkpoints
     checkpoints = relationship("Checkpoint", back_populates="execution", cascade="all, delete-orphan")
     
+    # Relationship to jobs
+    jobs = relationship("Job", back_populates="execution", cascade="all, delete-orphan")
+    
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation."""
         return {
@@ -114,4 +117,41 @@ class RateLimitState(Base):
             "max_tokens": self.max_tokens,
             "refill_rate": self.refill_rate,
             "last_update": self.last_update.isoformat() if self.last_update else None,
+        }
+
+
+class Job(Base):
+    """
+    Job record for pipeline execution.
+    
+    Stores the full job payload in PostgreSQL instead of RAM,
+    enabling crash recovery and large dataset processing.
+    """
+    
+    __tablename__ = "jobs"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    execution_id = Column(String(255), ForeignKey("executions.execution_id"), nullable=False, index=True)
+    batch_id = Column(String(255), nullable=False, unique=True, index=True)
+    job_payload = Column(JSON, nullable=False)  # Full job data
+    state = Column(String(50), nullable=False, index=True)  # pending, dispatched, completed, failed
+    batch_number = Column(Integer, nullable=True)  # Checkpoint batch number
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    dispatched_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    
+    # Relationship to execution
+    execution = relationship("Execution", back_populates="jobs")
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary representation."""
+        return {
+            "id": self.id,
+            "execution_id": self.execution_id,
+            "batch_id": self.batch_id,
+            "state": self.state,
+            "batch_number": self.batch_number,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "dispatched_at": self.dispatched_at.isoformat() if self.dispatched_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
         }

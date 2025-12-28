@@ -56,6 +56,27 @@ CREATE TABLE IF NOT EXISTS rate_limit_state (
 );
 
 
+-- Jobs table
+-- Stores job payloads persistently (not in RAM)
+CREATE TABLE IF NOT EXISTS jobs (
+    id SERIAL PRIMARY KEY,
+    execution_id VARCHAR(255) NOT NULL REFERENCES executions(execution_id) ON DELETE CASCADE,
+    batch_id VARCHAR(255) NOT NULL UNIQUE,
+    job_payload JSONB NOT NULL,
+    state VARCHAR(50) NOT NULL,  -- pending, dispatched, completed, failed
+    batch_number INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    dispatched_at TIMESTAMP,
+    completed_at TIMESTAMP
+);
+
+-- Indexes for jobs
+CREATE INDEX IF NOT EXISTS idx_jobs_execution_id ON jobs(execution_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_batch_id ON jobs(batch_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_state ON jobs(state);
+CREATE INDEX IF NOT EXISTS idx_jobs_batch_number ON jobs(batch_number);
+
+
 -- Trigger to update updated_at timestamp on executions
 CREATE OR REPLACE FUNCTION update_executions_updated_at()
 RETURNS TRIGGER AS $$

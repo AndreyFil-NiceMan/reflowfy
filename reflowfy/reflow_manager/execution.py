@@ -135,3 +135,9 @@ class ExecutionManager:
             return None
         
         return self.update_execution_state(execution_id, "running")
+    
+    def get_running_executions(self):
+        """Get all executions that are currently running."""
+        return self.db.query(Execution).filter(
+            Execution.state == "running"
+        ).all()

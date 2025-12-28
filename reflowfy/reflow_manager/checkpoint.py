@@ -122,3 +122,34 @@ class CheckpointManager:
             "completed": completed,
             "pending": total - completed,
         }
+    
+    def get_checkpoint_by_batch(self, batch_id: str) -> Optional[Checkpoint]:
+        """
+        Get a single checkpoint by batch_id.
+        
+        Args:
+            batch_id: Batch identifier
+        
+        Returns:
+            Checkpoint object or None if not found
+        """
+        return self.db.query(Checkpoint).filter(
+            Checkpoint.batch_id == batch_id
+        ).first()
+    
+    def get_batch_states(self, batch_ids: List[str]) -> Dict[str, str]:
+        """
+        Get states for multiple checkpoints efficiently.
+        
+        Args:
+            batch_ids: List of batch identifiers
+        
+        Returns:
+            Dictionary mapping batch_id to state
+        """
+        checkpoints = self.db.query(Checkpoint).filter(
+            Checkpoint.batch_id.in_(batch_ids)
+        ).all()
+        
+        return {cp.batch_id: cp.state for cp in checkpoints}
+

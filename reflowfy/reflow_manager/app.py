@@ -238,7 +238,12 @@ async def update_checkpoint(
     request: UpdateJobStatusRequest,
     manager: ReflowManager = Depends(get_reflow_manager),
 ):
-    """Update checkpoint status (called by workers after processing)."""
+    """
+    Update checkpoint status (called by workers after processing).
+    
+    Only updates checkpoint and job state - does NOT update execution counts.
+    Pipeline_runner handles counting via _sync_counts_from_db().
+    """
     checkpoint = manager.update_checkpoint_state(
         batch_id=batch_id,
         state=request.state,
@@ -252,34 +257,21 @@ async def update_checkpoint(
             detail=f"Checkpoint for batch '{batch_id}' not found",
         )
     
+    # Update job state in jobs table to match checkpoint state
+    job = manager.job_manager.update_job_state(batch_id, request.state)
+    if not job:
+        # Job might not exist (old execution before jobs table was added)
+        pass
+    
     # Store detailed statistics if provided
     if request.stats:
         checkpoint.stats = request.stats
-        manager.db.commit()
     
-    # Update execution job counts
-    if request.state == "completed":
-        manager.update_job_counts(checkpoint.execution_id, jobs_completed=1)
-    elif request.state == "failed":
-        manager.update_job_counts(checkpoint.execution_id, jobs_failed=1)
+    # Ensure all changes are committed
+    manager.db.commit()
     
-    # Check if execution is complete (all jobs done)
-    execution = manager.get_execution(checkpoint.execution_id)
-    if execution:
-        total_finished = execution.jobs_completed + execution.jobs_failed
-        
-        # If all dispatched jobs are finished, mark execution as completed
-        if execution.jobs_dispatched > 0 and total_finished >= execution.jobs_dispatched:
-            if execution.jobs_failed > 0:
-                # Has failures - mark as failed
-                manager.update_execution_state(
-                    checkpoint.execution_id,
-                    "failed",
-                    f"Completed with {execution.jobs_failed} failed jobs out of {execution.jobs_dispatched}"
-                )
-            else:
-                # All succeeded - mark as completed
-                manager.update_execution_state(checkpoint.execution_id, "completed")
+    # NOTE: We do NOT update execution counts or trigger completion here.
+    # Pipeline_runner controls the flow and syncs counts from DB.
     
     return checkpoint.to_dict()
 
@@ -489,6 +481,35 @@ async def get_execution_stats(
     return stats
 
 
+@app.post("/executions/{execution_id}/sync-jobs")
+async def sync_jobs_from_checkpoints(
+    execution_id: str,
+    manager: ReflowManager = Depends(get_reflow_manager),
+):
+    """
+    Sync job states from checkpoint states.
+    
+    Use this for executions that ran before job state updates were added,
+    or when job and checkpoint states are out of sync.
+    """
+    execution = manager.get_execution(execution_id)
+    if not execution:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Execution '{execution_id}' not found",
+        )
+    
+    result = manager.job_manager.sync_states_from_checkpoints(execution_id)
+    
+    return {
+        "execution_id": execution_id,
+        "synced_completed": result["synced_completed"],
+        "synced_failed": result["synced_failed"],
+        "total_synced": result["total_synced"],
+        "message": f"Synced {result['total_synced']} job states from checkpoints",
+    }
+
+
 # Startup event
 @app.on_event("startup")
 async def startup_event():
@@ -533,6 +554,58 @@ async def startup_event():
     print(f"\n✓ Kafka: {os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092')}")
     print(f"✓ Topic: {os.getenv('KAFKA_TOPIC', 'reflow.jobs')}")
     print(f"✓ Rate limit: {os.getenv('MAX_JOBS_PER_SECOND', '100')} jobs/sec")
+    
+    # Start background sync task
+    import asyncio
+    asyncio.create_task(auto_sync_job_states())
+    print("✓ Auto-sync background task started (every 5s)")
+
+
+async def auto_sync_job_states():
+    """
+    Background task to automatically sync job states from checkpoints.
+    
+    Runs every 5 seconds for all running executions.
+    """
+    import asyncio
+    from reflowfy.reflow_manager.database import SessionLocal
+    
+    SYNC_INTERVAL = 5  # seconds
+    
+    while True:
+        try:
+            await asyncio.sleep(SYNC_INTERVAL)
+            
+            # Create a new database session for background task
+            db = SessionLocal()
+            try:
+                kafka_bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+                kafka_topic = os.getenv("KAFKA_TOPIC", "reflow.jobs")
+                max_jobs_per_second = float(os.getenv("MAX_JOBS_PER_SECOND", "100"))
+                
+                manager = ReflowManager(
+                    db_session=db,
+                    kafka_bootstrap_servers=kafka_bootstrap_servers,
+                    kafka_topic=kafka_topic,
+                    max_jobs_per_second=max_jobs_per_second,
+                )
+                
+                # Get all running executions
+                running = manager.execution_manager.get_running_executions()
+                
+                if running:
+                    for execution in running:
+                        try:
+                            result = manager.job_manager.sync_states_from_checkpoints(execution.execution_id)
+                            if result["total_synced"] > 0:
+                                print(f"  🔄 Synced {result['total_synced']} jobs for {execution.execution_id[:8]}...")
+                        except Exception as e:
+                            print(f"  ⚠️ Sync failed for {execution.execution_id[:8]}: {e}")
+            finally:
+                db.close()
+                
+        except Exception as e:
+            print(f"⚠️ Auto-sync error: {e}")
 
 
 # Main entry point
