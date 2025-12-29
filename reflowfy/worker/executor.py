@@ -86,7 +86,7 @@ class WorkerExecutor:
         stats = JobStats()
         
         execution_id = job_payload.get("execution_id", "unknown")
-        batch_id = job_payload.get("batch_id", "unknown")
+        job_id = job_payload.get("job_id", "unknown")
         pipeline_name = job_payload.get("pipeline_name", "unknown")
         
         try:
@@ -100,14 +100,14 @@ class WorkerExecutor:
             stats.records_input = len(records)
             
             if not records:
-                print(f"⚠️  Job {batch_id}: No records to process")
+                print(f"⚠️  Job {job_id}: No records to process")
                 stats.success = True
                 stats.records_output = 0
                 stats.end_time = time.time()
-                self._report_job_completion(execution_id, batch_id, stats)
+                self._report_job_completion(execution_id, job_id, stats)
                 return True
             
-            print(f"🔄 Processing job {batch_id}: {len(records)} records")
+            print(f"🔄 Processing job {job_id}: {len(records)} records")
             
             # Load and apply transformations
             transformed_records = records
@@ -142,7 +142,7 @@ class WorkerExecutor:
                 stats.success = False
                 stats.error = "Destination health check failed"
                 stats.end_time = time.time()
-                self._report_job_completion(execution_id, batch_id, stats)
+                self._report_job_completion(execution_id, job_id, stats)
                 return False
             
             # Send to destination and track time
@@ -155,15 +155,15 @@ class WorkerExecutor:
             stats.success = True
             stats.end_time = time.time()
             
-            print(f"✓ Job {batch_id} completed successfully (duration: {stats.end_time - stats.start_time:.2f}s)\n")
+            print(f"✓ Job {job_id} completed successfully (duration: {stats.end_time - stats.start_time:.2f}s)\n")
             
             # Report to ReflowManager
-            self._report_job_completion(execution_id, batch_id, stats)
+            self._report_job_completion(execution_id, job_id, stats)
             
             return True
         
         except Exception as e:
-            print(f"❌ Job {batch_id} failed: {e}\n")
+            print(f"❌ Job {job_id} failed: {e}\n")
             
             # Mark as failed
             stats.success = False
@@ -171,14 +171,14 @@ class WorkerExecutor:
             stats.end_time = time.time()
             
             # Report failure to ReflowManager
-            self._report_job_completion(execution_id, batch_id, stats)
+            self._report_job_completion(execution_id, job_id, stats)
             
             return False
     
     def _report_job_completion(
         self,
         execution_id: str,
-        batch_id: str,
+        job_id: str,
         stats: JobStats
     ):
         """
@@ -186,14 +186,14 @@ class WorkerExecutor:
         
         Args:
             execution_id: Execution ID
-            batch_id: Batch/job ID
+            job_id: Batch/job ID
             stats: Job statistics
         """
         try:
             client = self._get_client()
             
             response = client.patch(
-                f"{self.reflow_manager_url}/checkpoints/{batch_id}",
+                f"{self.reflow_manager_url}/checkpoints/{job_id}",
                 json={
                     "state": "completed" if stats.success else "failed",
                     "processed_records": stats.records_output,

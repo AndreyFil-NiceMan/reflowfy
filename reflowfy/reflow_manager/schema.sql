@@ -35,12 +35,11 @@ CREATE TABLE IF NOT EXISTS rate_limit_state (
 );
 
 
--- Jobs table (unified with checkpoint data)
--- Stores job payloads and checkpoint tracking data
+-- Jobs table
+-- Stores job payloads and tracking data
 CREATE TABLE IF NOT EXISTS jobs (
-    id SERIAL PRIMARY KEY,
+    job_id VARCHAR(255) PRIMARY KEY,
     execution_id VARCHAR(255) NOT NULL REFERENCES executions(execution_id) ON DELETE CASCADE,
-    batch_id VARCHAR(255) NOT NULL UNIQUE,
     
     -- Job data
     job_payload JSONB NOT NULL,
@@ -49,8 +48,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     -- State tracking
     state VARCHAR(50) NOT NULL,  -- pending, dispatched, completed, failed
     
-    -- Checkpoint data (merged from old checkpoints table)
-    offset_data JSONB,
+    -- Worker results
     processed_records INTEGER DEFAULT 0,
     error_message TEXT,
     stats JSONB,
@@ -64,7 +62,6 @@ CREATE TABLE IF NOT EXISTS jobs (
 
 -- Indexes for jobs
 CREATE INDEX IF NOT EXISTS idx_jobs_execution_id ON jobs(execution_id);
-CREATE INDEX IF NOT EXISTS idx_jobs_batch_id ON jobs(batch_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_state ON jobs(state);
 CREATE INDEX IF NOT EXISTS idx_jobs_batch_number ON jobs(batch_number);
 

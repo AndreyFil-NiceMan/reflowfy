@@ -159,7 +159,7 @@ class ReflowManager:
         # Query unified Job table directly
         results = self.db.query(
             Job.batch_number,
-            func.count(Job.id).label("total_jobs"),
+            func.count(Job.job_id).label("total_jobs"),
             func.sum(case((Job.state == "pending", 1), else_=0)).label("pending"),
             func.sum(case((Job.state == "completed", 1), else_=0)).label("completed"),
             func.sum(case((Job.state == "failed", 1), else_=0)).label("failed"),

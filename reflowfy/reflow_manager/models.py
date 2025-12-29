@@ -80,26 +80,24 @@ class RateLimitState(Base):
 
 class Job(Base):
     """
-    Unified job record combining job payload and checkpoint data.
+    Job record for pipeline execution.
     
-    Stores job payload for dispatch/retry and checkpoint data for tracking.
+    Stores job payload for dispatch and tracking data for progress.
     """
     
     __tablename__ = "jobs"
     
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    job_id = Column(String(255), primary_key=True)
     execution_id = Column(String(255), ForeignKey("executions.execution_id"), nullable=False, index=True)
-    batch_id = Column(String(255), nullable=False, unique=True, index=True)
     
     # Job data
     job_payload = Column(JSON, nullable=False)
     batch_number = Column(Integer, nullable=True)
     
-    # State tracking (formerly in checkpoints)
+    # State tracking
     state = Column(String(50), nullable=False, index=True)  # pending, dispatched, completed, failed
     
-    # Checkpoint data (merged from checkpoints table)
-    offset_data = Column(JSON, nullable=True)
+    # Worker results
     processed_records = Column(Integer, default=0)
     error_message = Column(Text, nullable=True)
     stats = Column(JSON, nullable=True)
@@ -116,12 +114,10 @@ class Job(Base):
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation."""
         return {
-            "id": self.id,
+            "job_id": self.job_id,
             "execution_id": self.execution_id,
-            "batch_id": self.batch_id,
             "state": self.state,
             "batch_number": self.batch_number,
-            "offset_data": self.offset_data,
             "processed_records": self.processed_records,
             "error_message": self.error_message,
             "stats": self.stats,

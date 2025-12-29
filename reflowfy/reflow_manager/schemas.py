@@ -36,8 +36,7 @@ class UpdateJobStatusRequest(BaseModel):
 class CheckpointRequest(BaseModel):
     """Request to create a checkpoint."""
     execution_id: str
-    batch_id: str
-    offset_data: Optional[Dict[str, Any]] = None
+    job_id: str
     processed_records: int = 0
 
 

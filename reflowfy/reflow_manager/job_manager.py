@@ -8,7 +8,7 @@ from reflowfy.reflow_manager.models import Job
 
 
 class JobManager:
-    """Manages job records for pipeline executions (includes checkpoint functionality)."""
+    """Manages job records for pipeline executions."""
     
     def __init__(self, db_session: Session):
         self.db = db_session
@@ -16,31 +16,28 @@ class JobManager:
     def create_job(
         self,
         execution_id: str,
-        batch_id: str,
+        job_id: str,
         job_payload: Dict[str, Any],
         batch_number: Optional[int] = None,
-        offset_data: Optional[Dict[str, Any]] = None,
     ) -> Job:
         """
         Create a new job record.
         
         Args:
             execution_id: Execution identifier
-            batch_id: Unique batch identifier
+            job_id: Unique job identifier
             job_payload: Full job data
-            batch_number: Checkpoint batch number
-            offset_data: Source-specific offset/cursor data
+            batch_number: Batch number for grouping
         
         Returns:
             Created Job object
         """
         job = Job(
             execution_id=execution_id,
-            batch_id=batch_id,
+            job_id=job_id,
             job_payload=job_payload,
             state="pending",
             batch_number=batch_number,
-            offset_data=offset_data or {},
         )
         
         self.db.add(job)
@@ -49,12 +46,9 @@ class JobManager:
         
         return job
     
-    def get_job_by_batch_id(self, batch_id: str) -> Optional[Job]:
-        """Get job by batch_id."""
-        return self.db.query(Job).filter(Job.batch_id == batch_id).first()
-    
-    # Alias for backward compatibility
-    get_checkpoint_by_batch = get_job_by_batch_id
+    def get_job(self, job_id: str) -> Optional[Job]:
+        """Get job by job_id."""
+        return self.db.query(Job).filter(Job.job_id == job_id).first()
     
     def get_pending_jobs_by_batch_number(
         self,
@@ -92,24 +86,20 @@ class JobManager:
         
         return query.order_by(Job.created_at).all()
     
-    # Alias for backward compatibility
-    get_checkpoints = get_jobs
-    
-    def mark_jobs_dispatched(self, batch_ids: List[str]) -> int:
+    def mark_jobs_dispatched(self, job_ids: List[str]) -> int:
         """
         Mark multiple jobs as dispatched.
         
-        Only updates jobs that are still 'pending' - won't overwrite
-        jobs that have already been completed/failed by workers.
+        Only updates jobs that are still 'pending'.
         
         Args:
-            batch_ids: List of batch IDs to mark
+            job_ids: List of job IDs to mark
         
         Returns:
             Number of jobs updated
         """
         updated = self.db.query(Job).filter(
-            Job.batch_id.in_(batch_ids),
+            Job.job_id.in_(job_ids),
             Job.state == "pending",
         ).update(
             {"state": "dispatched", "dispatched_at": datetime.utcnow()},
@@ -120,7 +110,7 @@ class JobManager:
     
     def update_job_state(
         self,
-        batch_id: str,
+        job_id: str,
         state: str,
         processed_records: Optional[int] = None,
         error_message: Optional[str] = None,
@@ -146,7 +136,7 @@ class JobManager:
             update_data["stats"] = stats
         
         updated = self.db.query(Job).filter(
-            Job.batch_id == batch_id
+            Job.job_id == job_id
         ).update(update_data, synchronize_session=False)
         
         self.db.commit()
@@ -154,33 +144,32 @@ class JobManager:
         if updated == 0:
             return None
         
-        return self.get_job_by_batch_id(batch_id)
+        return self.get_job(job_id)
     
-    def get_batch_states(self, batch_ids: List[str]) -> Dict[str, str]:
+    def get_job_states(self, job_ids: List[str]) -> Dict[str, str]:
         """
         Get states for multiple jobs efficiently.
-        Returns fresh data by querying columns directly.
         
         Args:
-            batch_ids: List of batch identifiers
+            job_ids: List of job identifiers
         
         Returns:
-            Dictionary mapping batch_id to state
+            Dictionary mapping job_id to state
         """
-        results = self.db.query(Job.batch_id, Job.state).filter(
-            Job.batch_id.in_(batch_ids)
+        results = self.db.query(Job.job_id, Job.state).filter(
+            Job.job_id.in_(job_ids)
         ).all()
         
-        return {batch_id: state for batch_id, state in results}
+        return {job_id: state for job_id, state in results}
     
     def get_job_counts(self, execution_id: str) -> Dict[str, int]:
         """
-        Get job counts by state for an execution (using aggregation).
+        Get job counts by state for an execution.
         
         Returns:
             Dictionary with total, pending, dispatched, completed, failed counts
         """
-        rows = self.db.query(Job.state, func.count(Job.id)).filter(
+        rows = self.db.query(Job.state, func.count(Job.job_id)).filter(
             Job.execution_id == execution_id
         ).group_by(Job.state).all()
         
@@ -200,3 +189,4 @@ class JobManager:
         
         counts["total"] = total
         return counts
+

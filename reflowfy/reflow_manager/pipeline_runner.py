@@ -155,15 +155,15 @@ class PipelineRunner:
         print("  Phase 1: Saving jobs to database...")
         batch_number = 1
         job_count = 0
-        current_batch_ids = []
+        current_job_ids = []
         
         for source_job in pipeline.source.split_jobs(runtime_params):
-            batch_id = str(uuid.uuid4())
+            job_id = str(uuid.uuid4())
             
             # Create job payload
             job_payload = {
                 "execution_id": execution_id,
-                "batch_id": batch_id,
+                "job_id": job_id,
                 "pipeline_name": pipeline_name,
                 "transformations": pipeline.get_transformation_names(),
                 "destination": {
@@ -181,22 +181,21 @@ class PipelineRunner:
             # Serialize to handle non-JSON-serializable objects
             job_payload = self._serialize_for_json(job_payload)
             
-            # Save job to database (includes checkpoint fields)
+            # Save job to database
             self.job_manager.create_job(
                 execution_id=execution_id,
-                batch_id=batch_id,
+                job_id=job_id,
                 job_payload=job_payload,
                 batch_number=batch_number,
-                offset_data=source_job.metadata,
             )
             
-            current_batch_ids.append(batch_id)
+            current_job_ids.append(job_id)
             job_count += 1
             
             # When batch is full, increment batch number
-            if len(current_batch_ids) >= CHECKPOINT_BATCH_SIZE:
+            if len(current_job_ids) >= CHECKPOINT_BATCH_SIZE:
                 batch_number += 1
-                current_batch_ids = []
+                current_job_ids = []
         
         # Set total_jobs correctly (once, after all jobs saved)
         self._set_total_jobs(execution_id, job_count)
@@ -215,7 +214,7 @@ class PipelineRunner:
             if not jobs:
                 continue
             
-            batch_ids = [job.batch_id for job in jobs]
+            job_ids = [job.job_id for job in jobs]
             job_payloads = [job.job_payload for job in jobs]
             
             print(f"    Dispatching batch {current_batch_num} ({len(jobs)} jobs)...")
@@ -228,7 +227,7 @@ class PipelineRunner:
             )
             
             # Mark jobs as dispatched in database
-            self.job_manager.mark_jobs_dispatched(batch_ids)
+            self.job_manager.mark_jobs_dispatched(job_ids)
             total_dispatched += dispatched
             
             # Update execution counts (SET, not +=)
@@ -237,7 +236,7 @@ class PipelineRunner:
             # Wait for this batch to complete
             print(f"    Waiting for batch {current_batch_num}...")
             completed, failed = self._wait_for_batch_completion(
-                batch_ids=batch_ids,
+                job_ids=job_ids,
                 timeout=CHECKPOINT_BATCH_TIMEOUT,
                 poll_interval=CHECKPOINT_POLL_INTERVAL,
             )
@@ -324,7 +323,7 @@ class PipelineRunner:
     
     def _wait_for_batch_completion(
         self,
-        batch_ids: List[str],
+        job_ids: List[str],
         timeout: float = CHECKPOINT_BATCH_TIMEOUT,
         poll_interval: float = CHECKPOINT_POLL_INTERVAL,
     ) -> Tuple[int, int]:
@@ -332,7 +331,7 @@ class PipelineRunner:
         Wait for all jobs in a checkpoint batch to complete.
         
         Args:
-            batch_ids: List of batch IDs to wait for
+            job_ids: List of batch IDs to wait for
             timeout: Maximum time to wait in seconds
             poll_interval: How often to poll for completion
         
@@ -343,14 +342,14 @@ class PipelineRunner:
         
         while time.time() - start_time < timeout:
             # Get states for all checkpoints in this batch
-            states = self.checkpoint_manager.get_batch_states(batch_ids)
+            states = self.checkpoint_manager.get_job_states(job_ids)
             
             completed = 0
             failed = 0
             pending = 0
             
-            for batch_id in batch_ids:
-                state = states.get(batch_id, "pending")
+            for job_id in job_ids:
+                state = states.get(job_id, "pending")
                 if state == "completed":
                     completed += 1
                 elif state == "failed":
@@ -367,7 +366,7 @@ class PipelineRunner:
         
         # Timeout reached - return current counts
         print(f"  Warning: Batch timeout after {timeout}s, some jobs may not have completed")
-        states = self.checkpoint_manager.get_batch_states(batch_ids)
+        states = self.checkpoint_manager.get_job_states(job_ids)
         completed = sum(1 for s in states.values() if s == "completed")
         failed = sum(1 for s in states.values() if s == "failed")
         

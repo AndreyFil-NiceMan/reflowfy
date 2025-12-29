@@ -131,7 +131,7 @@ async def create_checkpoint(
     try:
         checkpoint = manager.create_checkpoint(
             execution_id=request.execution_id,
-            batch_id=request.batch_id,
+            job_id=request.job_id,
             offset_data=request.offset_data,
             processed_records=request.processed_records,
         )
@@ -155,9 +155,9 @@ async def get_checkpoints(
     return [job.to_dict() for job in jobs]
 
 
-@app.patch("/checkpoints/{batch_id}")
+@app.patch("/checkpoints/{job_id}")
 async def update_checkpoint(
-    batch_id: str,
+    job_id: str,
     request: UpdateJobStatusRequest,
     manager: ReflowManager = Depends(get_reflow_manager),
 ):
@@ -167,11 +167,11 @@ async def update_checkpoint(
     Updates job state and execution counts in a single transaction.
     """
     # Get the job to update
-    job = manager.job_manager.get_job_by_batch_id(batch_id)
+    job = manager.job_manager.get_job(job_id)
     if not job:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Job for batch '{batch_id}' not found",
+            detail=f"Job for batch '{job_id}' not found",
         )
     
     execution_id = job.execution_id
@@ -179,7 +179,7 @@ async def update_checkpoint(
     
     # Update job state with all checkpoint fields
     manager.job_manager.update_job_state(
-        batch_id,
+        job_id,
         request.state,
         processed_records=request.processed_records,
         error_message=request.error_message,
@@ -194,7 +194,7 @@ async def update_checkpoint(
             manager.update_job_counts(execution_id, jobs_failed=1)
     
     # Return updated job
-    job = manager.job_manager.get_job_by_batch_id(batch_id)
+    job = manager.job_manager.get_job(job_id)
     return job.to_dict()
 
 
@@ -208,8 +208,7 @@ async def update_checkpoint(
         for job in request.jobs:
             manager.create_checkpoint(
                 execution_id=request.execution_id,
-                batch_id=job.get("batch_id", ""),
-                offset_data=job.get("metadata", {}).get("source_metadata"),
+                job_id=job.get("job_id", ""),
             )
         
         # Dispatch jobs with rate limiting
