@@ -180,7 +180,7 @@ networks:
     driver: bridge
   reflofy-elastic-network:
     name: reflofy_reflofy-elastic-network
-    external: true
+
 
 volumes:
   postgres_data:

@@ -3,8 +3,7 @@ ReflowManager - Central coordinator for pipeline execution.
 
 This is a slim coordinator that composes the following modules:
 - ExecutionManager: Execution records management
-- CheckpointManager: Job checkpoint tracking
-- JobManager: Job payload persistence
+- JobManager: Job payload and checkpoint tracking (unified)
 - RateLimiter: Token bucket rate limiting
 - JobDispatcher: Kafka job dispatch
 - PipelineRunner: Pipeline execution
@@ -14,9 +13,8 @@ from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import Integer
 
-from reflowfy.reflow_manager.models import Execution, Checkpoint, RateLimitState, Job
+from reflowfy.reflow_manager.models import Execution, Job, RateLimitState
 from reflowfy.reflow_manager.execution import ExecutionManager
-from reflowfy.reflow_manager.checkpoint import CheckpointManager
 from reflowfy.reflow_manager.job_manager import JobManager
 from reflowfy.reflow_manager.rate_limiter import RateLimiter
 from reflowfy.reflow_manager.dispatcher import JobDispatcher
@@ -28,7 +26,7 @@ class ReflowManager:
     Central manager for pipeline execution state and rate limiting.
     
     This is a coordinator class that composes specialized managers
-    for execution, checkpointing, rate limiting, dispatch, and pipeline running.
+    for execution, job tracking, rate limiting, dispatch, and pipeline running.
     """
     
     def __init__(
@@ -54,7 +52,6 @@ class ReflowManager:
         
         # Initialize component managers
         self.execution_manager = ExecutionManager(db_session)
-        self.checkpoint_manager = CheckpointManager(db_session)
         self.job_manager = JobManager(db_session)
         self.rate_limiter = RateLimiter(db_session, max_jobs_per_second)
         self.dispatcher = JobDispatcher(
@@ -64,10 +61,12 @@ class ReflowManager:
         )
         self.pipeline_runner = PipelineRunner(
             self.execution_manager,
-            self.checkpoint_manager,
             self.job_manager,
             self.dispatcher,
         )
+        
+        # Backward compatibility alias
+        self.checkpoint_manager = self.job_manager
     
     # ===== Execution Management (delegated) =====
     
@@ -92,41 +91,11 @@ class ReflowManager:
     def resume_execution(self, execution_id: str) -> Optional[Execution]:
         return self.execution_manager.resume_execution(execution_id)
     
-    # ===== Checkpoint Management (delegated) =====
+    # ===== Job/Checkpoint Management (delegated to unified JobManager) =====
     
-    def create_checkpoint(self, execution_id: str, batch_id: str,
-                         offset_data: Optional[Dict[str, Any]] = None,
-                         processed_records: int = 0) -> Checkpoint:
-        return self.checkpoint_manager.create_checkpoint(execution_id, batch_id, offset_data, processed_records)
-    
-    def update_checkpoint_state(self, batch_id: str, state: str,
-                               processed_records: Optional[int] = None,
-                               error_message: Optional[str] = None) -> Optional[Checkpoint]:
-        return self.checkpoint_manager.update_checkpoint_state(batch_id, state, processed_records, error_message)
-    
-    def get_checkpoints(self, execution_id: str, state: Optional[str] = None) -> List[Checkpoint]:
-        return self.checkpoint_manager.get_checkpoints(execution_id, state)
-    
-    # ===== Rate Limiting (delegated) =====
-    
-    def can_dispatch(self, pipeline_name: str, count: int = 1, rate_limit: Optional[float] = None) -> bool:
-        return self.rate_limiter.can_dispatch(pipeline_name, count, rate_limit)
-    
-    def consume_tokens(self, pipeline_name: str, count: int = 1, rate_limit: Optional[float] = None) -> bool:
-        return self.rate_limiter.consume_tokens(pipeline_name, count, rate_limit)
-    
-    def acquire_token(self, pipeline_name: str, rate_limit: Optional[float] = None, max_wait: float = 1.0) -> bool:
-        return self.rate_limiter.acquire_token(pipeline_name, rate_limit, max_wait)
-    
-    # ===== Job Dispatch (delegated) =====
-    
-    def dispatch_job(self, job_payload: Dict[str, Any], pipeline_name: str, 
-                    rate_limit: Optional[float] = None) -> bool:
-        return self.dispatcher.dispatch_job(job_payload, pipeline_name, rate_limit)
-    
-    def dispatch_jobs_batch(self, jobs: List[Dict[str, Any]], pipeline_name: str,
-                           rate_limit: Optional[float] = None) -> int:
-        return self.dispatcher.dispatch_jobs_batch(jobs, pipeline_name, rate_limit)
+    def get_checkpoints(self, execution_id: str, state: Optional[str] = None) -> List[Job]:
+        """Get jobs (formerly checkpoints) for an execution."""
+        return self.job_manager.get_jobs(execution_id, state)
     
     # ===== Pipeline Execution (delegated) =====
     
@@ -140,29 +109,6 @@ class ReflowManager:
         return self.pipeline_runner._run_pipeline_jobs(execution_id, pipeline_name, runtime_params, rate_limit_override)
     
     # ===== Statistics =====
-    
-    def get_statistics(self) -> Dict[str, Any]:
-        """Get global statistics."""
-        active = self.db.query(Execution).filter(
-            Execution.state.in_(["pending", "running", "paused"])
-        ).count()
-        
-        total_dispatched = self.db.query(Execution).with_entities(
-            Execution.jobs_dispatched
-        ).all()
-        total_completed = self.db.query(Execution).with_entities(
-            Execution.jobs_completed
-        ).all()
-        total_failed = self.db.query(Execution).with_entities(
-            Execution.jobs_failed
-        ).all()
-        
-        return {
-            "active_executions": active,
-            "total_jobs_dispatched": sum(e[0] for e in total_dispatched),
-            "total_jobs_completed": sum(e[0] for e in total_completed),
-            "total_jobs_failed": sum(e[0] for e in total_failed),
-        }
     
     def get_execution_stats(self, execution_id: str) -> Optional[Dict[str, Any]]:
         """Get detailed execution statistics."""
@@ -206,19 +152,17 @@ class ReflowManager:
         }
     
     def _get_batch_checkpoint_stats(self, execution_id: str) -> List[Dict[str, Any]]:
-        """Get checkpoint stats grouped by batch_number (uses checkpoint states as source of truth)."""
-        from reflowfy.reflow_manager.models import Job, Checkpoint
+        """Get stats grouped by batch_number using unified Job table."""
+        from reflowfy.reflow_manager.models import Job
         from sqlalchemy import func, case
         
-        # Join jobs and checkpoints to get accurate states from checkpoints
+        # Query unified Job table directly
         results = self.db.query(
             Job.batch_number,
             func.count(Job.id).label("total_jobs"),
-            func.sum(case((Checkpoint.state == "pending", 1), else_=0)).label("pending"),
-            func.sum(case((Checkpoint.state == "completed", 1), else_=0)).label("completed"),
-            func.sum(case((Checkpoint.state == "failed", 1), else_=0)).label("failed"),
-        ).join(
-            Checkpoint, Job.batch_id == Checkpoint.batch_id
+            func.sum(case((Job.state == "pending", 1), else_=0)).label("pending"),
+            func.sum(case((Job.state == "completed", 1), else_=0)).label("completed"),
+            func.sum(case((Job.state == "failed", 1), else_=0)).label("failed"),
         ).filter(
             Job.execution_id == execution_id,
             Job.batch_number.isnot(None)
@@ -226,7 +170,7 @@ class ReflowManager:
         
         batches = []
         for row in results:
-            # Determine batch state from checkpoint states
+            # Determine batch state
             if row.failed and row.failed > 0:
                 state = "failed"
             elif row.completed == row.total_jobs:

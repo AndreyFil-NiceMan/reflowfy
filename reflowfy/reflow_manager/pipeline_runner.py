@@ -5,7 +5,6 @@ import uuid
 from typing import Dict, Any, Optional, List, Tuple
 
 from reflowfy.reflow_manager.execution import ExecutionManager
-from reflowfy.reflow_manager.checkpoint import CheckpointManager
 from reflowfy.reflow_manager.job_manager import JobManager
 from reflowfy.reflow_manager.dispatcher import JobDispatcher
 
@@ -23,15 +22,13 @@ class PipelineRunner:
     
     Coordinates between:
     - ExecutionManager for execution records
-    - CheckpointManager for job tracking
-    - JobManager for job persistence
+    - JobManager for job payload and checkpoint tracking (unified)
     - JobDispatcher for Kafka dispatch
     """
     
     def __init__(
         self,
         execution_manager: ExecutionManager,
-        checkpoint_manager: CheckpointManager,
         job_manager: JobManager,
         dispatcher: JobDispatcher,
     ):
@@ -40,14 +37,15 @@ class PipelineRunner:
         
         Args:
             execution_manager: ExecutionManager instance
-            checkpoint_manager: CheckpointManager instance
-            job_manager: JobManager instance
+            job_manager: JobManager instance (includes checkpoint functionality)
             dispatcher: JobDispatcher instance
         """
         self.execution_manager = execution_manager
-        self.checkpoint_manager = checkpoint_manager
         self.job_manager = job_manager
         self.dispatcher = dispatcher
+        
+        # Backward compatibility alias
+        self.checkpoint_manager = self.job_manager
     
     def run_pipeline(
         self,
@@ -183,18 +181,12 @@ class PipelineRunner:
             # Serialize to handle non-JSON-serializable objects
             job_payload = self._serialize_for_json(job_payload)
             
-            # Save job to database (not RAM!) with batch number
+            # Save job to database (includes checkpoint fields)
             self.job_manager.create_job(
                 execution_id=execution_id,
                 batch_id=batch_id,
                 job_payload=job_payload,
                 batch_number=batch_number,
-            )
-            
-            # Create checkpoint for this job
-            self.checkpoint_manager.create_checkpoint(
-                execution_id=execution_id,
-                batch_id=batch_id,
                 offset_data=source_job.metadata,
             )
             
@@ -306,29 +298,19 @@ class PipelineRunner:
     
     def _sync_counts_from_db(self, execution_id: str) -> Tuple[int, int, int]:
         """
-        Sync job counts from actual checkpoint states in database.
-        
-        This is the source of truth - avoids accumulation errors.
+        Sync job counts from actual job states in database.
         
         Returns:
             Tuple of (dispatched, completed, failed)
         """
-        from reflowfy.reflow_manager.models import Checkpoint
+        from reflowfy.reflow_manager.models import Job
         
-        # Get actual counts from jobs table
+        # Get counts directly from jobs table (now the source of truth)
         job_counts = self.job_manager.get_job_counts(execution_id)
-        dispatched = job_counts.get("dispatched", 0)
         
-        # Get actual counts from checkpoints table
-        completed = self.checkpoint_manager.db.query(Checkpoint).filter(
-            Checkpoint.execution_id == execution_id,
-            Checkpoint.state == "completed"
-        ).count()
-        
-        failed = self.checkpoint_manager.db.query(Checkpoint).filter(
-            Checkpoint.execution_id == execution_id,
-            Checkpoint.state == "failed"
-        ).count()
+        completed = job_counts.get("completed", 0)
+        failed = job_counts.get("failed", 0)
+        dispatched = job_counts.get("dispatched", 0) + completed + failed
         
         # Update execution with real counts
         execution = self.execution_manager.get_execution(execution_id)
