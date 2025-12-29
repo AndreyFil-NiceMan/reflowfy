@@ -4,58 +4,18 @@ import os
 from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, HTTPException, Depends, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from reflowfy.reflow_manager.database import get_db, init_db
 from reflowfy.reflow_manager.manager import ReflowManager
-
-
-# Pydantic models for requests/responses
-
-class CreateExecutionRequest(BaseModel):
-    """Request to create a new execution."""
-    execution_id: str
-    pipeline_name: str
-    runtime_params: Optional[Dict[str, Any]] = None
-
-
-class UpdateExecutionStateRequest(BaseModel):
-    """Request to update execution state."""
-    state: str
-    error_message: Optional[str] = None
-
-
-class DispatchJobsRequest(BaseModel):
-    """Request to dispatch jobs."""
-    execution_id: str
-    pipeline_name: str
-    jobs: List[Dict[str, Any]]
-    rate_limit: Optional[float] = None
-
-
-class UpdateJobStatusRequest(BaseModel):
-    """Request to update job/checkpoint status."""
-    state: str
-    processed_records: Optional[int] = None
-    error_message: Optional[str] = None
-    stats: Optional[Dict[str, Any]] = None  # Detailed job statistics from worker
-
-
-class CheckpointRequest(BaseModel):
-    """Request to create a checkpoint."""
-    execution_id: str
-    batch_id: str
-    offset_data: Optional[Dict[str, Any]] = None
-    processed_records: int = 0
-
-
-class RunPipelineRequest(BaseModel):
-    """Request to run a pipeline (new simplified endpoint)."""
-    pipeline_name: str
-    runtime_params: Optional[Dict[str, Any]] = None
-    rate_limit: Optional[float] = None
-    execution_id: Optional[str] = None  # Auto-generated if not provided
+from reflowfy.reflow_manager.schemas import (
+    CreateExecutionRequest,
+    UpdateExecutionStateRequest,
+    DispatchJobsRequest,
+    UpdateJobStatusRequest,
+    CheckpointRequest,
+    RunPipelineRequest,
+)
 
 
 # Create FastAPI app
@@ -102,43 +62,6 @@ async def health_check():
 
 
 # ===== Execution Management =====
-
-@app.post("/executions", status_code=status.HTTP_201_CREATED)
-async def create_execution(
-    request: CreateExecutionRequest,
-    manager: ReflowManager = Depends(get_reflow_manager),
-):
-    """Create a new pipeline execution."""
-    try:
-        execution = manager.create_execution(
-            execution_id=request.execution_id,
-            pipeline_name=request.pipeline_name,
-            runtime_params=request.runtime_params,
-        )
-        return execution.to_dict()
-    
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create execution: {str(e)}",
-        )
-
-
-@app.get("/executions/{execution_id}")
-async def get_execution(
-    execution_id: str,
-    manager: ReflowManager = Depends(get_reflow_manager),
-):
-    """Get execution by ID."""
-    execution = manager.get_execution(execution_id)
-    
-    if not execution:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Execution '{execution_id}' not found",
-        )
-    
-    return execution.to_dict()
 
 
 @app.patch("/executions/{execution_id}/state")
@@ -227,9 +150,9 @@ async def get_checkpoints(
     state: Optional[str] = None,
     manager: ReflowManager = Depends(get_reflow_manager),
 ):
-    """Get checkpoints for an execution."""
-    checkpoints = manager.get_checkpoints(execution_id, state)
-    return [cp.to_dict() for cp in checkpoints]
+    """Get jobs (checkpoints) for an execution."""
+    jobs = manager.job_manager.get_jobs(execution_id, state)
+    return [job.to_dict() for job in jobs]
 
 
 @app.patch("/checkpoints/{batch_id}")
@@ -239,50 +162,43 @@ async def update_checkpoint(
     manager: ReflowManager = Depends(get_reflow_manager),
 ):
     """
-    Update checkpoint status (called by workers after processing).
+    Update job/checkpoint status (called by workers after processing).
     
-    Only updates checkpoint and job state - does NOT update execution counts.
-    Pipeline_runner handles counting via _sync_counts_from_db().
+    Updates job state and execution counts in a single transaction.
     """
-    checkpoint = manager.update_checkpoint_state(
-        batch_id=batch_id,
-        state=request.state,
-        processed_records=request.processed_records,
-        error_message=request.error_message,
-    )
-    
-    if not checkpoint:
+    # Get the job to update
+    job = manager.job_manager.get_job_by_batch_id(batch_id)
+    if not job:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Checkpoint for batch '{batch_id}' not found",
+            detail=f"Job for batch '{batch_id}' not found",
         )
     
-    # Update job state in jobs table to match checkpoint state
-    job = manager.job_manager.update_job_state(batch_id, request.state)
-    if not job:
-        # Job might not exist (old execution before jobs table was added)
-        pass
+    execution_id = job.execution_id
+    old_state = job.state
     
-    # Store detailed statistics if provided
-    if request.stats:
-        checkpoint.stats = request.stats
+    # Update job state with all checkpoint fields
+    manager.job_manager.update_job_state(
+        batch_id,
+        request.state,
+        processed_records=request.processed_records,
+        error_message=request.error_message,
+        stats=request.stats,
+    )
     
-    # Ensure all changes are committed
-    manager.db.commit()
+    # Update execution counts if state changed to completed/failed
+    if old_state not in ["completed", "failed"]:
+        if request.state == "completed":
+            manager.update_job_counts(execution_id, jobs_completed=1)
+        elif request.state == "failed":
+            manager.update_job_counts(execution_id, jobs_failed=1)
     
-    # NOTE: We do NOT update execution counts or trigger completion here.
-    # Pipeline_runner controls the flow and syncs counts from DB.
-    
-    return checkpoint.to_dict()
+    # Return updated job
+    job = manager.job_manager.get_job_by_batch_id(batch_id)
+    return job.to_dict()
 
 
-# ===== Job Dispatch =====
 
-@app.post("/dispatch")
-async def dispatch_jobs(
-    request: DispatchJobsRequest,
-    manager: ReflowManager = Depends(get_reflow_manager),
-):
     """Dispatch jobs to Kafka with rate limiting."""
     try:
         # Update execution state to running
@@ -456,14 +372,6 @@ def _dispatch_pipeline_jobs(
 
 # ===== Statistics =====
 
-@app.get("/statistics")
-async def get_statistics(
-    manager: ReflowManager = Depends(get_reflow_manager),
-):
-    """Get global statistics."""
-    return manager.get_statistics()
-
-
 @app.get("/executions/{execution_id}/stats")
 async def get_execution_stats(
     execution_id: str,
@@ -480,34 +388,6 @@ async def get_execution_stats(
     
     return stats
 
-
-@app.post("/executions/{execution_id}/sync-jobs")
-async def sync_jobs_from_checkpoints(
-    execution_id: str,
-    manager: ReflowManager = Depends(get_reflow_manager),
-):
-    """
-    Sync job states from checkpoint states.
-    
-    Use this for executions that ran before job state updates were added,
-    or when job and checkpoint states are out of sync.
-    """
-    execution = manager.get_execution(execution_id)
-    if not execution:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Execution '{execution_id}' not found",
-        )
-    
-    result = manager.job_manager.sync_states_from_checkpoints(execution_id)
-    
-    return {
-        "execution_id": execution_id,
-        "synced_completed": result["synced_completed"],
-        "synced_failed": result["synced_failed"],
-        "total_synced": result["total_synced"],
-        "message": f"Synced {result['total_synced']} job states from checkpoints",
-    }
 
 
 # Startup event
@@ -554,58 +434,8 @@ async def startup_event():
     print(f"\n✓ Kafka: {os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092')}")
     print(f"✓ Topic: {os.getenv('KAFKA_TOPIC', 'reflow.jobs')}")
     print(f"✓ Rate limit: {os.getenv('MAX_JOBS_PER_SECOND', '100')} jobs/sec")
-    
-    # Start background sync task
-    import asyncio
-    asyncio.create_task(auto_sync_job_states())
-    print("✓ Auto-sync background task started (every 5s)")
 
 
-async def auto_sync_job_states():
-    """
-    Background task to automatically sync job states from checkpoints.
-    
-    Runs every 5 seconds for all running executions.
-    """
-    import asyncio
-    from reflowfy.reflow_manager.database import SessionLocal
-    
-    SYNC_INTERVAL = 5  # seconds
-    
-    while True:
-        try:
-            await asyncio.sleep(SYNC_INTERVAL)
-            
-            # Create a new database session for background task
-            db = SessionLocal()
-            try:
-                kafka_bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-                kafka_topic = os.getenv("KAFKA_TOPIC", "reflow.jobs")
-                max_jobs_per_second = float(os.getenv("MAX_JOBS_PER_SECOND", "100"))
-                
-                manager = ReflowManager(
-                    db_session=db,
-                    kafka_bootstrap_servers=kafka_bootstrap_servers,
-                    kafka_topic=kafka_topic,
-                    max_jobs_per_second=max_jobs_per_second,
-                )
-                
-                # Get all running executions
-                running = manager.execution_manager.get_running_executions()
-                
-                if running:
-                    for execution in running:
-                        try:
-                            result = manager.job_manager.sync_states_from_checkpoints(execution.execution_id)
-                            if result["total_synced"] > 0:
-                                print(f"  🔄 Synced {result['total_synced']} jobs for {execution.execution_id[:8]}...")
-                        except Exception as e:
-                            print(f"  ⚠️ Sync failed for {execution.execution_id[:8]}: {e}")
-            finally:
-                db.close()
-                
-        except Exception as e:
-            print(f"⚠️ Auto-sync error: {e}")
 
 
 # Main entry point

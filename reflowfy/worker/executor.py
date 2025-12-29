@@ -41,31 +41,6 @@ class JobStats:
         }
 
 
-class RateLimiter:
-    """Token bucket rate limiter."""
-    
-    def __init__(self, jobs_per_second: int):
-        """
-        Initialize rate limiter.
-        
-        Args:
-            jobs_per_second: Maximum jobs per second
-        """
-        self.jobs_per_second = jobs_per_second
-        self.interval = 1.0 / jobs_per_second
-        self.last_call = 0.0
-    
-    def wait_if_needed(self):
-        """Wait if rate limit would be exceeded."""
-        now = time.time()
-        time_since_last = now - self.last_call
-        
-        if time_since_last < self.interval:
-            sleep_time = self.interval - time_since_last
-            time.sleep(sleep_time)
-        
-        self.last_call = time.time()
-
 
 class WorkerExecutor:
     """
@@ -87,7 +62,7 @@ class WorkerExecutor:
         Args:
             reflow_manager_url: ReflowManager service URL
         """
-        self.rate_limiters: Dict[str, RateLimiter] = {}
+
         self.reflow_manager_url = reflow_manager_url.rstrip("/")
         self._client: Optional[httpx.Client] = None
     
@@ -118,7 +93,6 @@ class WorkerExecutor:
             # Extract job data
             transformation_names = job_payload.get("transformations", [])
             destination_config = job_payload.get("destination", {})
-            rate_limit_config = job_payload.get("rate_limit")
             records = job_payload.get("records", [])
             metadata = job_payload.get("metadata", {})
             
@@ -134,14 +108,6 @@ class WorkerExecutor:
                 return True
             
             print(f"🔄 Processing job {batch_id}: {len(records)} records")
-            
-            # Apply rate limiting if configured
-            if rate_limit_config and "jobs_per_second" in rate_limit_config:
-                rate_limiter = self._get_rate_limiter(
-                    pipeline_name,
-                    rate_limit_config["jobs_per_second"],
-                )
-                rate_limiter.wait_if_needed()
             
             # Load and apply transformations
             transformed_records = records
@@ -243,12 +209,7 @@ class WorkerExecutor:
             print(f"  ⚠️  Failed to report to ReflowManager: {e}")
             # Don't fail the job if reporting fails
     
-    def _get_rate_limiter(self, pipeline_name: str, jobs_per_second: int) -> RateLimiter:
-        """Get or create rate limiter for pipeline."""
-        if pipeline_name not in self.rate_limiters:
-            self.rate_limiters[pipeline_name] = RateLimiter(jobs_per_second)
-        
-        return self.rate_limiters[pipeline_name]
+
     
     def _create_destination(self, destination_config: Dict[str, Any]) -> Any:
         """

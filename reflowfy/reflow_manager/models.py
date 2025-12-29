@@ -31,9 +31,6 @@ class Execution(Base):
     error_message = Column(Text, nullable=True)
     runtime_params = Column(JSON, nullable=True)
     
-    # Relationship to checkpoints
-    checkpoints = relationship("Checkpoint", back_populates="execution", cascade="all, delete-orphan")
-    
     # Relationship to jobs
     jobs = relationship("Job", back_populates="execution", cascade="all, delete-orphan")
     
@@ -52,45 +49,6 @@ class Execution(Base):
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "error_message": self.error_message,
             "runtime_params": self.runtime_params,
-        }
-
-
-class Checkpoint(Base):
-    """
-    Checkpoint for resumable pipeline execution.
-    
-    Stores the state of individual batches/jobs to enable pause/resume.
-    """
-    
-    __tablename__ = "checkpoints"
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    execution_id = Column(String(255), ForeignKey("executions.execution_id"), nullable=False, index=True)
-    batch_id = Column(String(255), nullable=False, index=True)
-    offset_data = Column(JSON, nullable=True)  # Source-specific offset/cursor data
-    processed_records = Column(Integer, default=0)
-    state = Column(String(50), nullable=False)  # pending, processing, completed, failed
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-    error_message = Column(Text, nullable=True)
-    stats = Column(JSON, nullable=True)  # Detailed job statistics from worker
-    
-    # Relationship to execution
-    execution = relationship("Execution", back_populates="checkpoints")
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary representation."""
-        return {
-            "id": self.id,
-            "execution_id": self.execution_id,
-            "batch_id": self.batch_id,
-            "offset_data": self.offset_data,
-            "processed_records": self.processed_records,
-            "state": self.state,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-            "error_message": self.error_message,
-            "stats": self.stats,
         }
 
 
@@ -122,10 +80,9 @@ class RateLimitState(Base):
 
 class Job(Base):
     """
-    Job record for pipeline execution.
+    Unified job record combining job payload and checkpoint data.
     
-    Stores the full job payload in PostgreSQL instead of RAM,
-    enabling crash recovery and large dataset processing.
+    Stores job payload for dispatch/retry and checkpoint data for tracking.
     """
     
     __tablename__ = "jobs"
@@ -133,10 +90,23 @@ class Job(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     execution_id = Column(String(255), ForeignKey("executions.execution_id"), nullable=False, index=True)
     batch_id = Column(String(255), nullable=False, unique=True, index=True)
-    job_payload = Column(JSON, nullable=False)  # Full job data
+    
+    # Job data
+    job_payload = Column(JSON, nullable=False)
+    batch_number = Column(Integer, nullable=True)
+    
+    # State tracking (formerly in checkpoints)
     state = Column(String(50), nullable=False, index=True)  # pending, dispatched, completed, failed
-    batch_number = Column(Integer, nullable=True)  # Checkpoint batch number
+    
+    # Checkpoint data (merged from checkpoints table)
+    offset_data = Column(JSON, nullable=True)
+    processed_records = Column(Integer, default=0)
+    error_message = Column(Text, nullable=True)
+    stats = Column(JSON, nullable=True)
+    
+    # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     dispatched_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
     
@@ -151,7 +121,16 @@ class Job(Base):
             "batch_id": self.batch_id,
             "state": self.state,
             "batch_number": self.batch_number,
+            "offset_data": self.offset_data,
+            "processed_records": self.processed_records,
+            "error_message": self.error_message,
+            "stats": self.stats,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "dispatched_at": self.dispatched_at.isoformat() if self.dispatched_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
         }
+
+
+# Backward compatibility alias
+Checkpoint = Job

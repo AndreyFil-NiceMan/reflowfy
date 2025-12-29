@@ -24,27 +24,6 @@ CREATE INDEX IF NOT EXISTS idx_executions_state ON executions(state);
 CREATE INDEX IF NOT EXISTS idx_executions_created_at ON executions(created_at);
 
 
--- Checkpoints table
--- Stores checkpoint data for pause/resume functionality
-CREATE TABLE IF NOT EXISTS checkpoints (
-    id SERIAL PRIMARY KEY,
-    execution_id VARCHAR(255) NOT NULL REFERENCES executions(execution_id) ON DELETE CASCADE,
-    batch_id VARCHAR(255) NOT NULL,
-    offset_data JSONB,  -- Source-specific offset/cursor information
-    processed_records INTEGER DEFAULT 0,
-    state VARCHAR(50) NOT NULL,  -- pending, processing, completed, failed
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    error_message TEXT,
-    stats JSONB  -- Detailed job statistics from worker
-);
-
--- Indexes for checkpoints
-CREATE INDEX IF NOT EXISTS idx_checkpoints_execution_id ON checkpoints(execution_id);
-CREATE INDEX IF NOT EXISTS idx_checkpoints_batch_id ON checkpoints(batch_id);
-CREATE INDEX IF NOT EXISTS idx_checkpoints_state ON checkpoints(state);
-
-
 -- Rate limit state table
 -- Stores token bucket state for rate limiting
 CREATE TABLE IF NOT EXISTS rate_limit_state (
@@ -56,16 +35,29 @@ CREATE TABLE IF NOT EXISTS rate_limit_state (
 );
 
 
--- Jobs table
--- Stores job payloads persistently (not in RAM)
+-- Jobs table (unified with checkpoint data)
+-- Stores job payloads and checkpoint tracking data
 CREATE TABLE IF NOT EXISTS jobs (
     id SERIAL PRIMARY KEY,
     execution_id VARCHAR(255) NOT NULL REFERENCES executions(execution_id) ON DELETE CASCADE,
     batch_id VARCHAR(255) NOT NULL UNIQUE,
+    
+    -- Job data
     job_payload JSONB NOT NULL,
-    state VARCHAR(50) NOT NULL,  -- pending, dispatched, completed, failed
     batch_number INTEGER,
+    
+    -- State tracking
+    state VARCHAR(50) NOT NULL,  -- pending, dispatched, completed, failed
+    
+    -- Checkpoint data (merged from old checkpoints table)
+    offset_data JSONB,
+    processed_records INTEGER DEFAULT 0,
+    error_message TEXT,
+    stats JSONB,
+    
+    -- Timestamps
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     dispatched_at TIMESTAMP,
     completed_at TIMESTAMP
 );
@@ -86,14 +78,15 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS executions_updated_at_trigger ON executions;
 CREATE TRIGGER executions_updated_at_trigger
     BEFORE UPDATE ON executions
     FOR EACH ROW
     EXECUTE FUNCTION update_executions_updated_at();
 
 
--- Trigger to update updated_at timestamp on checkpoints
-CREATE OR REPLACE FUNCTION update_checkpoints_updated_at()
+-- Trigger to update updated_at timestamp on jobs
+CREATE OR REPLACE FUNCTION update_jobs_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
     NEW.updated_at = CURRENT_TIMESTAMP;
@@ -101,7 +94,13 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER checkpoints_updated_at_trigger
-    BEFORE UPDATE ON checkpoints
+DROP TRIGGER IF EXISTS jobs_updated_at_trigger ON jobs;
+CREATE TRIGGER jobs_updated_at_trigger
+    BEFORE UPDATE ON jobs
     FOR EACH ROW
-    EXECUTE FUNCTION update_checkpoints_updated_at();
+    EXECUTE FUNCTION update_jobs_updated_at();
+
+
+-- Migration: Drop old checkpoints table if exists
+-- (Run this manually after verifying data is migrated)
+-- DROP TABLE IF EXISTS checkpoints;
