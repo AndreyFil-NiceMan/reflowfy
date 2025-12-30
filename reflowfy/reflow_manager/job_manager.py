@@ -90,7 +90,8 @@ class JobManager:
         """
         Mark multiple jobs as dispatched.
         
-        Only updates jobs that are still 'pending'.
+        Sets dispatched_at for all jobs (even if already completed by fast workers).
+        Only updates state to 'dispatched' for jobs still in 'pending' state.
         
         Args:
             job_ids: List of job IDs to mark
@@ -98,13 +99,26 @@ class JobManager:
         Returns:
             Number of jobs updated
         """
+        now = datetime.utcnow()
+        
+        # First, set dispatched_at for ALL jobs (regardless of state)
+        self.db.query(Job).filter(
+            Job.job_id.in_(job_ids),
+            Job.dispatched_at.is_(None),  # Only if not already set
+        ).update(
+            {"dispatched_at": now},
+            synchronize_session=False,
+        )
+        
+        # Then, update state to 'dispatched' only for pending jobs
         updated = self.db.query(Job).filter(
             Job.job_id.in_(job_ids),
             Job.state == "pending",
         ).update(
-            {"state": "dispatched", "dispatched_at": datetime.utcnow()},
+            {"state": "dispatched"},
             synchronize_session=False,
         )
+        
         self.db.commit()
         return updated
     
