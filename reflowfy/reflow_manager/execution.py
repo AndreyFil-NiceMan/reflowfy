@@ -1,7 +1,7 @@
 """Execution management for ReflowManager."""
 
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from reflowfy.reflow_manager.models import Execution
 
@@ -135,3 +135,17 @@ class ExecutionManager:
             return None
         
         return self.update_execution_state(execution_id, "running")
+    
+    def get_interrupted_executions(self) -> List[Execution]:
+        """
+        Find executions that were running when the service crashed.
+        
+        These are executions in 'running' state that need to be resumed.
+        
+        Returns:
+            List of Execution objects in 'running' state
+        """
+        return self.db.query(Execution).filter(
+            Execution.state == "running"
+        ).all()
+

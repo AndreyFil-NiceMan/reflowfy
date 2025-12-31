@@ -433,6 +433,81 @@ async def startup_event():
     print(f"\n✓ Kafka: {os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092')}")
     print(f"✓ Topic: {os.getenv('KAFKA_TOPIC', 'reflow.jobs')}")
     print(f"✓ Rate limit: {os.getenv('MAX_JOBS_PER_SECOND', '100')} jobs/sec")
+    
+    # Check for interrupted executions and recover
+    print("\n🔄 Checking for interrupted executions...")
+    await _recover_interrupted_executions()
+
+
+async def _recover_interrupted_executions():
+    """Find and resume any executions that were interrupted by a crash."""
+    import asyncio
+    from reflowfy.reflow_manager.database import SessionLocal
+    
+    db = SessionLocal()
+    try:
+        kafka_bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+        kafka_topic = os.getenv("KAFKA_TOPIC", "reflow.jobs")
+        max_jobs_per_second = float(os.getenv("MAX_JOBS_PER_SECOND", "100"))
+        
+        manager = ReflowManager(
+            db_session=db,
+            kafka_bootstrap_servers=kafka_bootstrap_servers,
+            kafka_topic=kafka_topic,
+            max_jobs_per_second=max_jobs_per_second,
+        )
+        
+        # Find interrupted executions
+        interrupted = manager.execution_manager.get_interrupted_executions()
+        
+        if not interrupted:
+            print("  ✓ No interrupted executions found")
+            return
+        
+        print(f"  Found {len(interrupted)} interrupted execution(s)")
+        
+        # Resume each in a background thread (don't block startup)
+        for execution in interrupted:
+            print(f"  → Scheduling resume for: {execution.execution_id}")
+            # Use run_in_executor to avoid blocking the event loop
+            asyncio.get_event_loop().run_in_executor(
+                None,  # Default executor
+                _resume_execution_sync,
+                execution.execution_id,
+            )
+        
+        print(f"  ✓ Scheduled {len(interrupted)} execution(s) for recovery")
+    
+    finally:
+        db.close()
+
+
+def _resume_execution_sync(execution_id: str):
+    """Synchronously resume an execution (runs in thread pool)."""
+    from reflowfy.reflow_manager.database import SessionLocal
+    
+    db = SessionLocal()
+    try:
+        kafka_bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+        kafka_topic = os.getenv("KAFKA_TOPIC", "reflow.jobs")
+        max_jobs_per_second = float(os.getenv("MAX_JOBS_PER_SECOND", "100"))
+        
+        manager = ReflowManager(
+            db_session=db,
+            kafka_bootstrap_servers=kafka_bootstrap_servers,
+            kafka_topic=kafka_topic,
+            max_jobs_per_second=max_jobs_per_second,
+        )
+        
+        manager.pipeline_runner.resume_execution(execution_id)
+    
+    except Exception as e:
+        import traceback
+        print(f"❌ Failed to resume execution {execution_id}: {e}")
+        traceback.print_exc()
+    
+    finally:
+        db.close()
 
 
 

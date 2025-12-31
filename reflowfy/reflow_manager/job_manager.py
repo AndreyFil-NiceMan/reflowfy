@@ -204,3 +204,24 @@ class JobManager:
         counts["total"] = total
         return counts
 
+    def get_first_incomplete_batch(self, execution_id: str) -> Optional[int]:
+        """
+        Find the first batch with pending or dispatched jobs.
+        
+        Used for crash recovery to resume from where we left off.
+        
+        Args:
+            execution_id: Execution identifier
+        
+        Returns:
+            Batch number of first incomplete batch, or None if all complete
+        """
+        result = self.db.query(Job.batch_number).filter(
+            Job.execution_id == execution_id,
+            Job.state.in_(["pending", "dispatched"]),
+            Job.batch_number.isnot(None),
+        ).order_by(Job.batch_number).first()
+        
+        return result[0] if result else None
+
+

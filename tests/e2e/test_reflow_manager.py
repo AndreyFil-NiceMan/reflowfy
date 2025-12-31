@@ -263,5 +263,242 @@ class TestErrorHandling:
         assert response.status_code == 404
 
 
+class TestRecovery:
+    """Test reflow manager crash recovery."""
+    
+    DOCKER_CONTAINER_NAME = "reflowfy-reflow-manager"
+    
+    @pytest.fixture
+    def docker_client(self):
+        """Get Docker client for container management."""
+        import subprocess
+        return subprocess
+    
+    def _stop_reflow_manager(self, docker_client):
+        """Stop the reflow-manager container."""
+        result = docker_client.run(
+            ["docker", "stop", self.DOCKER_CONTAINER_NAME],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to stop container: {result.stderr}")
+        print(f"✓ Stopped {self.DOCKER_CONTAINER_NAME}")
+    
+    def _start_reflow_manager(self, docker_client):
+        """Start the reflow-manager container."""
+        result = docker_client.run(
+            ["docker", "start", self.DOCKER_CONTAINER_NAME],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to start container: {result.stderr}")
+        print(f"✓ Started {self.DOCKER_CONTAINER_NAME}")
+    
+    def _wait_for_reflow_manager_healthy(self, max_wait=60):
+        """Wait for reflow-manager to be healthy."""
+        import httpx
+        
+        start = time.time()
+        while time.time() - start < max_wait:
+            try:
+                with httpx.Client(base_url=REFLOW_MANAGER_URL, timeout=5.0) as client:
+                    response = client.get("/health")
+                    if response.status_code == 200:
+                        print("✓ ReflowManager is healthy")
+                        return True
+            except Exception:
+                pass
+            time.sleep(2)
+        
+        raise RuntimeError(f"ReflowManager not healthy after {max_wait}s")
+    
+    def test_recovery_after_crash(self, docker_client):
+        """
+        Test that reflow manager recovers interrupted executions after restart.
+        
+        Scenario:
+        1. Start a pipeline execution
+        2. Wait for jobs to be dispatched (running state)
+        3. Stop the reflow-manager (simulate crash)
+        4. Start the reflow-manager
+        5. Verify the execution resumes and completes successfully
+        """
+        import httpx
+        
+        # Create a fresh client
+        with httpx.Client(base_url=REFLOW_MANAGER_URL, timeout=TIMEOUT) as client:
+            # Step 1: Start a pipeline
+            response = client.post("/run", json={
+                "pipeline_name": "simple_test_pipeline",
+            })
+            
+            assert response.status_code == 202
+            execution_id = response.json()["execution_id"]
+            print(f"✓ Started pipeline execution: {execution_id}")
+            
+            # Step 2: Wait for jobs to be dispatched (at least in running state)
+            max_wait = 30
+            start = time.time()
+            state = None
+            jobs_dispatched = 0
+            
+            while time.time() - start < max_wait:
+                stats = client.get(f"/executions/{execution_id}/stats").json()
+                state = stats.get("state")
+                jobs_dispatched = stats.get("jobs_dispatched", 0)
+                
+                # Wait until some jobs are dispatched but not yet all completed
+                if state == "running" and jobs_dispatched > 0:
+                    print(f"✓ Execution is running with {jobs_dispatched} jobs dispatched")
+                    break
+                
+                if state == "completed":
+                    # Pipeline finished too fast - this is still a valid test, 
+                    # recovery will verify completed state is preserved
+                    print("⚠ Pipeline completed before we could interrupt")
+                    break
+                
+                time.sleep(1)
+            
+            # Record state before crash
+            pre_crash_stats = client.get(f"/executions/{execution_id}/stats").json()
+            print(f"Pre-crash state: {pre_crash_stats['state']}, "
+                  f"dispatched: {pre_crash_stats['jobs_dispatched']}, "
+                  f"completed: {pre_crash_stats['jobs_completed']}")
+        
+        # Step 3: Stop the reflow-manager (simulate crash)
+        print("\n🔄 Simulating crash by stopping reflow-manager...")
+        self._stop_reflow_manager(docker_client)
+        
+        # Wait a bit to ensure it's fully stopped
+        time.sleep(3)
+        
+        # Step 4: Start the reflow-manager again
+        print("🔄 Restarting reflow-manager...")
+        self._start_reflow_manager(docker_client)
+        
+        # Wait for it to be healthy
+        self._wait_for_reflow_manager_healthy()
+        
+        # Give recovery some time to kick in
+        time.sleep(5)
+        
+        # Step 5: Verify execution recovers and completes
+        with httpx.Client(base_url=REFLOW_MANAGER_URL, timeout=TIMEOUT) as client:
+            max_wait = 120  # Give more time for recovery + completion
+            start = time.time()
+            final_state = None
+            
+            while time.time() - start < max_wait:
+                stats = client.get(f"/executions/{execution_id}/stats").json()
+                final_state = stats.get("state")
+                
+                print(f"  State: {final_state}, "
+                      f"dispatched: {stats['jobs_dispatched']}, "
+                      f"completed: {stats['jobs_completed']}, "
+                      f"pending: {stats['jobs_pending']}")
+                
+                if final_state in ["completed", "failed"]:
+                    break
+                
+                time.sleep(POLL_INTERVAL)
+            
+            # Verify successful recovery
+            assert final_state == "completed", \
+                f"Expected execution to complete after recovery, got state: {final_state}"
+            
+            # Verify all jobs completed
+            assert stats["jobs_completed"] == stats["total_jobs"], \
+                f"Expected all {stats['total_jobs']} jobs to complete, " \
+                f"but only {stats['jobs_completed']} completed"
+            
+            assert stats["jobs_failed"] == 0, \
+                f"Expected 0 failed jobs, but got {stats['jobs_failed']}"
+            
+            print(f"\n✓ Recovery successful! Execution {execution_id} completed with "
+                  f"{stats['jobs_completed']} jobs after restart.")
+    
+    def test_recovery_with_partial_batch_completion(self, docker_client):
+        """
+        Test recovery when some batches are complete and some are in progress.
+        
+        Uses elastic_test_pipeline which has multiple batches for better testing.
+        """
+        import httpx
+        
+        with httpx.Client(base_url=REFLOW_MANAGER_URL, timeout=TIMEOUT) as client:
+            # Start elastic pipeline which creates multiple batches
+            response = client.post("/run", json={
+                "pipeline_name": "elastic_test_pipeline",
+                "runtime_params": {
+                    "start_time": "2025-01-01T00:00:00",
+                    "end_time": "2025-12-01T00:00:00",
+                },
+            })
+            
+            assert response.status_code == 202
+            execution_id = response.json()["execution_id"]
+            print(f"✓ Started elastic pipeline: {execution_id}")
+            
+            # Wait for multiple batches to be created
+            max_wait = 30
+            start = time.time()
+            
+            while time.time() - start < max_wait:
+                stats = client.get(f"/executions/{execution_id}/stats").json()
+                checkpoints = stats.get("checkpoints", [])
+                jobs_dispatched = stats.get("jobs_dispatched", 0)
+                
+                # Wait for some batches to be dispatched
+                if len(checkpoints) >= 2 and jobs_dispatched > 0:
+                    print(f"✓ {len(checkpoints)} batches created, "
+                          f"{jobs_dispatched} jobs dispatched")
+                    break
+                
+                time.sleep(1)
+            
+            pre_crash_stats = client.get(f"/executions/{execution_id}/stats").json()
+        
+        # Simulate crash
+        print("\n🔄 Simulating crash...")
+        self._stop_reflow_manager(docker_client)
+        time.sleep(3)
+        
+        # Restart
+        print("🔄 Restarting reflow-manager...")
+        self._start_reflow_manager(docker_client)
+        self._wait_for_reflow_manager_healthy()
+        time.sleep(5)
+        
+        # Verify recovery
+        with httpx.Client(base_url=REFLOW_MANAGER_URL, timeout=TIMEOUT) as client:
+            max_wait = 180  # Elastic pipeline may take longer
+            start = time.time()
+            final_state = None
+            
+            while time.time() - start < max_wait:
+                stats = client.get(f"/executions/{execution_id}/stats").json()
+                final_state = stats.get("state")
+                
+                if final_state in ["completed", "failed"]:
+                    break
+                
+                time.sleep(POLL_INTERVAL)
+            
+            # Verify recovery
+            assert final_state == "completed", \
+                f"Expected completion after recovery, got: {final_state}"
+            
+            assert stats["jobs_completed"] == stats["total_jobs"]
+            assert stats["jobs_failed"] == 0
+            
+            print(f"\n✓ Multi-batch recovery successful! "
+                  f"{len(stats['checkpoints'])} batches completed after restart.")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
