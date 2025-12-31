@@ -99,6 +99,8 @@ class ExecutionManager:
         """
         Update job counts for an execution.
         
+        Note: Does NOT commit - caller should commit after all updates.
+        
         Args:
             execution_id: Execution identifier
             jobs_dispatched: Increment jobs dispatched
@@ -119,9 +121,7 @@ class ExecutionManager:
         if jobs_failed is not None:
             execution.jobs_failed += jobs_failed
         
-        self.db.commit()
-        self.db.refresh(execution)
-        
+        # Don't commit here - caller will commit
         return execution
     
     def pause_execution(self, execution_id: str) -> Optional[Execution]:

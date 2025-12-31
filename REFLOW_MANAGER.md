@@ -93,7 +93,6 @@ POST /checkpoints
 {
   "execution_id": "abc-123",
   "batch_id": "batch-1",
-  "offset_data": {"cursor": "xyz"},
   "processed_records": 1000
 }
 ```

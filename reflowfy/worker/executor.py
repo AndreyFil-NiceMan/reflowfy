@@ -41,31 +41,6 @@ class JobStats:
         }
 
 
-class RateLimiter:
-    """Token bucket rate limiter."""
-    
-    def __init__(self, jobs_per_second: int):
-        """
-        Initialize rate limiter.
-        
-        Args:
-            jobs_per_second: Maximum jobs per second
-        """
-        self.jobs_per_second = jobs_per_second
-        self.interval = 1.0 / jobs_per_second
-        self.last_call = 0.0
-    
-    def wait_if_needed(self):
-        """Wait if rate limit would be exceeded."""
-        now = time.time()
-        time_since_last = now - self.last_call
-        
-        if time_since_last < self.interval:
-            sleep_time = self.interval - time_since_last
-            time.sleep(sleep_time)
-        
-        self.last_call = time.time()
-
 
 class WorkerExecutor:
     """
@@ -87,7 +62,7 @@ class WorkerExecutor:
         Args:
             reflow_manager_url: ReflowManager service URL
         """
-        self.rate_limiters: Dict[str, RateLimiter] = {}
+
         self.reflow_manager_url = reflow_manager_url.rstrip("/")
         self._client: Optional[httpx.Client] = None
     
@@ -111,14 +86,13 @@ class WorkerExecutor:
         stats = JobStats()
         
         execution_id = job_payload.get("execution_id", "unknown")
-        batch_id = job_payload.get("batch_id", "unknown")
+        job_id = job_payload.get("job_id", "unknown")
         pipeline_name = job_payload.get("pipeline_name", "unknown")
         
         try:
             # Extract job data
             transformation_names = job_payload.get("transformations", [])
             destination_config = job_payload.get("destination", {})
-            rate_limit_config = job_payload.get("rate_limit")
             records = job_payload.get("records", [])
             metadata = job_payload.get("metadata", {})
             
@@ -126,22 +100,14 @@ class WorkerExecutor:
             stats.records_input = len(records)
             
             if not records:
-                print(f"⚠️  Job {batch_id}: No records to process")
+                print(f"⚠️  Job {job_id}: No records to process")
                 stats.success = True
                 stats.records_output = 0
                 stats.end_time = time.time()
-                self._report_job_completion(execution_id, batch_id, stats)
+                self._report_job_completion(execution_id, job_id, stats)
                 return True
             
-            print(f"🔄 Processing job {batch_id}: {len(records)} records")
-            
-            # Apply rate limiting if configured
-            if rate_limit_config and "jobs_per_second" in rate_limit_config:
-                rate_limiter = self._get_rate_limiter(
-                    pipeline_name,
-                    rate_limit_config["jobs_per_second"],
-                )
-                rate_limiter.wait_if_needed()
+            print(f"🔄 Processing job {job_id}: {len(records)} records")
             
             # Load and apply transformations
             transformed_records = records
@@ -176,7 +142,7 @@ class WorkerExecutor:
                 stats.success = False
                 stats.error = "Destination health check failed"
                 stats.end_time = time.time()
-                self._report_job_completion(execution_id, batch_id, stats)
+                self._report_job_completion(execution_id, job_id, stats)
                 return False
             
             # Send to destination and track time
@@ -189,15 +155,15 @@ class WorkerExecutor:
             stats.success = True
             stats.end_time = time.time()
             
-            print(f"✓ Job {batch_id} completed successfully (duration: {stats.end_time - stats.start_time:.2f}s)\n")
+            print(f"✓ Job {job_id} completed successfully (duration: {stats.end_time - stats.start_time:.2f}s)\n")
             
             # Report to ReflowManager
-            self._report_job_completion(execution_id, batch_id, stats)
+            self._report_job_completion(execution_id, job_id, stats)
             
             return True
         
         except Exception as e:
-            print(f"❌ Job {batch_id} failed: {e}\n")
+            print(f"❌ Job {job_id} failed: {e}\n")
             
             # Mark as failed
             stats.success = False
@@ -205,14 +171,14 @@ class WorkerExecutor:
             stats.end_time = time.time()
             
             # Report failure to ReflowManager
-            self._report_job_completion(execution_id, batch_id, stats)
+            self._report_job_completion(execution_id, job_id, stats)
             
             return False
     
     def _report_job_completion(
         self,
         execution_id: str,
-        batch_id: str,
+        job_id: str,
         stats: JobStats
     ):
         """
@@ -220,14 +186,14 @@ class WorkerExecutor:
         
         Args:
             execution_id: Execution ID
-            batch_id: Batch/job ID
+            job_id: Batch/job ID
             stats: Job statistics
         """
         try:
             client = self._get_client()
             
             response = client.patch(
-                f"{self.reflow_manager_url}/checkpoints/{batch_id}",
+                f"{self.reflow_manager_url}/checkpoints/{job_id}",
                 json={
                     "state": "completed" if stats.success else "failed",
                     "processed_records": stats.records_output,
@@ -243,12 +209,7 @@ class WorkerExecutor:
             print(f"  ⚠️  Failed to report to ReflowManager: {e}")
             # Don't fail the job if reporting fails
     
-    def _get_rate_limiter(self, pipeline_name: str, jobs_per_second: int) -> RateLimiter:
-        """Get or create rate limiter for pipeline."""
-        if pipeline_name not in self.rate_limiters:
-            self.rate_limiters[pipeline_name] = RateLimiter(jobs_per_second)
-        
-        return self.rate_limiters[pipeline_name]
+
     
     def _create_destination(self, destination_config: Dict[str, Any]) -> Any:
         """

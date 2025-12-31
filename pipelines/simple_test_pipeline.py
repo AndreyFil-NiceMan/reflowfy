@@ -98,7 +98,7 @@ class AddProcessingInfo(BaseTransformation):
 
 
 # 2. Generate sample data
-sample_data = generate_sample_data(count=5000)
+sample_data = generate_sample_data(count=500)
 
 # 3. Configure source (mock data - no external dependencies!)
 source = mock_source(

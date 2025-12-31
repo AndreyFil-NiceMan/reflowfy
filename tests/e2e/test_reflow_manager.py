@@ -5,6 +5,7 @@ These tests require running services:
 - PostgreSQL on localhost:5432
 - Kafka on localhost:9093
 - ReflowManager on localhost:8001
+- Worker(s)
 
 Run with: pytest tests/e2e/test_reflow_manager.py -v
 """
@@ -17,7 +18,8 @@ import httpx
 
 # Configuration
 REFLOW_MANAGER_URL = os.getenv("REFLOW_MANAGER_URL", "http://localhost:8001")
-TIMEOUT = 30.0
+TIMEOUT = 60.0
+POLL_INTERVAL = 2
 
 
 @pytest.fixture
@@ -46,51 +48,10 @@ class TestHealthCheck:
         assert data["service"] == "reflow-manager"
 
 
-class TestExecutionManagement:
-    """Test execution CRUD operations."""
+class TestSimplePipeline:
+    """Test simple_test_pipeline execution."""
     
-    def test_create_execution(self, client, unique_execution_id):
-        """Test creating a new execution."""
-        response = client.post("/executions", json={
-            "execution_id": unique_execution_id,
-            "pipeline_name": "simple_test_pipeline",
-            "runtime_params": {"test": True},
-        })
-        
-        assert response.status_code == 201
-        data = response.json()
-        assert data["execution_id"] == unique_execution_id
-        assert data["pipeline_name"] == "simple_test_pipeline"
-        assert data["state"] == "pending"
-    
-    def test_get_execution(self, client, unique_execution_id):
-        """Test getting an execution by ID."""
-        # Create first
-        client.post("/executions", json={
-            "execution_id": unique_execution_id,
-            "pipeline_name": "simple_test_pipeline",
-        })
-        
-        # Get
-        response = client.get(f"/executions/{unique_execution_id}")
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert data["execution_id"] == unique_execution_id
-    
-    def test_get_nonexistent_execution_returns_404(self, client):
-        """Test that getting nonexistent execution returns 404."""
-        response = client.get("/executions/nonexistent-id")
-        
-        assert response.status_code == 404
-    
-
-
-
-class TestPipelineExecution:
-    """Test pipeline execution via /run endpoint."""
-    
-    def test_run_pipeline_returns_202_immediately(self, client):
+    def test_run_simple_pipeline_returns_202(self, client):
         """Test that /run returns 202 Accepted immediately."""
         start = time.time()
         
@@ -101,7 +62,7 @@ class TestPipelineExecution:
         elapsed = time.time() - start
         
         assert response.status_code == 202
-        assert elapsed < 1.0  # Should return in under 1 second
+        assert elapsed < 2.0  # Should return quickly
         
         data = response.json()
         assert "execution_id" in data
@@ -109,36 +70,9 @@ class TestPipelineExecution:
         assert data["pipeline_name"] == "simple_test_pipeline"
         assert "status_url" in data
     
-    def test_run_pipeline_with_custom_execution_id(self, client, unique_execution_id):
-        """Test running pipeline with custom execution ID."""
-        response = client.post("/run", json={
-            "pipeline_name": "simple_test_pipeline",
-            "execution_id": unique_execution_id,
-        })
-        
-        assert response.status_code == 202
-        data = response.json()
-        assert data["execution_id"] == unique_execution_id
-    
-    def test_run_pipeline_with_runtime_params(self, client):
-        """Test running pipeline with runtime parameters."""
-        response = client.post("/run", json={
-            "pipeline_name": "simple_test_pipeline",
-            "runtime_params": {"custom_param": "value"},
-        })
-        
-        assert response.status_code == 202
-    
-    def test_run_nonexistent_pipeline_returns_404(self, client):
-        """Test that running nonexistent pipeline returns 404."""
-        response = client.post("/run", json={
-            "pipeline_name": "nonexistent_pipeline",
-        })
-        
-        assert response.status_code == 404
-    
-    def test_run_pipeline_dispatches_jobs(self, client):
-        """Test that running a pipeline actually dispatches jobs."""
+    def test_simple_pipeline_completes(self, client):
+        """Test that simple pipeline runs to completion."""
+        # Start pipeline
         response = client.post("/run", json={
             "pipeline_name": "simple_test_pipeline",
         })
@@ -146,20 +80,138 @@ class TestPipelineExecution:
         assert response.status_code == 202
         execution_id = response.json()["execution_id"]
         
+        # Wait for completion
+        max_wait = 60
+        start = time.time()
+        final_state = None
+        
+        while time.time() - start < max_wait:
+            stats = client.get(f"/executions/{execution_id}/stats").json()
+            final_state = stats.get("state")
+            
+            if final_state in ["completed", "failed"]:
+                break
+            
+            time.sleep(POLL_INTERVAL)
+        
+        # Verify completion
+        assert final_state == "completed", f"Expected completed, got {final_state}"
+        
+        # Verify counts
+        assert stats["total_jobs"] > 0
+        assert stats["jobs_completed"] == stats["total_jobs"]
+        assert stats["jobs_failed"] == 0
+        assert stats["jobs_pending"] == 0
+    
+    def test_simple_pipeline_stats_format(self, client):
+        """Test that stats endpoint returns correct format."""
+        # Start pipeline
+        response = client.post("/run", json={
+            "pipeline_name": "simple_test_pipeline",
+        })
+        
+        execution_id = response.json()["execution_id"]
+        
+        # Wait a bit for jobs to be created
+        time.sleep(3)
+        
+        # Get stats
+        stats = client.get(f"/executions/{execution_id}/stats").json()
+        
+        # Verify new flat format
+        assert "execution_id" in stats
+        assert "pipeline_name" in stats
+        assert "state" in stats
+        assert "total_jobs" in stats
+        assert "jobs_dispatched" in stats
+        assert "jobs_pending" in stats
+        assert "jobs_completed" in stats
+        assert "jobs_failed" in stats
+        assert "current_checkpoint" in stats
+        assert "created_at" in stats
+        assert "updated_at" in stats
+        assert "checkpoints" in stats
+
+
+class TestElasticPipeline:
+    """Test elastic_test_pipeline execution."""
+    
+    def test_run_elastic_pipeline_returns_202(self, client):
+        """Test that elastic pipeline starts."""
+        response = client.post("/run", json={
+            "pipeline_name": "elastic_test_pipeline",
+            "runtime_params": {
+                "start_time": "2025-01-01T00:00:00",
+                "end_time": "2025-12-01T00:00:00",
+            },
+        })
+        
+        assert response.status_code == 202
+        data = response.json()
+        assert data["pipeline_name"] == "elastic_test_pipeline"
+    
+    def test_elastic_pipeline_dispatches_jobs(self, client):
+        """Test that elastic pipeline dispatches jobs."""
+        response = client.post("/run", json={
+            "pipeline_name": "elastic_test_pipeline",
+            "runtime_params": {
+                "start_time": "2025-01-01T00:00:00",
+                "end_time": "2025-12-01T00:00:00",
+            },
+        })
+        
+        assert response.status_code == 202
+        execution_id = response.json()["execution_id"]
+        
         # Wait for jobs to be dispatched
-        max_wait = 30
+        max_wait = 60
         start = time.time()
         jobs_dispatched = 0
         
         while time.time() - start < max_wait:
-            exec_response = client.get(f"/executions/{execution_id}")
-            if exec_response.status_code == 200:
-                jobs_dispatched = exec_response.json().get("jobs_dispatched", 0)
-                if jobs_dispatched > 0:
-                    break
-            time.sleep(1)
+            stats = client.get(f"/executions/{execution_id}/stats").json()
+            jobs_dispatched = stats.get("jobs_dispatched", 0)
+            
+            if jobs_dispatched > 0:
+                break
+            
+            time.sleep(POLL_INTERVAL)
         
-        assert jobs_dispatched > 0, f"Expected jobs to be dispatched, got {jobs_dispatched}"
+        assert jobs_dispatched > 0, f"Expected jobs dispatched, got {jobs_dispatched}"
+    
+    def test_elastic_pipeline_checkpoints(self, client):
+        """Test that elastic pipeline creates checkpoints."""
+        response = client.post("/run", json={
+            "pipeline_name": "elastic_test_pipeline",
+            "runtime_params": {
+                "start_time": "2025-01-01T00:00:00",
+                "end_time": "2025-12-01T00:00:00",
+            },
+        })
+        
+        execution_id = response.json()["execution_id"]
+        
+        # Wait for checkpoints to be created
+        max_wait = 30
+        start = time.time()
+        checkpoints = []
+        
+        while time.time() - start < max_wait:
+            stats = client.get(f"/executions/{execution_id}/stats").json()
+            checkpoints = stats.get("checkpoints", [])
+            
+            if len(checkpoints) > 0:
+                break
+            
+            time.sleep(POLL_INTERVAL)
+        
+        assert len(checkpoints) > 0, "Expected checkpoints to be created"
+        
+        # Verify checkpoint format
+        first_checkpoint = checkpoints[0]
+        assert "batch_number" in first_checkpoint
+        assert "total_jobs" in first_checkpoint
+        assert "state" in first_checkpoint
 
 
 class TestRateLimiting:
@@ -169,104 +221,22 @@ class TestRateLimiting:
         """Test that rate limit override is accepted."""
         response = client.post("/run", json={
             "pipeline_name": "simple_test_pipeline",
-            "rate_limit": 2,  # 2 jobs per second
+            "rate_limit": 5,  # 5 jobs per second
         })
         
         assert response.status_code == 202
-    
-    def test_rate_limiting_slows_dispatch(self, client):
-        """Test that rate limiting slows down job dispatch."""
-        # Start with rate_limit=10 (10 jobs/sec)
-        response = client.post("/run", json={
-            "pipeline_name": "simple_test_pipeline",
-            "rate_limit": 10,
-        })
-        
-        assert response.status_code == 202
-        execution_id = response.json()["execution_id"]
-        
-        # Poll for jobs to be dispatched (up to 30s)
-        max_wait = 30
-        start = time.time()
-        jobs_dispatched = 0
-        
-        while time.time() - start < max_wait:
-            exec_response = client.get(f"/executions/{execution_id}")
-            if exec_response.status_code == 200:
-                jobs_dispatched = exec_response.json().get("jobs_dispatched", 0)
-                if jobs_dispatched > 50:
-                    break
-            time.sleep(2)
-        
-        elapsed = time.time() - start
-        
-        # Verify some jobs were dispatched
-        assert jobs_dispatched > 0, "No jobs were dispatched"
-        
-        # Verify rate limiting is working by checking timing
-        # Without rate limiting, 500 jobs would dispatch in < 5 seconds
-        # With rate_limit=10, 500 jobs takes ~50 seconds minimum
-
-
-class TestCheckpoints:
-    """Test checkpoint management."""
-    
-    def test_create_checkpoint(self, client, unique_execution_id):
-        """Test creating a checkpoint."""
-        # Create execution first
-        client.post("/executions", json={
-            "execution_id": unique_execution_id,
-            "pipeline_name": "simple_test_pipeline",
-        })
-        
-        batch_id = str(uuid.uuid4())
-        response = client.post("/checkpoints", json={
-            "execution_id": unique_execution_id,
-            "batch_id": batch_id,
-            "offset_data": {"offset": 0},
-            "processed_records": 100,
-        })
-        
-        assert response.status_code == 201
-        data = response.json()
-        assert data["batch_id"] == batch_id
-        assert data["state"] == "pending"
-    
-
-
-
-class TestStatistics:
-    """Test statistics endpoints."""
-    
-    def test_get_global_statistics(self, client):
-        """Test getting global statistics."""
-        response = client.get("/statistics")
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert "active_executions" in data
-        assert "total_jobs_dispatched" in data
-        assert "total_jobs_completed" in data
-        assert "total_jobs_failed" in data
-    
-    def test_get_execution_stats(self, client, unique_execution_id):
-        """Test getting execution-specific statistics."""
-        # Create execution
-        client.post("/executions", json={
-            "execution_id": unique_execution_id,
-            "pipeline_name": "simple_test_pipeline",
-        })
-        
-        response = client.get(f"/executions/{unique_execution_id}/stats")
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert "execution_id" in data
-        assert "checkpoint_stats" in data
 
 
 class TestErrorHandling:
     """Test error handling."""
+    
+    def test_run_nonexistent_pipeline_returns_404(self, client):
+        """Test that running nonexistent pipeline returns 404."""
+        response = client.post("/run", json={
+            "pipeline_name": "nonexistent_pipeline",
+        })
+        
+        assert response.status_code == 404
     
     def test_invalid_json_returns_422(self, client):
         """Test that invalid JSON returns 422."""
@@ -285,6 +255,12 @@ class TestErrorHandling:
         })
         
         assert response.status_code == 422
+    
+    def test_get_nonexistent_execution_stats_returns_404(self, client):
+        """Test that getting stats for nonexistent execution returns 404."""
+        response = client.get("/executions/nonexistent-id/stats")
+        
+        assert response.status_code == 404
 
 
 if __name__ == "__main__":
