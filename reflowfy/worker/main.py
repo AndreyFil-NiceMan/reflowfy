@@ -76,12 +76,12 @@ def main():
     kafka_bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     kafka_topic = os.getenv("KAFKA_TOPIC", "reflow.jobs")
     kafka_group_id = os.getenv("KAFKA_GROUP_ID", "reflowfy-workers")
-    reflow_manager_url = os.getenv("REFLOW_MANAGER_URL", "http://localhost:8001")
+    database_url = os.getenv("DATABASE_URL", "postgresql://reflowfy:reflowfy@localhost:5432/reflowfy")
     
     print(f"Kafka brokers: {kafka_bootstrap_servers}")
     print(f"Topic: {kafka_topic}")
     print(f"Consumer group: {kafka_group_id}")
-    print(f"ReflowManager: {reflow_manager_url}")
+    print(f"Database: {database_url.split('@')[-1] if '@' in database_url else database_url}")  # Hide credentials
     print()
     
     # Create and start consumer
@@ -89,7 +89,7 @@ def main():
         bootstrap_servers=kafka_bootstrap_servers,
         topic=kafka_topic,
         group_id=kafka_group_id,
-        reflow_manager_url=reflow_manager_url,
+        database_url=database_url,
     )
     
     try:

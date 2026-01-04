@@ -164,12 +164,18 @@ class JobManager:
         """
         Get states for multiple jobs efficiently.
         
+        Note: Expires session cache first to see external updates from workers
+        who update jobs from their own database sessions.
+        
         Args:
             job_ids: List of job identifiers
         
         Returns:
             Dictionary mapping job_id to state
         """
+        # Expire cached objects to see external updates from workers
+        self.db.expire_all()
+        
         results = self.db.query(Job.job_id, Job.state).filter(
             Job.job_id.in_(job_ids)
         ).all()
@@ -180,9 +186,14 @@ class JobManager:
         """
         Get job counts by state for an execution.
         
+        Note: Expires session cache first to see external updates from workers.
+        
         Returns:
             Dictionary with total, pending, dispatched, completed, failed counts
         """
+        # Expire cached objects to see external updates from workers
+        self.db.expire_all()
+        
         rows = self.db.query(Job.state, func.count(Job.job_id)).filter(
             Job.execution_id == execution_id
         ).group_by(Job.state).all()

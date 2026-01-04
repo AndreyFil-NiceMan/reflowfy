@@ -25,13 +25,6 @@ class DispatchJobsRequest(BaseModel):
     rate_limit: Optional[float] = None
 
 
-class UpdateJobStatusRequest(BaseModel):
-    """Request to update job/checkpoint status."""
-    state: str
-    processed_records: Optional[int] = None
-    error_message: Optional[str] = None
-    stats: Optional[Dict[str, Any]] = None
-
 
 class CheckpointRequest(BaseModel):
     """Request to create a checkpoint."""

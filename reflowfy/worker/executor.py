@@ -1,12 +1,17 @@
 """Worker job executor."""
 
+import os
 import time
-import httpx
+from datetime import datetime
 from typing import Any, Dict, Optional
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.pool import QueuePool
 from reflowfy.transformations.registry import transformation_registry
 from reflowfy.destinations.kafka import KafkaDestination
 from reflowfy.destinations.http import HttpDestination
 from reflowfy.destinations.console import ConsoleDestination
+from reflowfy.reflow_manager.models import Job
 
 
 class JobStats:
@@ -52,25 +57,35 @@ class WorkerExecutor:
     3. Check destination health
     4. Send to destination with retries
     5. Rate limiting
-    6. Report statistics to ReflowManager
+    6. Update job status directly in PostgreSQL
     """
     
-    def __init__(self, reflow_manager_url: str = "http://localhost:8001"):
+    def __init__(self, database_url: Optional[str] = None):
         """
         Initialize worker executor.
         
         Args:
-            reflow_manager_url: ReflowManager service URL
+            database_url: PostgreSQL connection URL
         """
-
-        self.reflow_manager_url = reflow_manager_url.rstrip("/")
-        self._client: Optional[httpx.Client] = None
+        self.database_url = database_url or os.getenv(
+            "DATABASE_URL",
+            "postgresql://reflowfy:reflowfy@localhost:5432/reflowfy"
+        )
+        
+        # Create database engine and session factory
+        self._engine = create_engine(
+            self.database_url,
+            poolclass=QueuePool,
+            pool_size=5,
+            max_overflow=10,
+            pool_pre_ping=True,
+            echo=False,
+        )
+        self._SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self._engine)
     
-    def _get_client(self) -> httpx.Client:
-        """Get or create HTTP client."""
-        if self._client is None:
-            self._client = httpx.Client(timeout=10.0)
-        return self._client
+    def _get_db_session(self) -> Session:
+        """Get a new database session."""
+        return self._SessionLocal()
     
     def execute_job(self, job_payload: Dict[str, Any]) -> bool:
         """
@@ -104,7 +119,7 @@ class WorkerExecutor:
                 stats.success = True
                 stats.records_output = 0
                 stats.end_time = time.time()
-                self._report_job_completion(execution_id, job_id, stats)
+                self._update_job_in_db(execution_id, job_id, stats)
                 return True
             
             print(f"🔄 Processing job {job_id}: {len(records)} records")
@@ -142,7 +157,7 @@ class WorkerExecutor:
                 stats.success = False
                 stats.error = "Destination health check failed"
                 stats.end_time = time.time()
-                self._report_job_completion(execution_id, job_id, stats)
+                self._update_job_in_db(execution_id, job_id, stats)
                 return False
             
             # Send to destination and track time
@@ -157,8 +172,8 @@ class WorkerExecutor:
             
             print(f"✓ Job {job_id} completed successfully (duration: {stats.end_time - stats.start_time:.2f}s)\n")
             
-            # Report to ReflowManager
-            self._report_job_completion(execution_id, job_id, stats)
+            # Update job status in PostgreSQL
+            self._update_job_in_db(execution_id, job_id, stats)
             
             return True
         
@@ -170,45 +185,64 @@ class WorkerExecutor:
             stats.error = str(e)
             stats.end_time = time.time()
             
-            # Report failure to ReflowManager
-            self._report_job_completion(execution_id, job_id, stats)
+            # Update job status in PostgreSQL
+            self._update_job_in_db(execution_id, job_id, stats)
             
             return False
     
-    def _report_job_completion(
+    def _update_job_in_db(
         self,
         execution_id: str,
         job_id: str,
         stats: JobStats
     ):
         """
-        Report job completion to ReflowManager.
+        Update job status directly in PostgreSQL.
+        
+        Note: Only updates the jobs table. The reflow manager syncs
+        execution counts from the jobs table via _sync_counts_from_db().
         
         Args:
             execution_id: Execution ID
-            job_id: Batch/job ID
+            job_id: Job ID
             stats: Job statistics
         """
+        db = self._get_db_session()
         try:
-            client = self._get_client()
+            state = "completed" if stats.success else "failed"
+            now = datetime.utcnow()
             
-            response = client.patch(
-                f"{self.reflow_manager_url}/checkpoints/{job_id}",
-                json={
-                    "state": "completed" if stats.success else "failed",
-                    "processed_records": stats.records_output,
-                    "error_message": stats.error,
-                    "stats": stats.to_dict(),
-                }
+            # Update job state
+            update_data = {
+                "state": state,
+                "updated_at": now,
+                "completed_at": now,
+                "processed_records": stats.records_output,
+                "stats": stats.to_dict(),
+            }
+            
+            if stats.error:
+                update_data["error_message"] = stats.error
+            
+            # Update the job
+            updated = db.query(Job).filter(Job.job_id == job_id).update(
+                update_data,
+                synchronize_session=False
             )
-            response.raise_for_status()
             
-            print(f"  ✓ Reported stats to ReflowManager")
+            if updated == 0:
+                print(f"  ⚠️  Job {job_id} not found in database")
+                db.rollback()
+                return
+            
+            db.commit()
+            print(f"  ✓ Updated job status in database")
             
         except Exception as e:
-            print(f"  ⚠️  Failed to report to ReflowManager: {e}")
-            # Don't fail the job if reporting fails
-    
+            print(f"  ⚠️  Failed to update database: {e}")
+            db.rollback()
+        finally:
+            db.close()
 
     
     def _create_destination(self, destination_config: Dict[str, Any]) -> Any:
@@ -234,7 +268,6 @@ class WorkerExecutor:
             raise ValueError(f"Unknown destination type: {dest_type}")
     
     def close(self):
-        """Close HTTP client."""
-        if self._client:
-            self._client.close()
-            self._client = None
+        """Close database connections."""
+        if self._engine:
+            self._engine.dispose()
