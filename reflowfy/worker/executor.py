@@ -178,7 +178,8 @@ class WorkerExecutor:
             return True
         
         except Exception as e:
-            print(f"❌ Job {job_id} failed: {e}\n")
+            print(f"❌ Job {job_id} failed: {e}")
+            traceback.print_exc()
             
             # Mark as failed
             stats.success = False

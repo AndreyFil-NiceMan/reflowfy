@@ -68,7 +68,7 @@ class KafkaJobConsumer:
                 try:
                     job_payload = json.loads(msg.value().decode("utf-8"))
                     
-                    print(f"📦 Received job: {job_payload.get('batch_id', 'unknown')}")
+                    print(f"📦 Received job: {job_payload.get('job_id', 'unknown')}")
                     
                     # Execute job
                     success = self.executor.execute_job(job_payload)

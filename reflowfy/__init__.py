@@ -14,7 +14,6 @@ from reflowfy.core.registry import pipeline_registry
 from reflowfy.transformations.base import BaseTransformation
 from reflowfy.sources.elastic import elastic_source
 from reflowfy.sources.sql import sql_source
-from reflowfy.sources.api import api_source
 from reflowfy.destinations.kafka import kafka_destination
 from reflowfy.destinations.http import http_destination
 from reflowfy.destinations.console import console_destination
@@ -28,8 +27,8 @@ __all__ = [
     "BaseTransformation",
     "elastic_source",
     "sql_source",
-    "api_source",
     "kafka_destination",
     "http_destination",
     "console_destination",
 ]
+
