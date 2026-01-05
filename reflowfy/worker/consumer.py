@@ -19,7 +19,7 @@ class KafkaJobConsumer:
         topic: str,
         group_id: str = "reflowfy-workers",
         auto_offset_reset: str = "earliest",
-        reflow_manager_url: str = "http://localhost:8001",
+        database_url: Optional[str] = None,
     ):
         """
         Initialize Kafka consumer.
@@ -29,7 +29,7 @@ class KafkaJobConsumer:
             topic: Topic to consume from
             group_id: Consumer group ID
             auto_offset_reset: Offset reset strategy
-            reflow_manager_url: ReflowManager service URL for statistics reporting
+            database_url: PostgreSQL connection URL for job status updates
         """
         self.bootstrap_servers = bootstrap_servers
         self.topic = topic
@@ -44,7 +44,7 @@ class KafkaJobConsumer:
         }
         
         self.consumer: Optional[Consumer] = None
-        self.executor = WorkerExecutor(reflow_manager_url=reflow_manager_url)
+        self.executor = WorkerExecutor(database_url=database_url)
         self._running = False
     
     def start(self):

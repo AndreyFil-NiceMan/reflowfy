@@ -164,12 +164,18 @@ class JobManager:
         """
         Get states for multiple jobs efficiently.
         
+        Note: Expires session cache first to see external updates from workers
+        who update jobs from their own database sessions.
+        
         Args:
             job_ids: List of job identifiers
         
         Returns:
             Dictionary mapping job_id to state
         """
+        # Expire cached objects to see external updates from workers
+        self.db.expire_all()
+        
         results = self.db.query(Job.job_id, Job.state).filter(
             Job.job_id.in_(job_ids)
         ).all()
@@ -180,9 +186,14 @@ class JobManager:
         """
         Get job counts by state for an execution.
         
+        Note: Expires session cache first to see external updates from workers.
+        
         Returns:
             Dictionary with total, pending, dispatched, completed, failed counts
         """
+        # Expire cached objects to see external updates from workers
+        self.db.expire_all()
+        
         rows = self.db.query(Job.state, func.count(Job.job_id)).filter(
             Job.execution_id == execution_id
         ).group_by(Job.state).all()
@@ -203,4 +214,25 @@ class JobManager:
         
         counts["total"] = total
         return counts
+
+    def get_first_incomplete_batch(self, execution_id: str) -> Optional[int]:
+        """
+        Find the first batch with pending or dispatched jobs.
+        
+        Used for crash recovery to resume from where we left off.
+        
+        Args:
+            execution_id: Execution identifier
+        
+        Returns:
+            Batch number of first incomplete batch, or None if all complete
+        """
+        result = self.db.query(Job.batch_number).filter(
+            Job.execution_id == execution_id,
+            Job.state.in_(["pending", "dispatched"]),
+            Job.batch_number.isnot(None),
+        ).order_by(Job.batch_number).first()
+        
+        return result[0] if result else None
+
 
