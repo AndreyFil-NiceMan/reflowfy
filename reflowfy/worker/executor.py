@@ -2,6 +2,7 @@
 
 import time
 import httpx
+import traceback
 from typing import Any, Dict, Optional
 from reflowfy.transformations.registry import transformation_registry
 from reflowfy.destinations.kafka import KafkaDestination
@@ -163,7 +164,8 @@ class WorkerExecutor:
             return True
         
         except Exception as e:
-            print(f"❌ Job {job_id} failed: {e}\n")
+            print(f"❌ Job {job_id} failed: {e}")
+            traceback.print_exc()
             
             # Mark as failed
             stats.success = False
