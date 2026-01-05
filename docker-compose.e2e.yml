@@ -189,6 +189,8 @@ services:
         condition: service_healthy
       e2e-reflow-manager:
         condition: service_healthy
+      e2e-postgres:
+        condition: service_healthy
       e2e-kafka-init:
         condition: service_completed_successfully
     extra_hosts:
@@ -197,7 +199,7 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: e2e-kafka:29092
       KAFKA_TOPIC: e2e.reflow.jobs
       KAFKA_GROUP_ID: e2e-reflowfy-workers
-      REFLOW_MANAGER_URL: http://e2e-reflow-manager:8001
+      DATABASE_URL: postgresql://reflowfy:reflowfy@e2e-postgres:5432/reflowfy_e2e
       PIPELINE_MODULE: tests.e2e.test_pipelines
       # For source tests
       ELASTICSEARCH_URL: http://e2e-elasticsearch:9200

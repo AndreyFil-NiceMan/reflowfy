@@ -116,7 +116,7 @@ cd "$PROJECT_ROOT"
 # Step 1: Start Docker Compose services
 if [ "$SKIP_DOCKER" = false ]; then
     log_info "Starting Docker Compose services..."
-    docker-compose -f "$COMPOSE_FILE" up -d
+    docker-compose -f "$COMPOSE_FILE" up -d --build
     
     # Wait for services to be healthy (Docker Compose handles health checks)
     log_info "Waiting for services to be healthy..."
