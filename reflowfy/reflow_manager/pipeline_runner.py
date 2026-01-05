@@ -105,6 +105,151 @@ class PipelineRunner:
             "rate_limit": rate_limit_override,
         }
     
+    def resume_execution(
+        self,
+        execution_id: str,
+        rate_limit_override: Optional[float] = None,
+    ) -> None:
+        """
+        Resume an interrupted execution from where it left off.
+        
+        Skips Phase 1 (jobs already in DB) and resumes Phase 2
+        from the first incomplete batch. Used for crash recovery.
+        
+        Args:
+            execution_id: Execution identifier to resume
+            rate_limit_override: Optional override for jobs per second
+        """
+        from reflowfy.core.registry import pipeline_registry
+        
+        # Get execution record
+        execution = self.execution_manager.get_execution(execution_id)
+        if not execution:
+            print(f"⚠️ Execution {execution_id} not found, skipping resume")
+            return
+        
+        pipeline_name = execution.pipeline_name
+        
+        # Load pipeline from registry
+        pipeline = pipeline_registry.get(pipeline_name)
+        if not pipeline:
+            print(f"⚠️ Pipeline '{pipeline_name}' not in registry, marking execution as failed")
+            self.execution_manager.update_execution_state(
+                execution_id, "failed", 
+                error_message=f"Pipeline '{pipeline_name}' not found in registry during recovery"
+            )
+            return
+        
+        # Find first incomplete batch
+        first_incomplete_batch = self.job_manager.get_first_incomplete_batch(execution_id)
+        if first_incomplete_batch is None:
+            # All batches complete - just update final state
+            print(f"✓ Execution {execution_id} has no incomplete batches, syncing state")
+            self._sync_counts_from_db(execution_id)
+            counts = self.job_manager.get_job_counts(execution_id)
+            final_state = "completed" if counts.get("failed", 0) == 0 else "failed"
+            self.execution_manager.update_execution_state(execution_id, final_state)
+            return
+        
+        print(f"🔄 Resuming execution {execution_id} from batch {first_incomplete_batch}")
+        
+        # Determine effective rate limit
+        effective_rate_limit = rate_limit_override
+        if effective_rate_limit is None and pipeline.rate_limit:
+            effective_rate_limit = pipeline.rate_limit.get("jobs_per_second")
+        
+        # Get total jobs and max batch number from DB
+        job_counts = self.job_manager.get_job_counts(execution_id)
+        total_jobs = job_counts.get("total", 0)
+        
+        # Find max batch number
+        from reflowfy.reflow_manager.models import Job
+        from sqlalchemy import func
+        max_batch_result = self.job_manager.db.query(func.max(Job.batch_number)).filter(
+            Job.execution_id == execution_id
+        ).scalar()
+        max_batch = max_batch_result or 0
+        
+        # Sync current counts
+        total_dispatched, total_completed, total_failed = self._sync_counts_from_db(execution_id)
+        
+        # Resume from first incomplete batch
+        for current_batch_num in range(first_incomplete_batch, max_batch + 1):
+            # Load pending jobs for this batch
+            jobs = self.job_manager.get_pending_jobs_by_batch_number(execution_id, current_batch_num)
+            
+            if not jobs:
+                # Batch might already be complete, check dispatched jobs
+                dispatched_jobs = self.job_manager.db.query(Job).filter(
+                    Job.execution_id == execution_id,
+                    Job.batch_number == current_batch_num,
+                    Job.state == "dispatched",
+                ).all()
+                
+                if dispatched_jobs:
+                    # Wait for already-dispatched jobs
+                    job_ids = [job.job_id for job in dispatched_jobs]
+                    print(f"    Waiting for {len(dispatched_jobs)} dispatched jobs in batch {current_batch_num}...")
+                    completed, failed = self._wait_for_batch_completion(
+                        job_ids=job_ids,
+                        timeout=CHECKPOINT_BATCH_TIMEOUT,
+                        poll_interval=CHECKPOINT_POLL_INTERVAL,
+                    )
+                    total_completed += completed
+                    total_failed += failed
+                continue
+            
+            job_ids = [job.job_id for job in jobs]
+            job_payloads = [job.job_payload for job in jobs]
+            
+            print(f"    Dispatching batch {current_batch_num} ({len(jobs)} jobs)...")
+            
+            # Dispatch to Kafka
+            dispatched = self.dispatcher.dispatch_jobs_batch(
+                jobs=job_payloads,
+                pipeline_name=pipeline_name,
+                rate_limit=effective_rate_limit,
+            )
+            
+            # Mark jobs as dispatched
+            self.job_manager.mark_jobs_dispatched(job_ids)
+            total_dispatched += dispatched
+            
+            self._set_job_counts(execution_id, dispatched=total_dispatched)
+            
+            # Wait for batch completion
+            print(f"    Waiting for batch {current_batch_num}...")
+            completed, failed = self._wait_for_batch_completion(
+                job_ids=job_ids,
+                timeout=CHECKPOINT_BATCH_TIMEOUT,
+                poll_interval=CHECKPOINT_POLL_INTERVAL,
+            )
+            
+            total_completed += completed
+            total_failed += failed
+            
+            self._set_job_counts(
+                execution_id,
+                dispatched=total_dispatched,
+                completed=total_completed,
+                failed=total_failed,
+            )
+            
+            print(f"    Batch {current_batch_num}: {completed} completed, {failed} failed")
+        
+        # Final state update
+        dispatched, completed, failed = self._sync_counts_from_db(execution_id)
+        
+        total_finished = completed + failed
+        if total_finished == total_jobs:
+            final_state = "completed" if failed == 0 else "failed"
+        else:
+            final_state = "failed"
+            print(f"  Warning: Only {total_finished} of {total_jobs} jobs finished")
+        
+        self.execution_manager.update_execution_state(execution_id, final_state)
+        print(f"✓ Resumed execution {final_state}: {dispatched} dispatched, {completed} completed, {failed} failed")
+    
     def _run_pipeline_jobs(
         self,
         execution_id: str,

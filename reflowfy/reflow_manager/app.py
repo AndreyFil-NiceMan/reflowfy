@@ -12,7 +12,6 @@ from reflowfy.reflow_manager.schemas import (
     CreateExecutionRequest,
     UpdateExecutionStateRequest,
     DispatchJobsRequest,
-    UpdateJobStatusRequest,
     CheckpointRequest,
     RunPipelineRequest,
 )
@@ -155,91 +154,6 @@ async def get_checkpoints(
     return [job.to_dict() for job in jobs]
 
 
-@app.patch("/checkpoints/{job_id}")
-async def update_checkpoint(
-    job_id: str,
-    request: UpdateJobStatusRequest,
-    manager: ReflowManager = Depends(get_reflow_manager),
-):
-    """
-    Update job/checkpoint status (called by workers after processing).
-    
-    Updates job state and execution counts in a single transaction.
-    """
-    # Get the job to update
-    job = manager.job_manager.get_job(job_id)
-    if not job:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Job for batch '{job_id}' not found",
-        )
-    
-    execution_id = job.execution_id
-    old_state = job.state
-    
-    # Update job state with all checkpoint fields
-    manager.job_manager.update_job_state(
-        job_id,
-        request.state,
-        processed_records=request.processed_records,
-        error_message=request.error_message,
-        stats=request.stats,
-    )
-    
-    # Update execution counts if state changed to completed/failed
-    if old_state not in ["completed", "failed"]:
-        if request.state == "completed":
-            manager.update_job_counts(execution_id, jobs_completed=1)
-        elif request.state == "failed":
-            manager.update_job_counts(execution_id, jobs_failed=1)
-    
-    # Return updated job
-    job = manager.job_manager.get_job(job_id)
-    return job.to_dict()
-
-
-
-    """Dispatch jobs to Kafka with rate limiting."""
-    try:
-        # Update execution state to running
-        manager.update_execution_state(request.execution_id, "running")
-        
-        # Create checkpoints for all jobs
-        for job in request.jobs:
-            manager.create_checkpoint(
-                execution_id=request.execution_id,
-                job_id=job.get("job_id", ""),
-            )
-        
-        # Dispatch jobs with rate limiting
-        dispatched = manager.dispatch_jobs_batch(
-            jobs=request.jobs,
-            pipeline_name=request.pipeline_name,
-            rate_limit=request.rate_limit,
-        )
-        
-        # Update job counts
-        manager.update_job_counts(request.execution_id, jobs_dispatched=dispatched)
-        
-        return {
-            "execution_id": request.execution_id,
-            "total_jobs": len(request.jobs),
-            "dispatched": dispatched,
-            "rate_limited": len(request.jobs) - dispatched,
-        }
-    
-    except Exception as e:
-        # Mark execution as failed
-        manager.update_execution_state(
-            request.execution_id,
-            "failed",
-            error_message=str(e),
-        )
-        
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to dispatch jobs: {str(e)}",
-        )
 
 
 # ===== Pipeline Execution (New Simplified API) =====
@@ -433,6 +347,81 @@ async def startup_event():
     print(f"\n✓ Kafka: {os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092')}")
     print(f"✓ Topic: {os.getenv('KAFKA_TOPIC', 'reflow.jobs')}")
     print(f"✓ Rate limit: {os.getenv('MAX_JOBS_PER_SECOND', '100')} jobs/sec")
+    
+    # Check for interrupted executions and recover
+    print("\n🔄 Checking for interrupted executions...")
+    await _recover_interrupted_executions()
+
+
+async def _recover_interrupted_executions():
+    """Find and resume any executions that were interrupted by a crash."""
+    import asyncio
+    from reflowfy.reflow_manager.database import SessionLocal
+    
+    db = SessionLocal()
+    try:
+        kafka_bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+        kafka_topic = os.getenv("KAFKA_TOPIC", "reflow.jobs")
+        max_jobs_per_second = float(os.getenv("MAX_JOBS_PER_SECOND", "100"))
+        
+        manager = ReflowManager(
+            db_session=db,
+            kafka_bootstrap_servers=kafka_bootstrap_servers,
+            kafka_topic=kafka_topic,
+            max_jobs_per_second=max_jobs_per_second,
+        )
+        
+        # Find interrupted executions
+        interrupted = manager.execution_manager.get_interrupted_executions()
+        
+        if not interrupted:
+            print("  ✓ No interrupted executions found")
+            return
+        
+        print(f"  Found {len(interrupted)} interrupted execution(s)")
+        
+        # Resume each in a background thread (don't block startup)
+        for execution in interrupted:
+            print(f"  → Scheduling resume for: {execution.execution_id}")
+            # Use run_in_executor to avoid blocking the event loop
+            asyncio.get_event_loop().run_in_executor(
+                None,  # Default executor
+                _resume_execution_sync,
+                execution.execution_id,
+            )
+        
+        print(f"  ✓ Scheduled {len(interrupted)} execution(s) for recovery")
+    
+    finally:
+        db.close()
+
+
+def _resume_execution_sync(execution_id: str):
+    """Synchronously resume an execution (runs in thread pool)."""
+    from reflowfy.reflow_manager.database import SessionLocal
+    
+    db = SessionLocal()
+    try:
+        kafka_bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+        kafka_topic = os.getenv("KAFKA_TOPIC", "reflow.jobs")
+        max_jobs_per_second = float(os.getenv("MAX_JOBS_PER_SECOND", "100"))
+        
+        manager = ReflowManager(
+            db_session=db,
+            kafka_bootstrap_servers=kafka_bootstrap_servers,
+            kafka_topic=kafka_topic,
+            max_jobs_per_second=max_jobs_per_second,
+        )
+        
+        manager.pipeline_runner.resume_execution(execution_id)
+    
+    except Exception as e:
+        import traceback
+        print(f"❌ Failed to resume execution {execution_id}: {e}")
+        traceback.print_exc()
+    
+    finally:
+        db.close()
 
 
 
