@@ -17,7 +17,7 @@ import pytest
 import httpx
 
 # Configuration
-REFLOW_MANAGER_URL = os.getenv("REFLOW_MANAGER_URL", "http://localhost:8001")
+REFLOW_MANAGER_URL = os.getenv("REFLOW_MANAGER_URL", "http://localhost:8002")
 TIMEOUT = 60.0
 POLL_INTERVAL = 2
 
@@ -56,7 +56,7 @@ class TestSimplePipeline:
         start = time.time()
         
         response = client.post("/run", json={
-            "pipeline_name": "simple_test_pipeline",
+            "pipeline_name": "e2e_http_dest_test",
         })
         
         elapsed = time.time() - start
@@ -67,14 +67,14 @@ class TestSimplePipeline:
         data = response.json()
         assert "execution_id" in data
         assert data["state"] == "pending"
-        assert data["pipeline_name"] == "simple_test_pipeline"
+        assert data["pipeline_name"] == "e2e_http_dest_test"
         assert "status_url" in data
     
     def test_simple_pipeline_completes(self, client):
         """Test that simple pipeline runs to completion."""
         # Start pipeline
         response = client.post("/run", json={
-            "pipeline_name": "simple_test_pipeline",
+            "pipeline_name": "e2e_http_dest_test",
         })
         
         assert response.status_code == 202
@@ -107,7 +107,7 @@ class TestSimplePipeline:
         """Test that stats endpoint returns correct format."""
         # Start pipeline
         response = client.post("/run", json={
-            "pipeline_name": "simple_test_pipeline",
+            "pipeline_name": "e2e_http_dest_test",
         })
         
         execution_id = response.json()["execution_id"]
@@ -134,12 +134,12 @@ class TestSimplePipeline:
 
 
 class TestElasticPipeline:
-    """Test elastic_test_pipeline execution."""
+    """Test e2e_elastic_source_test execution."""
     
     def test_run_elastic_pipeline_returns_202(self, client):
         """Test that elastic pipeline starts."""
         response = client.post("/run", json={
-            "pipeline_name": "elastic_test_pipeline",
+            "pipeline_name": "e2e_elastic_source_test",
             "runtime_params": {
                 "start_time": "2025-01-01T00:00:00",
                 "end_time": "2025-12-01T00:00:00",
@@ -148,12 +148,12 @@ class TestElasticPipeline:
         
         assert response.status_code == 202
         data = response.json()
-        assert data["pipeline_name"] == "elastic_test_pipeline"
+        assert data["pipeline_name"] == "e2e_elastic_source_test"
     
     def test_elastic_pipeline_dispatches_jobs(self, client):
         """Test that elastic pipeline dispatches jobs."""
         response = client.post("/run", json={
-            "pipeline_name": "elastic_test_pipeline",
+            "pipeline_name": "e2e_elastic_source_test",
             "runtime_params": {
                 "start_time": "2025-01-01T00:00:00",
                 "end_time": "2025-12-01T00:00:00",
@@ -182,7 +182,7 @@ class TestElasticPipeline:
     def test_elastic_pipeline_checkpoints(self, client):
         """Test that elastic pipeline creates checkpoints."""
         response = client.post("/run", json={
-            "pipeline_name": "elastic_test_pipeline",
+            "pipeline_name": "e2e_elastic_source_test",
             "runtime_params": {
                 "start_time": "2025-01-01T00:00:00",
                 "end_time": "2025-12-01T00:00:00",
@@ -220,7 +220,7 @@ class TestRateLimiting:
     def test_rate_limit_override(self, client):
         """Test that rate limit override is accepted."""
         response = client.post("/run", json={
-            "pipeline_name": "simple_test_pipeline",
+            "pipeline_name": "e2e_http_dest_test",
             "rate_limit": 5,  # 5 jobs per second
         })
         
