@@ -149,13 +149,13 @@ log_info "Initializing test data..."
 
 # Initialize SQL test data
 log_info "Initializing SQL test data..."
-python -m tests.e2e.sources.init_sql_test_data || {
+python3 -m tests.e2e.sources.init_sql_test_data || {
     log_warning "SQL initialization failed (may already be initialized)"
 }
 
 # Initialize Elasticsearch test data
 log_info "Initializing Elasticsearch test data..."
-python -m tests.e2e.sources.init_elastic_test_data || {
+python3 -m tests.e2e.sources.init_elastic_test_data || {
     log_warning "Elasticsearch initialization failed (may already be initialized)"
 }
 

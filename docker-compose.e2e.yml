@@ -1,4 +1,4 @@
-version: '3.8'
+
 
 # E2E Testing Infrastructure
 # This compose file provides all dependencies needed for E2E tests
@@ -161,7 +161,9 @@ services:
   # ============================================================================
   # Mock HTTP Server for E2E testing
   e2e-mock-http:
-    image: reflofy-e2e-worker
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
     container_name: reflofy-e2e-mock-http
     command: python -m tests.e2e.destinations.mock_http_server
     ports:
