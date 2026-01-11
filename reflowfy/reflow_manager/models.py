@@ -130,3 +130,79 @@ class Job(Base):
 
 # Backward compatibility alias
 Checkpoint = Job
+
+
+class DLQJob(Base):
+    """
+    Dead Letter Queue job for scheduled reflow.
+    
+    Stores jobs from external services to be processed at a scheduled time.
+    """
+    
+    __tablename__ = "dlq_jobs"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    job_payload = Column(JSON, nullable=False)
+    pipeline_name = Column(String(255), nullable=False, index=True)
+    scheduled_at = Column(DateTime, nullable=False)
+    delay_minutes = Column(Integer, nullable=False)
+    status = Column(String(50), default="pending", index=True)  # pending, processing, completed, failed
+    retry_count = Column(Integer, default=0)
+    max_retries = Column(Integer, default=5)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    processed_at = Column(DateTime, nullable=True)
+    execution_id = Column(String(255), nullable=True)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary representation."""
+        return {
+            "id": self.id,
+            "job_payload": self.job_payload,
+            "pipeline_name": self.pipeline_name,
+            "scheduled_at": self.scheduled_at.isoformat() if self.scheduled_at else None,
+            "delay_minutes": self.delay_minutes,
+            "status": self.status,
+            "retry_count": self.retry_count,
+            "max_retries": self.max_retries,
+            "error_message": self.error_message,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "processed_at": self.processed_at.isoformat() if self.processed_at else None,
+            "execution_id": self.execution_id,
+        }
+
+
+class DLQJobArchive(Base):
+    """
+    Archived permanently failed DLQ jobs.
+    
+    Jobs are moved here after exceeding max_retries for historical tracking.
+    """
+    
+    __tablename__ = "dlq_jobs_archive"
+    
+    id = Column(Integer, primary_key=True)  # Preserves original ID
+    job_payload = Column(JSON, nullable=False)
+    pipeline_name = Column(String(255), nullable=False, index=True)
+    delay_minutes = Column(Integer, nullable=False)
+    retry_count = Column(Integer, nullable=False)
+    max_retries = Column(Integer, nullable=False)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False)
+    archived_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary representation."""
+        return {
+            "id": self.id,
+            "job_payload": self.job_payload,
+            "pipeline_name": self.pipeline_name,
+            "delay_minutes": self.delay_minutes,
+            "retry_count": self.retry_count,
+            "max_retries": self.max_retries,
+            "error_message": self.error_message,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "archived_at": self.archived_at.isoformat() if self.archived_at else None,
+        }

@@ -15,6 +15,11 @@ from reflowfy.reflow_manager.schemas import (
     CheckpointRequest,
     RunPipelineRequest,
 )
+from reflowfy.reflow_manager.dlq_routes import router as dlq_router
+from reflowfy.reflow_manager.dlq_scheduler import (
+    init_dlq_scheduler,
+    stop_dlq_scheduler,
+)
 
 
 # Create FastAPI app
@@ -32,6 +37,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include DLQ router
+app.include_router(dlq_router)
 
 
 # Dependency to get ReflowManager instance
@@ -351,6 +359,28 @@ async def startup_event():
     # Check for interrupted executions and recover
     print("\n🔄 Checking for interrupted executions...")
     await _recover_interrupted_executions()
+    
+    # Initialize DLQ scheduler
+    print("\n📬 Initializing DLQ scheduler...")
+    try:
+        def pipeline_runner_factory():
+            from reflowfy.reflow_manager.database import SessionLocal
+            db = SessionLocal()
+            kafka_bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+            kafka_topic = os.getenv("KAFKA_TOPIC", "reflow.jobs")
+            max_jobs_per_second = float(os.getenv("MAX_JOBS_PER_SECOND", "100"))
+            manager = ReflowManager(
+                db_session=db,
+                kafka_bootstrap_servers=kafka_bootstrap_servers,
+                kafka_topic=kafka_topic,
+                max_jobs_per_second=max_jobs_per_second,
+            )
+            return manager.pipeline_runner
+        
+        init_dlq_scheduler(pipeline_runner_factory)
+        print("✅ DLQ Scheduler initialized")
+    except Exception as e:
+        print(f"⚠️ Failed to initialize DLQ scheduler: {e}")
 
 
 async def _recover_interrupted_executions():
@@ -424,6 +454,14 @@ def _resume_execution_sync(execution_id: str):
         db.close()
 
 
+
+# Shutdown event
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown."""
+    print("\n🛑 Shutting down ReflowManager service...")
+    stop_dlq_scheduler()
+    print("✅ Shutdown complete")
 
 
 # Main entry point
