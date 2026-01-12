@@ -41,24 +41,134 @@ class PipelineParameter:
         name: Parameter name (used in API requests)
         description: Human-readable description
         required: Whether this parameter is mandatory
-        param_type: Expected type (str, int, bool, etc.)
+        param_type: Expected Python type (str, int, bool, float, list, dict)
         default: Default value if not provided
         choices: Optional list of valid values
+    
+    Example:
+        >>> PipelineParameter(name="count", param_type=int, required=True)
+        >>> PipelineParameter(name="env", param_type=str, choices=["dev", "prod"])
+        >>> PipelineParameter(name="enabled", param_type=bool, default=False)
     """
     name: str
     description: str = ""
     required: bool = False
-    param_type: str = "str"
+    param_type: type = str  # Actual Python type: str, int, bool, float, list, dict
     default: Any = None
     choices: Optional[List[Any]] = None
     
+    # Type name mapping for serialization
+    _TYPE_NAMES = {
+        str: "string",
+        int: "integer",
+        float: "number",
+        bool: "boolean",
+        list: "array",
+        dict: "object",
+    }
+    
+    def validate(self, value: Any) -> Optional[str]:
+        """
+        Validate a value against this parameter's type and constraints.
+        
+        Args:
+            value: The value to validate
+            
+        Returns:
+            Error message string if invalid, None if valid
+        """
+        if value is None:
+            if self.required:
+                return f"Missing required parameter: {self.name}"
+            return None
+        
+        # Type validation
+        if not self._check_type(value):
+            type_name = self._TYPE_NAMES.get(self.param_type, self.param_type.__name__)
+            return f"Parameter '{self.name}' must be {type_name}, got {type(value).__name__}"
+        
+        # Choices validation
+        if self.choices and value not in self.choices:
+            return f"Invalid value for {self.name}: '{value}'. Must be one of: {self.choices}"
+        
+        return None
+    
+    def _check_type(self, value: Any) -> bool:
+        """Check if value matches the expected type."""
+        # Special handling for bool (since bool is subclass of int in Python)
+        if self.param_type is bool:
+            return isinstance(value, bool)
+        
+        # Special handling for int (don't accept bool as int)
+        if self.param_type is int:
+            return isinstance(value, int) and not isinstance(value, bool)
+        
+        # Special handling for float (accept int as float)
+        if self.param_type is float:
+            return isinstance(value, (int, float)) and not isinstance(value, bool)
+        
+        # Standard type check
+        return isinstance(value, self.param_type)
+    
+    def coerce(self, value: Any) -> Any:
+        """
+        Attempt to coerce a value to the expected type.
+        
+        Useful for converting string inputs from APIs to proper types.
+        
+        Args:
+            value: The value to coerce
+            
+        Returns:
+            Coerced value, or original if coercion fails
+        """
+        if value is None:
+            return self.default
+        
+        # Already correct type
+        if self._check_type(value):
+            return value
+        
+        try:
+            if self.param_type is bool:
+                # Handle string booleans
+                if isinstance(value, str):
+                    if value.lower() in ('true', '1', 'yes', 'on'):
+                        return True
+                    if value.lower() in ('false', '0', 'no', 'off'):
+                        return False
+                return bool(value)
+            
+            if self.param_type is int:
+                return int(value)
+            
+            if self.param_type is float:
+                return float(value)
+            
+            if self.param_type is str:
+                return str(value)
+            
+            if self.param_type is list and isinstance(value, str):
+                import json
+                return json.loads(value)
+            
+            if self.param_type is dict and isinstance(value, str):
+                import json
+                return json.loads(value)
+                
+        except (ValueError, TypeError):
+            pass
+        
+        return value  # Return original if coercion fails
+    
     def to_dict(self) -> Dict[str, Any]:
         """Serialize parameter info for API documentation."""
+        type_name = self._TYPE_NAMES.get(self.param_type, self.param_type.__name__)
         result = {
             "name": self.name,
             "description": self.description,
             "required": self.required,
-            "type": self.param_type,
+            "type": type_name,
         }
         if self.default is not None:
             result["default"] = self.default
@@ -208,7 +318,7 @@ class AbstractPipeline(ABC):
             ...         PipelineParameter(
             ...             name="uppercase",
             ...             description="Apply uppercase transformation",
-            ...             param_type="bool",
+            ...             param_type=bool,
             ...             default=False
             ...         ),
             ...     ]
@@ -280,18 +390,9 @@ class AbstractPipeline(ABC):
         
         for param in self.define_parameters():
             value = runtime_params.get(param.name)
-            
-            # Check required
-            if param.required and value is None:
-                errors.append(f"Missing required parameter: {param.name}")
-                continue
-            
-            # Check choices if value provided
-            if value is not None and param.choices and value not in param.choices:
-                errors.append(
-                    f"Invalid value for {param.name}: '{value}'. "
-                    f"Must be one of: {param.choices}"
-                )
+            error = param.validate(value)
+            if error:
+                errors.append(error)
         
         return errors
     
