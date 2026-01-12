@@ -4,20 +4,25 @@ E2E Test Pipelines Package.
 This package contains pipeline definitions for E2E testing:
 - Source tests (Elasticsearch, SQL) → Console destination
 - Destination tests (HTTP, Kafka) ← Mock source
+
+Pipelines are automatically registered when the module is imported.
 """
 
-# Import and register all test pipelines
-# These are imported when the package is loaded by the ReflowManager/Worker
+# Import all test pipeline modules - registration happens on import
+from tests.e2e.test_pipelines import elastic_source_test_pipeline
+from tests.e2e.test_pipelines import sql_source_test_pipeline
+from tests.e2e.test_pipelines import http_dest_test_pipeline
+from tests.e2e.test_pipelines import kafka_dest_test_pipeline
 
-from tests.e2e.test_pipelines.elastic_source_test_pipeline import pipeline as elastic_source_pipeline
-from tests.e2e.test_pipelines.sql_source_test_pipeline import pipeline as sql_source_pipeline
-from tests.e2e.test_pipelines.http_dest_test_pipeline import pipeline as http_dest_pipeline
-from tests.e2e.test_pipelines.kafka_dest_test_pipeline import pipeline as kafka_dest_pipeline
+# Export the pipeline classes for direct access if needed
+from tests.e2e.test_pipelines.elastic_source_test_pipeline import E2EElasticSourceTestPipeline
+from tests.e2e.test_pipelines.sql_source_test_pipeline import E2ESqlSourceTestPipeline
+from tests.e2e.test_pipelines.http_dest_test_pipeline import E2EHttpDestTestPipeline
+from tests.e2e.test_pipelines.kafka_dest_test_pipeline import E2EKafkaDestTestPipeline
 
 __all__ = [
-    "elastic_source_pipeline",
-    "sql_source_pipeline",
-    "http_dest_pipeline",
-    "kafka_dest_pipeline",
+    "E2EElasticSourceTestPipeline",
+    "E2ESqlSourceTestPipeline",
+    "E2EHttpDestTestPipeline",
+    "E2EKafkaDestTestPipeline",
 ]
-

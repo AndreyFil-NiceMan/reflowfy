@@ -179,11 +179,16 @@ class DLQScheduler:
         # Generate execution ID
         execution_id = f"dlq-{uuid.uuid4().hex[:12]}"
         
-        # Build runtime params with job payloads
-        # The jobs are passed directly as a list of payloads
+        # For DLQ, the job_payload IS the runtime_params
+        # For single-job dispatch (most common), use that job's payload
+        # For batch dispatch, use the first job's payload (they should have compatible params)
+        runtime_params = jobs[0].job_payload if jobs else {}
+        
+        # Add DLQ metadata to runtime params
         runtime_params = {
-            "dlq_job_payloads": [job.job_payload for job in jobs],
-            "dlq_source": True,
+            **runtime_params,
+            "_dlq_source": True,
+            "_dlq_job_ids": [job.id for job in jobs],
         }
         
         # Get pipeline runner and run
