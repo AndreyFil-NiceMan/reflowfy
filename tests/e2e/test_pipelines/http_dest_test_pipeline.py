@@ -7,7 +7,8 @@ Used for E2E testing of the HttpDestination connector.
 
 import os
 from reflowfy import (
-    build_pipeline,
+    AbstractPipeline,
+    PipelineParameter,
     pipeline_registry,
     BaseTransformation,
 )
@@ -31,36 +32,38 @@ class AddDestinationInfo(BaseTransformation):
 
 
 # Configuration from environment
-# Mock HTTP server URL - started separately during tests
 MOCK_HTTP_URL = os.getenv("MOCK_HTTP_URL", "http://localhost:8091/webhook")
+SAMPLE_DATA = generate_sample_data(count=100)
 
-# Generate sample data
-sample_data = generate_sample_data(count=100)
 
-# Create mock source
-source = mock_source(
-    data=sample_data,
-    batch_size=10,
-)
+class E2EHttpDestTestPipeline(AbstractPipeline):
+    """E2E test pipeline for HTTP destination."""
+    
+    name = "e2e_http_dest_test"
+    rate_limit = {"jobs_per_second": 10}
+    
+    def define_parameters(self):
+        return []
+    
+    def define_source(self, params):
+        return mock_source(
+            data=SAMPLE_DATA,
+            batch_size=10,
+        )
+    
+    def define_destination(self, params):
+        return http_destination(
+            url=MOCK_HTTP_URL,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+            auth_type="bearer",
+            auth_token="test-webhook-token",
+            batch_requests=True,
+            timeout=30.0,
+        )
+    
+    def define_transformations(self, params):
+        return [AddDestinationInfo()]
 
-# Create HTTP destination
-destination = http_destination(
-    url=MOCK_HTTP_URL,
-    method="POST",
-    headers={"Content-Type": "application/json"},
-    auth_type="bearer",
-    auth_token="test-webhook-token",
-    batch_requests=True,  # Send all records in one request per batch
-    timeout=30.0,
-)
 
-# Build and register pipeline
-pipeline = build_pipeline(
-    name="e2e_http_dest_test",
-    source=source,
-    transformations=[AddDestinationInfo()],
-    destination=destination,
-    rate_limit={"jobs_per_second": 10},
-)
-
-pipeline_registry.register(pipeline)
+pipeline_registry.register(E2EHttpDestTestPipeline())

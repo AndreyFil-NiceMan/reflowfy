@@ -7,7 +7,8 @@ Used for E2E testing of the KafkaDestination connector.
 
 import os
 from reflowfy import (
-    build_pipeline,
+    AbstractPipeline,
+    PipelineParameter,
     pipeline_registry,
     BaseTransformation,
 )
@@ -33,32 +34,35 @@ class AddDestinationInfo(BaseTransformation):
 # Configuration from environment
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("E2E_KAFKA_SERVERS", "localhost:9094")
 KAFKA_TOPIC = os.getenv("E2E_KAFKA_DEST_TOPIC", "e2e-test-destination")
+SAMPLE_DATA = generate_sample_data(count=100)
 
-# Generate sample data
-sample_data = generate_sample_data(count=100)
 
-# Create mock source
-source = mock_source(
-    data=sample_data,
-    batch_size=10,
-)
+class E2EKafkaDestTestPipeline(AbstractPipeline):
+    """E2E test pipeline for Kafka destination."""
+    
+    name = "e2e_kafka_dest_test"
+    rate_limit = {"jobs_per_second": 10}
+    
+    def define_parameters(self):
+        return []
+    
+    def define_source(self, params):
+        return mock_source(
+            data=SAMPLE_DATA,
+            batch_size=10,
+        )
+    
+    def define_destination(self, params):
+        return kafka_destination(
+            bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+            topic=KAFKA_TOPIC,
+            compression_type="gzip",
+            batch_size=16384,
+            linger_ms=10,
+        )
+    
+    def define_transformations(self, params):
+        return [AddDestinationInfo()]
 
-# Create Kafka destination
-destination = kafka_destination(
-    bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
-    topic=KAFKA_TOPIC,
-    compression_type="gzip",
-    batch_size=16384,
-    linger_ms=10,
-)
 
-# Build and register pipeline
-pipeline = build_pipeline(
-    name="e2e_kafka_dest_test",
-    source=source,
-    transformations=[AddDestinationInfo()],
-    destination=destination,
-    rate_limit={"jobs_per_second": 10},
-)
-
-pipeline_registry.register(pipeline)
+pipeline_registry.register(E2EKafkaDestTestPipeline())
