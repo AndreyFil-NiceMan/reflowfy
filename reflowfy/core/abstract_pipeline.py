@@ -332,6 +332,69 @@ class AbstractPipeline(ABC):
         """
         return [p.name for p in self.define_parameters()]
     
+    # =========================================================================
+    # Execution Support - Properties for compatibility with execution engine
+    # =========================================================================
+    
+    _resolved_params: Optional[Dict[str, Any]] = None
+    _source: Any = None
+    _destination: Any = None
+    _transformations: List[Any] = None
+    
+    def resolve(self, runtime_params: Dict[str, Any]) -> "AbstractPipeline":
+        """
+        Resolve the pipeline with specific runtime parameters.
+        
+        This method prepares the pipeline for execution by calling all
+        define_* methods and caching the results. Should be called before
+        passing the pipeline to an executor.
+        
+        Args:
+            runtime_params: Runtime parameters for this execution
+        
+        Returns:
+            self (for chaining)
+        """
+        # Apply defaults and validate
+        params = self.apply_defaults(runtime_params)
+        errors = self.validate_parameters(params)
+        if errors:
+            raise ValueError(f"Invalid parameters: {'; '.join(errors)}")
+        
+        self._resolved_params = params
+        self._source = self.define_source(params)
+        self._destination = self.define_destination(params)
+        self._transformations = self.define_transformations(params)
+        
+        return self
+    
+    @property
+    def source(self) -> Any:
+        """Get the resolved source. Call resolve() first."""
+        if self._source is None:
+            raise RuntimeError(
+                "Pipeline not resolved. Call pipeline.resolve(runtime_params) before execution."
+            )
+        return self._source
+    
+    @property
+    def destination(self) -> Any:
+        """Get the resolved destination. Call resolve() first."""
+        if self._destination is None:
+            raise RuntimeError(
+                "Pipeline not resolved. Call pipeline.resolve(runtime_params) before execution."
+            )
+        return self._destination
+    
+    @property
+    def transformations(self) -> List[Any]:
+        """Get the resolved transformations. Call resolve() first."""
+        if self._transformations is None:
+            raise RuntimeError(
+                "Pipeline not resolved. Call pipeline.resolve(runtime_params) before execution."
+            )
+        return self._transformations
+    
     def to_dict(self) -> Dict[str, Any]:
         """Serialize pipeline metadata for API responses."""
         return {

@@ -2,7 +2,7 @@
 
 import threading
 from typing import Dict, List, Optional
-from reflowfy.core.pipeline import Pipeline
+from reflowfy.core.abstract_pipeline import AbstractPipeline
 
 
 class PipelineRegistry:
@@ -27,16 +27,16 @@ class PipelineRegistry:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
-                    cls._instance._pipelines: Dict[str, Pipeline] = {}
+                    cls._instance._pipelines: Dict[str, AbstractPipeline] = {}
                     cls._instance._registry_lock = threading.RLock()
         return cls._instance
     
-    def register(self, pipeline: Pipeline) -> None:
+    def register(self, pipeline: AbstractPipeline) -> None:
         """
         Register a pipeline.
         
         Args:
-            pipeline: Pipeline instance to register
+            pipeline: AbstractPipeline instance to register
         
         Raises:
             ValueError: If pipeline with same name already registered
@@ -51,7 +51,7 @@ class PipelineRegistry:
             self._pipelines[pipeline.name] = pipeline
             print(f"✓ Registered pipeline: {pipeline.name}")
     
-    def get(self, name: str) -> Optional[Pipeline]:
+    def get(self, name: str) -> Optional[AbstractPipeline]:
         """
         Retrieve a pipeline by name.
         
@@ -59,17 +59,17 @@ class PipelineRegistry:
             name: Pipeline name
         
         Returns:
-            Pipeline instance or None if not found
+            AbstractPipeline instance or None if not found
         """
         with self._registry_lock:
             return self._pipelines.get(name)
     
-    def list_all(self) -> List[Pipeline]:
+    def list_all(self) -> List[AbstractPipeline]:
         """
         Get all registered pipelines.
         
         Returns:
-            List of all Pipeline instances
+            List of all AbstractPipeline instances
         """
         with self._registry_lock:
             return list(self._pipelines.values())
