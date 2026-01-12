@@ -49,6 +49,10 @@ class LocalExecutor(BaseExecutor):
         if execution_id is None:
             execution_id = str(uuid.uuid4())
         
+        # Resolve pipeline with runtime params (for AbstractPipeline)
+        if hasattr(pipeline, 'resolve'):
+            pipeline.resolve(runtime_params)
+        
         # Create execution context
         context = ExecutionContext(
             execution_id=execution_id,

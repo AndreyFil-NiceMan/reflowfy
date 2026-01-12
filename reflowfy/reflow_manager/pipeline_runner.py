@@ -276,6 +276,10 @@ class PipelineRunner:
         if not pipeline:
             raise ValueError(f"Pipeline '{pipeline_name}' not found in registry")
         
+        # Resolve pipeline with runtime params (for AbstractPipeline)
+        if hasattr(pipeline, 'resolve'):
+            pipeline.resolve(runtime_params)
+        
         print(f"🚀 Job dispatch starting: {pipeline_name}")
         print(f"📊 Execution ID: {execution_id}")
         
