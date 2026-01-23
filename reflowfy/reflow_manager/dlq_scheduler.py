@@ -92,11 +92,13 @@ class DLQScheduler:
         db = SessionLocal()
         try:
             # Find all pending jobs whose scheduled_at has passed
+            # Use FOR UPDATE SKIP LOCKED to prevent multiple RM pods from
+            # processing the same job (allows concurrent processing of different jobs)
             now = datetime.utcnow()
             due_jobs = db.query(DLQJob).filter(
                 DLQJob.status == "pending",
                 DLQJob.scheduled_at <= now
-            ).all()
+            ).with_for_update(skip_locked=True).all()
             
             if not due_jobs:
                 return
@@ -179,11 +181,16 @@ class DLQScheduler:
         # Generate execution ID
         execution_id = f"dlq-{uuid.uuid4().hex[:12]}"
         
-        # Build runtime params with job payloads
-        # The jobs are passed directly as a list of payloads
+        # For DLQ, the job_payload IS the runtime_params
+        # For single-job dispatch (most common), use that job's payload
+        # For batch dispatch, use the first job's payload (they should have compatible params)
+        runtime_params = jobs[0].job_payload if jobs else {}
+        
+        # Add DLQ metadata to runtime params
         runtime_params = {
-            "dlq_job_payloads": [job.job_payload for job in jobs],
-            "dlq_source": True,
+            **runtime_params,
+            "_dlq_source": True,
+            "_dlq_job_ids": [job.id for job in jobs],
         }
         
         # Get pipeline runner and run
@@ -247,7 +254,8 @@ class DLQScheduler:
         Returns:
             execution_id if successful, None otherwise
         """
-        job = db.query(DLQJob).filter(DLQJob.id == job_id).first()
+        # Lock the row to prevent concurrent processing by another RM pod
+        job = db.query(DLQJob).filter(DLQJob.id == job_id).with_for_update().first()
         if not job:
             return None
         
@@ -285,10 +293,11 @@ class DLQScheduler:
         Returns:
             Tuple of (count of jobs dispatched, execution_id)
         """
+        # Lock rows to prevent concurrent processing by another RM pod
         jobs = db.query(DLQJob).filter(
             DLQJob.pipeline_name == pipeline_name,
             DLQJob.status == "pending"
-        ).all()
+        ).with_for_update(skip_locked=True).all()
         
         if not jobs:
             return 0, None

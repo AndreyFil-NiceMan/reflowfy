@@ -63,3 +63,4 @@ volumes:
 networks:
   reflofy-elastic-network:
     driver: bridge
+    external: false

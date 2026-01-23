@@ -3,7 +3,8 @@ Example pipeline - Copy this template to create your own pipelines.
 """
 
 from reflowfy import (
-    build_pipeline,
+    AbstractPipeline,
+    PipelineParameter,
     pipeline_registry,
     BaseTransformation,
     elastic_source,
@@ -23,32 +24,47 @@ class MyTransformation(BaseTransformation):
         return records
 
 
-# Configure source
-source = elastic_source(
-    url="http://elasticsearch:9200",
-    index="my-index-*",
-    base_query={
-        "query": {
-            "match_all": {}
-        }
-    },
-    scroll="2m",
-    size=1000,
-)
+class ExamplePipeline(AbstractPipeline):
+    """
+    Example pipeline template.
+    
+    Copy this file and customize for your use case.
+    """
+    
+    name = "example_pipeline"
+    rate_limit = {"jobs_per_second": 50}
+    
+    def define_parameters(self):
+        """Define your runtime parameters here."""
+        return [
+            # Add parameters as needed:
+            # PipelineParameter(name="param_name", required=True, description="..."),
+        ]
+    
+    def define_source(self, params):
+        """Configure your source."""
+        return elastic_source(
+            url="http://elasticsearch:9200",
+            index="my-index-*",
+            base_query={
+                "query": {
+                    "match_all": {}
+                }
+            },
+            scroll="2m",
+            size=1000,
+        )
+    
+    def define_destination(self, params):
+        """Configure your destination."""
+        return kafka_destination(
+            bootstrap_servers="kafka:29092",
+            topic="my-output-topic",
+        )
+    
+    def define_transformations(self, params):
+        """Define your transformation pipeline."""
+        return [MyTransformation()]
 
-# Configure destination  
-destination = kafka_destination(
-    bootstrap_servers="kafka:29092",
-    topic="my-output-topic",
-)
 
-# Build and register pipeline
-pipeline = build_pipeline(
-    name="example_pipeline",
-    source=source,
-    transformations=[MyTransformation()],
-    destination=destination,
-    rate_limit={"jobs_per_second": 50},
-)
-
-pipeline_registry.register(pipeline)
+pipeline_registry.register(ExamplePipeline())

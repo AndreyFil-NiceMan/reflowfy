@@ -7,7 +7,8 @@ Used for E2E testing of the ElasticSource connector.
 
 import os
 from reflowfy import (
-    build_pipeline,
+    AbstractPipeline,
+    PipelineParameter,
     pipeline_registry,
     BaseTransformation,
     elastic_source,
@@ -32,44 +33,52 @@ class AddSourceInfo(BaseTransformation):
 ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://localhost:9201")
 INDEX_NAME = "e2e-test-events"
 
-# Create source
-source = elastic_source(
-    url=ELASTICSEARCH_URL,
-    index=INDEX_NAME,
-    base_query={
-        "query": {
-            "bool": {
-                "must": [
-                    {
-                        "range": {
-                            "@timestamp": {
-                                "gte": "{{ start_time }}",
-                                "lte": "{{ end_time }}",
+
+class E2EElasticSourceTestPipeline(AbstractPipeline):
+    """E2E test pipeline for Elasticsearch source."""
+    
+    name = "e2e_elastic_source_test"
+    rate_limit = {"jobs_per_second": 10}
+    
+    def define_parameters(self):
+        return [
+            PipelineParameter(name="start_time", required=True),
+            PipelineParameter(name="end_time", required=True),
+        ]
+    
+    def define_source(self, params):
+        return elastic_source(
+            url=ELASTICSEARCH_URL,
+            index=INDEX_NAME,
+            base_query={
+                "query": {
+                    "bool": {
+                        "must": [
+                            {
+                                "range": {
+                                    "@timestamp": {
+                                        "gte": "{{ start_time }}",
+                                        "lte": "{{ end_time }}",
+                                    }
+                                }
                             }
-                        }
+                        ],
                     }
-                ],
-            }
-        },
-        "sort": [{"@timestamp": {"order": "desc"}}],
-    },
-    scroll="2m",
-    size=50,  # 50 docs per scroll page
-)
+                },
+                "sort": [{"@timestamp": {"order": "desc"}}],
+            },
+            scroll="2m",
+            size=50,
+        )
+    
+    def define_destination(self, params):
+        return console_destination(
+            pretty_print=True,
+            max_records_display=5,
+        )
+    
+    def define_transformations(self, params):
+        return [AddSourceInfo()]
 
-# Create destination
-destination = console_destination(
-    pretty_print=True,
-    max_records_display=5,
-)
 
-# Build and register pipeline
-pipeline = build_pipeline(
-    name="e2e_elastic_source_test",
-    source=source,
-    transformations=[AddSourceInfo()],
-    destination=destination,
-    rate_limit={"jobs_per_second": 10},
-)
-
-pipeline_registry.register(pipeline)
+pipeline_registry.register(E2EElasticSourceTestPipeline())

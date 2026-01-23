@@ -43,12 +43,6 @@ def create_pipeline_routes(
     runtime_params_list = pipeline.get_runtime_parameters()
     
     # Create query parameter definitions dynamically
-    # We'll use **kwargs to capture dynamic query params
-    
-    # Build the function signature dynamically
-    # Determine required runtime parameters from source
-    runtime_params_list = pipeline.source.get_runtime_parameters()
-    
     if runtime_params_list:
         params = [
             Parameter(name, Parameter.KEYWORD_ONLY, default=Query(..., description=f"Runtime parameter: {name}"))
