@@ -91,6 +91,34 @@ class RateLimiter:
         
         return state.tokens >= count
     
+    def _get_state_with_lock(
+        self,
+        pipeline_name: str,
+        rate_limit: float,
+    ) -> RateLimitState:
+        """
+        Get rate limit state with row-level lock for atomic updates.
+        
+        Uses SELECT FOR UPDATE to prevent race conditions when multiple
+        RM pods try to consume tokens simultaneously.
+        
+        Args:
+            pipeline_name: Pipeline name
+            rate_limit: The rate limit to use
+            
+        Returns:
+            Locked RateLimitState object
+        """
+        # First ensure the state exists (without lock)
+        state = self._get_or_create_state(pipeline_name, rate_limit)
+        
+        # Now get it with a lock for atomic update
+        locked_state = self.db.query(RateLimitState).filter(
+            RateLimitState.pipeline_name == pipeline_name
+        ).with_for_update().first()
+        
+        return locked_state
+    
     def consume_tokens(
         self,
         pipeline_name: str,
@@ -99,6 +127,9 @@ class RateLimiter:
     ) -> bool:
         """
         Consume tokens for rate limiting.
+        
+        Uses row-level locking to prevent race conditions when multiple
+        RM pods try to consume tokens concurrently.
         
         Args:
             pipeline_name: Pipeline name
@@ -109,7 +140,9 @@ class RateLimiter:
             True if tokens were consumed, False if not enough tokens
         """
         effective_rate = rate_limit if rate_limit is not None else self.default_rate
-        state = self._get_or_create_state(pipeline_name, effective_rate)
+        
+        # Get state with row-level lock to prevent concurrent consumption
+        state = self._get_state_with_lock(pipeline_name, effective_rate)
         
         # Calculate how many tokens should have been added
         now = datetime.utcnow()
@@ -124,8 +157,8 @@ class RateLimiter:
             self.db.commit()
             return True
         
-        # Don't update last_update if we didn't consume - 
-        # this was causing tokens to accumulate in retry loops
+        # Release the lock without changes
+        self.db.rollback()
         return False
     
     def acquire_token(

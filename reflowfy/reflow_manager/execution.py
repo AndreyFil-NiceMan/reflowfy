@@ -42,19 +42,23 @@ class ExecutionManager:
         
         return execution
     
-    def get_execution(self, execution_id: str) -> Optional[Execution]:
+    def get_execution(self, execution_id: str, for_update: bool = False) -> Optional[Execution]:
         """
         Get execution by ID.
         
         Args:
             execution_id: Execution identifier
+            for_update: If True, lock the row for update (prevents concurrent modifications)
         
         Returns:
             Execution object or None if not found
         """
-        return self.db.query(Execution).filter(
+        query = self.db.query(Execution).filter(
             Execution.execution_id == execution_id
-        ).first()
+        )
+        if for_update:
+            query = query.with_for_update()
+        return query.first()
     
     def update_execution_state(
         self,

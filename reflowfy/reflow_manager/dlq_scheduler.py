@@ -92,11 +92,13 @@ class DLQScheduler:
         db = SessionLocal()
         try:
             # Find all pending jobs whose scheduled_at has passed
+            # Use FOR UPDATE SKIP LOCKED to prevent multiple RM pods from
+            # processing the same job (allows concurrent processing of different jobs)
             now = datetime.utcnow()
             due_jobs = db.query(DLQJob).filter(
                 DLQJob.status == "pending",
                 DLQJob.scheduled_at <= now
-            ).all()
+            ).with_for_update(skip_locked=True).all()
             
             if not due_jobs:
                 return
@@ -252,7 +254,8 @@ class DLQScheduler:
         Returns:
             execution_id if successful, None otherwise
         """
-        job = db.query(DLQJob).filter(DLQJob.id == job_id).first()
+        # Lock the row to prevent concurrent processing by another RM pod
+        job = db.query(DLQJob).filter(DLQJob.id == job_id).with_for_update().first()
         if not job:
             return None
         
@@ -290,10 +293,11 @@ class DLQScheduler:
         Returns:
             Tuple of (count of jobs dispatched, execution_id)
         """
+        # Lock rows to prevent concurrent processing by another RM pod
         jobs = db.query(DLQJob).filter(
             DLQJob.pipeline_name == pipeline_name,
             DLQJob.status == "pending"
-        ).all()
+        ).with_for_update(skip_locked=True).all()
         
         if not jobs:
             return 0, None
