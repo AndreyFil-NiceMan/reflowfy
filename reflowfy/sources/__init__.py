@@ -2,6 +2,14 @@
 
 from reflowfy.sources.base import BaseSource, SourceJob, SourceError
 
+# API sources (httpx is a core dependency)
+from reflowfy.sources.api import (
+    PaginatedAPISource,
+    IDBasedAPISource,
+    paginated_api_source,
+    id_based_api_source,
+)
+
 # Optional S3 source (requires boto3)
 try:
     from reflowfy.sources.s3 import S3Source, s3_source
@@ -15,6 +23,10 @@ __all__ = [
     "BaseSource",
     "SourceJob", 
     "SourceError",
+    "PaginatedAPISource",
+    "IDBasedAPISource",
+    "paginated_api_source",
+    "id_based_api_source",
 ]
 
 # Add S3 exports only if available
