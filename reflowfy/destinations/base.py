@@ -67,7 +67,7 @@ class BaseDestination(ABC):
         """
         pass
     
-    def send_with_retry(self, records: List[Any], metadata: Optional[Dict[str, Any]] = None) -> None:
+    async def send_with_retry(self, records: List[Any], metadata: Optional[Dict[str, Any]] = None) -> None:
         """
         Send records with automatic retry and exponential backoff.
         
@@ -75,7 +75,9 @@ class BaseDestination(ABC):
             records: Records to send
             metadata: Optional metadata
         """
-        retry_decorator = retry(
+        from tenacity import AsyncRetrying
+        
+        async for attempt in AsyncRetrying(
             stop=stop_after_attempt(self.retry_config.max_attempts),
             wait=wait_exponential(
                 multiplier=self.retry_config.multiplier,
@@ -84,10 +86,9 @@ class BaseDestination(ABC):
             ),
             retry=retry_if_exception_type(DestinationError),
             reraise=True,
-        )
-        
-        retry_send = retry_decorator(self.send)
-        retry_send(records, metadata)
+        ):
+            with attempt:
+                await self.send(records, metadata)
     
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(config={self.config})"
