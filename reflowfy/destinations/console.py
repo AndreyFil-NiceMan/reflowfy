@@ -32,7 +32,7 @@ class ConsoleDestination(BaseDestination):
         }
         super().__init__(config, retry_config)
     
-    def send(self, records: List[Any], metadata: Optional[Dict[str, Any]] = None) -> None:
+    async def send(self, records: List[Any], metadata: Optional[Dict[str, Any]] = None) -> None:
         """
         Send records to console (print to stdout).
         
@@ -74,7 +74,7 @@ class ConsoleDestination(BaseDestination):
         print(f"{'=' * 80}\n")
         print(f"✅ Successfully sent {len(records)} records to console\n")
     
-    def health_check(self) -> bool:
+    async def health_check(self) -> bool:
         """Console is always healthy."""
         return True
 

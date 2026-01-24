@@ -70,7 +70,7 @@ class KafkaDestination(BaseDestination):
         
         return self._producer
     
-    def send(self, records: List[Any], metadata: Optional[Dict[str, Any]] = None) -> None:
+    async def send(self, records: List[Any], metadata: Optional[Dict[str, Any]] = None) -> None:
         """
         Send records to Kafka topic.
         
@@ -118,7 +118,7 @@ class KafkaDestination(BaseDestination):
             print(f"❌ Message delivery failed: {err}")
         # Success logging is too verbose for production
     
-    def health_check(self) -> bool:
+    async def health_check(self) -> bool:
         """Check Kafka cluster connectivity."""
         try:
             admin_client = AdminClient(

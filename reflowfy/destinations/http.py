@@ -51,10 +51,10 @@ class HttpDestination(BaseDestination):
             "batch_requests": batch_requests,
         }
         super().__init__(config, retry_config)
-        self._client: Optional[httpx.Client] = None
+        self._client: Optional[httpx.AsyncClient] = None
     
-    def _get_client(self) -> httpx.Client:
-        """Get or create HTTP client."""
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get or create async HTTP client."""
         if self._client is None:
             headers = dict(self.config["headers"])
             
@@ -67,14 +67,14 @@ class HttpDestination(BaseDestination):
             elif auth_type == "apikey" and auth_token:
                 headers["X-API-Key"] = auth_token
             
-            self._client = httpx.Client(
+            self._client = httpx.AsyncClient(
                 headers=headers,
                 timeout=self.config["timeout"],
             )
         
         return self._client
     
-    def send(self, records: List[Any], metadata: Optional[Dict[str, Any]] = None) -> None:
+    async def send(self, records: List[Any], metadata: Optional[Dict[str, Any]] = None) -> None:
         """
         Send records to HTTP endpoint.
         
@@ -85,7 +85,7 @@ class HttpDestination(BaseDestination):
         Raises:
             DestinationError: If send fails
         """
-        client = self._get_client()
+        client = await self._get_client()
         url = self.config["url"]
         method = self.config["method"]
         batch_requests = self.config["batch_requests"]
@@ -98,7 +98,7 @@ class HttpDestination(BaseDestination):
                     "metadata": metadata or {},
                 }
                 
-                response = client.request(method, url, json=payload)
+                response = await client.request(method, url, json=payload)
                 response.raise_for_status()
             
             else:
@@ -109,7 +109,7 @@ class HttpDestination(BaseDestination):
                         "metadata": metadata or {},
                     }
                     
-                    response = client.request(method, url, json=payload)
+                    response = await client.request(method, url, json=payload)
                     response.raise_for_status()
         
         except httpx.HTTPStatusError as e:
@@ -123,24 +123,24 @@ class HttpDestination(BaseDestination):
         except Exception as e:
             raise DestinationError("http", f"Unexpected error: {e}", e)
     
-    def health_check(self) -> bool:
+    async def health_check(self) -> bool:
         """Check if HTTP endpoint is accessible."""
         try:
-            client = self._get_client()
+            client = await self._get_client()
             # Try a HEAD request first, fall back to OPTIONS
             try:
-                response = client.head(self.config["url"], timeout=5.0)
+                response = await client.head(self.config["url"], timeout=5.0)
                 return response.status_code < 500
             except:
-                response = client.request("OPTIONS", self.config["url"], timeout=5.0)
+                response = await client.request("OPTIONS", self.config["url"], timeout=5.0)
                 return response.status_code < 500
         except Exception:
             return False
     
-    def close(self):
+    async def close(self):
         """Close HTTP client."""
         if self._client:
-            self._client.close()
+            await self._client.aclose()
             self._client = None
 
 

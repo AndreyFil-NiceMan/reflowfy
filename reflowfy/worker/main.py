@@ -59,8 +59,10 @@ def handle_shutdown(signum, frame):
 
 def main():
     """Worker main entry point."""
+    import asyncio
+    
     print("=" * 60)
-    print("Starting Reflowfy Worker")
+    print("Starting Reflowfy Worker (Async)")
     print("=" * 60)
     
     # Register signal handlers
@@ -84,7 +86,7 @@ def main():
     print(f"Database: {database_url.split('@')[-1] if '@' in database_url else database_url}")  # Hide credentials
     print()
     
-    # Create and start consumer
+    # Create consumer
     consumer = KafkaJobConsumer(
         bootstrap_servers=kafka_bootstrap_servers,
         topic=kafka_topic,
@@ -94,7 +96,8 @@ def main():
     
     try:
         print("Worker ready, waiting for jobs...\n")
-        consumer.start()
+        # Run async consumer in event loop
+        asyncio.run(consumer.start())
     except KeyboardInterrupt:
         print("\nWorker stopped by user")
     except Exception as e:
