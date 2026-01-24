@@ -64,7 +64,7 @@ log_error() {
 cleanup() {
     log_info "Cleaning up..."
     
-    # Stop mock servers
+    # Stop mock servers (if running locally)
     if [ -n "$MOCK_HTTP_PID" ] && kill -0 "$MOCK_HTTP_PID" 2>/dev/null; then
         log_info "Stopping mock HTTP server (PID: $MOCK_HTTP_PID)"
         kill "$MOCK_HTTP_PID" 2>/dev/null || true
@@ -162,6 +162,12 @@ python3 -m tests.e2e.sources.init_elastic_test_data || {
 # Step 3: Wait for mock HTTP server
 log_info "Waiting for mock HTTP server (running in Docker)..."
 wait_for_service "http://localhost:8091/health" "Mock HTTP server" 60 || exit 1
+
+# Step 3.5: Wait for mock API server (running in Docker)
+log_info "Waiting for mock API server (running in Docker)..."
+wait_for_service "http://localhost:8092/health" "Mock API server" 60 || {
+    log_warning "Mock API server not available, API source E2E tests may fail"
+}
 
 # Step 4: Run tests
 log_info "Running E2E tests..."
