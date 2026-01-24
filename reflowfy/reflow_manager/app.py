@@ -179,6 +179,8 @@ async def run_pipeline(
     Job splitting and dispatching happens in the background.
     
     Use GET /executions/{execution_id} to check progress.
+    
+    Set dry_run=true to preview jobs without executing.
     """
     import uuid
     from reflowfy.core.registry import pipeline_registry
@@ -193,6 +195,14 @@ async def run_pipeline(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Pipeline '{request.pipeline_name}' not found in registry",
+            )
+        
+        # Handle dry run mode - preview without execution
+        if request.dry_run:
+            return await _handle_dry_run(
+                pipeline=pipeline,
+                pipeline_name=request.pipeline_name,
+                runtime_params=request.runtime_params or {},
             )
         
         # Get ReflowManager config from environment
@@ -241,6 +251,85 @@ async def run_pipeline(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to start pipeline: {str(e)}",
+        )
+
+
+async def _handle_dry_run(
+    pipeline,
+    pipeline_name: str,
+    runtime_params: dict,
+):
+    """
+    Handle dry run mode - preview jobs without executing.
+    
+    Returns sample of what would be processed, including:
+    - Estimated job count
+    - Sample records from source
+    - Transformations to apply
+    - Destination configuration
+    """
+    try:
+        # Resolve pipeline with runtime params
+        pipeline.resolve(runtime_params)
+        
+        # Get source and sample records
+        source = pipeline.source
+        sample_records = []
+        estimated_jobs = 0
+        
+        # Try to fetch a sample (first page)
+        try:
+            if hasattr(source, 'fetch'):
+                sample_records = source.fetch(limit=5)
+            elif hasattr(source, 'split_jobs'):
+                jobs = source.split_jobs(runtime_params)
+                estimated_jobs = len(jobs) if hasattr(jobs, '__len__') else "unknown"
+                # Get first job's records as sample
+                if jobs:
+                    first_job = jobs[0] if isinstance(jobs, list) else next(iter(jobs), None)
+                    if first_job and 'records' in first_job:
+                        sample_records = first_job['records'][:5]
+        except Exception as e:
+            sample_records = [{"error": f"Could not fetch sample: {str(e)}"}]
+        
+        # Get transformation info
+        transformations = [
+            {"name": t.name, "description": getattr(t, 'description', '')}
+            for t in pipeline.transformations
+        ]
+        
+        # Get destination info (redact sensitive config)
+        dest = pipeline.destination
+        dest_type = type(dest).__name__
+        dest_config = {}
+        if hasattr(dest, 'config'):
+            # Redact sensitive fields
+            for key, value in dest.config.items():
+                if any(s in key.lower() for s in ['password', 'secret', 'token', 'key']):
+                    dest_config[key] = "***REDACTED***"
+                else:
+                    dest_config[key] = value
+        
+        return {
+            "dry_run": True,
+            "pipeline_name": pipeline_name,
+            "runtime_params": runtime_params,
+            "estimated_jobs": estimated_jobs,
+            "sample_records": sample_records,
+            "transformations": transformations,
+            "destination": {
+                "type": dest_type,
+                "config": dest_config,
+            },
+            "message": "Dry run complete. No jobs were dispatched.",
+        }
+    
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Dry run failed: {str(e)}",
         )
 
 

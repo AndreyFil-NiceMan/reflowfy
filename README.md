@@ -105,11 +105,12 @@ if __name__ == "__main__":
 
 ### 4. Execute Pipeline
 
-**Test locally** (synchronous, limited data):
+**Run Distributed** (async via Kafka):
 ```bash
-curl -X POST http://localhost:8000/pipelines/elastic_xml_pipeline/test \
+curl -X POST http://localhost:8001/run \
   -H "Content-Type: application/json" \
   -d '{
+    "pipeline_name": "elastic_xml_pipeline",
     "runtime_params": {
       "start_time": "2024-01-01",
       "end_time": "2024-01-02"
@@ -117,17 +118,20 @@ curl -X POST http://localhost:8000/pipelines/elastic_xml_pipeline/test \
   }'
 ```
 
-**Run distributed** (async via Kafka):
+**Dry Run** (Preview jobs without executing):
 ```bash
-curl -X POST http://localhost:8000/pipelines/elastic_xml_pipeline/run \
+curl -X POST http://localhost:8001/run \
   -H "Content-Type: application/json" \
   -d '{
+    "pipeline_name": "elastic_xml_pipeline",
     "runtime_params": {
       "start_time": "2024-01-01",
       "end_time": "2024-01-02"
-    }
+    },
+    "dry_run": true
   }'
 ```
+*Returns a preview of the job execution plan, sample records, and configuration.*
 
 ## 📦 Installation
 
@@ -170,12 +174,10 @@ KAFKA_TOPIC=reflow.jobs
 KAFKA_GROUP_ID=reflowfy-workers
 ```
 
-## 🎛 Execution Modes
-
 | Mode | Endpoint | Use Case | Kafka | Workers |
 |------|----------|----------|-------|---------|
-| **Local** | `/pipelines/{name}/test` | Testing, debugging | ❌ | ❌ |
-| **Distributed** | `/pipelines/{name}/run` | Production | ✅ | ✅ |
+| **Distributed** | `POST /run` | Production execution | ✅ | ✅ |
+| **Dry Run** | `POST /run` (dry_run=true) | Preview/Testing | ❌ | ❌ |
 
 ## 📊 Monitoring
 

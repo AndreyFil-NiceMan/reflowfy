@@ -39,6 +39,7 @@ class RunPipelineRequest(BaseModel):
     runtime_params: Optional[Dict[str, Any]] = None
     rate_limit: Optional[float] = None
     execution_id: Optional[str] = None
+    dry_run: bool = False  # Preview output without writing to destination
 
 
 class DestinationConfig(BaseModel):
