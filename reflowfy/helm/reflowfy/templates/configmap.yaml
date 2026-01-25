@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-reflowfy-config
+  labels:
+    {{- include "reflowfy.labels" . | nindent 4 }}
+data:
+  # Kafka settings
+  KAFKA_BOOTSTRAP_SERVERS: {{ include "reflowfy.kafka.bootstrapServers" . | quote }}
+  KAFKA_TOPIC: {{ include "reflowfy.kafka.topic" . | quote }}
+  KAFKA_GROUP_ID: {{ include "reflowfy.kafka.groupId" . | quote }}
+
+  # PostgreSQL settings (without password)
+  POSTGRESQL_HOST: {{ include "reflowfy.postgresql.host" . | quote }}
+  POSTGRESQL_PORT: {{ include "reflowfy.postgresql.port" . | quote }}
+  POSTGRESQL_DATABASE: {{ include "reflowfy.postgresql.database" . | quote }}
+  POSTGRESQL_USERNAME: {{ include "reflowfy.postgresql.username" . | quote }}
+
+  # ReflowManager settings
+  REFLOW_MANAGER_URL: "http://{{ .Release.Name }}-reflow-manager:{{ .Values.reflowManager.service.port }}"
+  MAX_JOBS_PER_SECOND: {{ .Values.reflowManager.maxJobsPerSecond | quote }}
+  PIPELINE_MODULE: {{ .Values.reflowManager.pipelineModule | quote }}
+  LOG_LEVEL: {{ .Values.reflowManager.logLevel | quote }}

@@ -1,0 +1,11 @@
+include README.md
+include LICENSE
+include pyproject.toml
+
+# Include Helm charts
+recursive-include reflowfy/helm *
+
+# Include Dockerfiles
+include Dockerfile.*
+include docker-compose.yml
+include docker-compose.*.yml

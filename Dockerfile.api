@@ -50,5 +50,12 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 # Expose port
 EXPOSE 8000
 
+# Create non-root user
+RUN addgroup --system --gid 1001 reflowfy && \
+    adduser --system --uid 1001 --gid 1001 --no-create-home reflowfy
+
+# Use non-root user
+USER reflowfy
+
 # Run API with pipeline auto-discovery
 CMD ["python", "-m", "reflowfy.api.app"]

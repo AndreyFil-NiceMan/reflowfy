@@ -43,6 +43,13 @@ ENV PYTHONUNBUFFERED=1
 # Graceful shutdown support
 STOPSIGNAL SIGTERM
 
+# Create non-root user
+RUN addgroup --system --gid 1001 reflowfy && \
+    adduser --system --uid 1001 --gid 1001 --no-create-home reflowfy
+
+# Use non-root user
+USER reflowfy
+
 # Run worker
 CMD ["python", "-m", "reflowfy.worker.main"]
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reflowfy"
-version = "0.1.0"
+version = "0.1.2"
 description = "A horizontally scalable data movement and transformation framework"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -37,6 +37,10 @@ dependencies = [
     # Async worker dependencies
     "aiokafka>=0.10.0",
     "asyncpg>=0.29.0",
+    # CLI dependencies
+    "typer[all]>=0.9.0",
+    "rich>=13.0.0",
+    "python-on-whales>=0.70.0",
 ]
 
 [project.optional-dependencies]
@@ -51,12 +55,18 @@ dev = [
 ]
 
 [project.scripts]
+reflowfy = "reflowfy.cli.main:app"
 reflowfy-api = "reflowfy.api.app:main"
 reflowfy-worker = "reflowfy.worker.main:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["reflowfy*"]
+
+[tool.setuptools.package-data]
+"reflowfy.helm" = ["**/*"]
+"reflowfy.templates" = ["*"]
+"reflowfy" = ["../Dockerfile.*", "../docker-compose.yml"]
 
 [tool.black]
 line-length = 100
