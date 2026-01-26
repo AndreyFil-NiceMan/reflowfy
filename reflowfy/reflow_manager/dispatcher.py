@@ -1,9 +1,12 @@
-"""Job dispatchers for ReflowManager."""
+"""Job dispatchers for ReflowManager using aiokafka."""
 
+import os
 import json
+import asyncio
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional
-from confluent_kafka import Producer, KafkaException
+from aiokafka import AIOKafkaProducer
+from aiokafka.errors import KafkaError
 
 from reflowfy.reflow_manager.rate_limiter import RateLimiter
 
@@ -15,7 +18,7 @@ class BaseDispatcher(ABC):
         self.rate_limiter = rate_limiter
 
     @abstractmethod
-    def dispatch_job(
+    async def dispatch_job(
         self,
         job_payload: Dict[str, Any],
         pipeline_name: str,
@@ -25,7 +28,7 @@ class BaseDispatcher(ABC):
         pass
 
     @abstractmethod
-    def dispatch_jobs_batch(
+    async def dispatch_jobs_batch(
         self,
         jobs: List[Dict[str, Any]],
         pipeline_name: str,
@@ -35,14 +38,14 @@ class BaseDispatcher(ABC):
         pass
 
     @abstractmethod
-    def close(self):
+    async def close(self):
         """Close resources."""
         pass
 
 
 class KafkaDispatcher(BaseDispatcher):
     """
-    Dispatches jobs to Kafka with rate limiting.
+    Dispatches jobs to Kafka with rate limiting using aiokafka.
     """
     
     def __init__(
@@ -50,64 +53,84 @@ class KafkaDispatcher(BaseDispatcher):
         kafka_bootstrap_servers: str,
         kafka_topic: str,
         rate_limiter: RateLimiter,
-        producer_config: Optional[Dict[str, Any]] = None,
+        # SASL Authentication
+        security_protocol: Optional[str] = None,
+        sasl_mechanism: Optional[str] = None,
+        sasl_username: Optional[str] = None,
+        sasl_password: Optional[str] = None,
     ):
         super().__init__(rate_limiter)
         self.kafka_bootstrap_servers = kafka_bootstrap_servers
         self.kafka_topic = kafka_topic
-        self.producer_config = producer_config or {}
-        self._producer: Optional[Producer] = None
+        
+        # SASL config
+        self.security_protocol = security_protocol
+        self.sasl_mechanism = sasl_mechanism
+        self.sasl_username = sasl_username
+        self.sasl_password = sasl_password
+        
+        self._producer: Optional[AIOKafkaProducer] = None
+        self._started = False
     
-    def _get_producer(self) -> Producer:
+    async def _get_producer(self) -> AIOKafkaProducer:
         """Get or create Kafka producer."""
-        if self._producer is None:
-            config = {
-                "bootstrap.servers": self.kafka_bootstrap_servers,
-                "compression.type": "gzip",
-                **self.producer_config,
+        if self._producer is None or not self._started:
+            # Build producer kwargs
+            producer_kwargs = {
+                "bootstrap_servers": self.kafka_bootstrap_servers,
+                "compression_type": "gzip",
             }
-            self._producer = Producer(config)
+            
+            # Add SASL config if credentials provided
+            if self.sasl_username and self.sasl_password:
+                producer_kwargs.update({
+                    "security_protocol": self.security_protocol or "SASL_PLAINTEXT",
+                    "sasl_mechanism": self.sasl_mechanism or "SCRAM-SHA-256",
+                    "sasl_plain_username": self.sasl_username,
+                    "sasl_plain_password": self.sasl_password,
+                    "client_id": self.sasl_username,  # client_id = username
+                })
+            
+            self._producer = AIOKafkaProducer(**producer_kwargs)
+            await self._producer.start()
+            self._started = True
+        
         return self._producer
     
-    def _delivery_callback(self, err, msg):
-        """Kafka delivery callback."""
-        if err:
-            print(f"❌ Message delivery failed: {err}")
-    
-    def dispatch_job(
+    async def dispatch_job(
         self,
         job_payload: Dict[str, Any],
         pipeline_name: str,
         rate_limit: Optional[float] = None,
     ) -> bool:
+        """Dispatch a single job to Kafka."""
         # Check and consume tokens
         if not self.rate_limiter.consume_tokens(pipeline_name, 1, rate_limit):
             return False
         
         # Send to Kafka
-        producer = self._get_producer()
+        producer = await self._get_producer()
         
         try:
-            producer.produce(
+            await producer.send_and_wait(
                 topic=self.kafka_topic,
                 value=json.dumps(job_payload).encode("utf-8"),
-                callback=self._delivery_callback,
             )
-            producer.poll(0)  # Trigger callbacks
             return True
         
-        except KafkaException as e:
+        except KafkaError as e:
             print(f"❌ Kafka error: {e}")
             return False
     
-    def dispatch_jobs_batch(
+    async def dispatch_jobs_batch(
         self,
         jobs: List[Dict[str, Any]],
         pipeline_name: str,
         rate_limit: Optional[float] = None,
     ) -> int:
+        """Dispatch a batch of jobs to Kafka."""
         dispatched = 0
-        producer = self._get_producer()
+        producer = await self._get_producer()
         
         for job in jobs:
             # Atomic token acquisition with rate limiting
@@ -117,30 +140,25 @@ class KafkaDispatcher(BaseDispatcher):
             
             # Dispatch
             try:
-                producer.produce(
+                await producer.send_and_wait(
                     topic=self.kafka_topic,
                     value=json.dumps(job).encode("utf-8"),
-                    callback=self._delivery_callback,
                 )
                 dispatched += 1
-                
-                # Poll periodically
-                if dispatched % 100 == 0:
-                    producer.poll(0)
             
-            except KafkaException as e:
+            except KafkaError as e:
                 print(f"❌ Kafka error: {e}")
                 break
         
-        # Final flush
-        producer.flush(timeout=10.0)
-        
         return dispatched
     
-    def close(self):
-        if self._producer:
-            self._producer.flush()
+    async def close(self):
+        """Close the producer connection."""
+        if self._producer and self._started:
+            await self._producer.stop()
             self._producer = None
+            self._started = False
 
-# Backward compatibility alias (if needed temporarily, but we will update usages)
+
+# Backward compatibility alias
 JobDispatcher = KafkaDispatcher

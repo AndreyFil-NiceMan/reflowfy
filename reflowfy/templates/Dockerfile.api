@@ -17,6 +17,7 @@ COPY pipelines/ pipelines/
 
 # Environment variables
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
 ENV API_HOST=0.0.0.0
 ENV API_PORT=8000
 ENV PIPELINE_MODULE=pipelines

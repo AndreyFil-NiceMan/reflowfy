@@ -1,20 +1,21 @@
-"""Kafka destination connector."""
+"""Kafka destination connector using aiokafka."""
 
+import os
 import json
 from typing import Any, Dict, List, Optional
-from confluent_kafka import Producer, KafkaException
-from confluent_kafka.admin import AdminClient
+from aiokafka import AIOKafkaProducer
+from aiokafka.errors import KafkaError
 from reflowfy.destinations.base import BaseDestination, DestinationError, RetryConfig
 
 
 class KafkaDestination(BaseDestination):
     """
-    Kafka destination connector.
+    Kafka destination connector using aiokafka.
     
     Supports:
+    - SASL authentication (SCRAM-SHA-256)
     - Configurable serialization (JSON by default)
-    - Batching and compression
-    - Connection pooling
+    - Compression
     - Error handling
     """
     
@@ -23,9 +24,12 @@ class KafkaDestination(BaseDestination):
         bootstrap_servers: str,
         topic: str,
         compression_type: str = "gzip",
-        batch_size: int = 16384,
-        linger_ms: int = 10,
         retry_config: Optional[RetryConfig] = None,
+        # SASL Authentication
+        security_protocol: Optional[str] = None,
+        sasl_mechanism: Optional[str] = None,
+        sasl_username: Optional[str] = None,
+        sasl_password: Optional[str] = None,
         **producer_config,
     ):
         """
@@ -34,39 +38,52 @@ class KafkaDestination(BaseDestination):
         Args:
             bootstrap_servers: Kafka broker addresses (comma-separated)
             topic: Target topic
-            compression_type: Compression algorithm (gzip, snappy, lz4, zstd)
-            batch_size: Batch size in bytes
-            linger_ms: Time to wait before sending batch
+            compression_type: Compression algorithm (gzip, snappy, lz4)
             retry_config: Optional retry configuration
+            security_protocol: Security protocol (e.g., SASL_PLAINTEXT)
+            sasl_mechanism: SASL mechanism (e.g., SCRAM-SHA-256)
+            sasl_username: SASL username
+            sasl_password: SASL password
             **producer_config: Additional producer configuration
         """
         config = {
             "bootstrap_servers": bootstrap_servers,
             "topic": topic,
             "compression_type": compression_type,
-            "batch_size": batch_size,
-            "linger_ms": linger_ms,
+            "security_protocol": security_protocol,
+            "sasl_mechanism": sasl_mechanism,
+            "sasl_username": sasl_username,
+            "sasl_password": sasl_password,
             **producer_config,
         }
         super().__init__(config, retry_config)
-        self._producer: Optional[Producer] = None
+        self._producer: Optional[AIOKafkaProducer] = None
+        self._started = False
     
-    def _get_producer(self) -> Producer:
-        """Get or create Kafka producer."""
-        if self._producer is None:
-            producer_config = {
-                "bootstrap.servers": self.config["bootstrap_servers"],
-                "compression.type": self.config["compression_type"],
-                "batch.size": self.config["batch_size"],
-                "linger.ms": self.config["linger_ms"],
+    async def _get_producer(self) -> AIOKafkaProducer:
+        """Get or create async Kafka producer."""
+        if self._producer is None or not self._started:
+            # Build producer kwargs
+            producer_kwargs = {
+                "bootstrap_servers": self.config["bootstrap_servers"],
+                "compression_type": self.config.get("compression_type", "gzip"),
             }
             
-            # Add any additional producer configs
-            for key, value in self.config.items():
-                if key not in ["bootstrap_servers", "topic", "compression_type", "batch_size", "linger_ms"]:
-                    producer_config[key] = value
+            # Add SASL config if credentials provided
+            username = self.config.get("sasl_username")
+            password = self.config.get("sasl_password")
+            if username and password:
+                producer_kwargs.update({
+                    "security_protocol": self.config.get("security_protocol") or "SASL_PLAINTEXT",
+                    "sasl_mechanism": self.config.get("sasl_mechanism") or "SCRAM-SHA-256",
+                    "sasl_plain_username": username,
+                    "sasl_plain_password": password,
+                    "client_id": username,  # client_id = username
+                })
             
-            self._producer = Producer(producer_config)
+            self._producer = AIOKafkaProducer(**producer_kwargs)
+            await self._producer.start()
+            self._started = True
         
         return self._producer
     
@@ -81,7 +98,7 @@ class KafkaDestination(BaseDestination):
         Raises:
             DestinationError: If send fails
         """
-        producer = self._get_producer()
+        producer = await self._get_producer()
         topic = self.config["topic"]
         
         try:
@@ -90,70 +107,50 @@ class KafkaDestination(BaseDestination):
                 value = json.dumps(record).encode("utf-8")
                 
                 # Prepare headers
-                headers = {}
+                headers = []
                 if metadata:
                     for k, v in metadata.items():
                         if isinstance(v, str):
-                            headers[k] = v.encode("utf-8")
+                            headers.append((k, v.encode("utf-8")))
                 
-                # Produce message
-                producer.produce(
+                # Send message
+                await producer.send_and_wait(
                     topic=topic,
                     value=value,
                     headers=headers if headers else None,
-                    callback=self._delivery_callback,
                 )
-            
-            # Flush to ensure all messages are sent
-            producer.flush(timeout=30.0)
         
-        except KafkaException as e:
+        except KafkaError as e:
             raise DestinationError("kafka", f"Failed to send to topic '{topic}': {e}", e)
         except Exception as e:
             raise DestinationError("kafka", f"Unexpected error: {e}", e)
     
-    def _delivery_callback(self, err, msg):
-        """Callback for message delivery reports."""
-        if err:
-            print(f"❌ Message delivery failed: {err}")
-        # Success logging is too verbose for production
-    
     async def health_check(self) -> bool:
         """Check Kafka cluster connectivity."""
         try:
-            admin_client = AdminClient(
-                {"bootstrap.servers": self.config["bootstrap_servers"]}
-            )
-            
-            # Get cluster metadata
-            metadata = admin_client.list_topics(timeout=5.0)
-            
-            # Check if topic exists
-            topic = self.config["topic"]
-            if topic in metadata.topics:
-                return True
-            
-            # Topic doesn't exist but cluster is reachable
-            print(f"⚠️  Topic '{topic}' does not exist but cluster is healthy")
+            producer = await self._get_producer()
+            # If we can get the producer, the connection is healthy
             return True
-        
         except Exception:
             return False
     
-    def close(self):
+    async def close(self):
         """Close producer connection."""
-        if self._producer:
-            self._producer.flush()
+        if self._producer and self._started:
+            await self._producer.stop()
             self._producer = None
+            self._started = False
 
 
 def kafka_destination(
     bootstrap_servers: str,
     topic: str,
     compression_type: str = "gzip",
-    batch_size: int = 16384,
-    linger_ms: int = 10,
     retry_config: Optional[RetryConfig] = None,
+    security_protocol: Optional[str] = None,
+    sasl_mechanism: Optional[str] = None,
+    sasl_username: Optional[str] = None,
+    sasl_password: Optional[str] = None,
     **producer_config,
 ) -> KafkaDestination:
     """
@@ -163,15 +160,19 @@ def kafka_destination(
         >>> destination = kafka_destination(
         ...     bootstrap_servers="kafka:9092",
         ...     topic="processed-logs",
-        ...     compression_type="gzip"
+        ...     compression_type="gzip",
+        ...     sasl_username="reflowfy",
+        ...     sasl_password="reflowfy"
         ... )
     """
     return KafkaDestination(
         bootstrap_servers=bootstrap_servers,
         topic=topic,
         compression_type=compression_type,
-        batch_size=batch_size,
-        linger_ms=linger_ms,
         retry_config=retry_config,
+        security_protocol=security_protocol,
+        sasl_mechanism=sasl_mechanism,
+        sasl_username=sasl_username,
+        sasl_password=sasl_password,
         **producer_config,
     )

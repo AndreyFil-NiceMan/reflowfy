@@ -9,10 +9,20 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm
 from python_on_whales import DockerClient
+from dotenv import load_dotenv
 
 app = typer.Typer(help="Reflowfy CLI Tool for easy deployment and management.")
 console = Console()
 docker = DockerClient()
+
+# Load .env file if it exists
+# Load .env file
+# Try to find .env in current directory first, then fallback to recursive search or default
+env_path = Path(".") / ".env"
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path)
+else:
+    load_dotenv()
 
 
 def get_package_path() -> Path:
@@ -45,40 +55,49 @@ def get_helm_chart_path() -> Path:
 
 def get_dockerfiles_path() -> Path:
     """Get path to Dockerfiles (templates for init or dev source)."""
-    # Priority 1: Current directory (Development mode)
-    if Path("Dockerfile.api").exists() and Path("pyproject.toml").exists():
+    # Priority 1: Current directory (User project or Development mode)
+    if Path("Dockerfile.api").exists() or Path("Dockerfile.reflow-manager").exists():
         return Path(".")
     
     # Priority 2: Templates bundled in package (Production/Init mode)
     return get_package_path() / "templates"
 
-@app.command()
-def build(
-    registry: str = typer.Option(..., help="Private registry URL (e.g. registry.lab.local)"),
-    project: str = typer.Option("reflowfy", help="Project/Namespace name"),
-    push: bool = typer.Option(True, help="Push images to registry after building")
-):
-    """
-    Build and push Reflowfy images to a private registry (OpenShift Ready).
-    """
+
+def _build_images(registry: str, project: str, push: bool, dry_run: bool = False) -> None:
+    """Helper to build and optionally push images."""
     console.print(Panel(f"Building images for registry: [bold cyan]{registry}[/bold cyan]"))
 
     images = ["api", "reflow-manager", "worker"]
     
+    # Build context should ALWAYS be the current working directory (where user's pipelines are)
+    build_context = Path(".")
+    
+    # Check if user has a pipelines folder
+    if not (build_context / "pipelines").exists():
+        console.print("⚠️  No 'pipelines/' folder found in current directory.", style="yellow")
+        console.print("   Make sure you're in your project root or run 'reflowfy init' first.", style="yellow")
+    
     for svc in images:
         tag = f"{registry}/{project}/{svc}:latest"
-        dockerfile = f"Dockerfile.{svc}"
-        if svc == "api": # Dockerfile mapping tweak if needed
-            dockerfile = "Dockerfile.api"
-        elif svc == "reflow-manager":
-             dockerfile = "Dockerfile.reflow-manager"
+        dockerfile = f"Dockerfile.{svc}" 
         
+        # Get path to Dockerfiles (may be in templates if not copied locally)
         dockerfiles_path = get_dockerfiles_path()
         dockerfile_full = dockerfiles_path / dockerfile
         
-        console.print(f"📦 Building [bold]{svc}[/bold] from {dockerfiles_path}...", style="yellow")
+        console.print(f"📦 Building [bold]{svc}[/bold] (Dockerfile: {dockerfile_full})...", style="yellow")
+        
+        if dry_run:
+             console.print(f"[Dry Run] Would build {dockerfile_full} as {tag}", style="dim")
+             console.print(f"[Dry Run] Build context: {build_context.absolute()}", style="dim")
+             if push:
+                 console.print(f"[Dry Run] Would push {tag}", style="dim")
+             continue
+
         try:
-             docker.build(str(dockerfiles_path), file=str(dockerfile_full), tags=[tag])
+             # Use current directory as build context (where pipelines/ exists)
+             # but reference the Dockerfile from templates if needed
+             docker.build(str(build_context), file=str(dockerfile_full), tags=[tag])
              console.print(f"✅ Built [bold]{tag}[/bold]", style="green")
              
              if push:
@@ -93,24 +112,63 @@ def build(
 
 
 @app.command()
+def build(
+    registry: Optional[str] = typer.Option(None, envvar="REGISTRY", help="Private registry URL (e.g. registry.lab.local)"),
+    project: Optional[str] = typer.Option(None, envvar="PROJECT", help="Project/Namespace name"),
+    push: bool = typer.Option(True, help="Push images to registry after building")
+):
+    """
+    Build and push Reflowfy images to a private registry (OpenShift Ready).
+    """
+    # Defaults handled by envvar or set manually
+    project = project or "reflowfy" # Fallback if not set in env or args
+    
+    if not registry:
+        console.print("❌ Registry is required. Set --registry or REGISTRY in .env", style="red")
+        if not Path(".env").exists():
+             console.print("⚠️  No .env file found in current directory.", style="yellow")
+        raise typer.Exit(code=1)
+
+    _build_images(registry, project, push)
+
+
+@app.command()
 def deploy(
-    registry: str = typer.Option(..., help="Registry where images are stored"),
-    kafka: str = typer.Option(..., help="External Kafka Broker (host:port)"),
-    namespace: str = typer.Option("reflowfy", help="Kubernetes namespace"),
-    db_host: Optional[str] = typer.Option(None, help="External DB Host (skip PostgreSQL deploy)"),
+    registry: Optional[str] = typer.Option(None, envvar="REGISTRY", help="Registry where images are stored (or set REGISTRY in .env)"),
+    kafka: Optional[str] = typer.Option(None, envvar="KAFKA_BOOTSTRAP_SERVERS", help="External Kafka Broker (or set KAFKA_BOOTSTRAP_SERVERS in .env)"),
+    namespace: str = typer.Option(None, envvar="NAMESPACE", help="Kubernetes namespace (or set NAMESPACE in .env)"),
+    db_host: Optional[str] = typer.Option(None, envvar="DB_HOST", help="External DB Host (skip PostgreSQL deploy)"),
     keda: bool = typer.Option(False, "--keda/--no-keda", help="Enable KEDA autoscaling for workers"),
     keda_min: int = typer.Option(0, "--keda-min", help="KEDA minimum replicas"),
     keda_max: int = typer.Option(100, "--keda-max", help="KEDA maximum replicas"),
-    kafka_topic: str = typer.Option("reflowfy.jobs", "--kafka-topic", help="Kafka topic name"),
+    kafka_topic: Optional[str] = typer.Option(None, "--kafka-topic", envvar="KAFKA_TOPIC", help="Kafka topic name (or set KAFKA_TOPIC in .env)"),
     workers: int = typer.Option(1, "--workers", help="Worker replicas (when KEDA disabled)"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print Helm command without executing"),
+    build: bool = typer.Option(False, "--build", help="Build images before deploying"),
+    push: bool = typer.Option(True, "--push/--no-push", help="Push images to registry if building"),
 ):
     """
     Deploy Reflowfy to Kubernetes/OpenShift using Helm.
     
-    Deploys PostgreSQL, API, ReflowManager, and Worker with optional KEDA autoscaling.
-    Kafka must be provided externally via the --kafka option.
+    Reads configuration from .env file if present. Command-line options override .env values.
     """
+    namespace = namespace or "reflowfy"
+    kafka_topic = kafka_topic or "reflow.jobs"
+    
+    # Validate required fields
+    if not registry:
+        console.print("❌ Registry is required. Set --registry or REGISTRY in .env", style="red")
+        if not Path(".env").exists():
+             console.print("⚠️  No .env file found in current directory.", style="yellow")
+        raise typer.Exit(code=1)
+        
+    if build:
+        _build_images(registry, namespace, push, dry_run=dry_run)
+    
+    if not kafka:
+        console.print("❌ Kafka is required. Set --kafka or KAFKA_BOOTSTRAP_SERVERS in .env", style="red")
+        raise typer.Exit(code=1)
+    
     console.print(Panel(f"🚀 Deploying Reflowfy to namespace: [bold cyan]{namespace}[/bold cyan]"))
 
     # Find Helm chart (bundled or local)
@@ -125,10 +183,10 @@ def deploy(
     cmd = [
         "helm", "upgrade", "--install", "reflowfy", str(chart_path),
         "--namespace", namespace,
-        # Registry configuration
-        "--set", f"api.image.repository={registry}/reflowfy-api",
-        "--set", f"reflowManager.image.repository={registry}/reflowfy-reflow-manager",
-        "--set", f"worker.image.repository={registry}/reflowfy-worker",
+        # Registry configuration (include namespace in path for OpenShift format: registry/project/image)
+        "--set", f"api.image.repository={registry}/{namespace}/api",
+        "--set", f"reflowManager.image.repository={registry}/{namespace}/reflow-manager",
+        "--set", f"worker.image.repository={registry}/{namespace}/worker",
         "--set", "api.image.tag=latest",
         "--set", "reflowManager.image.tag=latest",
         "--set", "worker.image.tag=latest",
@@ -326,15 +384,31 @@ pipeline_registry.register({name.title().replace("_", "")}())
     except Exception as e:
         console.print(f"  ⚠️ Could not copy Dockerfiles: {e}", style="yellow")
     
+    # Generate .env file from template
+    try:
+        env_template_path = get_package_path() / "templates" / ".env.template"
+        if not env_template_path.exists():
+            # Fallback for dev mode
+            env_template_path = Path("reflowfy/templates/.env.template")
+        
+        env_dest = target_dir / ".env"
+        if env_template_path.exists() and not env_dest.exists():
+            shutil.copy(env_template_path, env_dest)
+            console.print(f"  ✅ Created .env (configure your settings here)", style="green")
+        elif env_dest.exists():
+            console.print(f"  ⚠️ .env already exists, skipping", style="yellow")
+    except Exception as e:
+        console.print(f"  ⚠️ Could not create .env: {e}", style="yellow")
+    
     console.print(Panel(f"""
 🎉 Project initialized!
 
 Next steps:
   1. cd {target_dir.absolute()}
-  2. Edit pipelines/{name}.py to customize your pipeline
-  3. reflowfy run --build    (test locally)
-  4. reflowfy build --registry <your-registry>
-  5. reflowfy deploy --registry <your-registry> --kafka <kafka:9092>
+  2. Edit .env to configure Kafka, Registry, and Database
+  3. Edit pipelines/{name}.py to customize your pipeline
+  4. reflowfy run --build    (test locally)
+  5. reflowfy deploy        (deploy to OpenShift - reads from .env)
 """, style="bold green"))
 
 

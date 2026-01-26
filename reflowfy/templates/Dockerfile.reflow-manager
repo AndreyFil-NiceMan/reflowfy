@@ -17,6 +17,7 @@ COPY pipelines/ pipelines/
 
 # Environment variables
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
 ENV PIPELINE_MODULE=pipelines
 
 # Create non-root user

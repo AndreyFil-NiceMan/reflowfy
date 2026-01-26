@@ -5,6 +5,10 @@ from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, HTTPException, Depends, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from dotenv import load_dotenv
+
+# Load .env file if present
+load_dotenv()
 
 from reflowfy.reflow_manager.database import get_db, init_db
 from reflowfy.reflow_manager.manager import ReflowManager

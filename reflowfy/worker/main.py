@@ -80,9 +80,17 @@ def main():
     kafka_group_id = os.getenv("KAFKA_GROUP_ID", "reflowfy-workers")
     database_url = os.getenv("DATABASE_URL", "postgresql://reflowfy:reflowfy@localhost:5432/reflowfy")
     
+    # SASL Authentication config
+    security_protocol = os.getenv("KAFKA_SECURITY_PROTOCOL")
+    sasl_mechanism = os.getenv("KAFKA_SASL_MECHANISM")
+    sasl_username = os.getenv("KAFKA_SASL_USERNAME")
+    sasl_password = os.getenv("KAFKA_SASL_PASSWORD")
+    
     print(f"Kafka brokers: {kafka_bootstrap_servers}")
     print(f"Topic: {kafka_topic}")
     print(f"Consumer group: {kafka_group_id}")
+    if sasl_username:
+        print(f"SASL: {security_protocol or 'SASL_PLAINTEXT'} / {sasl_mechanism or 'SCRAM-SHA-256'}")
     print(f"Database: {database_url.split('@')[-1] if '@' in database_url else database_url}")  # Hide credentials
     print()
     
@@ -92,6 +100,10 @@ def main():
         topic=kafka_topic,
         group_id=kafka_group_id,
         database_url=database_url,
+        security_protocol=security_protocol,
+        sasl_mechanism=sasl_mechanism,
+        sasl_username=sasl_username,
+        sasl_password=sasl_password,
     )
     
     try:
