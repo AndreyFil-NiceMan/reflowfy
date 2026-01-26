@@ -45,7 +45,7 @@ kafka:
     bootstrapServers: "kafka:9092"
 
   # Common settings
-  topic: "reflowfy.jobs"
+  topic: "reflow.jobs"
   groupId: "reflowfy-workers"
 
 #####################################
@@ -57,8 +57,8 @@ api:
   enabled: true
   replicaCount: 1
   image:
-    repository: reflowfy-api
-    tag: "local"
+    repository: image-registry.openshift-image-registry.svc:5000/kofli-dev/reflowfy-api
+    tag: "latest"
     pullPolicy: IfNotPresent
   service:
     type: NodePort
@@ -77,8 +77,8 @@ reflowManager:
   enabled: true
   replicaCount: 1
   image:
-    repository: reflowfy-reflow-manager
-    tag: "local"
+    repository: image-registry.openshift-image-registry.svc:5000/kofli-dev/reflowfy-reflow-manager
+    tag: "latest"
     pullPolicy: IfNotPresent
   service:
     type: NodePort
@@ -100,8 +100,8 @@ worker:
   enabled: true
   replicaCount: 1
   image:
-    repository: reflowfy-worker
-    tag: "local"
+    repository: image-registry.openshift-image-registry.svc:5000/kofli-dev/reflowfy-worker
+    tag: "latest"
     pullPolicy: IfNotPresent
   resources:
     limits:
@@ -138,10 +138,3 @@ securityContext: {}
   #   drop:
   #     - ALL
   # readOnlyRootFilesystem: false
-
-# Host aliases for DNS resolution hacking (useful for minikube external services)
-hostAliases:
-  - ip: "192.168.49.3"
-    hostnames:
-      - "kafka"
-

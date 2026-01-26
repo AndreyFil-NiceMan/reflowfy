@@ -25,8 +25,13 @@ def get_helm_chart_path() -> Path:
     """Get path to the bundled Helm chart. Falls back to local ./helm/reflowfy if available."""
     # Priority 1: Local development (./helm/reflowfy)
     local_chart = Path("./helm/reflowfy")
-    if local_chart.exists():
+    if local_chart.exists() and (local_chart / "Chart.yaml").exists():
         return local_chart
+    
+    # Priority 1.5: Local development from root (./reflowfy/helm/reflowfy)
+    root_chart = Path("reflowfy/helm/reflowfy")
+    if root_chart.exists() and (root_chart / "Chart.yaml").exists():
+        return root_chart
     
     # Priority 2: Bundled in package
     bundled_chart = get_package_path() / "helm" / "reflowfy"
@@ -91,13 +96,22 @@ def build(
 def deploy(
     registry: str = typer.Option(..., help="Registry where images are stored"),
     kafka: str = typer.Option(..., help="External Kafka Broker (host:port)"),
-    db_host: Optional[str] = typer.Option(None, help="External DB Host (optional)"),
-    namespace: str = typer.Option("reflowfy", help="Kubernetes namespace")
+    namespace: str = typer.Option("reflowfy", help="Kubernetes namespace"),
+    db_host: Optional[str] = typer.Option(None, help="External DB Host (skip PostgreSQL deploy)"),
+    keda: bool = typer.Option(False, "--keda/--no-keda", help="Enable KEDA autoscaling for workers"),
+    keda_min: int = typer.Option(0, "--keda-min", help="KEDA minimum replicas"),
+    keda_max: int = typer.Option(100, "--keda-max", help="KEDA maximum replicas"),
+    kafka_topic: str = typer.Option("reflowfy.jobs", "--kafka-topic", help="Kafka topic name"),
+    workers: int = typer.Option(1, "--workers", help="Worker replicas (when KEDA disabled)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print Helm command without executing"),
 ):
     """
-    Deploy specific for OpenShift / Red Hat Lab.
+    Deploy Reflowfy to Kubernetes/OpenShift using Helm.
+    
+    Deploys PostgreSQL, API, ReflowManager, and Worker with optional KEDA autoscaling.
+    Kafka must be provided externally via the --kafka option.
     """
-    console.print(Panel("Deploying to OpenShift..."))
+    console.print(Panel(f"🚀 Deploying Reflowfy to namespace: [bold cyan]{namespace}[/bold cyan]"))
 
     # Find Helm chart (bundled or local)
     try:
@@ -110,35 +124,90 @@ def deploy(
     # Construct Helm command
     cmd = [
         "helm", "upgrade", "--install", "reflowfy", str(chart_path),
-        "--set", f"global.imageRegistry={registry}",
+        "--namespace", namespace,
+        # Registry configuration
+        "--set", f"api.image.repository={registry}/reflowfy-api",
+        "--set", f"reflowManager.image.repository={registry}/reflowfy-reflow-manager",
+        "--set", f"worker.image.repository={registry}/reflowfy-worker",
+        "--set", "api.image.tag=latest",
+        "--set", "reflowManager.image.tag=latest",
+        "--set", "worker.image.tag=latest",
+        "--set", "api.image.pullPolicy=Always",
+        "--set", "reflowManager.image.pullPolicy=Always",
+        "--set", "worker.image.pullPolicy=Always",
+        # Kafka configuration (external)
         "--set", f"kafka.external.bootstrapServers={kafka}",
-        "--set", "kafka.enabled=false", # Force external Kafka
+        "--set", f"kafka.topic={kafka_topic}",
+        # Service types for OpenShift
         "--set", "api.service.type=ClusterIP",
-        "--set", "reflowManager.service.type=ClusterIP"
+        "--set", "reflowManager.service.type=ClusterIP",
     ]
     
+    # PostgreSQL configuration
     if db_host:
-         cmd.extend(["--set", f"postgresql.external.host={db_host}", "--set", "postgresql.enabled=false"])
+        cmd.extend([
+            "--set", f"postgresql.external.host={db_host}",
+            "--set", "postgresql.enabled=false"
+        ])
+    else:
+        # Deploy PostgreSQL via Bitnami chart
+        cmd.extend(["--set", "postgresql.enabled=true"])
+    
+    # KEDA configuration
+    if keda:
+        cmd.extend([
+            "--set", "worker.keda.enabled=true",
+            "--set", f"worker.keda.minReplicaCount={keda_min}",
+            "--set", f"worker.keda.maxReplicaCount={keda_max}",
+        ])
+    else:
+        cmd.extend([
+            "--set", "worker.keda.enabled=false",
+            "--set", f"worker.replicaCount={workers}",
+        ])
 
-    console.print(f"🔧 Running Helm command...", style="yellow")
+    # Display command
+    console.print("\n� [bold]Helm Command:[/bold]")
+    console.print(" \\\n  ".join(cmd), style="cyan")
+    
+    if dry_run:
+        console.print("\n⚠️  [yellow]Dry-run mode - command not executed[/yellow]")
+        return
+    
+    console.print(f"\n🔧 Running Helm upgrade...", style="yellow")
     try:
         subprocess.run(cmd, check=True)
-        console.print("✅ Helm Upgrade successful", style="green")
+        console.print("✅ Helm upgrade successful", style="green")
     except subprocess.CalledProcessError:
         console.print("❌ Deployment failed", style="red")
         raise typer.Exit(code=1)
 
     # OpenShift Routes
-    console.print("🌐 Creating OpenShift Routes...", style="blue")
+    console.print("\n🌐 Creating OpenShift Routes...", style="blue")
     try:
         # Check if route exists, if not create
-        subprocess.run(["oc", "expose", "svc/reflowfy-api", "--name=reflowfy-api"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(["oc", "expose", "svc/reflowfy-reflow-manager", "--name=reflowfy-manager"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(
+            ["oc", "expose", "svc/reflowfy-api", "--name=reflowfy-api", "-n", namespace],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        subprocess.run(
+            ["oc", "expose", "svc/reflowfy-reflow-manager", "--name=reflowfy-manager", "-n", namespace],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
         console.print("✅ Routes created/verified", style="green")
     except FileNotFoundError:
         console.print("⚠️ 'oc' command not found. Skipping route creation.", style="yellow")
 
-    console.print(Panel("🚀 Deployment Complete! Use 'oc get routes' to see URLs.", style="bold green"))
+    console.print(Panel(f"""
+🎉 Deployment Complete!
+
+📋 Check status:
+   oc get pods -n {namespace}
+   oc get routes -n {namespace}
+
+📊 KEDA status (if enabled):
+   oc get scaledobject -n {namespace}
+""", style="bold green"))
 
 
 @app.command()

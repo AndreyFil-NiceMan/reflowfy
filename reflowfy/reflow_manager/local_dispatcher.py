@@ -5,7 +5,8 @@ from typing import Dict, Any, List, Optional
 
 from reflowfy.reflow_manager.dispatcher import BaseDispatcher
 from reflowfy.reflow_manager.rate_limiter import RateLimiter
-from reflowfy.worker.executor import WorkerExecutor
+
+
 
 
 class LocalDispatcher(BaseDispatcher):
@@ -15,6 +16,7 @@ class LocalDispatcher(BaseDispatcher):
     """
     
     def __init__(self, rate_limiter: RateLimiter, db_session=None):
+        from reflowfy.worker.executor import WorkerExecutor
         super().__init__(rate_limiter)
         # We need the database URL for WorkerExecutor
         # For now, we'll let WorkerExecutor find it from env, or pass it if available
