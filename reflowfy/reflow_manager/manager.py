@@ -17,7 +17,8 @@ from reflowfy.reflow_manager.models import Execution, Job, RateLimitState
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
 from reflowfy.reflow_manager.rate_limiter import RateLimiter
-from reflowfy.reflow_manager.dispatcher import JobDispatcher
+from reflowfy.reflow_manager.dispatcher import KafkaDispatcher
+from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner
 
 
@@ -35,6 +36,7 @@ class ReflowManager:
         kafka_bootstrap_servers: str = "localhost:9092",
         kafka_topic: str = "reflow.jobs",
         max_jobs_per_second: float = 100.0,
+        execution_mode: str = "distributed",  # "distributed" or "local"
     ):
         """
         Initialize ReflowManager.
@@ -44,21 +46,31 @@ class ReflowManager:
             kafka_bootstrap_servers: Kafka broker addresses
             kafka_topic: Topic for job dispatch
             max_jobs_per_second: Default global rate limit
+            execution_mode: "distributed" (Kafka) or "local" (In-process)
         """
         self.db = db_session
         self.kafka_bootstrap_servers = kafka_bootstrap_servers
         self.kafka_topic = kafka_topic
         self.max_jobs_per_second = max_jobs_per_second
+        self.execution_mode = execution_mode
         
         # Initialize component managers
         self.execution_manager = ExecutionManager(db_session)
         self.job_manager = JobManager(db_session)
         self.rate_limiter = RateLimiter(db_session, max_jobs_per_second)
-        self.dispatcher = JobDispatcher(
-            kafka_bootstrap_servers,
-            kafka_topic,
-            self.rate_limiter,
-        )
+        
+        # Select dispatcher based on mode
+        if execution_mode == "local":
+            print("🔧 ReflowManager initialized in LOCAL mode (in-process dispatch)")
+            self.dispatcher = LocalDispatcher(self.rate_limiter, db_session)
+        else:
+            print(f"🔧 ReflowManager initialized in DISTRIBUTED mode (Kafka: {kafka_bootstrap_servers})")
+            self.dispatcher = KafkaDispatcher(
+                kafka_bootstrap_servers,
+                kafka_topic,
+                self.rate_limiter,
+            )
+            
         self.pipeline_runner = PipelineRunner(
             self.execution_manager,
             self.job_manager,

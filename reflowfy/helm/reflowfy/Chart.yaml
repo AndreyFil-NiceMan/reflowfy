@@ -12,9 +12,5 @@ dependencies:
     repository: https://charts.bitnami.com/bitnami
     condition: postgresql.enabled
 
-  # Kafka - Optional, only deployed if kafka.enabled=true
-  - name: kafka
-    version: "32.4.3"
-    repository: https://charts.bitnami.com/bitnami
-    condition: kafka.enabled
+
 

@@ -1,20 +1,48 @@
-"""Kafka job dispatcher for ReflowManager."""
+"""Job dispatchers for ReflowManager."""
 
 import json
-from typing import Dict, Any, List, Optional, Callable
+from abc import ABC, abstractmethod
+from typing import Dict, Any, List, Optional
 from confluent_kafka import Producer, KafkaException
 
 from reflowfy.reflow_manager.rate_limiter import RateLimiter
 
 
-class JobDispatcher:
+class BaseDispatcher(ABC):
+    """Abstract base class for job dispatchers."""
+    
+    def __init__(self, rate_limiter: RateLimiter):
+        self.rate_limiter = rate_limiter
+
+    @abstractmethod
+    def dispatch_job(
+        self,
+        job_payload: Dict[str, Any],
+        pipeline_name: str,
+        rate_limit: Optional[float] = None,
+    ) -> bool:
+        """Dispatch a single job."""
+        pass
+
+    @abstractmethod
+    def dispatch_jobs_batch(
+        self,
+        jobs: List[Dict[str, Any]],
+        pipeline_name: str,
+        rate_limit: Optional[float] = None,
+    ) -> int:
+        """Dispatch a batch of jobs."""
+        pass
+
+    @abstractmethod
+    def close(self):
+        """Close resources."""
+        pass
+
+
+class KafkaDispatcher(BaseDispatcher):
     """
     Dispatches jobs to Kafka with rate limiting.
-    
-    Handles all Kafka producer operations including:
-    - Single job dispatch
-    - Batch job dispatch
-    - Rate limiting integration
     """
     
     def __init__(
@@ -24,18 +52,9 @@ class JobDispatcher:
         rate_limiter: RateLimiter,
         producer_config: Optional[Dict[str, Any]] = None,
     ):
-        """
-        Initialize job dispatcher.
-        
-        Args:
-            kafka_bootstrap_servers: Kafka broker addresses
-            kafka_topic: Kafka topic for job dispatch
-            rate_limiter: RateLimiter instance for rate limiting
-            producer_config: Additional Kafka producer configuration
-        """
+        super().__init__(rate_limiter)
         self.kafka_bootstrap_servers = kafka_bootstrap_servers
         self.kafka_topic = kafka_topic
-        self.rate_limiter = rate_limiter
         self.producer_config = producer_config or {}
         self._producer: Optional[Producer] = None
     
@@ -61,17 +80,6 @@ class JobDispatcher:
         pipeline_name: str,
         rate_limit: Optional[float] = None,
     ) -> bool:
-        """
-        Dispatch a single job to Kafka with rate limiting.
-        
-        Args:
-            job_payload: Job payload to send
-            pipeline_name: Pipeline name for rate limiting
-            rate_limit: Optional override rate limit
-        
-        Returns:
-            True if dispatched, False if rate limited
-        """
         # Check and consume tokens
         if not self.rate_limiter.consume_tokens(pipeline_name, 1, rate_limit):
             return False
@@ -98,23 +106,11 @@ class JobDispatcher:
         pipeline_name: str,
         rate_limit: Optional[float] = None,
     ) -> int:
-        """
-        Dispatch multiple jobs with rate limiting.
-        
-        Args:
-            jobs: List of job payloads
-            pipeline_name: Pipeline name
-            rate_limit: Optional override rate limit
-        
-        Returns:
-            Number of jobs successfully dispatched
-        """
         dispatched = 0
         producer = self._get_producer()
         
         for job in jobs:
             # Atomic token acquisition with rate limiting
-            # max_wait=60s allows for very slow rate limits (e.g., 1 job/sec)
             if not self.rate_limiter.acquire_token(pipeline_name, rate_limit, max_wait=60.0):
                 print(f"⚠️ Rate limit timeout after 60s, stopping dispatch after {dispatched} jobs")
                 break
@@ -142,7 +138,9 @@ class JobDispatcher:
         return dispatched
     
     def close(self):
-        """Close Kafka producer connections."""
         if self._producer:
             self._producer.flush()
             self._producer = None
+
+# Backward compatibility alias (if needed temporarily, but we will update usages)
+JobDispatcher = KafkaDispatcher

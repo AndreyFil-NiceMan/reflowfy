@@ -35,42 +35,18 @@ postgresql:
 #####################################
 # INFRASTRUCTURE - KAFKA
 #####################################
+#####################################
+# INFRASTRUCTURE - KAFKA
+#####################################
 kafka:
-  # Set to true to deploy Kafka via Bitnami chart
-  # Set to false to use external Kafka
-  enabled: false
-
-  # External Kafka configuration (used when enabled=false)
+  # External Kafka configuration (MANDATORY)
+  # You must provide the bootstrap servers for your external Kafka cluster.
   external:
-    bootstrapServers: "kafka:29092"  # Using internal docker network alias
+    bootstrapServers: "kafka:9092"
 
-  # Common settings (used in both modes)
+  # Common settings
   topic: "reflowfy.jobs"
   groupId: "reflowfy-workers"
-
-  # Bitnami Kafka chart values (used when enabled=true)
-  # Using KRaft mode (no Zookeeper required)
-  kraft:
-    enabled: true
-  controller:
-    replicaCount: 1
-  broker:
-    replicaCount: 0  # Combined mode - controller is also broker
-  listeners:
-    client:
-      protocol: PLAINTEXT
-    controller:
-      protocol: PLAINTEXT
-    interbroker:
-      protocol: PLAINTEXT
-  persistence:
-    enabled: true
-    size: 1Gi
-  # OpenShift compatible
-  podSecurityContext:
-    enabled: false
-  containerSecurityContext:
-    enabled: false
 
 #####################################
 # REFLOWFY COMPONENTS

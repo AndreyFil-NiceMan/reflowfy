@@ -160,11 +160,18 @@ def run(
     """
     console.print(Panel("🚀 Starting Local Development Stack"))
     
+    if build:
+        console.print("🔨 Building images with --no-cache...", style="yellow")
+        try:
+            subprocess.run(["docker-compose", "build", "--no-cache"], check=True)
+            console.print("✅ Build complete", style="green")
+        except subprocess.CalledProcessError:
+            console.print("❌ Build failed", style="red")
+            raise typer.Exit(code=1)
+
     cmd = ["docker-compose", "up"]
     if detach:
         cmd.append("-d")
-    if build:
-        cmd.append("--build")
         
     try:
         subprocess.run(cmd)
@@ -191,30 +198,51 @@ def init(
     
     # Create sample pipeline
     sample_pipeline = pipelines_dir / f"{name}.py"
-    sample_pipeline.write_text(f'''"""
-{name} - A sample Reflowfy pipeline
+    try:
+        # Load template
+        template_path = get_package_path() / "templates" / "pipeline_template.py"
+        if not template_path.exists():
+             # Fallback if running in dev without install
+             template_path = Path("reflowfy/templates/pipeline_template.py")
+        
+        content = template_path.read_text()
+        
+        # Replace placeholders if any (currently just simple find/replace for class name if we wanted, 
+        # but the request asked to use the specific content. 
+        # The user's content has "SimpleTestPipeline". Let's optionally rename the class to match {name} 
+        # if {name} was camel-cased, but better to keep it simple and just write the reliable file.)
+        # If the user wants the file to be customizable, they can edit it.
+        # However, to be nice, let's update the docstring at the top.
+        
+        # Just write the file
+        sample_pipeline.write_text(content)
+        
+    except Exception as e:
+        console.print(f"⚠️  Could not load pipeline template: {e}", style="yellow")
+        # Fallback to simple string if template fails (safety net)
+        sample_pipeline.write_text(f'''
 """
-from reflowfy import Pipeline, ListSource, ConsoleDestination
+A simple Reflowfy pipeline.
+"""
+from reflowfy import AbstractPipeline, pipeline_registry
 
-@Pipeline.register("{name}")
-def {name}():
-    return Pipeline(
-        name="{name}",
-        source=ListSource(items=[
-            {{"id": 1, "name": "Item 1"}},
-            {{"id": 2, "name": "Item 2"}},
-            {{"id": 3, "name": "Item 3"}},
-        ]),
-        destination=ConsoleDestination(),
-        transformations=[
-            # Add your transformations here
-        ]
-    )
+class {name.title().replace("_", "")}(AbstractPipeline):
+    name = "{name}"
+    def define_source(self, params): return []
+    def define_destination(self, params): return []
+    def define_transformations(self, params): return []
+
+pipeline_registry.register({name.title().replace("_", "")}())
 ''')
+
     console.print(f"  ✅ Created pipeline: pipelines/{name}.py", style="green")
     
     # Create __init__.py for pipelines
-    (pipelines_dir / "__init__.py").write_text(f"from .{name} import {name}\\n")
+    # The template uses SimpleTestPipeline class. 
+    # Since we are using a fixed template, we should export THAT class.
+    # OR we can parse the file to find the class name.
+    # For now, let's assume the template exports 'SimpleTestPipeline'.
+    (pipelines_dir / "__init__.py").write_text(f"from .{name} import SimpleTestPipeline\n\n__all__ = ['SimpleTestPipeline']\n")
     console.print(f"  ✅ Created pipelines/__init__.py", style="green")
     
     # Copy Dockerfiles if not present

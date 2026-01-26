@@ -17,6 +17,7 @@ COPY pipelines/ pipelines/
 
 # Environment variables
 ENV PYTHONUNBUFFERED=1
+ENV PIPELINE_MODULE=pipelines
 
 # Create non-root user
 RUN addgroup --system --gid 1001 reflowfy && \

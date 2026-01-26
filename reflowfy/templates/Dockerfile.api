@@ -28,4 +28,4 @@ RUN addgroup --system --gid 1001 reflowfy && \
 USER reflowfy
 
 EXPOSE 8000
-CMD ["reflowfy-api"]
+CMD ["python", "-m", "reflowfy.api.app"]
