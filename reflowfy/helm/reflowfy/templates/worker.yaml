@@ -74,6 +74,19 @@ spec:
               value: {{ include "reflowfy.kafka.topic" . | quote }}
             - name: KAFKA_GROUP_ID
               value: {{ include "reflowfy.kafka.groupId" . | quote }}
+            {{- if .Values.kafka.sasl.enabled }}
+            - name: KAFKA_SECURITY_PROTOCOL
+              value: {{ .Values.kafka.sasl.securityProtocol | quote }}
+            - name: KAFKA_SASL_MECHANISM
+              value: {{ .Values.kafka.sasl.mechanism | quote }}
+            - name: KAFKA_SASL_USERNAME
+              value: {{ .Values.kafka.sasl.username | quote }}
+            - name: KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.sasl.existingSecret }}
+                  key: {{ .Values.kafka.sasl.existingSecretPasswordKey }}
+            {{- end }}
             - name: DATABASE_PASSWORD
               valueFrom:
                 secretKeyRef:

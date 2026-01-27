@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reflowfy"
-version = "0.1.21"
+version = "0.1.23"
 description = "A horizontally scalable data movement and transformation framework"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -35,7 +35,7 @@ dependencies = [
     "structlog>=23.2.0",
     "tenacity>=8.2.3",
     # Async worker dependencies
-    "aiokafka==2.2.0",
+    "aiokafka==0.12.0",
     "python-dotenv>=1.0.0",
     "asyncpg>=0.29.0",
     # CLI dependencies

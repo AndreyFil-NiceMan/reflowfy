@@ -44,6 +44,16 @@ kafka:
   external:
     bootstrapServers: "kafka:9092"
 
+  # SASL Authentication
+  sasl:
+    enabled: true
+    mechanism: "SCRAM-SHA-256"
+    securityProtocol: "SASL_PLAINTEXT"
+    username: "reflowfy"
+    # Use existingSecret to avoid storing password in values.yaml
+    existingSecret: "kafka-sasl-credentials"
+    existingSecretPasswordKey: "password"
+
   # Common settings
   topic: "reflow.jobs"
   groupId: "reflowfy-workers"
