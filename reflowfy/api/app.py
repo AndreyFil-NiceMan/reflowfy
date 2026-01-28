@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from reflowfy import __version__
 from reflowfy.core.registry import pipeline_registry
 from reflowfy.api.routes import create_pipeline_routes
 from reflowfy.api.execution import execution_tracker
@@ -80,7 +81,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Reflowfy API",
         description="Data movement and transformation framework",
-        version="0.1.0",
+        version=__version__,
     )
     
     # CORS middleware
@@ -95,7 +96,7 @@ def create_app() -> FastAPI:
     # Health check endpoint
     @app.get("/health")
     async def health_check():
-        return {"status": "healthy", "service": "reflowfy-api"}
+        return {"status": "healthy", "service": "reflowfy-api", "version": __version__}
     
     # List all pipelines
     @app.get("/pipelines")
@@ -136,6 +137,7 @@ def create_app() -> FastAPI:
 
         print("=" * 60)
         print("🚀 Starting Reflowfy API (Startup)")
+        print(f"📦 Version: {__version__}")
         print("=" * 60)
         
         # Load pipelines
@@ -224,6 +226,7 @@ def main():
     # This triggers registration via metaclass
     print("=" * 60)
     print("🚀 Starting Reflowfy API")
+    print(f"📦 Version: {__version__}")
     print("=" * 60)
     
     # Auto-discover and load pipelines

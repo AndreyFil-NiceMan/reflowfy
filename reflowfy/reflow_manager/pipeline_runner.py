@@ -2,6 +2,7 @@
 
 import time
 import uuid
+import asyncio
 from typing import Dict, Any, Optional, List, Tuple
 
 from reflowfy.reflow_manager.execution import ExecutionManager
@@ -13,6 +14,21 @@ from reflowfy.reflow_manager.dispatcher import JobDispatcher
 CHECKPOINT_BATCH_SIZE = 25  # Jobs per checkpoint batch
 CHECKPOINT_BATCH_TIMEOUT = 300  # 5 minutes timeout per batch
 CHECKPOINT_POLL_INTERVAL = 2.0  # Poll every 2 seconds
+
+
+def _run_async(coro):
+    """Run async code in sync context, handling nested event loops."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop - safe to use asyncio.run()
+        return asyncio.run(coro)
+    else:
+        # Loop is already running - run in separate thread
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            future = pool.submit(asyncio.run, coro)
+            return future.result()
 
 
 
@@ -204,12 +220,12 @@ class PipelineRunner:
             
             print(f"    Dispatching batch {current_batch_num} ({len(jobs)} jobs)...")
             
-            # Dispatch to Kafka
-            dispatched = self.dispatcher.dispatch_jobs_batch(
+            # Dispatch to Kafka (async method, run in sync context)
+            dispatched = _run_async(self.dispatcher.dispatch_jobs_batch(
                 jobs=job_payloads,
                 pipeline_name=pipeline_name,
                 rate_limit=effective_rate_limit,
-            )
+            ))
             
             # Mark jobs as dispatched
             self.job_manager.mark_jobs_dispatched(job_ids)
@@ -368,12 +384,12 @@ class PipelineRunner:
             
             print(f"    Dispatching batch {current_batch_num} ({len(jobs)} jobs)...")
             
-            # Dispatch to Kafka
-            dispatched = self.dispatcher.dispatch_jobs_batch(
+            # Dispatch to Kafka (async method, run in sync context)
+            dispatched = _run_async(self.dispatcher.dispatch_jobs_batch(
                 jobs=job_payloads,
                 pipeline_name=pipeline_name,
                 rate_limit=effective_rate_limit,
-            )
+            ))
             
             # Mark jobs as dispatched in database
             self.job_manager.mark_jobs_dispatched(job_ids)

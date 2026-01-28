@@ -37,6 +37,11 @@ class ReflowManager:
         kafka_topic: str = "reflow.jobs",
         max_jobs_per_second: float = 100.0,
         execution_mode: str = "distributed",  # "distributed" or "local"
+        # SASL Authentication
+        kafka_security_protocol: Optional[str] = None,
+        kafka_sasl_mechanism: Optional[str] = None,
+        kafka_sasl_username: Optional[str] = None,
+        kafka_sasl_password: Optional[str] = None,
     ):
         """
         Initialize ReflowManager.
@@ -47,6 +52,10 @@ class ReflowManager:
             kafka_topic: Topic for job dispatch
             max_jobs_per_second: Default global rate limit
             execution_mode: "distributed" (Kafka) or "local" (In-process)
+            kafka_security_protocol: SASL security protocol (e.g., "SASL_PLAINTEXT")
+            kafka_sasl_mechanism: SASL mechanism (e.g., "SCRAM-SHA-256")
+            kafka_sasl_username: SASL username
+            kafka_sasl_password: SASL password
         """
         self.db = db_session
         self.kafka_bootstrap_servers = kafka_bootstrap_servers
@@ -69,6 +78,10 @@ class ReflowManager:
                 kafka_bootstrap_servers,
                 kafka_topic,
                 self.rate_limiter,
+                security_protocol=kafka_security_protocol,
+                sasl_mechanism=kafka_sasl_mechanism,
+                sasl_username=kafka_sasl_username,
+                sasl_password=kafka_sasl_password,
             )
             
         self.pipeline_runner = PipelineRunner(

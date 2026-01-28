@@ -5,11 +5,13 @@ import os
 import shutil
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm
 from python_on_whales import DockerClient
 from dotenv import load_dotenv
+import reflowfy
 
 app = typer.Typer(help="Reflowfy CLI Tool for easy deployment and management.")
 console = Console()
@@ -63,11 +65,18 @@ def get_dockerfiles_path() -> Path:
     return get_package_path() / "templates"
 
 
-def _build_images(registry: str, project: str, push: bool, dry_run: bool = False) -> None:
+def _build_images(registry: str, project: str, push: bool, no_cache: bool = False, dry_run: bool = False) -> None:
     """Helper to build and optionally push images."""
-    console.print(Panel(f"Building images for registry: [bold cyan]{registry}[/bold cyan]"))
+    cache_msg = " (no-cache)" if no_cache else ""
+    console.print(Panel(f"Building images for registry: [bold cyan]{registry}[/bold cyan]{cache_msg}"))
 
-    images = ["api", "reflow-manager", "worker"]
+    # Map image names (for registry) to dockerfile names
+    # Image names match Helm chart expectations, dockerfile names match actual files
+    image_map = {
+        "reflowfy-api": "api",
+        "reflowfy-reflow-manager": "reflow-manager",
+        "reflowfy-worker": "worker",
+    }
     
     # Build context should ALWAYS be the current working directory (where user's pipelines are)
     build_context = Path(".")
@@ -77,35 +86,46 @@ def _build_images(registry: str, project: str, push: bool, dry_run: bool = False
         console.print("⚠️  No 'pipelines/' folder found in current directory.", style="yellow")
         console.print("   Make sure you're in your project root or run 'reflowfy init' first.", style="yellow")
     
-    for svc in images:
-        tag = f"{registry}/{project}/{svc}:latest"
-        dockerfile = f"Dockerfile.{svc}" 
+    for image_name, dockerfile_name in image_map.items():
+        base_image = f"{registry}/{project}/{image_name}"
+        tags = [f"{base_image}:latest"]
+        
+        # Add version tag
+        try:
+            import reflowfy
+            version = reflowfy.__version__
+            tags.append(f"{base_image}:{version}")
+        except ImportError:
+            console.print("⚠️  Could not import reflowfy to get version for tagging.", style="yellow")
+
+        dockerfile = f"Dockerfile.{dockerfile_name}" 
         
         # Get path to Dockerfiles (may be in templates if not copied locally)
         dockerfiles_path = get_dockerfiles_path()
         dockerfile_full = dockerfiles_path / dockerfile
         
-        console.print(f"📦 Building [bold]{svc}[/bold] (Dockerfile: {dockerfile_full})...", style="yellow")
+        console.print(f"📦 Building [bold]{image_name}[/bold] (Dockerfile: {dockerfile_full})...", style="yellow")
         
         if dry_run:
-             console.print(f"[Dry Run] Would build {dockerfile_full} as {tag}", style="dim")
+             console.print(f"[Dry Run] Would build {dockerfile_full} with tags: {', '.join(tags)}", style="dim")
              console.print(f"[Dry Run] Build context: {build_context.absolute()}", style="dim")
              if push:
-                 console.print(f"[Dry Run] Would push {tag}", style="dim")
+                 console.print(f"[Dry Run] Would push tags: {', '.join(tags)}", style="dim")
              continue
 
         try:
              # Use current directory as build context (where pipelines/ exists)
              # but reference the Dockerfile from templates if needed
-             docker.build(str(build_context), file=str(dockerfile_full), tags=[tag])
-             console.print(f"✅ Built [bold]{tag}[/bold]", style="green")
+             docker.build(str(build_context), file=str(dockerfile_full), tags=tags, cache=not no_cache)
+             console.print(f"✅ Built [bold]{', '.join(tags)}[/bold]", style="green")
              
              if push:
-                 console.print(f"🚀 Pushing [bold]{tag}[/bold]...", style="blue")
-                 docker.push(tag)
-                 console.print(f"✅ Pushed [bold]{tag}[/bold]", style="green")
+                 for tag in tags:
+                     console.print(f"🚀 Pushing [bold]{tag}[/bold]...", style="blue")
+                     docker.push(tag)
+                     console.print(f"✅ Pushed [bold]{tag}[/bold]", style="green")
         except Exception as e:
-            console.print(f"❌ Failed to build/push {svc}: {e}", style="red")
+            console.print(f"❌ Failed to build/push {image_name}: {e}", style="red")
             raise typer.Exit(code=1)
 
     console.print(Panel("🎉 Build & Push Complete!", style="bold green"))
@@ -115,7 +135,9 @@ def _build_images(registry: str, project: str, push: bool, dry_run: bool = False
 def build(
     registry: Optional[str] = typer.Option(None, envvar="REGISTRY", help="Private registry URL (e.g. registry.lab.local)"),
     project: Optional[str] = typer.Option(None, envvar="PROJECT", help="Project/Namespace name"),
-    push: bool = typer.Option(True, help="Push images to registry after building")
+    push: bool = typer.Option(True, help="Push images to registry after building"),
+    no_cache: bool = typer.Option(False, "--no-cache", help="Build images without using cache"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print build commands without executing")
 ):
     """
     Build and push Reflowfy images to a private registry (OpenShift Ready).
@@ -129,7 +151,7 @@ def build(
              console.print("⚠️  No .env file found in current directory.", style="yellow")
         raise typer.Exit(code=1)
 
-    _build_images(registry, project, push)
+    _build_images(registry, project, push, no_cache=no_cache, dry_run=dry_run)
 
 
 @app.command()
@@ -137,15 +159,13 @@ def deploy(
     registry: Optional[str] = typer.Option(None, envvar="REGISTRY", help="Registry where images are stored (or set REGISTRY in .env)"),
     kafka: Optional[str] = typer.Option(None, envvar="KAFKA_BOOTSTRAP_SERVERS", help="External Kafka Broker (or set KAFKA_BOOTSTRAP_SERVERS in .env)"),
     namespace: str = typer.Option(None, envvar="NAMESPACE", help="Kubernetes namespace (or set NAMESPACE in .env)"),
-    db_host: Optional[str] = typer.Option(None, envvar="DB_HOST", help="External DB Host (skip PostgreSQL deploy)"),
+    deploy_postgres: bool = typer.Option(True, envvar="DEPLOY_POSTGRES", help="Deploy PostgreSQL (set to False to use external DB)"),
     keda: bool = typer.Option(False, "--keda/--no-keda", help="Enable KEDA autoscaling for workers"),
     keda_min: int = typer.Option(0, "--keda-min", help="KEDA minimum replicas"),
     keda_max: int = typer.Option(100, "--keda-max", help="KEDA maximum replicas"),
     kafka_topic: Optional[str] = typer.Option(None, "--kafka-topic", envvar="KAFKA_TOPIC", help="Kafka topic name (or set KAFKA_TOPIC in .env)"),
     workers: int = typer.Option(1, "--workers", help="Worker replicas (when KEDA disabled)"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print Helm command without executing"),
-    build: bool = typer.Option(False, "--build", help="Build images before deploying"),
-    push: bool = typer.Option(True, "--push/--no-push", help="Push images to registry if building"),
 ):
     """
     Deploy Reflowfy to Kubernetes/OpenShift using Helm.
@@ -161,9 +181,6 @@ def deploy(
         if not Path(".env").exists():
              console.print("⚠️  No .env file found in current directory.", style="yellow")
         raise typer.Exit(code=1)
-        
-    if build:
-        _build_images(registry, namespace, push, dry_run=dry_run)
     
     if not kafka:
         console.print("❌ Kafka is required. Set --kafka or KAFKA_BOOTSTRAP_SERVERS in .env", style="red")
@@ -184,12 +201,13 @@ def deploy(
         "helm", "upgrade", "--install", "reflowfy", str(chart_path),
         "--namespace", namespace,
         # Registry configuration (include namespace in path for OpenShift format: registry/project/image)
-        "--set", f"api.image.repository={registry}/{namespace}/api",
-        "--set", f"reflowManager.image.repository={registry}/{namespace}/reflow-manager",
-        "--set", f"worker.image.repository={registry}/{namespace}/worker",
-        "--set", "api.image.tag=latest",
-        "--set", "reflowManager.image.tag=latest",
-        "--set", "worker.image.tag=latest",
+        "--set", f"api.image.repository={registry}/{namespace}/reflowfy-api",
+        "--set", f"reflowManager.image.repository={registry}/{namespace}/reflowfy-reflow-manager",
+        "--set", f"worker.image.repository={registry}/{namespace}/reflowfy-worker",
+        # Use current installed version as default tag
+        "--set", f"api.image.tag={reflowfy.__version__}",
+        "--set", f"reflowManager.image.tag={reflowfy.__version__}",
+        "--set", f"worker.image.tag={reflowfy.__version__}",
         "--set", "api.image.pullPolicy=Always",
         "--set", "reflowManager.image.pullPolicy=Always",
         "--set", "worker.image.pullPolicy=Always",
@@ -202,14 +220,30 @@ def deploy(
     ]
     
     # PostgreSQL configuration
-    if db_host:
-        cmd.extend([
-            "--set", f"postgresql.external.host={db_host}",
-            "--set", "postgresql.enabled=false"
-        ])
-    else:
+    if deploy_postgres:
         # Deploy PostgreSQL via Bitnami chart
         cmd.extend(["--set", "postgresql.enabled=true"])
+    else:
+        # Parse DATABASE_URL for external config
+        db_url = os.getenv("DATABASE_URL")
+        if not db_url:
+             console.print("❌ DATABASE_URL is required when DEPLOY_POSTGRES is false.", style="red")
+             raise typer.Exit(code=1)
+        
+        try:
+            url = urlparse(db_url)
+            console.print(f"🔗 Configuring external PostgreSQL: {url.hostname}:{url.port or 5432}", style="blue")
+            cmd.extend([
+                "--set", "postgresql.enabled=false",
+                "--set", f"postgresql.external.host={url.hostname}",
+                "--set", f"postgresql.external.port={url.port or 5432}",
+                "--set", f"postgresql.external.database={url.path.lstrip('/')}",
+                "--set", f"postgresql.external.username={url.username}",
+                "--set", f"postgresql.external.password={url.password or ''}",
+            ])
+        except Exception as e:
+            console.print(f"❌ Failed to parse DATABASE_URL: {e}", style="red")
+            raise typer.Exit(code=1)
     
     # KEDA configuration
     if keda:

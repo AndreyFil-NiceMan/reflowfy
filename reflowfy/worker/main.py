@@ -60,9 +60,11 @@ def handle_shutdown(signum, frame):
 def main():
     """Worker main entry point."""
     import asyncio
+    from reflowfy import __version__
     
     print("=" * 60)
-    print("Starting Reflowfy Worker (Async)")
+    print("🚀 Starting Reflowfy Worker (Async)")
+    print(f"📦 Version: {__version__}")
     print("=" * 60)
     
     # Register signal handlers

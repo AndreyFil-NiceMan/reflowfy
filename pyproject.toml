@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reflowfy"
-version = "0.1.23"
+dynamic = ["version"]
 description = "A horizontally scalable data movement and transformation framework"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -64,9 +64,12 @@ reflowfy-worker = "reflowfy.worker.main:main"
 where = ["."]
 include = ["reflowfy*"]
 
+[tool.setuptools.dynamic]
+version = {attr = "reflowfy.__version__"}
+
 [tool.setuptools.package-data]
 "reflowfy.helm" = ["**/*"]
-"reflowfy.templates" = ["*"]
+"reflowfy.templates" = ["*", ".env.template"]
 "reflowfy" = ["../Dockerfile.*", "../docker-compose.yml"]
 
 [tool.black]

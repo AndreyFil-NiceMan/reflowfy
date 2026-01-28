@@ -69,7 +69,7 @@ api:
   image:
     repository: image-registry.openshift-image-registry.svc:5000/kofli-dev/reflowfy-api
     tag: "latest"
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   service:
     type: NodePort
     port: 8000
@@ -89,7 +89,7 @@ reflowManager:
   image:
     repository: image-registry.openshift-image-registry.svc:5000/kofli-dev/reflowfy-reflow-manager
     tag: "latest"
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   service:
     type: NodePort
     port: 8001
@@ -112,7 +112,7 @@ worker:
   image:
     repository: image-registry.openshift-image-registry.svc:5000/kofli-dev/reflowfy-worker
     tag: "latest"
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
   resources:
     limits:
       cpu: 2000m

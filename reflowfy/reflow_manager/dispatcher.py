@@ -70,10 +70,21 @@ class KafkaDispatcher(BaseDispatcher):
         self.sasl_password = sasl_password
         
         self._producer: Optional[AIOKafkaProducer] = None
+        self._producer_loop: Optional[asyncio.AbstractEventLoop] = None
         self._started = False
     
     async def _get_producer(self) -> AIOKafkaProducer:
         """Get or create Kafka producer."""
+        loop = asyncio.get_running_loop()
+        
+        # Check if existing producer is bound to a different or closed loop
+        if self._producer and (self._producer_loop is None or self._producer_loop != loop or self._producer_loop.is_closed()):
+            print("🔄 Detected event loop change, resetting Kafka producer")
+            # We cannot strictly close() the old producer if its loop is closed, just discard it
+            self._producer = None
+            self._producer_loop = None
+            self._started = False
+
         if self._producer is None or not self._started:
             # Build producer kwargs
             producer_kwargs = {
@@ -93,6 +104,7 @@ class KafkaDispatcher(BaseDispatcher):
             
             self._producer = AIOKafkaProducer(**producer_kwargs)
             await self._producer.start()
+            self._producer_loop = loop
             self._started = True
         
         return self._producer
