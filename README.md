@@ -21,30 +21,58 @@ User Request
 API (FastAPI) ────→ ReflowManager Service (port 8001)
     │                    ↓
     │                PostgreSQL (state + checkpoints)
-    │                    ↓
-    │                Kafka Producer (rate limited) → Kafka Topic (reflow.jobs)
-    │                    ↓
-    │                Worker Pool (KEDA scaled)
-    │                    ↓
-    └─→ Execution Tracking  Destinations
+    │                    ↑                   ↓
+    │                    │               Kafka Producer (rate limited) → Kafka Topic (reflow.jobs)
+    │                    │                   ↓
+    └─→ Execution Tracking               Worker Pool (KEDA scaled)
+                                             ↓
+                                        Destinations
 ```
 
 **Components:**
-- **API**: Orchestration, job splitting, route generation
-- **ReflowManager**: Rate limiting, state management, checkpointing
-- **PostgreSQL**: Persistent state storage for executions and checkpoints
-- **Kafka**: Job queue and load balancing
-- **Workers**: Generic executors that process jobs
-- **KEDA**: Kafka lag-based autoscaling
+- **ReflowManager**: Orchestrates jobs, enforces rate limits, and tracks state.
+- **PostgreSQL**: Central source of truth for execution state and checkpoints.
+- **Kafka**: Reliable job queue for load balancing.
+- **Workers**: Consumers that process jobs and **report status directly to PostgreSQL**.
+- **KEDA**: Autoscales workers based on Kafka lag.
 
-## � Documentation
+## 🚀 Quick Start
 
-- [**Fresh Project Guide**](docs/FRESH_PROJECT_GUIDE.md): Start here to build a new project.
-- [**ReflowManager Architecture**](docs/REFLOW_MANAGER.md): Deep dive into the rate-limiting core.
-- [**OpenShift Deployment**](docs/OPENSHIFT_DEPLOYMENT.md): Enterprise deployment guide.
-- [**E2E Testing**](docs/E2E_TESTING.md): How to test your pipelines.
+Get up and running in minutes using the CLI.
 
-## �🚀 Quick Start
+### 1. Install
+```bash
+pip install reflowfy
+```
+
+### 2. Initialize Project
+Create a new project directory with a sample pipeline and Docker configuration:
+```bash
+reflowfy init my_project
+cd my_project
+```
+
+### 3. Run Locally
+Start the full stack (API, Manager, Worker, Kafka, Postgres) locally using Docker Compose:
+```bash
+# Verify everything builds
+reflowfy run --build
+
+# Run in background
+reflowfy run -d
+```
+
+### 4. Deploy
+Deploy to OpenShift/Kubernetes with a single command:
+```bash
+reflowfy deploy
+```
+
+---
+
+## 🧠 Core Concepts
+
+Reflowfy is designed to be simple yet powerful. Here is how you define pipelines manually.
 
 ### 1. Define a Custom Transformation
 
@@ -99,7 +127,7 @@ pipeline = build_pipeline(
 pipeline_registry.register(pipeline)
 ```
 
-### 3. Start the API
+### 3. Start the API manually (if not using CLI)
 
 ```python
 # In your main.py

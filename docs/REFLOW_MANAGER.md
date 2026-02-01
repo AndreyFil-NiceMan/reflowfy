@@ -6,16 +6,18 @@ ReflowManager is a standalone service that provides rate limiting, pipeline stat
 
 ## Architecture
 
+## Architecture
+
 ```
 API (FastAPI)
   ↓ HTTP
 ReflowManager Service (FastAPI on port 8001)
   ↓
 PostgreSQL (state + checkpoints)
-  ↓
-Kafka Producer (rate limited) → Kafka (reflow.jobs)
-  ↓
-Workers
+  ↑             ↓
+  │         Kafka Producer (rate limited) → Kafka (reflow.jobs)
+  │             ↓
+  └──────── Workers
 ```
 
 ## Features
