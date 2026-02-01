@@ -72,76 +72,85 @@ reflowfy deploy
 
 ## 🧠 Core Concepts
 
-Reflowfy is designed to be simple yet powerful. Here is how you define pipelines manually.
+Reflowfy uses a class-based architecture for pipelines, allowing for dynamic configuration and modular design.
 
-### 1. Define a Custom Transformation
+### 1. Create Custom Transformations
+
+Transformations are reusable units of logic that process batches of records. To create one, subclass `BaseTransformation`:
 
 ```python
 from reflowfy import BaseTransformation
 
 class XmlToJson(BaseTransformation):
-    name = "xml_to_json"
+    name = "xml_to_json"  # Unique identifier
     
     def apply(self, records, context):
-        # Your transformation logic
-        return [parse_xml(r) for r in records]
+        """
+        Process a batch of records.
+        Records are passed as a list of dictionaries (or source-specific format).
+        Return the modified list.
+        """
+        return [self._parse_xml(r) for r in records]
+
+    def _parse_xml(self, record):
+        # ... logic ...
+        return record
 ```
 
 ### 2. Build a Pipeline
 
-```python
-from reflowfy import build_pipeline, pipeline_registry
-from reflowfy import elastic_source, kafka_destination
+Pipelines connect sources, transformations, and destinations. Subclass `AbstractPipeline` to define your logic:
 
-# Configure source with runtime parameters
-source = elastic_source(
-    url="http://elasticsearch:9200",
-    index="logs-*",
-    base_query={
-        "query": {
-            "range": {
-                "@timestamp": {
-                    "gte": "{{ start_time }}",  # Runtime parameter
-                    "lte": "{{ end_time }}"
+```python
+from reflowfy import AbstractPipeline, pipeline_registry
+from reflowfy import elastic_source, kafka_destination
+from .transformations import XmlToJson
+
+class ElasticXmlPipeline(AbstractPipeline):
+    name = "elastic_xml_pipeline"
+    rate_limit = {"jobs_per_second": 50}
+
+    def define_source(self, params):
+        """
+        Define source based on runtime parameters.
+        Parameters allow you to change behavior at runtime (e.g., time ranges).
+        """
+        return elastic_source(
+            url="http://elasticsearch:9200",
+            index="logs-*",
+            base_query={
+                "query": {
+                    "range": {
+                        "@timestamp": {
+                            "gte": "{{ start_time }}",  # Jinja template support
+                            "lte": "{{ end_time }}"
+                        }
+                    }
                 }
             }
-        }
-    }
-)
+        )
 
-# Configure destination
-destination = kafka_destination(
-    bootstrap_servers="kafka:9092",
-    topic="processed-logs"
-)
+    def define_transformations(self, params):
+        """List of transformations to apply in order."""
+        return [XmlToJson()]
 
-# Build and register
-pipeline = build_pipeline(
-    name="elastic_xml_pipeline",
-    source=source,
-    transformations=[XmlToJson()],
-    destination=destination,
-    rate_limit={"jobs_per_second": 50}
-)
+    def define_destination(self, params):
+        """Define where data should go."""
+        return kafka_destination(
+            bootstrap_servers="kafka:9092",
+            topic="processed-logs"
+        )
 
-pipeline_registry.register(pipeline)
+# Register the pipeline so the worker and API can find it
+pipeline_registry.register(ElasticXmlPipeline())
 ```
 
-### 3. Start the API manually (if not using CLI)
+### 3. Run Pipeline
 
-```python
-# In your main.py
-from reflowfy.api.app import main
-import examples.xml_to_json_pipeline  # Import to trigger registration
+You can run your pipeline locally or in production via the API:
 
-if __name__ == "__main__":
-    main()
-```
-
-### 4. Execute Pipeline
-
-**Run Distributed** (async via Kafka):
 ```bash
+# Production Execution (Async via Kafka)
 curl -X POST http://localhost:8001/run \
   -H "Content-Type: application/json" \
   -d '{
@@ -151,22 +160,10 @@ curl -X POST http://localhost:8001/run \
       "end_time": "2024-01-02"
     }
   }'
-```
 
-**Dry Run** (Preview jobs without executing):
-```bash
-curl -X POST http://localhost:8001/run \
-  -H "Content-Type: application/json" \
-  -d '{
-    "pipeline_name": "elastic_xml_pipeline",
-    "runtime_params": {
-      "start_time": "2024-01-01",
-      "end_time": "2024-01-02"
-    },
-    "dry_run": true
-  }'
+# Dry Run (Preview without side effects)
+curl -X POST http://localhost:8001/run ... -d '{..., "dry_run": true}'
 ```
-*Returns a preview of the job execution plan, sample records, and configuration.*
 
 ## 📦 Installation
 
@@ -214,25 +211,41 @@ KAFKA_GROUP_ID=reflowfy-workers
 | **Distributed** | `POST /run` | Production execution | ✅ | ✅ |
 | **Dry Run** | `POST /run` (dry_run=true) | Preview/Testing | ❌ | ❌ |
 
-## 📊 Monitoring
-
-Reflowfy exposes Prometheus metrics:
-
-- `reflowfy_jobs_processed_total` - Total jobs processed
-- `reflowfy_job_processing_duration_seconds` - Job processing time
-- `reflowfy_records_processed_total` - Total records processed
-- `reflowfy_active_workers` - Active worker count
-
 ## 🐳 Kubernetes Deployment
 
-```bash
-# Deploy with Helm (using bundled charts)
-# Note: For production, we recommend using the CLI 'reflowfy deploy'
-helm install reflowfy-api ./reflowfy/helm/reflowfy-api
-helm install reflowfy-worker ./reflowfy/helm/reflowfy-worker
-```
+Reflowfy streamlines deployment to Kubernetes/OpenShift using the CLI and Helm.
 
-KEDA will automatically scale workers based on Kafka lag.
+### Deployment Concept
+
+The deployment process uses your local configuration to configure the cluster.
+
+1.  **Configuration**: The `.env` file in your project root is the source of truth. It defines connection strings (Kafka, Registry, DB). 
+2.  **CLI**: The `reflowfy deploy` command reads this config and triggers a Helm upgrade.
+
+### Deployed Objects
+
+When you run `reflowfy deploy`, the following objects are created in your namespace:
+
+*   **ReflowAPI (Deployment + Service)**: The entry point for triggering pipeline runs.
+*   **ReflowManager (Deployment + Service)**: Orchestrates job distribution and manages state.
+*   **ReflowWorker (Deployment + KEDA ScaledObject)**: The worker pool that processes jobs. KEDA automatically scales this deployment based on Kafka lag (0 to N replicas).
+*   **PostgreSQL (Optional)**: If `DEPLOY_POSTGRES=True`, a dedicated Postgres instance is deployed. Otherwise, the system connects to your external DB.
+
+### How to Deploy
+
+1.  **Configure environment**:
+    Ensure your `.env` file has the correct registry and Kafka settings.
+    ```bash
+    REGISTRY=my.registry.com
+    dataset=my-project
+    KAFKA_BOOTSTRAP_SERVERS=my-kafka:9092
+    ```
+
+2.  **Run Deploy**:
+    ```bash
+    reflowfy deploy
+    ```
+    *This will build/push images (if requested), generate the Helm values from your .env, and apply the chart.*
 
 ## 📝 License
 
