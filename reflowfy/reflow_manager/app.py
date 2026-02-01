@@ -5,6 +5,12 @@ from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, HTTPException, Depends, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from dotenv import load_dotenv
+
+# Load .env file if present
+load_dotenv()
+
+from reflowfy import __version__
 
 from reflowfy.reflow_manager.database import get_db, init_db
 from reflowfy.reflow_manager.manager import ReflowManager
@@ -26,7 +32,7 @@ from reflowfy.reflow_manager.dlq_scheduler import (
 app = FastAPI(
     title="ReflowManager",
     description="Pipeline state management and rate limiting service",
-    version="1.0.0",
+    version=__version__,
 )
 
 # CORS middleware
@@ -42,18 +48,29 @@ app.add_middleware(
 app.include_router(dlq_router)
 
 
+# Helper to get Kafka configuration from environment (including SASL)
+def _get_kafka_config() -> dict:
+    """Get Kafka configuration from environment variables."""
+    return {
+        "kafka_bootstrap_servers": os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
+        "kafka_topic": os.getenv("KAFKA_TOPIC", "reflow.jobs"),
+        "max_jobs_per_second": float(os.getenv("MAX_JOBS_PER_SECOND", "100")),
+        # SASL Authentication (set by Helm chart)
+        "kafka_security_protocol": os.getenv("KAFKA_SECURITY_PROTOCOL"),
+        "kafka_sasl_mechanism": os.getenv("KAFKA_SASL_MECHANISM"),
+        "kafka_sasl_username": os.getenv("KAFKA_SASL_USERNAME"),
+        "kafka_sasl_password": os.getenv("KAFKA_SASL_PASSWORD"),
+    }
+
+
 # Dependency to get ReflowManager instance
 def get_reflow_manager(db: Session = Depends(get_db)) -> ReflowManager:
     """Get ReflowManager instance with database session."""
-    kafka_bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-    kafka_topic = os.getenv("KAFKA_TOPIC", "reflow.jobs")
-    max_jobs_per_second = float(os.getenv("MAX_JOBS_PER_SECOND", "100"))
+    config = _get_kafka_config()
     
     return ReflowManager(
         db_session=db,
-        kafka_bootstrap_servers=kafka_bootstrap_servers,
-        kafka_topic=kafka_topic,
-        max_jobs_per_second=max_jobs_per_second,
+        **config,
     )
 
 
@@ -65,6 +82,7 @@ async def health_check():
     return {
         "status": "healthy",
         "service": "reflow-manager",
+        "version": __version__,
     }
 
 
@@ -206,16 +224,12 @@ async def run_pipeline(
             )
         
         # Get ReflowManager config from environment
-        kafka_bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-        kafka_topic = os.getenv("KAFKA_TOPIC", "reflow.jobs")
-        max_jobs_per_second = float(os.getenv("MAX_JOBS_PER_SECOND", "100"))
+        config = _get_kafka_config()
         
         # Create initial execution record (pending state)
         manager = ReflowManager(
             db_session=db,
-            kafka_bootstrap_servers=kafka_bootstrap_servers,
-            kafka_topic=kafka_topic,
-            max_jobs_per_second=max_jobs_per_second,
+            **config,
         )
         
         execution = manager.create_execution(
@@ -346,15 +360,11 @@ def _dispatch_pipeline_jobs(
     db = SessionLocal()
     
     try:
-        kafka_bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-        kafka_topic = os.getenv("KAFKA_TOPIC", "reflow.jobs")
-        max_jobs_per_second = float(os.getenv("MAX_JOBS_PER_SECOND", "100"))
+        config = _get_kafka_config()
         
         manager = ReflowManager(
             db_session=db,
-            kafka_bootstrap_servers=kafka_bootstrap_servers,
-            kafka_topic=kafka_topic,
-            max_jobs_per_second=max_jobs_per_second,
+            **config,
         )
         
         # Run the pipeline (this updates the existing execution record)
@@ -408,7 +418,10 @@ async def startup_event():
     import pkgutil
     from pathlib import Path
     
+    print("=" * 60)
     print("🚀 Starting ReflowManager service...")
+    print(f"📦 Version: {__version__}")
+    print("=" * 60)
     
     # Initialize database
     print("Initializing database...")
@@ -455,14 +468,10 @@ async def startup_event():
         def pipeline_runner_factory():
             from reflowfy.reflow_manager.database import SessionLocal
             db = SessionLocal()
-            kafka_bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-            kafka_topic = os.getenv("KAFKA_TOPIC", "reflow.jobs")
-            max_jobs_per_second = float(os.getenv("MAX_JOBS_PER_SECOND", "100"))
+            config = _get_kafka_config()
             manager = ReflowManager(
                 db_session=db,
-                kafka_bootstrap_servers=kafka_bootstrap_servers,
-                kafka_topic=kafka_topic,
-                max_jobs_per_second=max_jobs_per_second,
+                **config,
             )
             return manager.pipeline_runner
         
@@ -479,15 +488,11 @@ async def _recover_interrupted_executions():
     
     db = SessionLocal()
     try:
-        kafka_bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-        kafka_topic = os.getenv("KAFKA_TOPIC", "reflow.jobs")
-        max_jobs_per_second = float(os.getenv("MAX_JOBS_PER_SECOND", "100"))
+        config = _get_kafka_config()
         
         manager = ReflowManager(
             db_session=db,
-            kafka_bootstrap_servers=kafka_bootstrap_servers,
-            kafka_topic=kafka_topic,
-            max_jobs_per_second=max_jobs_per_second,
+            **config,
         )
         
         # Find interrupted executions
@@ -521,15 +526,11 @@ def _resume_execution_sync(execution_id: str):
     
     db = SessionLocal()
     try:
-        kafka_bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-        kafka_topic = os.getenv("KAFKA_TOPIC", "reflow.jobs")
-        max_jobs_per_second = float(os.getenv("MAX_JOBS_PER_SECOND", "100"))
+        config = _get_kafka_config()
         
         manager = ReflowManager(
             db_session=db,
-            kafka_bootstrap_servers=kafka_bootstrap_servers,
-            kafka_topic=kafka_topic,
-            max_jobs_per_second=max_jobs_per_second,
+            **config,
         )
         
         manager.pipeline_runner.resume_execution(execution_id)

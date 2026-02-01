@@ -1,0 +1,15 @@
+include README.md
+include LICENSE
+include pyproject.toml
+
+# Include Helm charts
+recursive-include reflowfy/helm *
+
+# Include templates (including .env.template)
+recursive-include reflowfy/templates *
+include reflowfy/templates/.env.template
+
+# Include Dockerfiles
+include Dockerfile.*
+include docker-compose.yml
+include docker-compose.*.yml

@@ -1,0 +1,33 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaUser
+metadata:
+  name: reflowfy
+  namespace: kofli-dev
+  labels:
+    strimzi.io/cluster: reflowfy-kafka
+spec:
+  authentication:
+    type: scram-sha-256
+  authorization:
+    type: simple
+    acls:
+      # Allow read/write to reflowfy topics
+      - resource:
+          type: topic
+          name: reflow
+          patternType: prefix
+        operations:
+          - Read
+          - Write
+          - Create
+          - Describe
+        host: "*"
+      # Allow consumer group access
+      - resource:
+          type: group
+          name: reflowfy
+          patternType: prefix
+        operations:
+          - Read
+          - Describe
+        host: "*"

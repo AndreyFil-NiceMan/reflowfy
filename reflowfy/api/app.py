@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from reflowfy import __version__
 from reflowfy.core.registry import pipeline_registry
 from reflowfy.api.routes import create_pipeline_routes
 from reflowfy.api.execution import execution_tracker
@@ -25,6 +26,12 @@ def discover_and_load_pipelines(module_name: str = "pipelines") -> int:
     """
     loaded_count = 0
     
+    # Ensure current directory is in sys.path
+    import sys
+    cwd = os.getcwd()
+    if cwd not in sys.path:
+        sys.path.insert(0, cwd)
+    
     try:
         # Try to import the pipelines package
         pipelines_package = importlib.import_module(module_name)
@@ -42,14 +49,24 @@ def discover_and_load_pipelines(module_name: str = "pipelines") -> int:
                     loaded_count += 1
                 except Exception as e:
                     print(f"  ✗ Failed to load {module_name_inner}.py: {e}")
+                    import traceback
+                    traceback.print_exc()
         
         if loaded_count == 0:
             print(f"  ⚠️  No pipeline files found in '{module_name}'")
         else:
             print(f"  ✓ Loaded {loaded_count} pipeline file(s)")
             
-    except ImportError:
-        print(f"  ⚠️  Module '{module_name}' not found - no pipelines loaded")
+    except ImportError as e:
+        print(f"  ⚠️  Module '{module_name}' not found - no pipelines loaded: {e}")
+        import traceback
+        traceback.print_exc()
+        print(f"  ℹ️  sys.path: {sys.path}")
+        print(f"  ℹ️  CWD: {cwd}")
+        try:
+             print(f"  ℹ️  Contents of CWD: {os.listdir(cwd)}")
+        except:
+             pass
     
     return loaded_count
 
@@ -64,7 +81,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Reflowfy API",
         description="Data movement and transformation framework",
-        version="0.1.0",
+        version=__version__,
     )
     
     # CORS middleware
@@ -79,7 +96,7 @@ def create_app() -> FastAPI:
     # Health check endpoint
     @app.get("/health")
     async def health_check():
-        return {"status": "healthy", "service": "reflowfy-api"}
+        return {"status": "healthy", "service": "reflowfy-api", "version": __version__}
     
     # List all pipelines
     @app.get("/pipelines")
@@ -110,6 +127,52 @@ def create_app() -> FastAPI:
         
         return status.to_dict()
     
+    # Startup event to load pipelines
+    @app.on_event("startup")
+    async def startup_event():
+        """Initialize pipelines on startup."""
+        import importlib
+        import pkgutil
+        from pathlib import Path
+
+        print("=" * 60)
+        print("🚀 Starting Reflowfy API (Startup)")
+        print(f"📦 Version: {__version__}")
+        print("=" * 60)
+        
+        # Load pipelines
+        pipeline_module = os.getenv("PIPELINE_MODULE", "pipelines")
+        print(f"\n📂 Discovering pipelines in '{pipeline_module}'...")
+        
+        try:
+            pipelines_package = importlib.import_module(pipeline_module)
+            package_path = Path(pipelines_package.__file__).parent
+            
+            loaded_count = 0
+            for _, module_name, is_pkg in pkgutil.iter_modules([str(package_path)]):
+                if not is_pkg:
+                    try:
+                        full_module = f"{pipeline_module}.{module_name}"
+                        importlib.import_module(full_module)
+                        print(f"  ✓ Loaded {module_name}.py")
+                        loaded_count += 1
+                    except Exception as e:
+                        print(f"  ✗ Failed to load {module_name}.py: {e}")
+            
+            if loaded_count == 0:
+                print(f"  ⚠️  No pipeline files found in '{pipeline_module}'")
+            else:
+                print(f"  ✓ Loaded {loaded_count} pipeline file(s)")
+                
+        except ImportError as e:
+            print(f"  ⚠️  Module '{pipeline_module}' not found - no pipelines loaded: {e}")
+            # Try to print sys.path to help debug
+            import sys
+            print(f"  ℹ️  sys.path: {sys.path}")
+        
+        # Setup routes after pipelines are registered
+        setup_pipeline_routes(app)
+
     return app
 
 
@@ -163,6 +226,7 @@ def main():
     # This triggers registration via metaclass
     print("=" * 60)
     print("🚀 Starting Reflowfy API")
+    print(f"📦 Version: {__version__}")
     print("=" * 60)
     
     # Auto-discover and load pipelines

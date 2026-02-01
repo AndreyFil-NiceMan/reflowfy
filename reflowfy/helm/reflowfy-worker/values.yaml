@@ -1,0 +1,64 @@
+replicaCount: 1
+
+image:
+  repository: reflowfy-worker
+  pullPolicy: IfNotPresent
+  tag: "local"
+
+resources:
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+# Kafka configuration
+kafka:
+  bootstrapServers: "kafka:9092"
+  topic: "reflow.jobs"
+  groupId: "reflowfy-workers"
+
+# PostgreSQL configuration (for job status updates)
+postgresql:
+  host: "postgresql"
+  port: 5432
+  database: "reflowfy"
+  username: "reflowfy"
+  password: "reflowfy"
+  existingSecret: ""
+  existingSecretPasswordKey: "password"
+
+# Pipeline module to import
+pipelineModule: "pipelines"
+
+# KEDA autoscaling
+keda:
+  enabled: false
+  minReplicaCount: 0
+  maxReplicaCount: 100
+  pollingInterval: 10
+  cooldownPeriod: 60
+  lagThreshold: 10
+
+# Pod security context (OpenShift compatible)
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
+
+env: []
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+

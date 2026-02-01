@@ -37,7 +37,14 @@ API (FastAPI) ────→ ReflowManager Service (port 8001)
 - **Workers**: Generic executors that process jobs
 - **KEDA**: Kafka lag-based autoscaling
 
-## 🚀 Quick Start
+## � Documentation
+
+- [**Fresh Project Guide**](docs/FRESH_PROJECT_GUIDE.md): Start here to build a new project.
+- [**ReflowManager Architecture**](docs/REFLOW_MANAGER.md): Deep dive into the rate-limiting core.
+- [**OpenShift Deployment**](docs/OPENSHIFT_DEPLOYMENT.md): Enterprise deployment guide.
+- [**E2E Testing**](docs/E2E_TESTING.md): How to test your pipelines.
+
+## �🚀 Quick Start
 
 ### 1. Define a Custom Transformation
 
@@ -191,9 +198,10 @@ Reflowfy exposes Prometheus metrics:
 ## 🐳 Kubernetes Deployment
 
 ```bash
-# Deploy with Helm
-helm install reflowfy-api ./helm/reflowfy-api
-helm install reflowfy-worker ./helm/reflowfy-worker
+# Deploy with Helm (using bundled charts)
+# Note: For production, we recommend using the CLI 'reflowfy deploy'
+helm install reflowfy-api ./reflowfy/helm/reflowfy-api
+helm install reflowfy-worker ./reflowfy/helm/reflowfy-worker
 ```
 
 KEDA will automatically scale workers based on Kafka lag.

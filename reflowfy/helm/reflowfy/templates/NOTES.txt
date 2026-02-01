@@ -1,0 +1,64 @@
+
+=======================================================
+  Reflowfy has been installed!
+=======================================================
+
+{{- if .Values.postgresql.enabled }}
+PostgreSQL: Deployed (internal)
+  Host: {{ .Release.Name }}-postgresql
+  Port: 5432
+  Database: {{ .Values.postgresql.auth.database }}
+{{- else }}
+PostgreSQL: External
+  Host: {{ .Values.postgresql.external.host }}
+  Port: {{ .Values.postgresql.external.port }}
+{{- end }}
+
+{{- if .Values.kafka.enabled }}
+Kafka: Deployed (internal)
+  Bootstrap Servers: {{ .Release.Name }}-kafka:9092
+{{- else }}
+Kafka: External
+  Bootstrap Servers: {{ .Values.kafka.external.bootstrapServers }}
+{{- end }}
+
+Topic: {{ include "reflowfy.kafka.topic" . }}
+
+-------------------------------------------------------
+SERVICES:
+-------------------------------------------------------
+{{- if .Values.api.enabled }}
+API:
+  kubectl port-forward svc/{{ .Release.Name }}-api {{ .Values.api.service.port }}:{{ .Values.api.service.port }}
+  Then access: http://localhost:{{ .Values.api.service.port }}
+{{- end }}
+
+{{- if .Values.reflowManager.enabled }}
+ReflowManager:
+  kubectl port-forward svc/{{ .Release.Name }}-reflow-manager {{ .Values.reflowManager.service.port }}:{{ .Values.reflowManager.service.port }}
+  Then access: http://localhost:{{ .Values.reflowManager.service.port }}
+  API Docs: http://localhost:{{ .Values.reflowManager.service.port }}/docs
+{{- end }}
+
+-------------------------------------------------------
+VERIFICATION:
+-------------------------------------------------------
+1. Check all pods are running:
+   kubectl get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+2. Check API health:
+   kubectl port-forward svc/{{ .Release.Name }}-api 8000:8000 &
+   curl http://localhost:8000/health
+
+3. Check ReflowManager health:
+   kubectl port-forward svc/{{ .Release.Name }}-reflow-manager 8001:8001 &
+   curl http://localhost:8001/health
+
+-------------------------------------------------------
+RUN A TEST PIPELINE:
+-------------------------------------------------------
+curl -X POST http://localhost:8001/run \
+  -H "Content-Type: application/json" \
+  -d '{"pipeline_name": "simple_test_pipeline"}'
+
+For more information, see: GETTING_STARTED.md

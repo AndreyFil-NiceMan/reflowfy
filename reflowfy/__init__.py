@@ -18,7 +18,7 @@ from reflowfy.destinations.kafka import kafka_destination
 from reflowfy.destinations.http import http_destination
 from reflowfy.destinations.console import console_destination
 
-__version__ = "0.2.0"
+__version__ = "0.1.34"
 
 __all__ = [
     "AbstractPipeline",

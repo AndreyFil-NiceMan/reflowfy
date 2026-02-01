@@ -33,5 +33,12 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
 # Expose port
 EXPOSE 8001
 
+# Create non-root user
+RUN addgroup --system --gid 1001 reflowfy && \
+    adduser --system --uid 1001 --gid 1001 --no-create-home reflowfy
+
+# Use non-root user
+USER reflowfy
+
 # Start ReflowManager service
 CMD ["python", "-m", "reflowfy.reflow_manager.app"]

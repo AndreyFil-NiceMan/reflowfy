@@ -1,5 +1,3 @@
-"""
-Pipelines directory - Place your pipeline definitions here.
+from .my_pipeline import SimpleTestPipeline
 
-All .py files in this directory will be automatically imported by the API.
-"""
+__all__ = ['SimpleTestPipeline']
