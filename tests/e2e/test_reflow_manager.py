@@ -113,32 +113,41 @@ class TestCrashRecovery:
         import subprocess
         
         # 1. Start pipeline with slow rate limit to allow time for restart
-        # 100 items / 10 batch_size = 10 batches. 
-        # 1 job/sec = 10+ seconds execution time.
+        # crash_recovery_test pipeline has 500 items / 10 batch_size = 50 jobs.
+        # Using 0.5 jobs/sec = ~100 seconds total execution time
         response = client.post("/run", json={
-            "pipeline_name": "e2e_http_dest_test",
-            "rate_limit": 1.0, 
+            "pipeline_name": "crash_recovery_test",
+            "rate_limit": 0.5,  # Slow - 1 job every 2 seconds
         })
         
         assert response.status_code == 202
         execution_id = response.json()["execution_id"]
         
-        # 2. Wait for it to be running and process at least one job
-        max_wait = 10
+        # 2. Wait for it to be running with jobs dispatched
+        # We want to restart mid-execution to test recovery
+        max_wait = 20
         start = time.time()
-        running = False
+        can_proceed = False
+        pipeline_state = None
         
         while time.time() - start < max_wait:
             time.sleep(1)
             try:
                 stats = client.get(f"/executions/{execution_id}/stats").json()
-                if stats["state"] == "running" and stats["jobs_completed"] > 0:
-                    running = True
+                pipeline_state = stats.get("state")
+                jobs_dispatched = stats.get("jobs_dispatched", 0)
+                jobs_completed = stats.get("jobs_completed", 0)
+                print(f"  [DEBUG] Stats: state={pipeline_state}, completed={jobs_completed}, dispatched={jobs_dispatched}, total={stats.get('total_jobs')}")
+                
+                # Proceed when running with at least some jobs dispatched
+                if pipeline_state == "running" and jobs_dispatched > 0:
+                    can_proceed = True
                     break
-            except Exception:
+            except Exception as e:
+                print(f"  [DEBUG] Stats error: {e}")
                 pass
                 
-        assert running, "Pipeline did not start running or process jobs in time"
+        assert can_proceed, f"Pipeline did not reach running state with dispatched jobs (last state: {pipeline_state})"
         
         print(f"\n⚡ Restarting ReflowManager (simulating crash)...")
         
@@ -170,8 +179,8 @@ class TestCrashRecovery:
         print("✅ ReflowManager recovered!")
         
         # 5. Verify pipeline completes
-        # It might take a moment to resume
-        max_wait = 60
+        # With 50 jobs at 0.5/sec, completion takes up to 100+ seconds after restart
+        max_wait = 180
         start = time.time()
         final_state = None
         

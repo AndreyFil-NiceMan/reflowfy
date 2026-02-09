@@ -64,8 +64,7 @@ def get_dockerfiles_path() -> Path:
     # Priority 2: Templates bundled in package (Production/Init mode)
     return get_package_path() / "templates"
 
-
-def _build_images(registry: str, project: str, push: bool, no_cache: bool = False, dry_run: bool = False) -> None:
+def _build_images(registry: str, project: str, push: bool, no_cache: bool = False) -> None:
     """Helper to build and optionally push images."""
     cache_msg = " (no-cache)" if no_cache else ""
     console.print(Panel(f"Building images for registry: [bold cyan]{registry}[/bold cyan]{cache_msg}"))
@@ -105,13 +104,6 @@ def _build_images(registry: str, project: str, push: bool, no_cache: bool = Fals
         dockerfile_full = dockerfiles_path / dockerfile
         
         console.print(f"📦 Building [bold]{image_name}[/bold] (Dockerfile: {dockerfile_full})...", style="yellow")
-        
-        if dry_run:
-             console.print(f"[Dry Run] Would build {dockerfile_full} with tags: {', '.join(tags)}", style="dim")
-             console.print(f"[Dry Run] Build context: {build_context.absolute()}", style="dim")
-             if push:
-                 console.print(f"[Dry Run] Would push tags: {', '.join(tags)}", style="dim")
-             continue
 
         try:
              # Use current directory as build context (where pipelines/ exists)
@@ -130,14 +122,12 @@ def _build_images(registry: str, project: str, push: bool, no_cache: bool = Fals
 
     console.print(Panel("🎉 Build & Push Complete!", style="bold green"))
 
-
 @app.command()
 def build(
     registry: Optional[str] = typer.Option(None, envvar="REGISTRY", help="Private registry URL (e.g. registry.lab.local)"),
     project: Optional[str] = typer.Option(None, envvar="PROJECT", help="Project/Namespace name"),
     push: bool = typer.Option(True, help="Push images to registry after building"),
     no_cache: bool = typer.Option(False, "--no-cache", help="Build images without using cache"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Print build commands without executing")
 ):
     """
     Build and push Reflowfy images to a private registry (OpenShift Ready).
@@ -150,8 +140,7 @@ def build(
         if not Path(".env").exists():
              console.print("⚠️  No .env file found in current directory.", style="yellow")
         raise typer.Exit(code=1)
-
-    _build_images(registry, project, push, no_cache=no_cache, dry_run=dry_run)
+    _build_images(registry, project, push, no_cache=no_cache)
 
 
 @app.command()
@@ -165,7 +154,6 @@ def deploy(
     keda_max: int = typer.Option(100, "--keda-max", help="KEDA maximum replicas"),
     kafka_topic: Optional[str] = typer.Option(None, "--kafka-topic", envvar="KAFKA_TOPIC", help="Kafka topic name (or set KAFKA_TOPIC in .env)"),
     workers: int = typer.Option(1, "--workers", help="Worker replicas (when KEDA disabled)"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Print Helm command without executing"),
 ):
     """
     Deploy Reflowfy to Kubernetes/OpenShift using Helm.
@@ -259,12 +247,8 @@ def deploy(
         ])
 
     # Display command
-    console.print("\n� [bold]Helm Command:[/bold]")
+    console.print("\n📋 [bold]Helm Command:[/bold]")
     console.print(" \\\n  ".join(cmd), style="cyan")
-    
-    if dry_run:
-        console.print("\n⚠️  [yellow]Dry-run mode - command not executed[/yellow]")
-        return
     
     console.print(f"\n🔧 Running Helm upgrade...", style="yellow")
     try:

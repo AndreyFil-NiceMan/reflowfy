@@ -55,6 +55,8 @@ def _get_kafka_config() -> dict:
         "kafka_bootstrap_servers": os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
         "kafka_topic": os.getenv("KAFKA_TOPIC", "reflow.jobs"),
         "max_jobs_per_second": float(os.getenv("MAX_JOBS_PER_SECOND", "100")),
+        # Execution mode: "distributed" (Kafka) or "local" (in-process)
+        "execution_mode": os.getenv("EXECUTION_MODE", "distributed"),
         # SASL Authentication (set by Helm chart)
         "kafka_security_protocol": os.getenv("KAFKA_SECURITY_PROTOCOL"),
         "kafka_sasl_mechanism": os.getenv("KAFKA_SASL_MECHANISM"),
@@ -215,14 +217,6 @@ async def run_pipeline(
                 detail=f"Pipeline '{request.pipeline_name}' not found in registry",
             )
         
-        # Handle dry run mode - preview without execution
-        if request.dry_run:
-            return await _handle_dry_run(
-                pipeline=pipeline,
-                pipeline_name=request.pipeline_name,
-                runtime_params=request.runtime_params or {},
-            )
-        
         # Get ReflowManager config from environment
         config = _get_kafka_config()
         
@@ -265,85 +259,6 @@ async def run_pipeline(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to start pipeline: {str(e)}",
-        )
-
-
-async def _handle_dry_run(
-    pipeline,
-    pipeline_name: str,
-    runtime_params: dict,
-):
-    """
-    Handle dry run mode - preview jobs without executing.
-    
-    Returns sample of what would be processed, including:
-    - Estimated job count
-    - Sample records from source
-    - Transformations to apply
-    - Destination configuration
-    """
-    try:
-        # Resolve pipeline with runtime params
-        pipeline.resolve(runtime_params)
-        
-        # Get source and sample records
-        source = pipeline.source
-        sample_records = []
-        estimated_jobs = 0
-        
-        # Try to fetch a sample (first page)
-        try:
-            if hasattr(source, 'fetch'):
-                sample_records = source.fetch(limit=5)
-            elif hasattr(source, 'split_jobs'):
-                jobs = source.split_jobs(runtime_params)
-                estimated_jobs = len(jobs) if hasattr(jobs, '__len__') else "unknown"
-                # Get first job's records as sample
-                if jobs:
-                    first_job = jobs[0] if isinstance(jobs, list) else next(iter(jobs), None)
-                    if first_job and 'records' in first_job:
-                        sample_records = first_job['records'][:5]
-        except Exception as e:
-            sample_records = [{"error": f"Could not fetch sample: {str(e)}"}]
-        
-        # Get transformation info
-        transformations = [
-            {"name": t.name, "description": getattr(t, 'description', '')}
-            for t in pipeline.transformations
-        ]
-        
-        # Get destination info (redact sensitive config)
-        dest = pipeline.destination
-        dest_type = type(dest).__name__
-        dest_config = {}
-        if hasattr(dest, 'config'):
-            # Redact sensitive fields
-            for key, value in dest.config.items():
-                if any(s in key.lower() for s in ['password', 'secret', 'token', 'key']):
-                    dest_config[key] = "***REDACTED***"
-                else:
-                    dest_config[key] = value
-        
-        return {
-            "dry_run": True,
-            "pipeline_name": pipeline_name,
-            "runtime_params": runtime_params,
-            "estimated_jobs": estimated_jobs,
-            "sample_records": sample_records,
-            "transformations": transformations,
-            "destination": {
-                "type": dest_type,
-                "config": dest_config,
-            },
-            "message": "Dry run complete. No jobs were dispatched.",
-        }
-    
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Dry run failed: {str(e)}",
         )
 
 
@@ -398,15 +313,25 @@ async def get_execution_stats(
     manager: ReflowManager = Depends(get_reflow_manager),
 ):
     """Get detailed execution statistics."""
-    stats = manager.get_execution_stats(execution_id)
-    
-    if not stats:
+    try:
+        stats = manager.get_execution_stats(execution_id)
+        
+        if not stats:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Execution '{execution_id}' not found",
+            )
+        
+        return stats
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Execution '{execution_id}' not found",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching execution stats: {str(e)}",
         )
-    
-    return stats
 
 
 
@@ -428,31 +353,11 @@ async def startup_event():
     init_db()
     print("✓ Database initialized")
     
-    # Load pipelines
+    # Load pipelines using global discovery
+    from reflowfy.core.pipeline_discovery import discover_and_load_pipelines
     pipeline_module = os.getenv("PIPELINE_MODULE", "pipelines")
-    print(f"\n📂 Discovering pipelines in '{pipeline_module}'...")
-    
-    try:
-        pipelines_package = importlib.import_module(pipeline_module)
-        package_path = Path(pipelines_package.__file__).parent
-        
-        loaded_count = 0
-        for _, module_name, is_pkg in pkgutil.iter_modules([str(package_path)]):
-            if not is_pkg:
-                try:
-                    full_module = f"{pipeline_module}.{module_name}"
-                    importlib.import_module(full_module)
-                    print(f"  ✓ Loaded {module_name}.py")
-                    loaded_count += 1
-                except Exception as e:
-                    print(f"  ✗ Failed to load {module_name}.py: {e}")
-        
-        if loaded_count == 0:
-            print(f"  ⚠️  No pipeline files found in '{pipeline_module}'")
-        else:
-            print(f"  ✓ Loaded {loaded_count} pipeline file(s)")
-    except ImportError:
-        print(f"  ⚠️  Module '{pipeline_module}' not found - no pipelines loaded")
+    print(f"\n📂 Loading pipelines from '{pipeline_module}'...")
+    loaded_count = discover_and_load_pipelines(pipeline_module)
     
     print(f"\n✓ Kafka: {os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092')}")
     print(f"✓ Topic: {os.getenv('KAFKA_TOPIC', 'reflow.jobs')}")

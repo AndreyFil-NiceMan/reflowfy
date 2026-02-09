@@ -1,0 +1,86 @@
+# E2E Test Infrastructure
+# This compose file provides test dependencies (elasticsearch, mock servers)
+# Used alongside the generated docker-compose.yml from reflowfy init
+#
+# Usage: docker-compose -f docker-compose.e2e-infra.yml up -d
+networks:
+  reflowfy-network:
+    name: e2e_workspace_reflowfy-network
+    external: true
+
+services:
+  # ============================================================================
+  # Elasticsearch (for Elastic Source Tests)
+  # ============================================================================
+
+  e2e-elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: reflofy-e2e-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - cluster.name=reflofy-e2e-cluster
+      - node.name=reflofy-e2e-node
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - xpack.security.enabled=false
+      - xpack.security.enrollment.enabled=false
+      - network.host=0.0.0.0
+    ports:
+      - "9201:9200"
+      - "9301:9300"
+    networks:
+      - reflowfy-network
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    volumes:
+      - e2e-elasticsearch-data:/usr/share/elasticsearch/data
+
+  # ============================================================================
+  # Mock HTTP Server for HTTP Destination Tests
+  # ============================================================================
+
+  e2e-mock-http:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: reflofy-e2e-mock-http
+    command: python -m tests.e2e.destinations.mock_http_server
+    ports:
+      - "8091:8091"
+    volumes:
+      - ./tests:/app/tests:ro
+    networks:
+      - reflowfy-network
+    healthcheck:
+      test: [ "CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8091/health')\" || exit 1" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
+  # Mock API Server for API Source Tests
+  # ============================================================================
+
+  e2e-mock-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: reflofy-e2e-mock-api
+    command: python -m uvicorn tests.e2e.sources.mock_api_server:app --host 0.0.0.0 --port 8092
+    ports:
+      - "8092:8092"
+    volumes:
+      - ./tests:/app/tests:ro
+    networks:
+      - reflowfy-network
+    healthcheck:
+      test: [ "CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8092/health')\" || exit 1" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  e2e-elasticsearch-data:

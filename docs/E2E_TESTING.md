@@ -15,6 +15,14 @@ This guide covers how to run end-to-end tests for the Reflofy framework, includi
 ./scripts/run_e2e_tests.sh destinations
 ```
 
+This script will:
+1. Build the Reflowfy package.
+2. Install the package in the current environment (or venv).
+3. Initialize a temporary test workspace.
+4. Start all services using `reflowfy run --build`.
+5. Run the tests.
+6. Cleanup the workspace and build artifacts.
+
 ## Test Structure
 
 ```
@@ -42,52 +50,37 @@ tests/e2e/
 
 ## Prerequisites
 
-### Option 1: Use the Test Runner (Recommended)
-
-The test runner script handles everything:
+The E2E tests run in an isolated workspace using the Reflowfy CLI. To run them manually without the script (for debugging):
 
 ```bash
-./scripts/run_e2e_tests.sh
+# 1. Build and install package
+python3 -m build
+pip install dist/*.whl
+
+# 2. Create workspace
+mkdir -p e2e_workspace && cd e2e_workspace
+
+# 3. Initialize project
+reflowfy init . --name e2e_pipeline
+
+# 4. Copy wheel and patch Dockerfiles
+cp ../dist/*.whl .
+WHEEL=$(basename ../dist/*.whl)
+for f in Dockerfile.api Dockerfile.reflow-manager Dockerfile.worker; do
+  sed -i "s|RUN pip install --no-cache-dir reflowfy|COPY $WHEEL /tmp/$WHEEL\nRUN pip install --no-cache-dir /tmp/$WHEEL|" $f
+done
+
+# 5. Copy E2E config and pipelines
+cp ../docker-compose.e2e.yml docker-compose.yml
+cp -r ../tests .
+cp -r ../tests/e2e/test_pipelines/* pipelines/
+
+# 6. Run services
+reflowfy run --build
+
+# 7. Run tests (from project root)
+cd .. && pytest tests/e2e
 ```
-
-### Option 2: Manual Setup
-
-1. **Start Docker Compose services:**
-   ```bash
-   docker-compose -f docker-compose.e2e.yml up -d
-   ```
-
-2. **Wait for services to be healthy:**
-   ```bash
-   # Check PostgreSQL
-   docker-compose -f docker-compose.e2e.yml exec e2e-postgres pg_isready
-   
-   # Check Elasticsearch
-   curl http://localhost:9201/_cluster/health
-   
-   # Check ReflowManager
-   curl http://localhost:8002/health
-   ```
-
-3. **Initialize test data:**
-   ```bash
-   python -m tests.e2e.sources.init_sql_test_data
-   python -m tests.e2e.sources.init_elastic_test_data
-   ```
-
-4. **Start mock servers (in separate terminals):**
-   ```bash
-   # Mock API server (for API source tests)
-   python -m tests.e2e.sources.mock_api_server
-   
-   # Mock HTTP server (for HTTP destination tests)
-   python -m tests.e2e.destinations.mock_http_server
-   ```
-
-5. **Run tests:**
-   ```bash
-   pytest tests/e2e/ -v
-   ```
 
 ## Service Ports
 
@@ -98,7 +91,7 @@ The test runner script handles everything:
 | Kafka (E2E) | 9094 | Kafka broker |
 | ReflowManager (E2E) | 8002 | Pipeline manager |
 | Kafka UI (debug) | 8081 | Kafka monitoring |
-| Mock API Server | 8090 | For API source tests |
+| Mock API Server | 8092 | For API source tests |
 | Mock HTTP Server | 8091 | For HTTP destination tests |
 
 ## Running Individual Tests
@@ -120,88 +113,14 @@ pytest tests/e2e/destinations/test_http_destination.py -v
 pytest tests/e2e/destinations/test_kafka_destination.py -v
 ```
 
-## Adding New Tests
-
-### Adding a New Source Test
-
-1. **Create the test pipeline** in `tests/e2e/test_pipelines/`:
-   ```python
-   # my_source_test_pipeline.py
-   from reflowfy import build_pipeline, pipeline_registry
-   from reflowfy.destinations.console import console_destination
-   
-   source = my_source(...)  # Your source configuration
-   destination = console_destination()
-   
-   pipeline = build_pipeline(
-       name="e2e_my_source_test",
-       source=source,
-       transformations=[...],
-       destination=destination,
-   )
-   
-   pipeline_registry.register(pipeline)
-   ```
-
-2. **Add import to `__init__.py`:**
-   ```python
-   from tests.e2e.test_pipelines.my_source_test_pipeline import pipeline as my_source_pipeline
-   ```
-
-3. **Create the test file** in `tests/e2e/sources/`:
-   ```python
-   # test_my_source.py
-   def test_pipeline_completes(self, client):
-       response = client.post("/run", json={
-           "pipeline_name": "e2e_my_source_test",
-       })
-       # ... verify completion
-   ```
-
-### Adding a New Destination Test
-
-1. **Create the test pipeline** with `MockSource`:
-   ```python
-   from reflowfy.sources.mock import mock_source, generate_sample_data
-   
-   source = mock_source(data=generate_sample_data(100), batch_size=10)
-   destination = my_destination(...)  # Your destination
-   ```
-
-2. **Create verification mechanism** (mock server, consumer, etc.)
-
-3. **Write tests** that verify data arrives at destination
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `E2E_REFLOW_MANAGER_URL` | `http://localhost:8002` | ReflowManager URL |
-| `ELASTICSEARCH_URL` | `http://localhost:9201` | Elasticsearch URL |
-| `SQL_CONNECTION_URL` | `postgresql://reflowfy:reflowfy@localhost:5433/reflowfy_e2e` | PostgreSQL URL |
-| `E2E_KAFKA_SERVERS` | `localhost:9094` | Kafka bootstrap servers |
-| `MOCK_API_URL` | `http://localhost:8090` | Mock API server URL |
-| `MOCK_HTTP_URL` | `http://localhost:8091` | Mock HTTP server URL |
-
 ## Troubleshooting
 
 ### Services not starting
+Services run in `e2e_workspace`. Only use `docker-compose` inside that directory.
 ```bash
-# Check Docker Compose logs
-docker-compose -f docker-compose.e2e.yml logs -f
-
-# Check specific service
-docker-compose -f docker-compose.e2e.yml logs e2e-reflow-manager
+cd e2e_workspace
+docker-compose logs -f
 ```
 
-### Tests skipped
-Tests are automatically skipped if required services are unavailable. Check the skip messages for details.
-
-### Cleanup
-```bash
-# Stop all services
-docker-compose -f docker-compose.e2e.yml down
-
-# Remove volumes (clean slate)
-docker-compose -f docker-compose.e2e.yml down -v
-```
+### Clean State
+Run the runner script again, as it cleans the workspace automatically.

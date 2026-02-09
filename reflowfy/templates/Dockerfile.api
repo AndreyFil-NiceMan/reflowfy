@@ -2,13 +2,6 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    libpq5 \
-    netcat-traditional \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
 # Install Reflowfy
 RUN pip install --no-cache-dir reflowfy
 
@@ -21,12 +14,6 @@ ENV PYTHONPATH=/app
 ENV API_HOST=0.0.0.0
 ENV API_PORT=8000
 ENV PIPELINE_MODULE=pipelines
-
-# Create non-root user
-RUN addgroup --system --gid 1001 reflowfy && \
-    adduser --system --uid 1001 --gid 1001 --no-create-home reflowfy
-
-USER reflowfy
 
 EXPOSE 8000
 CMD ["python", "-m", "reflowfy.api.app"]

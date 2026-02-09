@@ -21,30 +21,23 @@ class LocalDispatcher(BaseDispatcher):
         # We need the database URL for WorkerExecutor
         # For now, we'll let WorkerExecutor find it from env, or pass it if available
         self.executor = WorkerExecutor()
-        self._loop = asyncio.get_event_loop()
         
-    def dispatch_job(
+    async def dispatch_job(
         self,
         job_payload: Dict[str, Any],
         pipeline_name: str,
         rate_limit: Optional[float] = None,
     ) -> bool:
         """Dispatch single job locally."""
-        # Simple local execution: fire and forget (background task)
-        # We don't need rate limiting for local test usually, but we respect the interface
-        
-        # Bridge to async execution
+        # Execute job directly using the async executor
         try:
-             # If we are in a running loop (FastAPI), create a task
-            loop = asyncio.get_running_loop()
-            loop.create_task(self.executor.execute_job(job_payload))
+            await self.executor.execute_job(job_payload)
             return True
-        except RuntimeError:
-            # If no running loop (e.g. script), run synchronously
-            asyncio.run(self.executor.execute_job(job_payload))
-            return True
+        except Exception as e:
+            print(f"❌ Local dispatch failed: {e}")
+            return False
 
-    def dispatch_jobs_batch(
+    async def dispatch_jobs_batch(
         self,
         jobs: List[Dict[str, Any]],
         pipeline_name: str,
@@ -52,21 +45,17 @@ class LocalDispatcher(BaseDispatcher):
     ) -> int:
         """Dispatch batch locally."""
         count = 0
-        loop = None
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            pass
-
+        
         for job in jobs:
-            if loop:
-                loop.create_task(self.executor.execute_job(job))
-            else:
-                asyncio.run(self.executor.execute_job(job))
-            count += 1
+            try:
+                await self.executor.execute_job(job)
+                count += 1
+            except Exception as e:
+                print(f"❌ Local job execution failed: {e}")
             
         return count
     
-    def close(self):
-        # Executor close is async, might need handling
-        pass
+    async def close(self):
+        """Close executor resources."""
+        await self.executor.close()
+

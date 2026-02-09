@@ -174,6 +174,26 @@ class PipelineRunner:
         if effective_rate_limit is None and pipeline.rate_limit:
             effective_rate_limit = pipeline.rate_limit.get("jobs_per_second")
         
+        # Check if we're in local execution mode
+        # In local mode, dispatched jobs that weren't completed are orphaned
+        # (the executor that was processing them died with the restart)
+        from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
+        is_local_mode = isinstance(self.dispatcher, LocalDispatcher)
+        
+        if is_local_mode:
+            # Reset any "dispatched" jobs back to "pending" - they need re-dispatch
+            # because the local executor that was processing them is gone
+            from reflowfy.reflow_manager.models import Job
+            orphaned = self.job_manager.db.query(Job).filter(
+                Job.execution_id == execution_id,
+                Job.state == "dispatched",
+            ).all()
+            if orphaned:
+                print(f"  ⚠️ Local mode: Resetting {len(orphaned)} orphaned dispatched jobs to pending")
+                for job in orphaned:
+                    job.state = "pending"
+                self.job_manager.db.commit()
+        
         # Get total jobs and max batch number from DB
         job_counts = self.job_manager.get_job_counts(execution_id)
         total_jobs = job_counts.get("total", 0)
@@ -203,7 +223,8 @@ class PipelineRunner:
                 ).all()
                 
                 if dispatched_jobs:
-                    # Wait for already-dispatched jobs
+                    # In distributed mode, wait for already-dispatched jobs
+                    # (workers may still be processing them via Kafka)
                     job_ids = [job.job_id for job in dispatched_jobs]
                     print(f"    Waiting for {len(dispatched_jobs)} dispatched jobs in batch {current_batch_num}...")
                     completed, failed = self._wait_for_batch_completion(

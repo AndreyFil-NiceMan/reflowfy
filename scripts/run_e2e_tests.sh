@@ -2,13 +2,13 @@
 # ==============================================================================
 # Reflofy E2E Test Runner
 #
-# Starts all required services and runs E2E tests.
+# Builds the package, installs it, starts services via CLI, and runs E2E tests.
 #
 # Usage:
 #   ./scripts/run_e2e_tests.sh              # Run all E2E tests
 #   ./scripts/run_e2e_tests.sh sources      # Run only source tests
 #   ./scripts/run_e2e_tests.sh destinations # Run only destination tests
-#   ./scripts/run_e2e_tests.sh --no-docker  # Skip Docker Compose (services already running)
+#   ./scripts/run_e2e_tests.sh --no-docker  # Skip services start (assume running)
 # ==============================================================================
 
 set -e
@@ -22,9 +22,8 @@ NC='\033[0m' # No Color
 
 # Configuration
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPOSE_FILE="$PROJECT_ROOT/docker-compose.e2e.yml"
-MOCK_API_PID=""
-MOCK_HTTP_PID=""
+WORKSPACE="$PROJECT_ROOT/e2e_workspace"
+DIST_DIR="$PROJECT_ROOT/dist"
 
 # Parse arguments
 TEST_SUITE="all"
@@ -38,6 +37,9 @@ for arg in "$@"; do
         destinations)
             TEST_SUITE="destinations"
             ;;
+        all)
+             TEST_SUITE="all"
+             ;;
         --no-docker)
             SKIP_DOCKER=true
             ;;
@@ -64,16 +66,17 @@ log_error() {
 cleanup() {
     log_info "Cleaning up..."
     
-    # Stop mock servers (if running locally)
-    if [ -n "$MOCK_HTTP_PID" ] && kill -0 "$MOCK_HTTP_PID" 2>/dev/null; then
-        log_info "Stopping mock HTTP server (PID: $MOCK_HTTP_PID)"
-        kill "$MOCK_HTTP_PID" 2>/dev/null || true
+    if [ "$SKIP_DOCKER" = false ]; then
+        if [ -d "$WORKSPACE" ]; then
+            log_info "Stopping Docker Compose services..."
+            (cd "$WORKSPACE" && docker-compose down --remove-orphans 2>/dev/null || true)
+            (cd "$WORKSPACE" && docker-compose -f docker-compose.e2e-infra.yml down --remove-orphans 2>/dev/null || true)
+        fi
     fi
     
-    if [ "$SKIP_DOCKER" = false ]; then
-        log_info "Stopping Docker Compose services..."
-        docker-compose -f "$COMPOSE_FILE" down --remove-orphans 2>/dev/null || true
-    fi
+    log_info "Removing workspace and dist folders..."
+    rm -rf "$WORKSPACE"
+    rm -rf "$DIST_DIR"
     
     log_success "Cleanup complete"
 }
@@ -95,7 +98,9 @@ wait_for_service() {
         fi
         sleep 2
         waited=$((waited + 2))
+        echo -n "."
     done
+    echo ""
     
     log_error "$name not available after ${max_wait}s"
     return 1
@@ -107,18 +112,140 @@ wait_for_service() {
 
 echo ""
 echo "=============================================="
-echo "  Reflofy E2E Test Runner"
+echo "  Reflofy E2E Test Runner (CLI Integration)"
 echo "=============================================="
 echo ""
 
 cd "$PROJECT_ROOT"
 
-# Step 1: Start Docker Compose services
+# Step 0: Build and Install Package
+log_info "Step 0: Building and Installing Reflowfy..."
+
+if ! command -v python3 &> /dev/null; then
+    log_error "python3 could not be found"
+    exit 1
+fi
+
+# Clean dist
+rm -rf "$DIST_DIR"
+rm -rf "$WORKSPACE"
+
+# Build package
+log_info "Building package..."
+python3 -m build || {
+    log_error "Failed to build package. Make sure 'build' is installed (pip install build)"
+    exit 1
+}
+
+# Install wheel
+WHEEL_FILE=$(find "$DIST_DIR" -name "*.whl" | head -n 1)
+if [ -z "$WHEEL_FILE" ]; then
+    log_error "No wheel file found in $DIST_DIR"
+    exit 1
+fi
+
+log_info "Installing $WHEEL_FILE..."
+pip install --force-reinstall "$WHEEL_FILE" || {
+    log_error "Failed to install package"
+    exit 1
+}
+log_success "Reflowfy installed successfully"
+
+# Step 1: Initialize Workspace
+log_info "Step 1: Initializing E2E Workspace..."
+
+mkdir -p "$WORKSPACE"
+cd "$WORKSPACE"
+
+# Run reflowfy init
+log_info "Running reflowfy init..."
+python3 -m reflowfy.cli.main init . --name e2e_pipeline || {
+    log_error "reflowfy init failed"
+    exit 1
+}
+
+# Verify files exist
+REQUIRED_FILES=("pipelines/e2e_pipeline.py" ".env" "Dockerfile.api" "Dockerfile.reflow-manager" "Dockerfile.worker" "docker-compose.yml")
+for file in "${REQUIRED_FILES[@]}"; do
+    if [ ! -f "$file" ]; then
+        log_error "Missing expected file after init: $file"
+        exit 1
+    fi
+done
+log_success "Workspace initialized and verified"
+
+# Step 2: Configure for E2E Testing
+log_info "Step 2: Configuring Workspace for E2E..."
+
+# Copy the wheel to workspace
+WHEEL_FILENAME=$(basename "$WHEEL_FILE")
+cp "$WHEEL_FILE" .
+
+# Modify Dockerfiles to install from local wheel instead of PyPI
+log_info "Modifying Dockerfiles to install from local wheel..."
+
+for dockerfile in Dockerfile.api Dockerfile.reflow-manager Dockerfile.worker; do
+    # Replace "RUN pip install --no-cache-dir reflowfy" with COPY wheel + install
+    sed -i "s|RUN pip install --no-cache-dir reflowfy|COPY $WHEEL_FILENAME /tmp/$WHEEL_FILENAME\nRUN pip install --no-cache-dir /tmp/$WHEEL_FILENAME|" "$dockerfile"
+    log_success "  Modified $dockerfile"
+done
+
+# Modify docker-compose.yml for E2E testing (different ports, container names, env vars)
+log_info "Modifying docker-compose.yml for E2E..."
+
+# Change container names to avoid conflicts
+sed -i 's/container_name: reflowfy-/container_name: reflofy-e2e-/g' docker-compose.yml
+
+# Change ports to E2E ports (5432->5433, 8001->8002, 8000->8003)
+sed -i 's/"5432:5432"/"5433:5432"/g' docker-compose.yml
+sed -i 's/"8001:8001"/"8002:8001"/g' docker-compose.yml
+sed -i 's/"8000:8000"/"8003:8000"/g' docker-compose.yml
+sed -i 's/"5050:80"/"5051:80"/g' docker-compose.yml
+
+# Add environment variables for E2E test sources (elasticsearch, sql, mock servers)
+sed -i '/EXECUTION_MODE: local/a\      ELASTICSEARCH_URL: http://reflofy-e2e-elasticsearch:9200\n      SQL_CONNECTION_URL: postgresql://reflowfy:reflowfy@postgres:5432/reflowfy\n      MOCK_HTTP_URL: http://reflofy-e2e-mock-http:8091/webhook\n      MOCK_API_URL: http://reflofy-e2e-mock-api:8092' docker-compose.yml
+
+# Change PIPELINE_MODULE to load E2E test pipelines
+sed -i 's/PIPELINE_MODULE: pipelines/PIPELINE_MODULE: tests.e2e.test_pipelines/g' docker-compose.yml
+
+# Modify Dockerfiles to also COPY tests folder for E2E pipeline module
+log_info "Adding tests folder to Dockerfiles..."
+for dockerfile in Dockerfile.api Dockerfile.reflow-manager; do
+    # Add COPY tests after COPY pipelines
+    sed -i 's|COPY pipelines/ pipelines/|COPY pipelines/ pipelines/\nCOPY tests/ tests/|' "$dockerfile"
+done
+
+# Copy E2E test pipelines to pipelines/ folder
+log_info "Copying E2E test pipelines..."
+cp -r "$PROJECT_ROOT/tests/e2e/test_pipelines/"* pipelines/ || true
+
+# Copy tests folder for mock servers and test pipelines
+cp -r "$PROJECT_ROOT/tests" .
+
+# Copy E2E infrastructure compose file
+cp "$PROJECT_ROOT/docker-compose.e2e-infra.yml" .
+
+log_success "Workspace configured for E2E"
+
+# Step 3: Run Services
 if [ "$SKIP_DOCKER" = false ]; then
-    log_info "Starting Docker Compose services..."
-    docker-compose -f "$COMPOSE_FILE" up -d --build
+    log_info "Step 3: Starting Services..."
     
-    # Wait for services to be healthy (Docker Compose handles health checks)
+    # Start main services using reflowfy run
+    log_info "Starting main Reflowfy services..."
+    python3 -m reflowfy.cli.main run --build --detach || {
+        log_error "reflowfy run failed"
+        exit 1
+    }
+    
+    # Start E2E infrastructure (elasticsearch, mock servers)
+    log_info "Starting E2E test infrastructure..."
+    docker-compose -f docker-compose.e2e-infra.yml up -d --build || {
+        log_error "E2E infrastructure startup failed"
+        exit 1
+    }
+    
+    # Wait for services
     log_info "Waiting for services to be healthy..."
     
     # Wait for PostgreSQL
@@ -135,62 +262,41 @@ if [ "$SKIP_DOCKER" = false ]; then
         sleep 2
     done
     
-    # Wait for Elasticsearch
     wait_for_service "http://localhost:9201/_cluster/health" "Elasticsearch" 90 || exit 1
-    
-    # Wait for ReflowManager
     wait_for_service "http://localhost:8002/health" "ReflowManager" 60 || exit 1
+    
+    # Wait for mock services used in E2E
+    wait_for_service "http://localhost:8091/health" "Mock HTTP server" 60 || exit 1
+    wait_for_service "http://localhost:8092/health" "Mock API server" 60 || {
+         log_warning "Mock API server not available"
+    }
 else
-    log_warning "Skipping Docker Compose (--no-docker flag)"
+    log_warning "Skipping Docker Start (--no-docker)"
 fi
 
-# Step 2: Initialize test data
-log_info "Initializing test data..."
+# Step 4: Run Tests
+log_info "Step 4: Running E2E Tests..."
 
-# Initialize SQL test data
-log_info "Initializing SQL test data..."
-python3 -m tests.e2e.sources.init_sql_test_data || {
-    log_warning "SQL initialization failed (may already be initialized)"
-}
-
-# Initialize Elasticsearch test data
-log_info "Initializing Elasticsearch test data..."
-python3 -m tests.e2e.sources.init_elastic_test_data || {
-    log_warning "Elasticsearch initialization failed (may already be initialized)"
-}
-
-# Step 3: Wait for mock HTTP server
-log_info "Waiting for mock HTTP server (running in Docker)..."
-wait_for_service "http://localhost:8091/health" "Mock HTTP server" 60 || exit 1
-
-# Step 3.5: Wait for mock API server (running in Docker)
-log_info "Waiting for mock API server (running in Docker)..."
-wait_for_service "http://localhost:8092/health" "Mock API server" 60 || {
-    log_warning "Mock API server not available, API source E2E tests may fail"
-}
-
-# Step 4: Run tests
-log_info "Running E2E tests..."
-echo ""
+# We need to run tests from the Workspace or Project Root?
+# The tests usually import 'reflowfy'. Since we installed it, it works anywhere.
+# But existing tests might rely on relative paths for data files.
+# Let's run from PROJECT_ROOT but pointing to the running services (configured via default ports)
+cd "$PROJECT_ROOT"
 
 case $TEST_SUITE in
     sources)
-        log_info "Running source tests only..."
         pytest tests/e2e/sources/ -v --tb=short
         ;;
     destinations)
-        log_info "Running destination tests only..."
         pytest tests/e2e/destinations/ -v --tb=short
         ;;
     all)
-        log_info "Running all E2E tests..."
         pytest tests/e2e/ -v --tb=short
         ;;
 esac
 
 TEST_EXIT_CODE=$?
 
-echo ""
 if [ $TEST_EXIT_CODE -eq 0 ]; then
     log_success "All E2E tests passed!"
 else

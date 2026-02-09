@@ -1,8 +1,9 @@
 """
-HTTP Destination Test Pipeline.
+Crash Recovery Test Pipeline.
 
-Pipeline that uses mock source and sends to HTTP endpoint.
-Used for E2E testing of the HttpDestination connector.
+Dedicated pipeline for crash recovery testing with many jobs and a slow
+rate limit override to ensure the pipeline runs long enough to be
+interrupted and recovered.
 """
 
 import os
@@ -13,35 +14,33 @@ from reflowfy import (
     BaseTransformation,
 )
 from reflowfy.sources.mock import mock_source, generate_sample_data
-from reflowfy.destinations.http import http_destination
 
 
-class AddDestinationInfo(BaseTransformation):
-    """Add destination metadata to records."""
+class AddCrashRecoveryInfo(BaseTransformation):
+    """Add crash recovery metadata to records."""
     
-    name = "http_add_dest_info"
+    name = "crash_recovery_add_info"
     
     def apply(self, records, context):
-        """Add destination identification to records."""
+        """Add metadata to records."""
         execution_id = context.get("execution_id", "unknown")
         for record in records:
-            record["_destination_type"] = "http"
-            record["_test_pipeline"] = "http_dest_test"
+            record["_test_pipeline"] = "crash_recovery"
             record["_execution_id"] = execution_id
         return records
 
 
 # Configuration from environment
 MOCK_HTTP_URL = os.getenv("MOCK_HTTP_URL", "http://localhost:8091/webhook")
-# Use 100 items (10 jobs) for fast E2E tests, crash recovery uses slow rate
-SAMPLE_DATA = generate_sample_data(count=100)
+# 500 items / 10 batch_size = 50 jobs. At 0.5 jobs/sec override = ~100 seconds
+SAMPLE_DATA = generate_sample_data(count=500)
 
 
-class E2EHttpDestTestPipeline(AbstractPipeline):
-    """E2E test pipeline for HTTP destination."""
+class CrashRecoveryTestPipeline(AbstractPipeline):
+    """Test pipeline for crash recovery scenarios."""
     
-    name = "e2e_http_dest_test"
-    # High rate for fast normal tests - crash recovery test uses 0.5/sec override
+    name = "crash_recovery_test"
+    # High default rate - crash recovery test will use slow override
     rate_limit = {"jobs_per_second": 50}
     
     def define_parameters(self):
@@ -54,6 +53,8 @@ class E2EHttpDestTestPipeline(AbstractPipeline):
         )
     
     def define_destination(self, params):
+        # Use HTTP destination like the other test pipeline
+        from reflowfy.destinations.http import http_destination
         return http_destination(
             url=MOCK_HTTP_URL,
             method="POST",
@@ -65,7 +66,7 @@ class E2EHttpDestTestPipeline(AbstractPipeline):
         )
     
     def define_transformations(self, params):
-        return [AddDestinationInfo()]
+        return [AddCrashRecoveryInfo()]
 
 
-pipeline_registry.register(E2EHttpDestTestPipeline())
+pipeline_registry.register(CrashRecoveryTestPipeline())

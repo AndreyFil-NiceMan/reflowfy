@@ -1,74 +1,15 @@
 """FastAPI application factory."""
 
 import os
-import importlib
-import pkgutil
-from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from reflowfy import __version__
 from reflowfy.core.registry import pipeline_registry
+from reflowfy.core.pipeline_discovery import discover_and_load_pipelines
 from reflowfy.api.routes import create_pipeline_routes
 from reflowfy.api.execution import execution_tracker
 from reflowfy.execution.distributed_executor import get_executor
-
-
-def discover_and_load_pipelines(module_name: str = "pipelines") -> int:
-    """
-    Auto-discover and import all pipeline modules from specified directory.
-    
-    Args:
-        module_name: Name of the module/directory containing pipelines
-        
-    Returns:
-        Number of pipeline files loaded
-    """
-    loaded_count = 0
-    
-    # Ensure current directory is in sys.path
-    import sys
-    cwd = os.getcwd()
-    if cwd not in sys.path:
-        sys.path.insert(0, cwd)
-    
-    try:
-        # Try to import the pipelines package
-        pipelines_package = importlib.import_module(module_name)
-        package_path = Path(pipelines_package.__file__).parent
-        
-        print(f"\n📂 Discovering pipelines in '{module_name}'...")
-        
-        # Import all Python files in the pipelines directory
-        for _, module_name_inner, is_pkg in pkgutil.iter_modules([str(package_path)]):
-            if not is_pkg:  # Only import Python files, not subdirectories
-                try:
-                    full_module = f"{module_name}.{module_name_inner}"
-                    importlib.import_module(full_module)
-                    print(f"  ✓ Loaded {module_name_inner}.py")
-                    loaded_count += 1
-                except Exception as e:
-                    print(f"  ✗ Failed to load {module_name_inner}.py: {e}")
-                    import traceback
-                    traceback.print_exc()
-        
-        if loaded_count == 0:
-            print(f"  ⚠️  No pipeline files found in '{module_name}'")
-        else:
-            print(f"  ✓ Loaded {loaded_count} pipeline file(s)")
-            
-    except ImportError as e:
-        print(f"  ⚠️  Module '{module_name}' not found - no pipelines loaded: {e}")
-        import traceback
-        traceback.print_exc()
-        print(f"  ℹ️  sys.path: {sys.path}")
-        print(f"  ℹ️  CWD: {cwd}")
-        try:
-             print(f"  ℹ️  Contents of CWD: {os.listdir(cwd)}")
-        except:
-             pass
-    
-    return loaded_count
 
 
 def create_app() -> FastAPI:
@@ -131,44 +72,15 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     async def startup_event():
         """Initialize pipelines on startup."""
-        import importlib
-        import pkgutil
-        from pathlib import Path
-
         print("=" * 60)
         print("🚀 Starting Reflowfy API (Startup)")
         print(f"📦 Version: {__version__}")
         print("=" * 60)
         
-        # Load pipelines
+        # Load pipelines using global discovery
         pipeline_module = os.getenv("PIPELINE_MODULE", "pipelines")
-        print(f"\n📂 Discovering pipelines in '{pipeline_module}'...")
-        
-        try:
-            pipelines_package = importlib.import_module(pipeline_module)
-            package_path = Path(pipelines_package.__file__).parent
-            
-            loaded_count = 0
-            for _, module_name, is_pkg in pkgutil.iter_modules([str(package_path)]):
-                if not is_pkg:
-                    try:
-                        full_module = f"{pipeline_module}.{module_name}"
-                        importlib.import_module(full_module)
-                        print(f"  ✓ Loaded {module_name}.py")
-                        loaded_count += 1
-                    except Exception as e:
-                        print(f"  ✗ Failed to load {module_name}.py: {e}")
-            
-            if loaded_count == 0:
-                print(f"  ⚠️  No pipeline files found in '{pipeline_module}'")
-            else:
-                print(f"  ✓ Loaded {loaded_count} pipeline file(s)")
-                
-        except ImportError as e:
-            print(f"  ⚠️  Module '{pipeline_module}' not found - no pipelines loaded: {e}")
-            # Try to print sys.path to help debug
-            import sys
-            print(f"  ℹ️  sys.path: {sys.path}")
+        print(f"\n📂 Loading pipelines from '{pipeline_module}'...")
+        discover_and_load_pipelines(pipeline_module)
         
         # Setup routes after pipelines are registered
         setup_pipeline_routes(app)

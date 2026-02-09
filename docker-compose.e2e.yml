@@ -149,7 +149,6 @@ services:
       MOCK_API_URL: http://e2e-mock-api:8092
     volumes:
       - ./tests:/app/tests:ro
-      - ./reflowfy:/app/reflowfy:ro
     networks:
       - reflofy-e2e-network
     healthcheck:
@@ -233,7 +232,6 @@ services:
       MOCK_API_URL: http://e2e-mock-api:8092
     volumes:
       - ./tests:/app/tests:ro
-      - ./reflowfy:/app/reflowfy:ro
     networks:
       - reflofy-e2e-network
     restart: unless-stopped
