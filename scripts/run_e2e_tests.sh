@@ -106,6 +106,28 @@ wait_for_service() {
     return 1
 }
 
+wait_for_kafka() {
+    local max_wait=${1:-90}
+    log_info "Waiting for Kafka to be healthy..."
+    
+    local waited=0
+    while [ $waited -lt $max_wait ]; do
+        if docker exec reflofy-e2e-kafka kafka-topics --list --bootstrap-server localhost:29092 > /dev/null 2>&1; then
+            log_success "Kafka is ready"
+            return 0
+        fi
+        sleep 3
+        waited=$((waited + 3))
+        echo -n "."
+    done
+    echo ""
+    
+    log_error "Kafka not ready after ${max_wait}s"
+    log_info "Kafka logs:"
+    docker logs reflofy-e2e-kafka 2>&1 | tail -30
+    return 1
+}
+
 # ==============================================================================
 # Main Script
 # ==============================================================================
@@ -203,7 +225,10 @@ sed -i 's/"8000:8000"/"8003:8000"/g' docker-compose.yml
 sed -i 's/"5050:80"/"5051:80"/g' docker-compose.yml
 
 # Add environment variables for E2E test sources (elasticsearch, sql, mock servers)
-sed -i '/EXECUTION_MODE: local/a\      ELASTICSEARCH_URL: http://reflofy-e2e-elasticsearch:9200\n      SQL_CONNECTION_URL: postgresql://reflowfy:reflowfy@postgres:5432/reflowfy\n      MOCK_HTTP_URL: http://reflofy-e2e-mock-http:8091/webhook\n      MOCK_API_URL: http://reflofy-e2e-mock-api:8092' docker-compose.yml
+sed -i '/EXECUTION_MODE: local/a\      ELASTICSEARCH_URL: http://reflofy-e2e-elasticsearch:9200\n      SQL_CONNECTION_URL: postgresql://reflowfy:reflowfy@postgres:5432/reflowfy\n      MOCK_HTTP_URL: http://reflofy-e2e-mock-http:8091/webhook\n      MOCK_API_URL: http://reflofy-e2e-mock-api:8092\n      DLQ_POLL_INTERVAL_SECONDS: 5' docker-compose.yml
+
+# Point Kafka to the internal e2e-kafka container
+sed -i 's/KAFKA_BOOTSTRAP_SERVERS: "ignored:9092"/KAFKA_BOOTSTRAP_SERVERS: "reflofy-e2e-kafka:29092"/g' docker-compose.yml
 
 # Change PIPELINE_MODULE to load E2E test pipelines
 sed -i 's/PIPELINE_MODULE: pipelines/PIPELINE_MODULE: tests.e2e.test_pipelines/g' docker-compose.yml
@@ -225,23 +250,55 @@ cp -r "$PROJECT_ROOT/tests" .
 # Copy E2E infrastructure compose file
 cp "$PROJECT_ROOT/docker-compose.e2e-infra.yml" .
 
+# Make the workspace docker-compose use the same network name as infra
+# The infra compose creates "e2e_workspace_reflowfy-network" with driver: bridge.
+# The workspace compose uses "reflowfy-network" which docker-compose names as
+# "<project>_reflowfy-network" = "e2e_workspace_reflowfy-network". These match!
+# But to be safe, let's use external: true pointing to the infra-created network.
+sed -i '/^networks:/,/^volumes:/{
+  /driver: bridge/c\    name: e2e_workspace_reflowfy-network\n    external: true
+}' docker-compose.yml
+
 log_success "Workspace configured for E2E"
 
 # Step 3: Run Services
 if [ "$SKIP_DOCKER" = false ]; then
     log_info "Step 3: Starting Services..."
     
-    # Start main services using reflowfy run
-    log_info "Starting main Reflowfy services..."
-    python3 -m reflowfy.cli.main run --build --detach || {
-        log_error "reflowfy run failed"
-        exit 1
-    }
-    
-    # Start E2E infrastructure (elasticsearch, mock servers)
+    # Clean up any leftover containers/networks from previous runs
+    log_info "Cleaning up previous E2E state..."
+    docker-compose down --remove-orphans 2>/dev/null || true
+    docker-compose -f docker-compose.e2e-infra.yml down --remove-orphans 2>/dev/null || true
+    docker network rm e2e_workspace_reflowfy-network 2>/dev/null || true
+
+    # Start E2E infrastructure FIRST (creates the shared network, starts Kafka, ES, mocks)
     log_info "Starting E2E test infrastructure..."
     docker-compose -f docker-compose.e2e-infra.yml up -d --build || {
         log_error "E2E infrastructure startup failed"
+        exit 1
+    }
+
+    # Wait for Kafka to be fully healthy before starting main services
+    wait_for_kafka 120 || exit 1
+
+    # Create Kafka topics explicitly
+    log_info "Creating Kafka topics..."
+    docker exec reflofy-e2e-kafka kafka-topics --create \
+        --topic reflow.jobs \
+        --bootstrap-server localhost:29092 \
+        --replication-factor 1 --partitions 1 \
+        --if-not-exists 2>/dev/null || log_warning "Topic reflow.jobs might already exist"
+    docker exec reflofy-e2e-kafka kafka-topics --create \
+        --topic e2e-test-destination \
+        --bootstrap-server localhost:29092 \
+        --replication-factor 1 --partitions 1 \
+        --if-not-exists 2>/dev/null || log_warning "Topic e2e-test-destination might already exist"
+    log_success "Kafka topics created"
+
+    # Start main services (they join the existing network)
+    log_info "Starting main Reflowfy services..."
+    python3 -m reflowfy.cli.main run --build --detach || {
+        log_error "reflowfy run failed"
         exit 1
     }
     
@@ -263,13 +320,32 @@ if [ "$SKIP_DOCKER" = false ]; then
     done
     
     wait_for_service "http://localhost:9201/_cluster/health" "Elasticsearch" 90 || exit 1
-    wait_for_service "http://localhost:8002/health" "ReflowManager" 60 || exit 1
+    wait_for_service "http://localhost:8002/health" "ReflowManager" 120 || exit 1
     
     # Wait for mock services used in E2E
     wait_for_service "http://localhost:8091/health" "Mock HTTP server" 60 || exit 1
     wait_for_service "http://localhost:8092/health" "Mock API server" 60 || {
          log_warning "Mock API server not available"
     }
+
+    # Initialize test data
+    log_info "Initializing test data..."
+    
+    log_info "  - PostgreSQL data..."
+    export SQL_CONNECTION_URL="postgresql://reflowfy:reflowfy@localhost:5433/reflowfy"
+    python3 tests/e2e/sources/init_sql_test_data.py || log_warning "Failed to init SQL data"
+    
+    log_info "  - Elasticsearch data..."
+    export ELASTICSEARCH_URL="http://localhost:9201"
+    python3 tests/e2e/sources/init_elastic_test_data.py || log_warning "Failed to init Elastic data"
+    
+    # Export Kafka SASL config for tests running on host
+    export E2E_KAFKA_SERVERS="localhost:9095"
+    export KAFKA_SECURITY_PROTOCOL="SASL_PLAINTEXT"
+    export KAFKA_SASL_MECHANISM="PLAIN"
+    export KAFKA_SASL_USERNAME="admin"
+    export KAFKA_SASL_PASSWORD="admin-secret"
+
 else
     log_warning "Skipping Docker Start (--no-docker)"
 fi
@@ -288,10 +364,10 @@ case $TEST_SUITE in
         pytest tests/e2e/sources/ -v --tb=short
         ;;
     destinations)
-        pytest tests/e2e/destinations/ -v --tb=short
+        pytest tests/e2e/destinations/ -v --tb=short -ra
         ;;
     all)
-        pytest tests/e2e/ -v --tb=short
+        pytest tests/e2e/ -v --tb=short -ra
         ;;
 esac
 

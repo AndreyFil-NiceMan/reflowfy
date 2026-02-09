@@ -6,6 +6,7 @@ Background scheduler that polls for due DLQ jobs and processes them.
 import os
 import threading
 import time
+import traceback
 import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
@@ -92,8 +93,6 @@ class DLQScheduler:
         db = SessionLocal()
         try:
             # Find all pending jobs whose scheduled_at has passed
-            # Use FOR UPDATE SKIP LOCKED to prevent multiple RM pods from
-            # processing the same job (allows concurrent processing of different jobs)
             now = datetime.utcnow()
             due_jobs = db.query(DLQJob).filter(
                 DLQJob.status == "pending",
@@ -104,6 +103,8 @@ class DLQScheduler:
                 return
             
             print(f"📋 DLQ Scheduler found {len(due_jobs)} due jobs")
+            for j in due_jobs:
+                print(f"   Job {j.id}: pipeline={j.pipeline_name}, scheduled_at={j.scheduled_at}, retry={j.retry_count}")
             
             # Group jobs by pipeline
             jobs_by_pipeline: Dict[str, List[DLQJob]] = defaultdict(list)
@@ -157,7 +158,8 @@ class DLQScheduler:
             
         except Exception as e:
             error_msg = str(e)
-            print(f"❌ Failed to dispatch DLQ jobs: {error_msg}")
+            print(f"❌ Failed to dispatch DLQ jobs for {pipeline_name}: {error_msg}")
+            traceback.print_exc()
             
             # Handle retries
             for job in jobs:

@@ -35,7 +35,7 @@ async def schedule_dlq_job(
     
     The job will be processed after the specified delay (or default delay).
     """
-    delay_minutes = request.delay_minutes or DLQ_DEFAULT_DELAY_MINUTES
+    delay_minutes = request.delay_minutes if request.delay_minutes is not None else DLQ_DEFAULT_DELAY_MINUTES
     scheduled_at = datetime.utcnow() + timedelta(minutes=delay_minutes)
     
     dlq_job = DLQJob(

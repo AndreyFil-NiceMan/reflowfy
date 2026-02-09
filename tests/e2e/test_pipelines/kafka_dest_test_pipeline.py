@@ -32,7 +32,9 @@ class AddDestinationInfo(BaseTransformation):
 
 
 # Configuration from environment
-KAFKA_BOOTSTRAP_SERVERS = os.getenv("E2E_KAFKA_SERVERS", "localhost:9094")
+# Inside Docker containers, KAFKA_BOOTSTRAP_SERVERS points to the PLAINTEXT listener (e2e-kafka:29092)
+# From the host (for test verification), E2E_KAFKA_SERVERS points to the SASL listener (localhost:9094)
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", os.getenv("E2E_KAFKA_SERVERS", "localhost:9095"))
 KAFKA_TOPIC = os.getenv("E2E_KAFKA_DEST_TOPIC", "e2e-test-destination")
 SAMPLE_DATA = generate_sample_data(count=100)
 

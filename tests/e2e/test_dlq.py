@@ -347,7 +347,7 @@ class TestDLQSchedulerBehavior:
         Note: This test only works if DLQ_POLL_INTERVAL_SECONDS is set
         to a low value (e.g., 10) for testing.
         """
-        pytest.skip("Skipping - requires scheduler with short poll interval")
+        # pytest.skip("Skipping - requires scheduler with short poll interval")
         
         # Arrange - schedule job for immediate processing
         create_response = dlq_client.post("/dlq/schedule", json={

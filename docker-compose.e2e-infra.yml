@@ -6,7 +6,7 @@
 networks:
   reflowfy-network:
     name: e2e_workspace_reflowfy-network
-    external: true
+    driver: bridge
 
 services:
   # ============================================================================
@@ -82,5 +82,69 @@ services:
       timeout: 5s
       retries: 5
 
+  # ============================================================================
+  # Kafka with SASL_PLAINTEXT (for E2E Tests)
+  # ============================================================================
+
+  e2e-zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: reflofy-e2e-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - reflowfy-network
+
+  e2e-kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: reflofy-e2e-kafka
+    depends_on:
+      - e2e-zookeeper
+    ports:
+      - "9095:9095"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: e2e-zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,SASL_PLAINTEXT:SASL_PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://e2e-kafka:29092,SASL_PLAINTEXT://localhost:9095
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,SASL_PLAINTEXT://0.0.0.0:9095
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_SASL_ENABLED_MECHANISMS: PLAIN
+      KAFKA_OPTS: "-Djava.security.auth.login.config=/tmp/kafka_jaas.conf -Dzookeeper.sasl.client=false"
+    command:
+      - bash
+      - -c
+      - |
+        # Generate JAAS config inline (no external file needed)
+        cat > /tmp/kafka_jaas.conf <<'EOF'
+        KafkaServer {
+          org.apache.kafka.common.security.plain.PlainLoginModule required
+          username="admin"
+          password="admin-secret"
+          user_admin="admin-secret";
+        };
+        EOF
+        # Wait for Zookeeper via simple TCP (bypasses cub's SASL issue)
+        echo "Waiting for Zookeeper..."
+        while ! nc -z e2e-zookeeper 2181 2>/dev/null; do sleep 1; done
+        echo "Zookeeper is ready, starting Kafka..."
+        # Run Confluent's configure + launch directly (skips cub zk-ready)
+        /etc/confluent/docker/ensure
+        /etc/confluent/docker/configure
+        /etc/confluent/docker/launch
+    networks:
+      - reflowfy-network
+    healthcheck:
+      test: [ "CMD-SHELL", "kafka-topics --list --bootstrap-server localhost:29092" ]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
 volumes:
   e2e-elasticsearch-data:
+
+
