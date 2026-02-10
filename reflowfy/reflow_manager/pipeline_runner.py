@@ -307,11 +307,23 @@ class PipelineRunner:
         """
         from reflowfy.core.registry import pipeline_registry
         from reflowfy.core.execution_context import ExecutionContext
+        from reflowfy.core.id_based_pipeline import IdBasedPipeline
         
         # Load pipeline from registry
         pipeline = pipeline_registry.get(pipeline_name)
         if not pipeline:
             raise ValueError(f"Pipeline '{pipeline_name}' not found in registry")
+        
+        # Check if this is an IdBasedPipeline — use per-ID execution flow
+        if isinstance(pipeline, IdBasedPipeline):
+            self._run_id_based_pipeline_jobs(
+                execution_id=execution_id,
+                pipeline=pipeline,
+                pipeline_name=pipeline_name,
+                runtime_params=runtime_params,
+                rate_limit_override=rate_limit_override,
+            )
+            return
         
         # Resolve pipeline with runtime params (for AbstractPipeline)
         if hasattr(pipeline, 'resolve'):
@@ -455,6 +467,187 @@ class PipelineRunner:
         self.execution_manager.update_execution_state(execution_id, final_state)
         
         print(f"Execution {final_state}: {dispatched} dispatched, {completed} completed, {failed} failed")
+    
+    def _run_id_based_pipeline_jobs(
+        self,
+        execution_id: str,
+        pipeline: Any,
+        pipeline_name: str,
+        runtime_params: Dict[str, Any],
+        rate_limit_override: Optional[float] = None,
+    ) -> None:
+        """
+        Dispatch jobs for an IdBasedPipeline.
+        
+        Iterates over each ID in runtime_params['ids'], resolves the source
+        per-ID, and creates jobs from each ID's source. All jobs belong to
+        the same execution.
+        
+        Args:
+            execution_id: Existing execution identifier
+            pipeline: IdBasedPipeline instance
+            pipeline_name: Name of the pipeline
+            runtime_params: Runtime parameters (must include 'ids')
+            rate_limit_override: Optional override for jobs per second
+        """
+        from reflowfy.core.execution_context import ExecutionContext
+        
+        # Validate parameters
+        pipeline.resolve(runtime_params)
+        params = pipeline.apply_defaults(runtime_params)
+        
+        ids = params.get("ids", [])
+        
+        print(f"🚀 IdBasedPipeline dispatch starting: {pipeline_name}")
+        print(f"📊 Execution ID: {execution_id}")
+        print(f"🔑 Processing {len(ids)} IDs: {ids}")
+        
+        # Update state to running
+        self.execution_manager.update_execution_state(execution_id, "running")
+        
+        # Create execution context
+        context = ExecutionContext(
+            execution_id=execution_id,
+            pipeline_name=pipeline_name,
+            runtime_params=params,
+        )
+        
+        # Determine effective rate limit
+        effective_rate_limit = rate_limit_override
+        if effective_rate_limit is None and pipeline.rate_limit:
+            effective_rate_limit = pipeline.rate_limit.get("jobs_per_second")
+        
+        # Resolve destination once (shared across all IDs)
+        destination = pipeline.define_destination(params)
+        
+        # Phase 1: For each ID, resolve source and save jobs to database
+        print(f"  Phase 1: Saving jobs to database for {len(ids)} IDs...")
+        batch_number = 1
+        job_count = 0
+        current_job_ids = []
+        
+        for current_id in ids:
+            print(f"    Processing ID: {current_id}")
+            
+            # Resolve source and transformations for this specific ID
+            resolved = pipeline.resolve_for_id(params, current_id)
+            source = resolved["source"]
+            transformations = resolved["transformations"]
+            transformation_names = [t.name for t in transformations]
+            
+            # Split this ID's source into jobs
+            for source_job in source.split_jobs(params):
+                job_id = str(uuid.uuid4())
+                
+                # Create job payload with current_id in metadata
+                job_payload = {
+                    "execution_id": execution_id,
+                    "job_id": job_id,
+                    "pipeline_name": pipeline_name,
+                    "transformations": transformation_names,
+                    "destination": {
+                        "type": destination.__class__.__name__,
+                        "config": destination.config,
+                    },
+                    "rate_limit": pipeline.rate_limit,
+                    "records": source_job.records,
+                    "metadata": {
+                        **context.to_dict(),
+                        "current_id": current_id,
+                        "source_metadata": source_job.metadata,
+                    },
+                }
+                
+                # Serialize to handle non-JSON-serializable objects
+                job_payload = self._serialize_for_json(job_payload)
+                
+                # Save job to database
+                self.job_manager.create_job(
+                    execution_id=execution_id,
+                    job_id=job_id,
+                    job_payload=job_payload,
+                    batch_number=batch_number,
+                )
+                
+                current_job_ids.append(job_id)
+                job_count += 1
+                
+                # When batch is full, increment batch number
+                if len(current_job_ids) >= CHECKPOINT_BATCH_SIZE:
+                    batch_number += 1
+                    current_job_ids = []
+        
+        # Set total_jobs correctly (once, after all jobs saved)
+        self._set_total_jobs(execution_id, job_count)
+        print(f"  Saved {job_count} jobs to database in {batch_number} batches (from {len(ids)} IDs)")
+        
+        # Phase 2: Dispatch and wait for each batch (reuses existing logic)
+        print("  Phase 2: Dispatching batches...")
+        total_dispatched = 0
+        total_completed = 0
+        total_failed = 0
+        
+        for current_batch_num in range(1, batch_number + 1):
+            # Load jobs for this batch from database
+            jobs = self.job_manager.get_pending_jobs_by_batch_number(execution_id, current_batch_num)
+            
+            if not jobs:
+                continue
+            
+            job_ids = [job.job_id for job in jobs]
+            job_payloads = [job.job_payload for job in jobs]
+            
+            print(f"    Dispatching batch {current_batch_num} ({len(jobs)} jobs)...")
+            
+            # Dispatch to Kafka (async method, run in sync context)
+            dispatched = _run_async(self.dispatcher.dispatch_jobs_batch(
+                jobs=job_payloads,
+                pipeline_name=pipeline_name,
+                rate_limit=effective_rate_limit,
+            ))
+            
+            # Mark jobs as dispatched in database
+            self.job_manager.mark_jobs_dispatched(job_ids)
+            total_dispatched += dispatched
+            
+            # Update execution counts (SET, not +=)
+            self._set_job_counts(execution_id, dispatched=total_dispatched)
+            
+            # Wait for this batch to complete
+            print(f"    Waiting for batch {current_batch_num}...")
+            completed, failed = self._wait_for_batch_completion(
+                job_ids=job_ids,
+                timeout=CHECKPOINT_BATCH_TIMEOUT,
+                poll_interval=CHECKPOINT_POLL_INTERVAL,
+            )
+            
+            total_completed += completed
+            total_failed += failed
+            
+            # Update completion counts
+            self._set_job_counts(
+                execution_id,
+                dispatched=total_dispatched,
+                completed=total_completed,
+                failed=total_failed,
+            )
+            
+            print(f"    Batch {current_batch_num}: {completed} completed, {failed} failed")
+        
+        # Final state update - sync actual counts from database
+        dispatched, completed, failed = self._sync_counts_from_db(execution_id)
+        
+        # Determine final state based on actual DB counts
+        total_finished = completed + failed
+        if total_finished == job_count:
+            final_state = "completed" if failed == 0 else "failed"
+        else:
+            final_state = "failed"
+            print(f"  Warning: Only {total_finished} of {job_count} jobs finished")
+        
+        self.execution_manager.update_execution_state(execution_id, final_state)
+        
+        print(f"IdBasedPipeline {final_state}: {dispatched} dispatched, {completed} completed, {failed} failed ({len(ids)} IDs)")
     
     def _set_total_jobs(self, execution_id: str, total: int) -> None:
         """Set total_jobs for an execution (uses SET, not +=)."""

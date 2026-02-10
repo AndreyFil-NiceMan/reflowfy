@@ -80,9 +80,17 @@ def register(app: typer.Typer):
 
         console.print(f"\n[bold green]📦 Pipeline:[/bold green] {pipeline.name}")
 
+        # Detect pipeline type
+        from reflowfy.core.id_based_pipeline import IdBasedPipeline
+        is_id_based = isinstance(pipeline, IdBasedPipeline)
+
+        if is_id_based:
+            console.print(f"[bold cyan]🔑 Pipeline type: IdBasedPipeline[/bold cyan]")
+
         # Prompt for parameters
+        # IdBasedPipeline uses get_all_parameters() which includes built-in 'ids'
         params = {}
-        parameters = pipeline.define_parameters()
+        parameters = pipeline.get_all_parameters() if is_id_based else pipeline.define_parameters()
 
         if parameters:
             console.print(f"\n[bold]📝 Pipeline parameters:[/bold]")
@@ -130,6 +138,96 @@ def register(app: typer.Typer):
 
         console.print(f"\n[bold]⚙️  Running with params:[/bold] {params}")
         console.print(f"[bold]📊 Record limit:[/bold] {limit}")
+
+        # ================================================================
+        # IdBasedPipeline: per-ID execution
+        # ================================================================
+        if is_id_based:
+            ids = params.get("ids", [])
+            if not ids:
+                console.print("[red]❌ No IDs provided. 'ids' parameter is required.[/red]")
+                raise typer.Exit(1)
+
+            console.print(f"\n[bold]🔑 Processing {len(ids)} IDs:[/bold] {ids}")
+
+            # Destination is shared across all IDs
+            try:
+                destination = pipeline.define_destination(params)
+            except Exception as e:
+                console.print(f"[red]❌ Destination setup failed: {e}[/red]")
+                traceback.print_exc()
+                raise typer.Exit(1)
+
+            console.print(f"[bold]📤 Destination:[/bold] {destination}")
+
+            total_records = 0
+
+            for current_id in ids:
+                console.print(f"\n[bold cyan]━━━ ID: {current_id} ━━━[/bold cyan]")
+
+                try:
+                    source = pipeline.define_source(params, current_id)
+                    transformations = pipeline.define_transformations(params, current_id)
+                except Exception as e:
+                    console.print(f"[red]❌ Setup failed for ID '{current_id}': {e}[/red]")
+                    traceback.print_exc()
+                    continue
+
+                console.print(f"  [bold]🔌 Source:[/bold] {source}")
+                console.print(f"  [bold]🔄 Transformations:[/bold] {[t.__class__.__name__ for t in transformations]}")
+
+                # Fetch records
+                console.print(f"  [cyan]Fetching records (limit={limit})...[/cyan]")
+                try:
+                    records = source.fetch(params, limit=limit)
+                except Exception as e:
+                    console.print(f"  [red]❌ Source fetch failed for '{current_id}': {e}[/red]")
+                    traceback.print_exc()
+                    continue
+
+                console.print(f"  [green]✓ Fetched {len(records)} records[/green]")
+
+                if not records:
+                    console.print(f"  [yellow]⚠️ No records for ID: {current_id}[/yellow]")
+                    continue
+
+                # Apply transformations
+                transformed = records
+                for t in transformations:
+                    console.print(f"    [cyan]Applying {t.__class__.__name__}...[/cyan]")
+                    try:
+                        transformed = t.apply(transformed, {"current_id": current_id})
+                        console.print(f"    [green]✓ {t.__class__.__name__}: {len(transformed)} records[/green]")
+                    except Exception as e:
+                        console.print(f"    [red]❌ {t.__class__.__name__} failed: {e}[/red]")
+                        traceback.print_exc()
+                        break
+
+                # Show sample output
+                console.print(f"  [bold]📋 Sample ({min(2, len(transformed))} of {len(transformed)}):[/bold]")
+                for i, record in enumerate(transformed[:2]):
+                    console.print(f"    [dim]Record {i+1}:[/dim] {json.dumps(record, default=str, indent=2)[:400]}")
+
+                # Send to destination or dry-run
+                if not dry_run:
+                    try:
+                        async def _send_id(recs=transformed, meta={"current_id": current_id}):
+                            await destination.send_with_retry(recs, meta)
+                        asyncio.run(_send_id())
+                        console.print(f"  [green]✓ Sent {len(transformed)} records[/green]")
+                    except Exception as e:
+                        console.print(f"  [red]❌ Send failed for '{current_id}': {e}[/red]")
+
+                total_records += len(transformed)
+
+            if dry_run:
+                console.print(f"\n[yellow]🏜️  Dry run — skipping destination send[/yellow]")
+            console.print(f"\n[bold green]✅ Test complete: {len(ids)} IDs, {total_records} records processed[/bold green]")
+            return
+
+        # ================================================================
+        # AbstractPipeline: standard execution (existing flow)
+        # ================================================================
 
         # Initialize source, transformations, destination
         try:

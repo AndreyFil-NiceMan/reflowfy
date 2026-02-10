@@ -4,7 +4,7 @@ import os
 import json
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 from aiokafka import AIOKafkaProducer
 from aiokafka.errors import KafkaError
 
@@ -50,7 +50,7 @@ class KafkaDispatcher(BaseDispatcher):
     
     def __init__(
         self,
-        kafka_bootstrap_servers: str,
+        kafka_bootstrap_servers: Union[str, List[str]],
         kafka_topic: str,
         rate_limiter: RateLimiter,
         # SASL Authentication
@@ -60,7 +60,13 @@ class KafkaDispatcher(BaseDispatcher):
         sasl_password: Optional[str] = None,
     ):
         super().__init__(rate_limiter)
-        self.kafka_bootstrap_servers = kafka_bootstrap_servers
+        
+        # Handle comma-separated string
+        if isinstance(kafka_bootstrap_servers, str) and "," in kafka_bootstrap_servers:
+             self.kafka_bootstrap_servers = [s.strip() for s in kafka_bootstrap_servers.split(",") if s.strip()]
+        else:
+             self.kafka_bootstrap_servers = kafka_bootstrap_servers
+
         self.kafka_topic = kafka_topic
         
         # SASL config

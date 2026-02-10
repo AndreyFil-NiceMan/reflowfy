@@ -150,7 +150,11 @@ class PipelineParameter:
             
             if self.param_type is list and isinstance(value, str):
                 import json
-                return json.loads(value)
+                try:
+                    return json.loads(value)
+                except (json.JSONDecodeError, ValueError):
+                    # Fallback: treat as comma-separated values
+                    return [v.strip() for v in value.split(",") if v.strip()]
             
             if self.param_type is dict and isinstance(value, str):
                 import json

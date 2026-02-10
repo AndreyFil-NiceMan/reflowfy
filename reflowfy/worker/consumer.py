@@ -2,7 +2,7 @@
 
 import json
 import asyncio
-from typing import Optional
+from typing import Optional, Union, List
 from aiokafka import AIOKafkaConsumer
 from aiokafka.errors import KafkaError
 from reflowfy.worker.executor import WorkerExecutor
@@ -17,7 +17,7 @@ class KafkaJobConsumer:
     
     def __init__(
         self,
-        bootstrap_servers: str,
+        bootstrap_servers: Union[str, List[str]],
         topic: str,
         group_id: str = "reflowfy-workers",
         auto_offset_reset: str = "earliest",
@@ -42,7 +42,12 @@ class KafkaJobConsumer:
             sasl_username: SASL username
             sasl_password: SASL password
         """
-        self.bootstrap_servers = bootstrap_servers
+        # Handle comma-separated string for bootstrap_servers
+        if isinstance(bootstrap_servers, str) and "," in bootstrap_servers:
+            self.bootstrap_servers = [s.strip() for s in bootstrap_servers.split(",") if s.strip()]
+        else:
+            self.bootstrap_servers = bootstrap_servers
+            
         self.topic = topic
         self.group_id = group_id
         self.auto_offset_reset = auto_offset_reset

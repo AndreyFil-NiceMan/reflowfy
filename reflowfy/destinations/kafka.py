@@ -2,7 +2,7 @@
 
 import os
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from aiokafka import AIOKafkaProducer
 from aiokafka.errors import KafkaError
 from reflowfy.destinations.base import BaseDestination, DestinationError, RetryConfig
@@ -21,7 +21,7 @@ class KafkaDestination(BaseDestination):
     
     def __init__(
         self,
-        bootstrap_servers: str,
+        bootstrap_servers: Union[str, List[str]],
         topic: str,
         compression_type: str = "gzip",
         retry_config: Optional[RetryConfig] = None,
@@ -56,6 +56,11 @@ class KafkaDestination(BaseDestination):
             "sasl_password": sasl_password,
             **producer_config,
         }
+        
+        # Parse bootstrap_servers if it's a comma-separated string
+        if isinstance(bootstrap_servers, str) and "," in bootstrap_servers:
+             config["bootstrap_servers"] = [s.strip() for s in bootstrap_servers.split(",") if s.strip()]
+
         super().__init__(config, retry_config)
         self._producer: Optional[AIOKafkaProducer] = None
         self._started = False
@@ -143,7 +148,7 @@ class KafkaDestination(BaseDestination):
 
 
 def kafka_destination(
-    bootstrap_servers: str,
+    bootstrap_servers: Union[str, List[str]],
     topic: str,
     compression_type: str = "gzip",
     retry_config: Optional[RetryConfig] = None,

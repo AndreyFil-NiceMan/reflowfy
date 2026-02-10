@@ -1,11 +1,11 @@
 """Centralized Kafka configuration with SASL support."""
 
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Union
 
 
 def get_kafka_config(
-    bootstrap_servers: Optional[str] = None,
+    bootstrap_servers: Optional[Union[str, List[str]]] = None,
     security_protocol: Optional[str] = None,
     sasl_mechanism: Optional[str] = None,
     sasl_username: Optional[str] = None,
@@ -26,6 +26,13 @@ def get_kafka_config(
     mechanism = sasl_mechanism or os.getenv("KAFKA_SASL_MECHANISM", "SCRAM-SHA-256")
     servers = bootstrap_servers or os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     
+    # Ensure servers is a list
+    if isinstance(servers, str):
+        if "," in servers:
+            servers = [s.strip() for s in servers.split(",") if s.strip()]
+        else:
+            pass
+
     config: Dict[str, Any] = {
         "bootstrap_servers": servers,
     }
