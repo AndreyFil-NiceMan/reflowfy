@@ -375,3 +375,119 @@ class TestDLQSchedulerBehavior:
         final_status = final_response.json()["status"]
         
         assert final_status in ["completed", "failed", "processing"]
+
+
+# ============================================================================
+# Test: DLQ Edge Cases
+# ============================================================================
+
+class TestDLQEdgeCases:
+    """Edge case tests for DLQ functionality."""
+    
+    def test_cancel_non_pending_job(self, dlq_client, cleanup_dlq_jobs):
+        """
+        Cancelling a job that is not 'pending' should return 400.
+        
+        We create a job, cancel it (making it 'cancelled'), then try
+        to cancel it again.
+        """
+        # Arrange - create and cancel a job
+        create_response = dlq_client.post("/dlq/schedule", json={
+            "job_payload": {"edge_case_test": True},
+            "pipeline_name": "test_pipeline_edge",
+            "delay_minutes": 60,
+        })
+        job_id = create_response.json()["id"]
+        
+        # Cancel it first time (should work)
+        cancel_response = dlq_client.delete(f"/dlq/jobs/{job_id}")
+        assert cancel_response.status_code == 200
+        
+        # Try to cancel again (status is now 'cancelled')
+        second_cancel = dlq_client.delete(f"/dlq/jobs/{job_id}")
+        assert second_cancel.status_code == 400
+    
+    def test_schedule_with_zero_delay(self, dlq_client, cleanup_dlq_jobs):
+        """
+        Schedule with delay_minutes=0 should set scheduled_at to now (or past).
+        """
+        # Arrange
+        request = {
+            "job_payload": {"zero_delay_test": True},
+            "pipeline_name": "test_pipeline_zero_delay",
+            "delay_minutes": 0,
+        }
+        
+        # Act
+        response = dlq_client.post("/dlq/schedule", json=request)
+        
+        # Assert
+        assert response.status_code == 201
+        data = response.json()
+        assert data["delay_minutes"] == 0
+        assert data["status"] == "pending"
+        
+        # scheduled_at should be approximately now (within a few seconds)
+        scheduled_at = datetime.fromisoformat(data["scheduled_at"].replace("Z", "+00:00"))
+        now = datetime.utcnow()
+        diff_seconds = abs((now - scheduled_at.replace(tzinfo=None)).total_seconds())
+        assert diff_seconds < 10, (
+            f"scheduled_at should be ~now for delay=0, but diff was {diff_seconds}s"
+        )
+    
+    def test_dlq_list_pagination(self, dlq_client, cleanup_dlq_jobs):
+        """
+        Test that DLQ list endpoint supports pagination correctly.
+        """
+        import uuid
+        
+        unique_id = uuid.uuid4().hex[:8]
+        pipeline_name = f"test_pipeline_pagination_{unique_id}"
+        
+        # Create 12 jobs
+        for i in range(12):
+            dlq_client.post("/dlq/schedule", json={
+                "job_payload": {"page_index": i},
+                "pipeline_name": pipeline_name,
+                "delay_minutes": 60,
+            })
+        
+        # Page 1: limit=5, offset=0
+        page1 = dlq_client.get("/dlq/jobs", params={
+            "pipeline_name": pipeline_name,
+            "limit": 5,
+            "offset": 0,
+        }).json()
+        
+        assert page1["total"] == 12
+        assert len(page1["jobs"]) == 5
+        
+        # Page 2: limit=5, offset=5
+        page2 = dlq_client.get("/dlq/jobs", params={
+            "pipeline_name": pipeline_name,
+            "limit": 5,
+            "offset": 5,
+        }).json()
+        
+        assert page2["total"] == 12
+        assert len(page2["jobs"]) == 5
+        
+        # Page 3: limit=5, offset=10
+        page3 = dlq_client.get("/dlq/jobs", params={
+            "pipeline_name": pipeline_name,
+            "limit": 5,
+            "offset": 10,
+        }).json()
+        
+        assert page3["total"] == 12
+        assert len(page3["jobs"]) == 2  # Only 2 remaining
+        
+        # Verify no overlap between pages
+        page1_ids = {j["id"] for j in page1["jobs"]}
+        page2_ids = {j["id"] for j in page2["jobs"]}
+        page3_ids = {j["id"] for j in page3["jobs"]}
+        
+        assert page1_ids.isdisjoint(page2_ids), "Page 1 and 2 have overlapping IDs"
+        assert page2_ids.isdisjoint(page3_ids), "Page 2 and 3 have overlapping IDs"
+        
+        print(f"✅ Pagination works: 5 + 5 + 2 = {len(page1_ids | page2_ids | page3_ids)} jobs")

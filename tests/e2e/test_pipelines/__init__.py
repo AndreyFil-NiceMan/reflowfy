@@ -17,6 +17,7 @@ from tests.e2e.test_pipelines import api_source_test_pipeline
 from tests.e2e.test_pipelines import api_id_source_test_pipeline
 from tests.e2e.test_pipelines import crash_recovery_test_pipeline
 from tests.e2e.test_pipelines import dlq_test_pipeline
+from tests.e2e.test_pipelines import transformation_test_pipeline
 
 # Export the pipeline classes for direct access if needed
 from tests.e2e.test_pipelines.elastic_source_test_pipeline import E2EElasticSourceTestPipeline
@@ -26,6 +27,7 @@ from tests.e2e.test_pipelines.kafka_dest_test_pipeline import E2EKafkaDestTestPi
 from tests.e2e.test_pipelines.api_source_test_pipeline import E2EApiSourceTestPipeline
 from tests.e2e.test_pipelines.api_id_source_test_pipeline import E2EApiIdSourceTestPipeline
 from tests.e2e.test_pipelines.crash_recovery_test_pipeline import CrashRecoveryTestPipeline
+from tests.e2e.test_pipelines.transformation_test_pipeline import E2ETransformationTestPipeline
 
 __all__ = [
     "E2EElasticSourceTestPipeline",
@@ -35,5 +37,6 @@ __all__ = [
     "E2EApiSourceTestPipeline",
     "E2EApiIdSourceTestPipeline",
     "CrashRecoveryTestPipeline",
+    "E2ETransformationTestPipeline",
 ]
 
