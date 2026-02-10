@@ -1,0 +1,198 @@
+"""Test a pipeline locally without Docker."""
+
+import os
+import sys
+import json
+import asyncio
+import traceback
+import importlib.util
+import typer
+from pathlib import Path
+
+from reflowfy.cli.utils import console
+
+
+def register(app: typer.Typer):
+    """Register the test command."""
+
+    @app.command()
+    def test(
+        pipeline_file: str = typer.Argument(..., help="Path to the pipeline file (e.g., pipelines/my_pipeline.py)"),
+        limit: int = typer.Option(100, "--limit", "-l", help="Maximum number of records to process"),
+        dry_run: bool = typer.Option(False, "--dry-run", help="Print records instead of sending to destination"),
+    ):
+        """
+        Test a pipeline locally without Docker.
+
+        Loads the pipeline file, prompts for parameters, and runs
+        with a record limit (default 100).
+        """
+        from rich.panel import Panel
+        from rich.prompt import Prompt, Confirm
+
+        pipeline_path = Path(pipeline_file).resolve()
+        if not pipeline_path.exists():
+            console.print(f"[red]❌ File not found: {pipeline_file}[/red]")
+            raise typer.Exit(1)
+
+        # Load the pipeline file
+        console.print(Panel(f"🧪 Testing pipeline from: [bold]{pipeline_path.name}[/bold]", style="cyan"))
+
+        # Ensure cwd is in sys.path for imports
+        cwd = os.getcwd()
+        if cwd not in sys.path:
+            sys.path.insert(0, cwd)
+
+        # Import the pipeline file
+        spec = importlib.util.spec_from_file_location("test_pipeline_module", str(pipeline_path))
+        if spec is None or spec.loader is None:
+            console.print(f"[red]❌ Cannot load: {pipeline_file}[/red]")
+            raise typer.Exit(1)
+
+        try:
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        except Exception as e:
+            console.print(f"[red]❌ Error loading pipeline file: {e}[/red]")
+            raise typer.Exit(1)
+
+        # Find registered pipelines
+        from reflowfy.core.registry import pipeline_registry
+        pipelines = pipeline_registry.list_all()
+
+        if not pipelines:
+            console.print("[red]❌ No pipelines found in the file. Make sure your pipeline is registered.[/red]")
+            raise typer.Exit(1)
+
+        # If multiple pipelines, let user choose
+        if len(pipelines) > 1:
+            console.print("\n[bold]Found multiple pipelines:[/bold]")
+            for i, p in enumerate(pipelines, 1):
+                console.print(f"  {i}. {p.name}")
+            choice = Prompt.ask("Select pipeline number", default="1")
+            try:
+                pipeline = pipelines[int(choice) - 1]
+            except (ValueError, IndexError):
+                console.print("[red]Invalid choice[/red]")
+                raise typer.Exit(1)
+        else:
+            pipeline = pipelines[0]
+
+        console.print(f"\n[bold green]📦 Pipeline:[/bold green] {pipeline.name}")
+
+        # Prompt for parameters
+        params = {}
+        parameters = pipeline.define_parameters()
+
+        if parameters:
+            console.print(f"\n[bold]📝 Pipeline parameters:[/bold]")
+            for param in parameters:
+                # Build prompt label
+                label = f"  {param.name}"
+                if param.description:
+                    label += f" [dim]({param.description})[/dim]"
+
+                # Show type info
+                type_name = param._TYPE_NAMES.get(param.param_type, str(param.param_type))
+                hints = [type_name]
+                if param.choices:
+                    hints.append(f"choices: {param.choices}")
+                if param.required:
+                    hints.append("required")
+                console.print(f"{label}  [dim]{', '.join(hints)}[/dim]")
+
+                # Determine default
+                default_val = param.default
+                if default_val is not None:
+                    default_str = str(default_val)
+                elif not param.required:
+                    default_str = ""
+                else:
+                    default_str = None
+
+                # Prompt
+                if param.param_type == bool:
+                    if default_val is not None:
+                        value = Confirm.ask(f"    → {param.name}", default=bool(default_val))
+                    else:
+                        value = Confirm.ask(f"    → {param.name}")
+                else:
+                    raw = Prompt.ask(f"    → {param.name}", default=default_str if default_str is not None else ...)
+                    value = param.coerce(raw)
+
+                # Validate choices
+                if param.choices and value not in param.choices:
+                    console.print(f"[yellow]⚠️  '{value}' not in choices {param.choices}, using anyway[/yellow]")
+
+                params[param.name] = value
+        else:
+            console.print("\n[dim]No parameters needed for this pipeline.[/dim]")
+
+        console.print(f"\n[bold]⚙️  Running with params:[/bold] {params}")
+        console.print(f"[bold]📊 Record limit:[/bold] {limit}")
+
+        # Initialize source, transformations, destination
+        try:
+            source = pipeline.define_source(params)
+            transformations = pipeline.define_transformations(params)
+            destination = pipeline.define_destination(params)
+        except Exception as e:
+            console.print(f"[red]❌ Pipeline setup failed: {e}[/red]")
+            traceback.print_exc()
+            raise typer.Exit(1)
+
+        console.print(f"\n[bold]🔌 Source:[/bold] {source}")
+        console.print(f"[bold]🔄 Transformations:[/bold] {[t.__class__.__name__ for t in transformations]}")
+        console.print(f"[bold]📤 Destination:[/bold] {destination}")
+
+        # Fetch records
+        console.print(f"\n[cyan]Fetching records (limit={limit})...[/cyan]")
+        try:
+            records = source.fetch(params, limit=limit)
+        except Exception as e:
+            console.print(f"[red]❌ Source fetch failed: {e}[/red]")
+            traceback.print_exc()
+            raise typer.Exit(1)
+
+        console.print(f"[green]✓ Fetched {len(records)} records[/green]")
+
+        if not records:
+            console.print("[yellow]⚠️  No records returned from source[/yellow]")
+            raise typer.Exit(0)
+
+        # Apply transformations
+        transformed = records
+        for t in transformations:
+            console.print(f"  [cyan]Applying {t.__class__.__name__}...[/cyan]")
+            try:
+                transformed = t.apply(transformed, {})
+                console.print(f"  [green]✓ {t.__class__.__name__}: {len(transformed)} records[/green]")
+            except Exception as e:
+                console.print(f"  [red]❌ {t.__class__.__name__} failed: {e}[/red]")
+                traceback.print_exc()
+                raise typer.Exit(1)
+
+        # Show sample output
+        console.print(f"\n[bold]📋 Sample output ({min(3, len(transformed))} of {len(transformed)} records):[/bold]")
+        for i, record in enumerate(transformed[:3]):
+            console.print(f"  [dim]Record {i+1}:[/dim] {json.dumps(record, default=str, indent=2)[:500]}")
+
+        # Send to destination or dry-run
+        if dry_run:
+            console.print(f"\n[yellow]🏜️  Dry run — skipping destination send[/yellow]")
+            console.print(f"\n[bold green]✅ Test complete: {len(transformed)} records processed[/bold green]")
+        else:
+            console.print(f"\n[cyan]Sending {len(transformed)} records to destination...[/cyan]")
+            try:
+                async def _send():
+                    if not await destination.health_check():
+                        console.print("[red]❌ Destination health check failed[/red]")
+                        raise typer.Exit(1)
+                    await destination.send_with_retry(transformed, {})
+
+                asyncio.run(_send())
+                console.print(f"[bold green]✅ Test complete: {len(transformed)} records sent successfully[/bold green]")
+            except Exception as e:
+                console.print(f"[red]❌ Destination send failed: {e}[/red]")
+                traceback.print_exc()
+                raise typer.Exit(1)
