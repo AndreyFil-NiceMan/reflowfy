@@ -152,3 +152,10 @@ securityContext: {}
   #   drop:
   #     - ALL
   # readOnlyRootFilesystem: false
+
+#####################################
+# UTILITY IMAGES
+#####################################
+busybox:
+  image: "busybox:1.36"
+

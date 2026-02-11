@@ -18,10 +18,11 @@ def register(app: typer.Typer):
     def deploy(
         registry: Optional[str] = typer.Option(None, envvar="REGISTRY", help="Registry where images are stored (or set REGISTRY in .env)"),
         kafka: Optional[str] = typer.Option(None, envvar="KAFKA_BOOTSTRAP_SERVERS", help="External Kafka Broker (or set KAFKA_BOOTSTRAP_SERVERS in .env)"),
+        busybox_image: str = typer.Option("busybox:1.36", envvar="BUSYBOX_IMAGE", help="Busybox image for init containers"),
         namespace: str = typer.Option(None, envvar="NAMESPACE", help="Kubernetes namespace (or set NAMESPACE in .env)"),
+        image_pull_secret: Optional[str] = typer.Option(None, envvar="IMAGE_PULL_SECRET", help="Name of imagePullSecret for private registry"),
         deploy_postgres: bool = typer.Option(True, envvar="DEPLOY_POSTGRES", help="Deploy PostgreSQL (set to False to use external DB)"),
-        postgres_image_repo: Optional[str] = typer.Option(None, envvar="POSTGRES_IMAGE_REPOSITORY", help="Custom PostgreSQL image repository"),
-        postgres_image_tag: Optional[str] = typer.Option(None, envvar="POSTGRES_IMAGE_TAG", help="Custom PostgreSQL image tag"),
+        postgres_image: Optional[str] = typer.Option(None, envvar="POSTGRES_IMAGE", help="Custom PostgreSQL image (e.g. myrepo/postgres:14)"),
         keda: bool = typer.Option(False, "--keda/--no-keda", help="Enable KEDA autoscaling for workers"),
         keda_min: int = typer.Option(0, "--keda-min", help="KEDA minimum replicas"),
         keda_max: int = typer.Option(100, "--keda-max", help="KEDA maximum replicas"),
@@ -72,21 +73,32 @@ def register(app: typer.Typer):
             "--set", "worker.image.pullPolicy=Always",
             "--set", f"kafka.external.bootstrapServers={kafka.replace(',', '\\,')}",
             "--set", f"kafka.topic={kafka_topic}",
+            "--set", f"busybox.image={busybox_image}",
             "--set", "api.service.type=ClusterIP",
             "--set", "reflowManager.service.type=ClusterIP",
         ]
         
+        # Image pull secret
+        if image_pull_secret:
+            cmd.extend(["--set", f"global.imagePullSecrets[0].name={image_pull_secret}"])
+        
         # PostgreSQL configuration
         if deploy_postgres:
             cmd.extend(["--set", "postgresql.enabled=true"])
-            if postgres_image_repo:
-                cmd.extend(["--set", f"postgresql.image.repository={postgres_image_repo}"])
+            if postgres_image:
+                # Parse image string into repo and tag
+                if ":" in postgres_image:
+                    repo, tag = postgres_image.rsplit(":", 1)
+                else:
+                    repo, tag = postgres_image, "latest" # or None/empty if we want to rely on chart default, but chart default is usually set in values.yaml
+
+                cmd.extend(["--set", f"postgresql.image.repository={repo}"])
+                cmd.extend(["--set", f"postgresql.image.tag={tag}"])
+                
                 # If a custom repository is provided, clear the registry to prevent prepending specific defaults
                 cmd.extend(["--set", "postgresql.image.registry="])
                 # Enable insecure images to bypass Bitnami's check for unrecognized images
                 cmd.extend(["--set", "global.security.allowInsecureImages=true"])
-            if postgres_image_tag:
-                 cmd.extend(["--set", f"postgresql.image.tag={postgres_image_tag}"])
         else:
             db_url = os.getenv("DATABASE_URL")
             if not db_url:
