@@ -42,8 +42,10 @@ spec:
               echo "ReflowManager is ready!"
 
               echo "Waiting for Kafka at $KAFKA_BOOTSTRAP_SERVERS..."
-              host=$(echo $KAFKA_BOOTSTRAP_SERVERS | cut -d: -f1)
-              port=$(echo $KAFKA_BOOTSTRAP_SERVERS | cut -d: -f2)
+              # Extract host and port from the first broker in the list
+              first_broker=$(echo $KAFKA_BOOTSTRAP_SERVERS | cut -d, -f1)
+              host=$(echo $first_broker | cut -d: -f1)
+              port=$(echo $first_broker | cut -d: -f2)
               until nc -z $host $port; do 
                 echo "Kafka not ready ($host:$port), sleeping 2s..."
                 sleep 2

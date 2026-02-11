@@ -20,6 +20,8 @@ def register(app: typer.Typer):
         kafka: Optional[str] = typer.Option(None, envvar="KAFKA_BOOTSTRAP_SERVERS", help="External Kafka Broker (or set KAFKA_BOOTSTRAP_SERVERS in .env)"),
         namespace: str = typer.Option(None, envvar="NAMESPACE", help="Kubernetes namespace (or set NAMESPACE in .env)"),
         deploy_postgres: bool = typer.Option(True, envvar="DEPLOY_POSTGRES", help="Deploy PostgreSQL (set to False to use external DB)"),
+        postgres_image_repo: Optional[str] = typer.Option(None, envvar="POSTGRES_IMAGE_REPOSITORY", help="Custom PostgreSQL image repository"),
+        postgres_image_tag: Optional[str] = typer.Option(None, envvar="POSTGRES_IMAGE_TAG", help="Custom PostgreSQL image tag"),
         keda: bool = typer.Option(False, "--keda/--no-keda", help="Enable KEDA autoscaling for workers"),
         keda_min: int = typer.Option(0, "--keda-min", help="KEDA minimum replicas"),
         keda_max: int = typer.Option(100, "--keda-max", help="KEDA maximum replicas"),
@@ -68,7 +70,7 @@ def register(app: typer.Typer):
             "--set", "api.image.pullPolicy=Always",
             "--set", "reflowManager.image.pullPolicy=Always",
             "--set", "worker.image.pullPolicy=Always",
-            "--set", f"kafka.external.bootstrapServers={kafka}",
+            "--set", f"kafka.external.bootstrapServers={kafka.replace(',', '\\,')}",
             "--set", f"kafka.topic={kafka_topic}",
             "--set", "api.service.type=ClusterIP",
             "--set", "reflowManager.service.type=ClusterIP",
@@ -77,6 +79,14 @@ def register(app: typer.Typer):
         # PostgreSQL configuration
         if deploy_postgres:
             cmd.extend(["--set", "postgresql.enabled=true"])
+            if postgres_image_repo:
+                cmd.extend(["--set", f"postgresql.image.repository={postgres_image_repo}"])
+                # If a custom repository is provided, clear the registry to prevent prepending specific defaults
+                cmd.extend(["--set", "postgresql.image.registry="])
+                # Enable insecure images to bypass Bitnami's check for unrecognized images
+                cmd.extend(["--set", "global.security.allowInsecureImages=true"])
+            if postgres_image_tag:
+                 cmd.extend(["--set", f"postgresql.image.tag={postgres_image_tag}"])
         else:
             db_url = os.getenv("DATABASE_URL")
             if not db_url:

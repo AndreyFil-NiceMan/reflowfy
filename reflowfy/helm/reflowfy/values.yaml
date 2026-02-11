@@ -136,6 +136,10 @@ global:
   # Image pull secrets (if using private registry)
   imagePullSecrets: []
 
+  # Global security settings
+  security:
+    allowInsecureImages: false
+
 # Pod security context (set runAsNonRoot: true for OpenShift if images support it)
 podSecurityContext: {}
   # runAsNonRoot: true

@@ -1,6 +1,7 @@
 """Build and push Docker images to a private registry."""
 
 import typer
+import os
 from pathlib import Path
 from typing import Optional
 from python_on_whales import DockerClient
@@ -44,10 +45,11 @@ def _build_images(registry: str, project: str, push: bool, no_cache: bool = Fals
         dockerfiles_path = get_dockerfiles_path()
         dockerfile_full = dockerfiles_path / dockerfile
         
-        console.print(f"📦 Building [bold]{image_name}[/bold] (Dockerfile: {dockerfile_full})...", style="yellow")
+        python_image = os.getenv("PYTHON_IMAGE", "python:3.11-slim")
+        console.print(f"📦 Building [bold]{image_name}[/bold] (Dockerfile: {dockerfile_full}, Base: {python_image})...", style="yellow")
 
         try:
-             docker.build(str(build_context), file=str(dockerfile_full), tags=tags, cache=not no_cache)
+             docker.build(str(build_context), file=str(dockerfile_full), tags=tags, cache=not no_cache, build_args={"PYTHON_IMAGE": python_image})
              console.print(f"✅ Built [bold]{', '.join(tags)}[/bold]", style="green")
              
              if push:
