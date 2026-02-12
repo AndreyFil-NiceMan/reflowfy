@@ -17,6 +17,7 @@ def register(app: typer.Typer):
     @app.command()
     def deploy(
         registry: Optional[str] = typer.Option(None, envvar="REGISTRY", help="Registry where images are stored (or set REGISTRY in .env)"),
+        project: Optional[str] = typer.Option(None, envvar="PROJECT", help="Project/Namespace for image tags (or set PROJECT in .env)"),
         kafka: Optional[str] = typer.Option(None, envvar="KAFKA_BOOTSTRAP_SERVERS", help="External Kafka Broker (or set KAFKA_BOOTSTRAP_SERVERS in .env)"),
         busybox_image: str = typer.Option("busybox:1.36", envvar="BUSYBOX_IMAGE", help="Busybox image for init containers"),
         namespace: str = typer.Option(None, envvar="NAMESPACE", help="Kubernetes namespace (or set NAMESPACE in .env)"),
@@ -37,6 +38,7 @@ def register(app: typer.Typer):
         from rich.panel import Panel
 
         namespace = namespace or "reflowfy"
+        project = project or namespace
         kafka_topic = kafka_topic or "reflow.jobs"
         
         if not registry:
@@ -62,9 +64,9 @@ def register(app: typer.Typer):
         cmd = [
             "helm", "upgrade", "--install", "reflowfy", str(chart_path),
             "--namespace", namespace,
-            "--set", f"api.image.repository={registry}/{namespace}/reflowfy-api",
-            "--set", f"reflowManager.image.repository={registry}/{namespace}/reflowfy-reflow-manager",
-            "--set", f"worker.image.repository={registry}/{namespace}/reflowfy-worker",
+            "--set", f"api.image.repository={registry}/{project}/reflowfy-api",
+            "--set", f"reflowManager.image.repository={registry}/{project}/reflowfy-reflow-manager",
+            "--set", f"worker.image.repository={registry}/{project}/reflowfy-worker",
             "--set", f"api.image.tag={reflowfy.__version__}",
             "--set", f"reflowManager.image.tag={reflowfy.__version__}",
             "--set", f"worker.image.tag={reflowfy.__version__}",
