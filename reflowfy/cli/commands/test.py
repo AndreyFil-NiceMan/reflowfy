@@ -6,8 +6,11 @@ import json
 import asyncio
 import traceback
 import importlib.util
+import uuid
 import typer
 from pathlib import Path
+
+from reflowfy.core.execution_context import ExecutionContext
 
 from reflowfy.cli.utils import console
 
@@ -162,6 +165,13 @@ def register(app: typer.Typer):
 
             total_records = 0
 
+            # Build execution context (mirrors local_executor behavior)
+            context = ExecutionContext(
+                execution_id=str(uuid.uuid4()),
+                pipeline_name=pipeline.name,
+                runtime_params=params,
+            )
+
             for current_id in ids:
                 console.print(f"\n[bold cyan]━━━ ID: {current_id} ━━━[/bold cyan]")
 
@@ -196,7 +206,7 @@ def register(app: typer.Typer):
                 for t in transformations:
                     console.print(f"    [cyan]Applying {t.__class__.__name__}...[/cyan]")
                     try:
-                        transformed = t.apply(transformed, {"current_id": current_id})
+                        transformed = t.apply(transformed, {**context.to_dict(), "current_id": current_id})
                         console.print(f"    [green]✓ {t.__class__.__name__}: {len(transformed)} records[/green]")
                     except Exception as e:
                         console.print(f"    [red]❌ {t.__class__.__name__} failed: {e}[/red]")
@@ -258,12 +268,19 @@ def register(app: typer.Typer):
             console.print("[yellow]⚠️  No records returned from source[/yellow]")
             raise typer.Exit(0)
 
+        # Build execution context (mirrors local_executor behavior)
+        context = ExecutionContext(
+            execution_id=str(uuid.uuid4()),
+            pipeline_name=pipeline.name,
+            runtime_params=params,
+        )
+
         # Apply transformations
         transformed = records
         for t in transformations:
             console.print(f"  [cyan]Applying {t.__class__.__name__}...[/cyan]")
             try:
-                transformed = t.apply(transformed, {})
+                transformed = t.apply(transformed, context.to_dict())
                 console.print(f"  [green]✓ {t.__class__.__name__}: {len(transformed)} records[/green]")
             except Exception as e:
                 console.print(f"  [red]❌ {t.__class__.__name__} failed: {e}[/red]")
