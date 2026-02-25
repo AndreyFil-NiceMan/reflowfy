@@ -22,6 +22,7 @@ from reflowfy.reflow_manager.schemas import (
     RunPipelineRequest,
 )
 from reflowfy.reflow_manager.dlq_routes import router as dlq_router
+from reflowfy.reflow_manager.stats_routes import router as stats_router
 from reflowfy.reflow_manager.dlq_scheduler import (
     init_dlq_scheduler,
     stop_dlq_scheduler,
@@ -46,6 +47,9 @@ app.add_middleware(
 
 # Include DLQ router
 app.include_router(dlq_router)
+
+# Include Stats router
+app.include_router(stats_router)
 
 
 # Helper to get Kafka configuration from environment (including SASL)
