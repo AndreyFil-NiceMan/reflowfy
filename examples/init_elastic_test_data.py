@@ -7,7 +7,7 @@ This script:
 3. Inserts 1000 test records with realistic data
 
 Run this after starting Elasticsearch:
-    docker-compose -f docker-compose.elastic.yml up -d
+    docker compose -f docker-compose.elastic.yml up -d
     python examples/init_elastic_test_data.py
 """
 
@@ -175,7 +175,7 @@ def init_elasticsearch_test_data(
     if not es.ping():
         print("❌ Failed to connect to Elasticsearch")
         print("   Make sure Elasticsearch is running:")
-        print("   docker-compose -f docker-compose.elastic.yml up -d")
+        print("   docker compose -f docker-compose.elastic.yml up -d")
         return False
     
     print("✓ Connected successfully")

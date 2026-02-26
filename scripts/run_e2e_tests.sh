@@ -69,8 +69,8 @@ cleanup() {
     if [ "$SKIP_DOCKER" = false ]; then
         if [ -d "$WORKSPACE" ]; then
             log_info "Stopping Docker Compose services..."
-            (cd "$WORKSPACE" && docker-compose down --remove-orphans 2>/dev/null || true)
-            (cd "$WORKSPACE" && docker-compose -f docker-compose.e2e-infra.yml down --remove-orphans 2>/dev/null || true)
+            (cd "$WORKSPACE" && docker compose down --remove-orphans 2>/dev/null || true)
+            (cd "$WORKSPACE" && docker compose -f docker-compose.e2e-infra.yml down --remove-orphans 2>/dev/null || true)
         fi
     fi
     
@@ -250,9 +250,9 @@ cp -r "$PROJECT_ROOT/tests" .
 # Copy E2E infrastructure compose file
 cp "$PROJECT_ROOT/docker-compose.e2e-infra.yml" .
 
-# Make the workspace docker-compose use the same network name as infra
+# Make the workspace docker compose use the same network name as infra
 # The infra compose creates "e2e_workspace_reflowfy-network" with driver: bridge.
-# The workspace compose uses "reflowfy-network" which docker-compose names as
+# The workspace compose uses "reflowfy-network" which docker compose names as
 # "<project>_reflowfy-network" = "e2e_workspace_reflowfy-network". These match!
 # But to be safe, let's use external: true pointing to the infra-created network.
 sed -i '/^networks:/,/^volumes:/{
@@ -267,13 +267,13 @@ if [ "$SKIP_DOCKER" = false ]; then
     
     # Clean up any leftover containers/networks from previous runs
     log_info "Cleaning up previous E2E state..."
-    docker-compose down --remove-orphans 2>/dev/null || true
-    docker-compose -f docker-compose.e2e-infra.yml down --remove-orphans 2>/dev/null || true
+    docker compose down --remove-orphans 2>/dev/null || true
+    docker compose -f docker-compose.e2e-infra.yml down --remove-orphans 2>/dev/null || true
     docker network rm e2e_workspace_reflowfy-network 2>/dev/null || true
 
     # Start E2E infrastructure FIRST (creates the shared network, starts Kafka, ES, mocks)
     log_info "Starting E2E test infrastructure..."
-    docker-compose -f docker-compose.e2e-infra.yml up -d --build || {
+    docker compose -f docker-compose.e2e-infra.yml up -d --build || {
         log_error "E2E infrastructure startup failed"
         exit 1
     }

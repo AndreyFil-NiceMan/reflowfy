@@ -9,7 +9,7 @@ This pipeline:
 
 Usage:
     # Start Elasticsearch:
-    docker-compose -f docker-compose.elastic.yml up -d
+    docker compose -f docker-compose.elastic.yml up -d
     
     # Initialize test data:
     python examples/init_elastic_test_data.py

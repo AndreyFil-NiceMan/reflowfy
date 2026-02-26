@@ -24,13 +24,13 @@ def register(app: typer.Typer):
         if build:
             console.print("🔨 Building images with --no-cache...", style="yellow")
             try:
-                subprocess.run(["docker-compose", "build", "--no-cache"], check=True)
+                subprocess.run(["docker", "compose", "build", "--no-cache"], check=True)
                 console.print("✅ Build complete", style="green")
             except subprocess.CalledProcessError:
                 console.print("❌ Build failed", style="red")
                 raise typer.Exit(code=1)
 
-        cmd = ["docker-compose", "up"]
+        cmd = ["docker", "compose", "up"]
         if detach:
             cmd.append("-d")
             
