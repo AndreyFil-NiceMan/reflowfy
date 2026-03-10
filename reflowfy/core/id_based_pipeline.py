@@ -22,11 +22,35 @@ Example:
     ...         return [EnrichWithId()]
 """
 
-from abc import ABC, abstractmethod
+from abc import ABCMeta, abstractmethod
 from typing import Any, Dict, List, Optional, Set, Union
 import re
 
 from reflowfy.core.abstract_pipeline import PipelineParameter
+
+
+class IdBasedPipelineMeta(ABCMeta):
+    """
+    Metaclass for automatic ID-based pipeline registration.
+    
+    When a class inherits from IdBasedPipeline and defines a 'name' attribute,
+    it is automatically instantiated and registered in the pipeline registry.
+    """
+    
+    def __new__(mcs, name, bases, namespace):
+        cls = super().__new__(mcs, name, bases, namespace)
+        
+        # Only register concrete pipelines (not the base class)
+        if name != 'IdBasedPipeline' and bases:
+            if 'name' in namespace and namespace['name']:
+                from reflowfy.core.registry import pipeline_registry
+                try:
+                    instance = cls()
+                    pipeline_registry.register(instance)
+                except Exception:
+                    pass
+        
+        return cls
 
 
 # Built-in 'ids' parameter — automatically injected
@@ -38,7 +62,7 @@ _IDS_PARAMETER = PipelineParameter(
 )
 
 
-class IdBasedPipeline(ABC):
+class IdBasedPipeline(metaclass=IdBasedPipelineMeta):
     """
     Pipeline that executes dynamically for each ID in a user-provided list.
     

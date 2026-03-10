@@ -45,7 +45,12 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "kafka: mark test as requiring Kafka"
     )
-
+    config.addinivalue_line(
+        "markers", "dx: mark test as Developer Experience (DX) related"
+    )
+    config.addinivalue_line(
+        "markers", "slow: mark test as slow-running"
+    )
 
 def pytest_collection_modifyitems(config, items):
     """Add e2e marker to all tests in this directory."""
@@ -65,6 +70,8 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.postgres)
         if "kafka" in fspath_str:
             item.add_marker(pytest.mark.kafka)
+        if "test_auto_registration" in fspath_str or "test_decorator" in fspath_str or "test_cli" in fspath_str:
+            item.add_marker(pytest.mark.dx)
 
 
 # ============================================================================

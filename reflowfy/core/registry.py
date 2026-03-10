@@ -1,8 +1,10 @@
 """Pipeline registry for dynamic registration and lookup."""
 
 import threading
-from typing import Dict, List, Optional
-from reflowfy.core.abstract_pipeline import AbstractPipeline
+from typing import TYPE_CHECKING, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from reflowfy.core.abstract_pipeline import AbstractPipeline
 
 
 class PipelineRegistry:
@@ -27,31 +29,30 @@ class PipelineRegistry:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
-                    cls._instance._pipelines: Dict[str, AbstractPipeline] = {}
+                    cls._instance._pipelines: Dict[str, "AbstractPipeline"] = {}
                     cls._instance._registry_lock = threading.RLock()
         return cls._instance
     
-    def register(self, pipeline: AbstractPipeline) -> None:
+    def register(self, pipeline: "AbstractPipeline") -> None:
         """
         Register a pipeline.
         
         Args:
             pipeline: AbstractPipeline instance to register
-        
-        Raises:
-            ValueError: If pipeline with same name already registered
+            
+        Note:
+            If a pipeline with the same name is already registered, 
+            registration is silently skipped (idempotent).
         """
         with self._registry_lock:
             if pipeline.name in self._pipelines:
-                raise ValueError(
-                    f"Pipeline '{pipeline.name}' is already registered. "
-                    "Each pipeline must have a unique name."
-                )
+                # Idempotent: skip duplicate registration silently
+                return
             
             self._pipelines[pipeline.name] = pipeline
             print(f"✓ Registered pipeline: {pipeline.name}")
     
-    def get(self, name: str) -> Optional[AbstractPipeline]:
+    def get(self, name: str) -> Optional["AbstractPipeline"]:
         """
         Retrieve a pipeline by name.
         
@@ -64,7 +65,7 @@ class PipelineRegistry:
         with self._registry_lock:
             return self._pipelines.get(name)
     
-    def list_all(self) -> List[AbstractPipeline]:
+    def list_all(self) -> List["AbstractPipeline"]:
         """
         Get all registered pipelines.
         

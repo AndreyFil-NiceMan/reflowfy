@@ -5,36 +5,24 @@ Pipeline that uses mock source and sends to HTTP endpoint.
 Used for E2E testing of the HttpDestination connector.
 """
 
-import os
 from reflowfy import (
     AbstractPipeline,
     PipelineParameter,
-    pipeline_registry,
-    BaseTransformation,
+    transformation,
 )
-from reflowfy.sources.mock import mock_source, generate_sample_data
-from reflowfy.destinations.http import http_destination
+from tests.e2e.test_pipelines.shared_sources import e2e_mock
+from tests.e2e.test_pipelines.shared_destinations import e2e_http
 
 
-class AddDestinationInfo(BaseTransformation):
+@transformation("http_add_dest_info")
+def http_add_dest_info(records, context):
     """Add destination metadata to records."""
-    
-    name = "http_add_dest_info"
-    
-    def apply(self, records, context):
-        """Add destination identification to records."""
-        execution_id = context.get("execution_id", "unknown")
-        for record in records:
-            record["_destination_type"] = "http"
-            record["_test_pipeline"] = "http_dest_test"
-            record["_execution_id"] = execution_id
-        return records
-
-
-# Configuration from environment
-MOCK_HTTP_URL = os.getenv("MOCK_HTTP_URL", "http://localhost:8091/webhook")
-# Use 100 items (10 jobs) for fast E2E tests, crash recovery uses slow rate
-SAMPLE_DATA = generate_sample_data(count=100)
+    execution_id = context.get("execution_id", "unknown")
+    for record in records:
+        record["_destination_type"] = "http"
+        record["_test_pipeline"] = "http_dest_test"
+        record["_execution_id"] = execution_id
+    return records
 
 
 class E2EHttpDestTestPipeline(AbstractPipeline):
@@ -48,24 +36,10 @@ class E2EHttpDestTestPipeline(AbstractPipeline):
         return []
     
     def define_source(self, params):
-        return mock_source(
-            data=SAMPLE_DATA,
-            batch_size=10,
-        )
+        return e2e_mock(count=100, batch_size=10)
     
     def define_destination(self, params):
-        return http_destination(
-            url=MOCK_HTTP_URL,
-            method="POST",
-            headers={"Content-Type": "application/json"},
-            auth_type="bearer",
-            auth_token="test-webhook-token",
-            batch_requests=True,
-            timeout=30.0,
-        )
+        return e2e_http()
     
     def define_transformations(self, params):
-        return [AddDestinationInfo()]
-
-
-pipeline_registry.register(E2EHttpDestTestPipeline())
+        return [http_add_dest_info()]

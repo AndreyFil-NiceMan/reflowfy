@@ -9,35 +9,26 @@ import os
 from reflowfy import (
     AbstractPipeline,
     PipelineParameter,
-    pipeline_registry,
-    BaseTransformation,
+    transformation,
 )
-from reflowfy.sources.api import id_based_api_source
-from reflowfy.destinations.console import console_destination
+from tests.e2e.test_pipelines.shared_sources import e2e_id_based_api
+from tests.e2e.test_pipelines.shared_destinations import e2e_console
 
 
-class AddIDSourceInfo(BaseTransformation):
+@transformation("api_id_add_source_info")
+def api_id_add_source_info(records, context):
     """Add source metadata to records."""
-    
-    name = "api_id_add_source_info"
-    
-    def apply(self, records, context):
-        """Add source identification to records."""
-        for record in records:
-            record["_source_type"] = "api_id"
-            record["_test_pipeline"] = "e2e_api_id_source_test"
-        return records
+    for record in records:
+        record["_source_type"] = "api_id"
+        record["_test_pipeline"] = "e2e_api_id_source_test"
+    return records
 
 
-class LogIDRecordCount(BaseTransformation):
+@transformation("api_id_log_record_count")
+def api_id_log_record_count(records, context):
     """Log the number of records processed."""
-    
-    name = "api_id_log_record_count"
-    
-    def apply(self, records, context):
-        """Log record count."""
-        print(f"  📊 ID-Based API Source: Processing {len(records)} records")
-        return records
+    print(f"  📊 ID-Based API Source: Processing {len(records)} records")
+    return records
 
 
 # Configuration from environment
@@ -78,24 +69,17 @@ class E2EApiIdSourceTestPipeline(AbstractPipeline):
         ]
     
     def define_source(self, params):
-        return id_based_api_source(
+        return e2e_id_based_api(
             base_url=params.get("base_url", MOCK_API_URL),
-            endpoint_template="/users/{id}",
             ids=params.get("ids", [1, 2, 3, 4, 5]),
             batch_size=params.get("batch_size", 2),
         )
     
     def define_destination(self, params):
-        return console_destination(
-            pretty_print=True,
-            max_records_display=5,
-        )
+        return e2e_console()
     
     def define_transformations(self, params):
         return [
-            LogIDRecordCount(),
-            AddIDSourceInfo(),
+            api_id_log_record_count(),
+            api_id_add_source_info(),
         ]
-
-
-pipeline_registry.register(E2EApiIdSourceTestPipeline())

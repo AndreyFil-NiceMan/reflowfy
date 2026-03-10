@@ -26,10 +26,40 @@ Example:
     ...         return [MyTransformation()]
 """
 
-from abc import ABC, abstractmethod
+from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set
 import re
+
+
+class PipelineMeta(ABCMeta):
+    """
+    Metaclass for automatic pipeline registration.
+    
+    When a class inherits from AbstractPipeline and defines a 'name' attribute,
+    it is automatically instantiated and registered in the pipeline registry.
+    
+    Inherits from ABCMeta to be compatible with ABC.
+    """
+    
+    def __new__(mcs, name, bases, namespace):
+        cls = super().__new__(mcs, name, bases, namespace)
+        
+        # Only register concrete pipelines (not the base class)
+        if name != 'AbstractPipeline' and bases:
+            # Check if this is a concrete pipeline with a name
+            if 'name' in namespace and namespace['name']:
+                # Import here to avoid circular dependency
+                from reflowfy.core.registry import pipeline_registry
+                try:
+                    instance = cls()
+                    pipeline_registry.register(instance)
+                except Exception:
+                    # Skip auto-registration if instantiation fails
+                    # (e.g., missing required config)
+                    pass
+        
+        return cls
 
 
 @dataclass
@@ -181,7 +211,7 @@ class PipelineParameter:
         return result
 
 
-class AbstractPipeline(ABC):
+class AbstractPipeline(metaclass=PipelineMeta):
     """
     Abstract base class for configurable pipelines.
     

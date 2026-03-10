@@ -2,7 +2,7 @@
 services:
   # PostgreSQL - Database for ReflowManager
   postgres:
-    image: postgres:15-alpine
+    image: ${POSTGRES_IMAGE:-postgres:15-alpine}
     container_name: reflowfy-postgres
     environment:
       POSTGRES_DB: reflowfy
@@ -22,7 +22,7 @@ services:
 
   # pgAdmin - PostgreSQL Web UI
   pgadmin:
-    image: dpage/pgadmin4:latest
+    image: ${PGADMIN_IMAGE:-dpage/pgadmin4:latest}
     container_name: reflowfy-pgadmin
     depends_on:
       postgres:
@@ -41,6 +41,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.reflow-manager
+      args:
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
     container_name: reflowfy-reflow-manager
     depends_on:
       postgres:
@@ -71,6 +73,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
+      args:
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
     container_name: reflowfy-api
     depends_on:
       reflow-manager:

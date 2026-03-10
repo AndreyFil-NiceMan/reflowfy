@@ -8,47 +8,34 @@ apply transformations, and output to console.
 Used for E2E testing of the IdBasedPipeline feature.
 """
 
-import os
 from reflowfy import (
     IdBasedPipeline,
     PipelineParameter,
-    pipeline_registry,
-    BaseTransformation,
+    transformation,
 )
-from reflowfy.sources.mock import mock_source
+from tests.e2e.test_pipelines.shared_sources import e2e_mock
+from tests.e2e.test_pipelines.shared_destinations import e2e_console
 
 
-class AddIdMetadataTransformation(BaseTransformation):
+@transformation("id_pipeline_add_metadata")
+def id_pipeline_add_metadata(records, context):
     """Add the current_id and processing metadata to each record."""
-    
-    name = "id_pipeline_add_metadata"
-    
-    def apply(self, records, context):
-        """Add ID metadata to each record."""
-        current_id = context.get("current_id", "unknown")
-        execution_id = context.get("execution_id", "unknown")
-        for record in records:
-            record["_processed_by_id_pipeline"] = True
-            record["_current_id"] = current_id
-            record["_execution_id"] = execution_id
-        return records
+    current_id = context.get("current_id", "unknown")
+    execution_id = context.get("execution_id", "unknown")
+    for record in records:
+        record["_processed_by_id_pipeline"] = True
+        record["_current_id"] = current_id
+        record["_execution_id"] = execution_id
+    return records
 
 
-class EnrichWithIdTransformation(BaseTransformation):
+@transformation("id_pipeline_enrich")
+def id_pipeline_enrich(records, context):
     """Enrich records with computed fields based on ID processing."""
-    
-    name = "id_pipeline_enrich"
-    
-    def apply(self, records, context):
-        """Enrich records."""
-        for record in records:
-            record["_id_pipeline_verified"] = record.get("_processed_by_id_pipeline", False)
-            record["_test_pipeline"] = "e2e_id_based_pipeline_test"
-        return records
-
-
-# Configuration
-MOCK_HTTP_URL = os.getenv("MOCK_HTTP_URL", "http://localhost:8091/webhook")
+    for record in records:
+        record["_id_pipeline_verified"] = record.get("_processed_by_id_pipeline", False)
+        record["_test_pipeline"] = "e2e_id_based_pipeline_test"
+    return records
 
 
 class E2EIdBasedPipelineTest(IdBasedPipeline):
@@ -89,20 +76,13 @@ class E2EIdBasedPipelineTest(IdBasedPipeline):
             for i in range(records_per_id)
         ]
         
-        return mock_source(data=data, batch_size=5)
+        return e2e_mock(data=data, batch_size=5)
     
     def define_destination(self, params):
-        from reflowfy.destinations.console import console_destination
-        return console_destination(
-            pretty_print=False,
-            max_records_display=3,
-        )
+        return e2e_console(pretty_print=False, max_records_display=3)
     
     def define_transformations(self, params, current_id):
         return [
-            AddIdMetadataTransformation(),
-            EnrichWithIdTransformation(),
+            id_pipeline_add_metadata(),
+            id_pipeline_enrich(),
         ]
-
-
-pipeline_registry.register(E2EIdBasedPipelineTest())

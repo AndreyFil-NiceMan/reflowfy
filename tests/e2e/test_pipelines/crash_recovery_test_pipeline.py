@@ -6,34 +6,23 @@ rate limit override to ensure the pipeline runs long enough to be
 interrupted and recovered.
 """
 
-import os
 from reflowfy import (
     AbstractPipeline,
     PipelineParameter,
-    pipeline_registry,
-    BaseTransformation,
+    transformation,
 )
-from reflowfy.sources.mock import mock_source, generate_sample_data
+from tests.e2e.test_pipelines.shared_sources import e2e_mock
+from tests.e2e.test_pipelines.shared_destinations import e2e_http
 
 
-class AddCrashRecoveryInfo(BaseTransformation):
+@transformation("crash_recovery_add_info")
+def crash_recovery_add_info(records, context):
     """Add crash recovery metadata to records."""
-    
-    name = "crash_recovery_add_info"
-    
-    def apply(self, records, context):
-        """Add metadata to records."""
-        execution_id = context.get("execution_id", "unknown")
-        for record in records:
-            record["_test_pipeline"] = "crash_recovery"
-            record["_execution_id"] = execution_id
-        return records
-
-
-# Configuration from environment
-MOCK_HTTP_URL = os.getenv("MOCK_HTTP_URL", "http://localhost:8091/webhook")
-# 500 items / 10 batch_size = 50 jobs. At 0.5 jobs/sec override = ~100 seconds
-SAMPLE_DATA = generate_sample_data(count=500)
+    execution_id = context.get("execution_id", "unknown")
+    for record in records:
+        record["_test_pipeline"] = "crash_recovery"
+        record["_execution_id"] = execution_id
+    return records
 
 
 class CrashRecoveryTestPipeline(AbstractPipeline):
@@ -47,26 +36,11 @@ class CrashRecoveryTestPipeline(AbstractPipeline):
         return []
     
     def define_source(self, params):
-        return mock_source(
-            data=SAMPLE_DATA,
-            batch_size=10,
-        )
+        # 500 items / 10 batch_size = 50 jobs. At 0.5 jobs/sec override = ~100 seconds
+        return e2e_mock(count=500, batch_size=10)
     
     def define_destination(self, params):
-        # Use HTTP destination like the other test pipeline
-        from reflowfy.destinations.http import http_destination
-        return http_destination(
-            url=MOCK_HTTP_URL,
-            method="POST",
-            headers={"Content-Type": "application/json"},
-            auth_type="bearer",
-            auth_token="test-webhook-token",
-            batch_requests=True,
-            timeout=30.0,
-        )
+        return e2e_http()
     
     def define_transformations(self, params):
-        return [AddCrashRecoveryInfo()]
-
-
-pipeline_registry.register(CrashRecoveryTestPipeline())
+        return [crash_recovery_add_info()]

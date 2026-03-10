@@ -14,7 +14,6 @@ Just run the API and call the /test endpoint!
 from reflowfy import (
     AbstractPipeline,
     PipelineParameter,
-    pipeline_registry,
     BaseTransformation,
 )
 from reflowfy.sources.mock import mock_source, generate_sample_data
@@ -118,6 +117,3 @@ class SimpleTestPipeline(AbstractPipeline):
             AddProcessingInfo(),
         ]
 
-
-# Register the pipeline
-pipeline_registry.register(SimpleTestPipeline())

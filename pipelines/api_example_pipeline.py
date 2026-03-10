@@ -79,6 +79,3 @@ class APIPipeline(AbstractPipeline):
         # Add your transformations here
         return []
 
-
-# Register the pipeline
-api_pipeline = APIPipeline()

@@ -19,6 +19,11 @@ from reflowfy.destinations.kafka import kafka_destination
 from reflowfy.destinations.http import http_destination
 from reflowfy.destinations.console import console_destination
 
+# Decorators for reusable components
+from reflowfy.sources.decorators import source, source_registry
+from reflowfy.destinations.decorators import destination, destination_registry
+from reflowfy.transformations.decorators import transformation
+
 __version__ = "0.27"
 
 __all__ = [
@@ -32,5 +37,11 @@ __all__ = [
     "kafka_destination",
     "http_destination",
     "console_destination",
+    # Decorators
+    "source",
+    "destination",
+    "transformation",
+    "source_registry",
+    "destination_registry",
 ]
 

@@ -8,6 +8,7 @@
 #   ./scripts/run_e2e_tests.sh              # Run all E2E tests
 #   ./scripts/run_e2e_tests.sh sources      # Run only source tests
 #   ./scripts/run_e2e_tests.sh destinations # Run only destination tests
+#   ./scripts/run_e2e_tests.sh dx           # Run only Developer Experience tests
 #   ./scripts/run_e2e_tests.sh --no-docker  # Skip services start (assume running)
 # ==============================================================================
 
@@ -36,6 +37,9 @@ for arg in "$@"; do
             ;;
         destinations)
             TEST_SUITE="destinations"
+            ;;
+        dx)
+            TEST_SUITE="dx"
             ;;
         all)
              TEST_SUITE="all"
@@ -186,7 +190,15 @@ python3 -m reflowfy.cli.main init . --name e2e_pipeline || {
     exit 1
 }
 
-# Verify files exist
+# Verify files and directories exist
+REQUIRED_DIRS=("pipelines" "sources" "destinations" "transformations" "queries")
+for dir in "${REQUIRED_DIRS[@]}"; do
+    if [ ! -d "$dir" ]; then
+        log_error "Missing expected directory after init: $dir"
+        exit 1
+    fi
+done
+
 REQUIRED_FILES=("pipelines/e2e_pipeline.py" ".env" "Dockerfile.api" "Dockerfile.reflow-manager" "Dockerfile.worker" "docker-compose.yml")
 for file in "${REQUIRED_FILES[@]}"; do
     if [ ! -f "$file" ]; then
@@ -365,6 +377,9 @@ case $TEST_SUITE in
         ;;
     destinations)
         pytest tests/e2e/destinations/ -v --tb=short -ra
+        ;;
+    dx)
+        pytest tests/e2e/test_auto_registration.py tests/e2e/test_decorator_components.py tests/e2e/test_cli_scaffolding.py tests/e2e/test_cli_build.py tests/e2e/test_cli_run.py tests/e2e/test_cli_check.py tests/e2e/test_cli_deploy.py tests/e2e/test_cli_test.py -v --tb=short -ra
         ;;
     all)
         pytest tests/e2e/ -v --tb=short -ra

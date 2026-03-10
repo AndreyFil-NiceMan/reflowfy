@@ -67,6 +67,3 @@ class S3JsonPipeline(AbstractPipeline):
         # Add your transformations here
         return []
 
-
-# Register the pipeline
-s3_json_pipeline = S3JsonPipeline()

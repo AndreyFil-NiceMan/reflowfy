@@ -2,51 +2,42 @@
 SQL Source Test Pipeline.
 
 Pipeline that reads from PostgreSQL and outputs to console.
+Uses a SQL query template loaded from queries/events_by_date.sql.
 Used for E2E testing of the SqlSource connector.
 """
 
-import os
+from pathlib import Path
+
 from reflowfy import (
     AbstractPipeline,
     PipelineParameter,
-    pipeline_registry,
-    BaseTransformation,
-    sql_source,
+    transformation,
 )
-from reflowfy.destinations.console import console_destination
+from tests.e2e.test_pipelines.shared_sources import e2e_sql
+from tests.e2e.test_pipelines.shared_destinations import e2e_console
 
 
-class AddSourceInfo(BaseTransformation):
+# Load query from the queries/ folder
+QUERIES_DIR = Path(__file__).parent / "queries"
+SQL_QUERY = (QUERIES_DIR / "events_by_date.sql").read_text()
+
+
+@transformation("sql_add_source_info")
+def sql_add_source_info(records, context):
     """Add source metadata to records."""
-    
-    name = "sql_add_source_info"
-    
-    def apply(self, records, context):
-        """Add source identification to records."""
-        for record in records:
-            record["_source_type"] = "sql"
-            record["_test_pipeline"] = "sql_source_test"
-        return records
+    for record in records:
+        record["_source_type"] = "sql"
+        record["_test_pipeline"] = "sql_source_test"
+    return records
 
 
-class FilterByStatus(BaseTransformation):
+@transformation("sql_filter_by_status")
+def sql_filter_by_status(records, context):
     """Filter records by status."""
-    
-    name = "sql_filter_by_status"
-    
-    def apply(self, records, context):
-        """Keep only active records."""
-        status_filter = context.get("runtime_params", {}).get("filter_status", "active")
-        filtered = [r for r in records if r.get("status") == status_filter]
-        print(f"  📊 SQL Filter: {len(records)} → {len(filtered)} records (status={status_filter})")
-        return filtered
-
-
-# Configuration from environment
-SQL_CONNECTION_URL = os.getenv(
-    "SQL_CONNECTION_URL", 
-    "postgresql://reflowfy:reflowfy@localhost:5433/reflowfy_e2e"
-)
+    status_filter = context.get("runtime_params", {}).get("filter_status", "active")
+    filtered = [r for r in records if r.get("status") == status_filter]
+    print(f"  📊 SQL Filter: {len(records)} → {len(filtered)} records (status={status_filter})")
+    return filtered
 
 
 class E2ESqlSourceTestPipeline(AbstractPipeline):
@@ -63,30 +54,17 @@ class E2ESqlSourceTestPipeline(AbstractPipeline):
         ]
     
     def define_source(self, params):
-        return sql_source(
-            connection_url=SQL_CONNECTION_URL,
-            query="""
-                SELECT id, event_type, user_id, user_name, status, amount, created_at, metadata
-                FROM test_events
-                WHERE created_at >= '{{ start_time }}'::timestamp
-                  AND created_at <= '{{ end_time }}'::timestamp
-                ORDER BY id
-            """,
+        return e2e_sql(
+            query=SQL_QUERY,
             id_column="id",
             batch_size=50,
         )
     
     def define_destination(self, params):
-        return console_destination(
-            pretty_print=True,
-            max_records_display=5,
-        )
+        return e2e_console(pretty_print=True, max_records_display=5)
     
     def define_transformations(self, params):
         return [
-            FilterByStatus(),
-            AddSourceInfo(),
+            sql_filter_by_status(),
+            sql_add_source_info(),
         ]
-
-
-pipeline_registry.register(E2ESqlSourceTestPipeline())

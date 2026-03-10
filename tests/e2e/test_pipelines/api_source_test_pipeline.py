@@ -9,35 +9,26 @@ import os
 from reflowfy import (
     AbstractPipeline,
     PipelineParameter,
-    pipeline_registry,
-    BaseTransformation,
+    transformation,
 )
-from reflowfy.sources.api import paginated_api_source
-from reflowfy.destinations.console import console_destination
+from tests.e2e.test_pipelines.shared_sources import e2e_paginated_api
+from tests.e2e.test_pipelines.shared_destinations import e2e_console
 
 
-class AddAPISourceInfo(BaseTransformation):
+@transformation("api_add_source_info")
+def api_add_source_info(records, context):
     """Add source metadata to records."""
-    
-    name = "api_add_source_info"
-    
-    def apply(self, records, context):
-        """Add source identification to records."""
-        for record in records:
-            record["_source_type"] = "api"
-            record["_test_pipeline"] = "e2e_api_source_test"
-        return records
+    for record in records:
+        record["_source_type"] = "api"
+        record["_test_pipeline"] = "e2e_api_source_test"
+    return records
 
 
-class LogRecordCount(BaseTransformation):
+@transformation("api_log_record_count")
+def api_log_record_count(records, context):
     """Log the number of records processed."""
-    
-    name = "api_log_record_count"
-    
-    def apply(self, records, context):
-        """Log record count."""
-        print(f"  📊 API Source: Processing {len(records)} records")
-        return records
+    print(f"  📊 API Source: Processing {len(records)} records")
+    return records
 
 
 # Configuration from environment
@@ -78,28 +69,17 @@ class E2EApiSourceTestPipeline(AbstractPipeline):
         ]
     
     def define_source(self, params):
-        return paginated_api_source(
+        return e2e_paginated_api(
             base_url=params.get("base_url", MOCK_API_URL),
             endpoint=params.get("endpoint", "/users"),
-            pagination_type="offset",
             page_size=params.get("page_size", 10),
-            data_key="data",
-            total_key="total",
-            offset_param="offset",
-            limit_param="limit",
         )
     
     def define_destination(self, params):
-        return console_destination(
-            pretty_print=True,
-            max_records_display=5,
-        )
+        return e2e_console()
     
     def define_transformations(self, params):
         return [
-            LogRecordCount(),
-            AddAPISourceInfo(),
+            api_log_record_count(),
+            api_add_source_info(),
         ]
-
-
-pipeline_registry.register(E2EApiSourceTestPipeline())

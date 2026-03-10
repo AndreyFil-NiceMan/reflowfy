@@ -5,7 +5,6 @@ Example pipeline - Copy this template to create your own pipelines.
 from reflowfy import (
     AbstractPipeline,
     PipelineParameter,
-    pipeline_registry,
     BaseTransformation,
     elastic_source,
     kafka_destination,
@@ -66,5 +65,3 @@ class ExamplePipeline(AbstractPipeline):
         """Define your transformation pipeline."""
         return [MyTransformation()]
 
-
-pipeline_registry.register(ExamplePipeline())

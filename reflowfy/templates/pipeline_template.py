@@ -1,6 +1,8 @@
 """
 Simple test pipeline that works without any external dependencies.
 
+Auto-registered — no need to call pipeline_registry.register().
+
 Perfect for testing the Reflowfy framework locally:
 - No Elasticsearch needed
 - No Kafka needed  
@@ -14,7 +16,6 @@ Just run the API and call the /test endpoint!
 from reflowfy import (
     AbstractPipeline,
     PipelineParameter,
-    pipeline_registry,
     BaseTransformation,
 )
 from reflowfy.sources.mock import mock_source, generate_sample_data
@@ -117,7 +118,3 @@ class SimpleTestPipeline(AbstractPipeline):
             UppercaseNames(),
             AddProcessingInfo(),
         ]
-
-
-# Register the pipeline
-pipeline_registry.register(SimpleTestPipeline())

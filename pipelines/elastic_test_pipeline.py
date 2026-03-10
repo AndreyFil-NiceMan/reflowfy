@@ -31,7 +31,6 @@ from datetime import datetime
 from reflowfy import (
     AbstractPipeline,
     PipelineParameter,
-    pipeline_registry,
     BaseTransformation,
     elastic_source,
 )
@@ -198,21 +197,3 @@ class ElasticTestPipeline(AbstractPipeline):
             FormatEventData(),
         ]
 
-
-# Register the pipeline
-pipeline_registry.register(ElasticTestPipeline())
-
-# ============================================================================
-# Pipeline Ready!
-# ============================================================================
-# 
-# Example requests:
-#
-# Local test (synchronous):
-#   curl -X POST "http://localhost:8000/pipelines/elastic_test_pipeline/test?start_time=2024-01-01T00:00:00&end_time=2024-12-31T23:59:59&filter_status=active"
-#
-# Distributed run (async):
-#   curl -X POST "http://localhost:8000/pipelines/elastic_test_pipeline/run?start_time=2024-01-01T00:00:00&end_time=2024-12-31T23:59:59"
-#
-# Or use Swagger UI at http://localhost:8000/docs
-# ============================================================================
