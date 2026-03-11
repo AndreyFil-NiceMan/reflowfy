@@ -38,7 +38,7 @@ class RateLimiter:
             state = RateLimitState(
                 pipeline_name=pipeline_name,
                 tokens=1.0,  # Start with minimal tokens - no burst allowed
-                max_tokens=rate_limit,
+                max_tokens=max(1.0, rate_limit),
                 refill_rate=rate_limit,
                 last_update=datetime.utcnow(),
             )
@@ -49,7 +49,7 @@ class RateLimiter:
             # Update the rate limit if it's different from what's stored
             # This handles rate_limit overrides from API calls
             state.refill_rate = rate_limit
-            state.max_tokens = rate_limit
+            state.max_tokens = max(1.0, rate_limit)
             self.db.commit()
         
         return state

@@ -108,11 +108,18 @@ def setup_pipeline_routes(app: FastAPI) -> None:
     # Get ReflowManager URL from environment
     reflow_manager_url = os.getenv("REFLOW_MANAGER_URL", "http://localhost:8001")
     
-    # Create executors
-    local_executor = get_executor("local")
+    # Create executors - both go through ReflowManager for proper DB tracking
+    # Local mode: ReflowManager uses LocalDispatcher (in-process execution)
+    # Distributed mode: ReflowManager uses KafkaDispatcher (Kafka + workers)
+    local_executor = get_executor(
+        "distributed",
+        reflow_manager_url=reflow_manager_url,
+        execution_mode="local",
+    )
     distributed_executor = get_executor(
         "distributed",
         reflow_manager_url=reflow_manager_url,
+        execution_mode="distributed",
     )
     
     # Create routes for each pipeline

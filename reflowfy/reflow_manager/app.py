@@ -243,6 +243,7 @@ async def run_pipeline(
             pipeline_name=request.pipeline_name,
             runtime_params=request.runtime_params or {},
             rate_limit_override=request.rate_limit,
+            mode=request.mode,
         )
         
         # Return immediately with execution details
@@ -271,6 +272,7 @@ def _dispatch_pipeline_jobs(
     pipeline_name: str,
     runtime_params: dict,
     rate_limit_override: Optional[float] = None,
+    mode: Optional[str] = None,
 ):
     """Background task to dispatch pipeline jobs."""
     from reflowfy.reflow_manager.database import SessionLocal
@@ -280,6 +282,10 @@ def _dispatch_pipeline_jobs(
     
     try:
         config = _get_kafka_config()
+        
+        # Override execution_mode if mode was specified in the request
+        if mode:
+            config["execution_mode"] = mode
         
         manager = ReflowManager(
             db_session=db,

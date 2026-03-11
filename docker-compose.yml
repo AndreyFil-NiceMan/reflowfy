@@ -103,14 +103,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
     ports:
       - "8001:8001"
     environment:
       DATABASE_URL: postgresql://reflowfy:reflowfy@postgres:5432/reflowfy
-      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-      KAFKA_TOPIC: reflow.jobs
+      EXECUTION_MODE: local
       MAX_JOBS_PER_SECOND: 100
       PIPELINE_MODULE: pipelines
       HOST: 0.0.0.0
@@ -133,8 +130,6 @@ services:
     container_name: reflowfy-api
     depends_on:
       reflow-manager:
-        condition: service_healthy
-      kafka:
         condition: service_healthy
     ports:
       - "8000:8000"

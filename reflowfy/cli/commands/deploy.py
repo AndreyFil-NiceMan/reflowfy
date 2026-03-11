@@ -29,6 +29,7 @@ def register(app: typer.Typer):
         keda_max: int = typer.Option(100, "--keda-max", help="KEDA maximum replicas"),
         kafka_topic: Optional[str] = typer.Option(None, "--kafka-topic", envvar="KAFKA_TOPIC", help="Kafka topic name (or set KAFKA_TOPIC in .env)"),
         workers: int = typer.Option(1, "--workers", help="Worker replicas (when KEDA disabled)"),
+        tag: Optional[str] = typer.Option(None, "--tag", "-t", envvar="IMAGE_TAG", help="Specific tag for the Reflowfy images (overrides default version)"),
     ):
         """
         Deploy Reflowfy to Kubernetes/OpenShift using Helm.
@@ -51,7 +52,10 @@ def register(app: typer.Typer):
             console.print("❌ Kafka is required. Set --kafka or KAFKA_BOOTSTRAP_SERVERS in .env", style="red")
             raise typer.Exit(code=1)
         
-        console.print(Panel(f"🚀 Deploying Reflowfy to namespace: [bold cyan]{namespace}[/bold cyan]"))
+        # Determine image tag
+        image_tag = tag or getattr(reflowfy, "__version__", "latest")
+        
+        console.print(Panel(f"🚀 Deploying Reflowfy (tag: {image_tag}) to namespace: [bold cyan]{namespace}[/bold cyan]"))
 
         try:
             chart_path = get_helm_chart_path()
@@ -67,9 +71,9 @@ def register(app: typer.Typer):
             "--set", f"api.image.repository={registry}/{project}/reflowfy-api",
             "--set", f"reflowManager.image.repository={registry}/{project}/reflowfy-reflow-manager",
             "--set", f"worker.image.repository={registry}/{project}/reflowfy-worker",
-            "--set", f"api.image.tag={reflowfy.__version__}",
-            "--set", f"reflowManager.image.tag={reflowfy.__version__}",
-            "--set", f"worker.image.tag={reflowfy.__version__}",
+            "--set", f"api.image.tag={image_tag}",
+            "--set", f"reflowManager.image.tag={image_tag}",
+            "--set", f"worker.image.tag={image_tag}",
             "--set", "api.image.pullPolicy=Always",
             "--set", "reflowManager.image.pullPolicy=Always",
             "--set", "worker.image.pullPolicy=Always",

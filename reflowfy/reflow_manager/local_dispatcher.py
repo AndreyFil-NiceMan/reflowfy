@@ -12,30 +12,48 @@ from reflowfy.reflow_manager.rate_limiter import RateLimiter
 class LocalDispatcher(BaseDispatcher):
     """
     Dispatches jobs locally by running them in-process.
-    Uses WorkerExecutor to process jobs immediately.
+    
+    Creates a fresh WorkerExecutor for each batch to avoid asyncpg
+    connection issues across event loop boundaries (each batch runs
+    in its own asyncio.run() via _run_async).
+    
+    Supports rate limiting via the same token-bucket RateLimiter
+    used by KafkaDispatcher.
     """
     
     def __init__(self, rate_limiter: RateLimiter, db_session=None):
-        from reflowfy.worker.executor import WorkerExecutor
         super().__init__(rate_limiter)
-        # We need the database URL for WorkerExecutor
-        # For now, we'll let WorkerExecutor find it from env, or pass it if available
-        self.executor = WorkerExecutor()
         
+    def _create_executor(self):
+        """Create a fresh WorkerExecutor instance."""
+        from reflowfy.worker.executor import WorkerExecutor
+        return WorkerExecutor()
+
     async def dispatch_job(
         self,
         job_payload: Dict[str, Any],
         pipeline_name: str,
         rate_limit: Optional[float] = None,
     ) -> bool:
-        """Dispatch single job locally."""
-        # Execute job directly using the async executor
+        """Dispatch single job locally with rate limiting."""
+        # Rate limit: acquire a token before executing
+        if rate_limit is not None:
+            acquired = self.rate_limiter.acquire_token(
+                pipeline_name, rate_limit, max_wait=60.0
+            )
+            if not acquired:
+                print(f"⚠️ Rate limit timeout, skipping job")
+                return False
+        
+        executor = self._create_executor()
         try:
-            await self.executor.execute_job(job_payload)
+            await executor.execute_job(job_payload)
             return True
         except Exception as e:
             print(f"❌ Local dispatch failed: {e}")
             return False
+        finally:
+            await executor.close()
 
     async def dispatch_jobs_batch(
         self,
@@ -43,19 +61,33 @@ class LocalDispatcher(BaseDispatcher):
         pipeline_name: str,
         rate_limit: Optional[float] = None,
     ) -> int:
-        """Dispatch batch locally."""
-        count = 0
+        """Dispatch batch locally with rate limiting and a fresh executor."""
+        executor = self._create_executor()
+        dispatched = 0
         
-        for job in jobs:
-            try:
-                await self.executor.execute_job(job)
-                count += 1
-            except Exception as e:
-                print(f"❌ Local job execution failed: {e}")
+        try:
+            for job in jobs:
+                # Rate limit: acquire a token before each job (same as KafkaDispatcher)
+                if rate_limit is not None:
+                    acquired = self.rate_limiter.acquire_token(
+                        pipeline_name, rate_limit, max_wait=60.0
+                    )
+                    if not acquired:
+                        print(f"⚠️ Rate limit timeout after 60s, stopping dispatch after {dispatched} jobs")
+                        break
+                
+                try:
+                    await executor.execute_job(job)
+                    dispatched += 1
+                except Exception as e:
+                    print(f"❌ Local job execution failed: {e}")
+        finally:
+            await executor.close()
             
-        return count
+        return dispatched
     
     async def close(self):
-        """Close executor resources."""
-        await self.executor.close()
+        """No persistent resources to close."""
+        pass
+
 

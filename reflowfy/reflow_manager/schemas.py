@@ -38,6 +38,7 @@ class RunPipelineRequest(BaseModel):
     runtime_params: Optional[Dict[str, Any]] = None
     rate_limit: Optional[float] = None
     execution_id: Optional[str] = None
+    mode: Optional[str] = None  # "local" or "distributed" (defaults to EXECUTION_MODE env var)
 
 
 class DestinationConfig(BaseModel):

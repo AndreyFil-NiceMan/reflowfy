@@ -11,7 +11,7 @@ from reflowfy.cli.utils import console, get_dockerfiles_path
 docker = DockerClient()
 
 
-def _build_images(registry: str, project: str, push: bool, no_cache: bool = False) -> None:
+def _build_images(registry: str, project: str, push: bool, no_cache: bool = False, custom_tag: Optional[str] = None) -> None:
     """Helper to build and optionally push images."""
     from rich.panel import Panel
 
@@ -32,14 +32,16 @@ def _build_images(registry: str, project: str, push: bool, no_cache: bool = Fals
     
     for image_name, dockerfile_name in image_map.items():
         base_image = f"{registry}/{project}/{image_name}"
-        tags = [f"{base_image}:latest"]
-        
-        try:
-            import reflowfy
-            version = reflowfy.__version__
-            tags.append(f"{base_image}:{version}")
-        except ImportError:
-            console.print("⚠️  Could not import reflowfy to get version for tagging.", style="yellow")
+        if custom_tag:
+            tags = [f"{base_image}:{custom_tag}"]
+        else:
+            tags = [f"{base_image}:latest"]
+            try:
+                import reflowfy
+                version = reflowfy.__version__
+                tags.append(f"{base_image}:{version}")
+            except ImportError:
+                console.print("⚠️  Could not import reflowfy to get version for tagging.", style="yellow")
 
         dockerfile = f"Dockerfile.{dockerfile_name}" 
         dockerfiles_path = get_dockerfiles_path()
@@ -73,6 +75,7 @@ def register(app: typer.Typer):
         project: Optional[str] = typer.Option(None, envvar="PROJECT", help="Project/Namespace name"),
         push: bool = typer.Option(True, help="Push images to registry after building"),
         no_cache: bool = typer.Option(False, "--no-cache", help="Build images without using cache"),
+        tag: Optional[str] = typer.Option(None, "--tag", "-t", help="Specific tag for the image (overrides default version tagging)"),
     ):
         """
         Build and push Reflowfy images to a private registry (OpenShift Ready).
@@ -84,4 +87,4 @@ def register(app: typer.Typer):
             if not Path(".env").exists():
                  console.print("⚠️  No .env file found in current directory.", style="yellow")
             raise typer.Exit(code=1)
-        _build_images(registry, project, push, no_cache=no_cache)
+        _build_images(registry, project, push, no_cache=no_cache, custom_tag=tag)

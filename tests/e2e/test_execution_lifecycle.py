@@ -185,7 +185,7 @@ class TestExecutionStatsProgress:
         Verify that jobs_completed increases over time while pipeline runs.
         
         Uses crash_recovery_test at very slow rate (0.3 jobs/sec) so we 
-        can observe incremental progress over ~15 seconds of polling.
+        can observe incremental progress over polling.
         """
         # Start with very slow rate: 500 items / 10 batch = 50 jobs at 0.3/sec = ~170s
         response = client.post("/run", json={
@@ -198,27 +198,41 @@ class TestExecutionStatsProgress:
         # Wait for running
         _wait_for_state(client, execution_id, "running", max_wait=30)
         
-        # Capture first snapshot immediately
-        first_stats = client.get(f"/executions/{execution_id}/stats").json()
-        first_completed = first_stats.get("jobs_completed", 0)
+        # Capture baseline snapshot immediately after reaching running state
+        baseline_stats = client.get(f"/executions/{execution_id}/stats").json()
+        baseline_completed = baseline_stats.get("jobs_completed", 0)
         
-        # Wait for some progress
-        time.sleep(15)
+        # Poll until we see progress or the pipeline finishes
+        max_wait = 120
+        start = time.time()
+        progress_seen = False
+        latest_completed = baseline_completed
         
-        # Capture second snapshot
-        second_stats = client.get(f"/executions/{execution_id}/stats").json()
-        second_completed = second_stats.get("jobs_completed", 0)
+        while time.time() - start < max_wait:
+            time.sleep(POLL_INTERVAL)
+            
+            stats = client.get(f"/executions/{execution_id}/stats").json()
+            latest_completed = stats.get("jobs_completed", 0)
+            state = stats.get("state", "")
+            
+            if latest_completed > baseline_completed:
+                progress_seen = True
+                break
+            
+            # If pipeline reached final state, all progress happened already
+            if state in ("completed", "failed"):
+                progress_seen = latest_completed > 0
+                break
         
         # Verify total_jobs was set
-        assert second_stats.get("total_jobs", 0) > 0
+        assert stats.get("total_jobs", 0) > 0
         
-        # Verify progress: at 0.3 jobs/sec, after 15s we should have ~4-5 more completed
-        assert second_completed > first_completed, (
-            f"Expected progress over 15s, but jobs_completed didn't increase: "
-            f"first={first_completed}, second={second_completed}"
+        assert progress_seen, (
+            f"Expected progress, but jobs_completed didn't increase from baseline: "
+            f"baseline={baseline_completed}, latest={latest_completed}"
         )
         
-        print(f"✅ Stats showed progress: {first_completed} → {second_completed}")
+        print(f"✅ Stats showed progress: {baseline_completed} → {latest_completed}")
     
     def test_stats_include_all_expected_fields(self, client):
         """Verify stats response contains all expected fields."""

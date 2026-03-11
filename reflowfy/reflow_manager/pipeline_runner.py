@@ -242,9 +242,13 @@ class PipelineRunner:
             print(f"    Dispatching batch {current_batch_num} ({len(jobs)} jobs)...")
             
             # Dispatch to Kafka (async method, run in sync context)
+            # Use execution-scoped key for rate limiting to prevent
+            # concurrent executions of the same pipeline from contending
+            # on the same rate limiter bucket
+            rate_limit_key = f"{pipeline_name}:{execution_id}"
             dispatched = _run_async(self.dispatcher.dispatch_jobs_batch(
                 jobs=job_payloads,
-                pipeline_name=pipeline_name,
+                pipeline_name=rate_limit_key,
                 rate_limit=effective_rate_limit,
             ))
             
@@ -400,7 +404,15 @@ class PipelineRunner:
         print(f"  Saved {job_count} jobs to database in {batch_number} batches")
         
         # Phase 2: Dispatch and wait for each batch
-        print("  Phase 2: Dispatching batches...")
+        # Check if we're in local mode (no need to poll for completion)
+        from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
+        is_local_mode = isinstance(self.dispatcher, LocalDispatcher)
+        
+        if is_local_mode:
+            print("  Phase 2: Executing batches locally (in-process)...")
+        else:
+            print("  Phase 2: Dispatching batches...")
+        
         total_dispatched = 0
         total_completed = 0
         total_failed = 0
@@ -415,12 +427,16 @@ class PipelineRunner:
             job_ids = [job.job_id for job in jobs]
             job_payloads = [job.job_payload for job in jobs]
             
-            print(f"    Dispatching batch {current_batch_num} ({len(jobs)} jobs)...")
+            print(f"    {'Executing' if is_local_mode else 'Dispatching'} batch {current_batch_num} ({len(jobs)} jobs)...")
             
-            # Dispatch to Kafka (async method, run in sync context)
+            # Dispatch (in local mode, this executes jobs synchronously)
+            # Use execution-scoped key for rate limiting to prevent
+            # concurrent executions of the same pipeline from contending
+            # on the same rate limiter bucket
+            rate_limit_key = f"{pipeline_name}:{execution_id}"
             dispatched = _run_async(self.dispatcher.dispatch_jobs_batch(
                 jobs=job_payloads,
-                pipeline_name=pipeline_name,
+                pipeline_name=rate_limit_key,
                 rate_limit=effective_rate_limit,
             ))
             
@@ -431,13 +447,20 @@ class PipelineRunner:
             # Update execution counts (SET, not +=)
             self._set_job_counts(execution_id, dispatched=total_dispatched)
             
-            # Wait for this batch to complete
-            print(f"    Waiting for batch {current_batch_num}...")
-            completed, failed = self._wait_for_batch_completion(
-                job_ids=job_ids,
-                timeout=CHECKPOINT_BATCH_TIMEOUT,
-                poll_interval=CHECKPOINT_POLL_INTERVAL,
-            )
+            if is_local_mode:
+                # Local mode: jobs already executed synchronously by LocalDispatcher.
+                # WorkerExecutor updated job states directly in DB.
+                # No need to poll — just count results from dispatch.
+                completed = dispatched
+                failed = len(jobs) - dispatched
+            else:
+                # Distributed mode: jobs sent to Kafka, wait for workers to complete
+                print(f"    Waiting for batch {current_batch_num}...")
+                completed, failed = self._wait_for_batch_completion(
+                    job_ids=job_ids,
+                    timeout=CHECKPOINT_BATCH_TIMEOUT,
+                    poll_interval=CHECKPOINT_POLL_INTERVAL,
+                )
             
             total_completed += completed
             total_failed += failed
@@ -582,7 +605,15 @@ class PipelineRunner:
         print(f"  Saved {job_count} jobs to database in {batch_number} batches (from {len(ids)} IDs)")
         
         # Phase 2: Dispatch and wait for each batch (reuses existing logic)
-        print("  Phase 2: Dispatching batches...")
+        # Check if we're in local mode (no need to poll for completion)
+        from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
+        is_local_mode = isinstance(self.dispatcher, LocalDispatcher)
+        
+        if is_local_mode:
+            print("  Phase 2: Executing batches locally (in-process)...")
+        else:
+            print("  Phase 2: Dispatching batches...")
+        
         total_dispatched = 0
         total_completed = 0
         total_failed = 0
@@ -597,12 +628,14 @@ class PipelineRunner:
             job_ids = [job.job_id for job in jobs]
             job_payloads = [job.job_payload for job in jobs]
             
-            print(f"    Dispatching batch {current_batch_num} ({len(jobs)} jobs)...")
+            print(f"    {'Executing' if is_local_mode else 'Dispatching'} batch {current_batch_num} ({len(jobs)} jobs)...")
             
-            # Dispatch to Kafka (async method, run in sync context)
+            # Dispatch (in local mode, this executes jobs synchronously)
+            # Use execution-scoped key for rate limiting
+            rate_limit_key = f"{pipeline_name}:{execution_id}"
             dispatched = _run_async(self.dispatcher.dispatch_jobs_batch(
                 jobs=job_payloads,
-                pipeline_name=pipeline_name,
+                pipeline_name=rate_limit_key,
                 rate_limit=effective_rate_limit,
             ))
             
@@ -613,13 +646,20 @@ class PipelineRunner:
             # Update execution counts (SET, not +=)
             self._set_job_counts(execution_id, dispatched=total_dispatched)
             
-            # Wait for this batch to complete
-            print(f"    Waiting for batch {current_batch_num}...")
-            completed, failed = self._wait_for_batch_completion(
-                job_ids=job_ids,
-                timeout=CHECKPOINT_BATCH_TIMEOUT,
-                poll_interval=CHECKPOINT_POLL_INTERVAL,
-            )
+            if is_local_mode:
+                # Local mode: jobs already executed synchronously by LocalDispatcher.
+                # WorkerExecutor updated job states directly in DB.
+                # No need to poll — just count results from dispatch.
+                completed = dispatched
+                failed = len(jobs) - dispatched
+            else:
+                # Distributed mode: jobs sent to Kafka, wait for workers to complete
+                print(f"    Waiting for batch {current_batch_num}...")
+                completed, failed = self._wait_for_batch_completion(
+                    job_ids=job_ids,
+                    timeout=CHECKPOINT_BATCH_TIMEOUT,
+                    poll_interval=CHECKPOINT_POLL_INTERVAL,
+                )
             
             total_completed += completed
             total_failed += failed

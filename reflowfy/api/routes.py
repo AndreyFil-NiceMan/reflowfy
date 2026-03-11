@@ -98,17 +98,11 @@ def create_pipeline_routes(
             
             try:
                 # Execute pipeline
-                if mode == "local":
-                    status = executor.execute(
-                        pipeline=pipeline,
-                        runtime_params=runtime_params_dict,
-                    )
-                else:
-                    status = executor.execute(
-                        pipeline=pipeline,
-                        runtime_params=runtime_params_dict,
-                        rate_limit_override=rate_limit_override,
-                    )
+                status = executor.execute(
+                    pipeline=pipeline,
+                    runtime_params=runtime_params_dict,
+                    rate_limit_override=rate_limit_override,
+                )
                 
                 # Track execution
                 execution_tracker.track(status)
@@ -161,17 +155,11 @@ def create_pipeline_routes(
                 print(f"Rate limit override: {rate_limit} jobs/sec")
             
             try:
-                if mode == "local":
-                    status = executor.execute(
-                        pipeline=pipeline,
-                        runtime_params=runtime_params_dict,
-                    )
-                else:
-                    status = executor.execute(
-                        pipeline=pipeline,
-                        runtime_params=runtime_params_dict,
-                        rate_limit_override=rate_limit_override,
-                    )
+                status = executor.execute(
+                    pipeline=pipeline,
+                    runtime_params=runtime_params_dict,
+                    rate_limit_override=rate_limit_override,
+                )
                 
                 execution_tracker.track(status)
                 print(f"✓ Execution started: {status.execution_id}\n")

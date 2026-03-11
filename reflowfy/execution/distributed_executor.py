@@ -23,6 +23,7 @@ class DistributedExecutor(BaseExecutor):
         self,
         reflow_manager_url: str = "http://localhost:8001",
         timeout: float = 120.0,  # Increased from 30s to handle large rate-limited dispatches
+        mode: str = "distributed",
     ):
         """
         Initialize distributed executor.
@@ -30,9 +31,11 @@ class DistributedExecutor(BaseExecutor):
         Args:
             reflow_manager_url: ReflowManager service URL
             timeout: HTTP request timeout
+            mode: Execution mode ('local' or 'distributed')
         """
         self.reflow_manager_url = reflow_manager_url.rstrip("/")
         self.timeout = timeout
+        self.mode = mode
         self._client: Optional[httpx.Client] = None
     
     def _get_client(self) -> httpx.Client:
@@ -99,6 +102,7 @@ class DistributedExecutor(BaseExecutor):
                     "runtime_params": runtime_params,
                     "execution_id": execution_id,
                     "rate_limit": rate_limit,
+                    "mode": self.mode,
                 },
             )
             
@@ -171,6 +175,7 @@ def get_executor(mode: str, **kwargs) -> BaseExecutor:
                 "http://localhost:8001"
             ),
             timeout=kwargs.get("timeout", 30.0),
+            mode=kwargs.get("execution_mode", "distributed"),
         )
     
     else:
