@@ -23,24 +23,28 @@ PostgreSQL (state + checkpoints)
 ## Features
 
 ### 1. Rate Limiting
+
 - **Token Bucket Algorithm**: Smooth and efficient rate limiting
 - **Global Rate Limiting**: Works across all API instances
 - **Per-Pipeline Limits**: Override global rate limit per pipeline
 - **Database-Backed**: Tokens stored in PostgreSQL for consistency
 
 ### 2. Pipeline State Management
+
 - **Execution Tracking**: Track all pipeline executions with state (pending, running, paused, completed, failed)
 - **Job Counting**: Track total jobs dispatched, completed, and failed
 - **Error Tracking**: Store error messages for failed executions
 - **Runtime Parameters**: Store runtime parameters with each execution
 
 ### 3. Checkpointing (Pause/Resume)
+
 - **Batch-Level Checkpoints**: Each job batch has a checkpoint
 - **Offset Storage**: Store source-specific offset/cursor data
 - **Pause/Resume**: Pause pipelines and resume from last checkpoint
 - **State Recovery**: Resume pipelines even after service restarts
 
 ### 4. Job Dispatch
+
 - **Rate-Limited Dispatch**: Automatically apply rate limits when sending to Kafka
 - **Batch Dispatch**: Send multiple jobs in a batch for efficiency
 - **Health Checks**: Verify Kafka connectivity before dispatch
@@ -50,6 +54,7 @@ PostgreSQL (state + checkpoints)
 ### Execution Management
 
 #### Create Execution
+
 ```bash
 POST /executions
 {
@@ -60,29 +65,33 @@ POST /executions
 ```
 
 #### Get Execution
+
 ```bash
 GET /executions/{execution_id}
 ```
 
 Returns:
+
 ```json
 {
-  "execution_id": "abc-123",
-  "pipeline_name": "my_pipeline",
-  "state": "running",
-  "jobs_dispatched": 150,
-  "jobs_completed": 120,
-  "jobs_failed": 2,
-  "created_at": "2024-01-01T12:00:00Z"
+	"execution_id": "abc-123",
+	"pipeline_name": "my_pipeline",
+	"state": "running",
+	"jobs_dispatched": 150,
+	"jobs_completed": 120,
+	"jobs_failed": 2,
+	"created_at": "2024-01-01T12:00:00Z"
 }
 ```
 
 #### Pause Execution
+
 ```bash
 POST /executions/{execution_id}/pause
 ```
 
 #### Resume Execution
+
 ```bash
 POST /executions/{execution_id}/resume
 ```
@@ -90,6 +99,7 @@ POST /executions/{execution_id}/resume
 ### Checkpointing
 
 #### Create Checkpoint
+
 ```bash
 POST /checkpoints
 {
@@ -100,12 +110,14 @@ POST /checkpoints
 ```
 
 #### Get Checkpoints
+
 ```bash
 GET /executions/{execution_id}/checkpoints
 GET /executions/{execution_id}/checkpoints?state=completed
 ```
 
 #### Update Checkpoint (Called by Workers)
+
 ```bash
 PATCH /checkpoints/{batch_id}
 {
@@ -117,6 +129,7 @@ PATCH /checkpoints/{batch_id}
 ### Job Dispatch
 
 #### Dispatch Jobs to Kafka
+
 ```bash
 POST /dispatch
 {
@@ -128,38 +141,43 @@ POST /dispatch
 ```
 
 Returns:
+
 ```json
 {
-  "execution_id": "abc-123",
-  "total_jobs": 200,
-  "dispatched": 150,
-  "rate_limited": 50
+	"execution_id": "abc-123",
+	"total_jobs": 200,
+	"dispatched": 150,
+	"rate_limited": 50
 }
 ```
 
 ### Statistics
 
 #### Global Statistics
+
 ```bash
 GET /statistics
 ```
 
 Returns:
+
 ```json
 {
-  "active_executions": 5,
-  "total_jobs_dispatched": 10000,
-  "total_jobs_completed": 9500,
-  "total_jobs_failed": 50
+	"active_executions": 5,
+	"total_jobs_dispatched": 10000,
+	"total_jobs_completed": 9500,
+	"total_jobs_failed": 50
 }
 ```
 
 #### Execution Statistics
+
 ```bash
 GET /executions/{execution_id}/stats
 ```
 
 ### Health Check
+
 ```bash
 GET /health
 ```
@@ -168,15 +186,15 @@ GET /health
 
 ### Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DATABASE_URL` | `postgresql://reflowfy:reflowfy@localhost:5432/reflowfy` | PostgreSQL connection string |
-| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Kafka broker addresses |
-| `KAFKA_TOPIC` | `reflow.jobs` | Kafka topic for job dispatch |
-| `MAX_JOBS_PER_SECOND` | `100` | Global rate limit (jobs/second) |
-| `HOST` | `0.0.0.0` | Server host |
-| `PORT` | `8001` | Server port |
-| `LOG_LEVEL` | `INFO` | Logging level |
+| Variable                  | Default                                                  | Description                     |
+| ------------------------- | -------------------------------------------------------- | ------------------------------- |
+| `DATABASE_URL`            | `postgresql://reflowfy:reflowfy@localhost:5432/reflowfy` | PostgreSQL connection string    |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092`                                         | Kafka broker addresses          |
+| `KAFKA_TOPIC`             | `reflow.jobs`                                            | Kafka topic for job dispatch    |
+| `MAX_JOBS_PER_SECOND`     | `100`                                                    | Global rate limit (jobs/second) |
+| `HOST`                    | `0.0.0.0`                                                | Server host                     |
+| `PORT`                    | `8001`                                                   | Server port                     |
+| `LOG_LEVEL`               | `INFO`                                                   | Logging level                   |
 
 ### Docker Deployment
 
@@ -206,6 +224,7 @@ python -m reflowfy.reflow_manager.app
 ## Database Schema
 
 ### Executions Table
+
 ```sql
 CREATE TABLE executions (
     execution_id VARCHAR(255) PRIMARY KEY,
@@ -224,6 +243,7 @@ CREATE TABLE executions (
 ```
 
 ### Checkpoints Table
+
 ```sql
 CREATE TABLE checkpoints (
     id SERIAL PRIMARY KEY,
@@ -239,6 +259,7 @@ CREATE TABLE checkpoints (
 ```
 
 ### Rate Limit State Table
+
 ```sql
 CREATE TABLE rate_limit_state (
     pipeline_name VARCHAR(255) PRIMARY KEY,
@@ -252,6 +273,7 @@ CREATE TABLE rate_limit_state (
 ## Pause/Resume Example
 
 ### 1. Start a Pipeline
+
 ```bash
 # Start execution via API
 curl -X POST http://localhost:8000/pipelines/my_pipeline/run?start_date=2024-01-01
@@ -259,6 +281,7 @@ curl -X POST http://localhost:8000/pipelines/my_pipeline/run?start_date=2024-01-
 ```
 
 ### 2. Monitor Progress
+
 ```bash
 # Check execution state
 curl http://localhost:8001/executions/abc-123
@@ -268,12 +291,14 @@ curl http://localhost:8001/executions/abc-123/checkpoints
 ```
 
 ### 3. Pause Pipeline
+
 ```bash
 # Pause the execution
 curl -X POST http://localhost:8001/executions/abc-123/pause
 ```
 
 ### 4. Resume Pipeline
+
 ```bash
 # Resume from last checkpoint
 curl -X POST http://localhost:8001/executions/abc-123/resume
@@ -284,11 +309,13 @@ The pipeline will resume from where it left off, without reprocessing completed 
 ## Monitoring
 
 ### Health Check
+
 ```bash
 curl http://localhost:8001/health
 ```
 
 ### Statistics Dashboard
+
 ```bash
 # Global stats
 curl http://localhost:8001/statistics
@@ -298,13 +325,14 @@ curl http://localhost:8001/executions/abc-123/stats
 ```
 
 ### Database Queries
+
 ```bash
 # Connect to database
 docker-compose exec postgres psql -U reflowfy -d reflowfy
 
 # Check active executions
-SELECT execution_id, pipeline_name, state, jobs_dispatched, jobs_completed 
-FROM executions 
+SELECT execution_id, pipeline_name, state, jobs_dispatched, jobs_completed
+FROM executions
 WHERE state IN ('running', 'paused');
 
 # Check rate limit state
@@ -316,12 +344,14 @@ SELECT * FROM rate_limit_state;
 ### Service Won't Start
 
 1. Check database connection:
+
    ```bash
    docker-compose ps postgres
    docker-compose logs postgres
    ```
 
 2. Check database is initialized:
+
    ```bash
    docker-compose exec postgres psql -U reflowfy -d reflowfy -c "\dt"
    ```
@@ -334,11 +364,13 @@ SELECT * FROM rate_limit_state;
 ### Jobs Not Dispatching
 
 1. Check rate limit state:
+
    ```bash
    curl http://localhost:8001/statistics
    ```
 
 2. Check Kafka connection:
+
    ```bash
    docker-compose logs kafka
    ```
@@ -353,6 +385,7 @@ SELECT * FROM rate_limit_state;
 ### Pause/Resume Not Working
 
 1. Check checkpoints exist:
+
    ```bash
    curl http://localhost:8001/executions/{execution_id}/checkpoints
    ```
@@ -379,5 +412,6 @@ SELECT * FROM rate_limit_state;
 ## API Documentation
 
 Interactive API documentation available at:
+
 - Swagger UI: `http://localhost:8001/docs`
 - ReDoc: `http://localhost:8001/redoc`

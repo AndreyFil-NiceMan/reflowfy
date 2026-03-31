@@ -20,17 +20,18 @@ services:
       - discovery.type=single-node
       - cluster.name=reflofy-e2e-cluster
       - node.name=reflofy-e2e-node
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - 'ES_JAVA_OPTS=-Xms512m -Xmx512m'
       - xpack.security.enabled=false
       - xpack.security.enrollment.enabled=false
       - network.host=0.0.0.0
     ports:
-      - "9201:9200"
-      - "9301:9300"
+      - '9201:9200'
+      - '9301:9300'
     networks:
       - reflowfy-network
     healthcheck:
-      test: [ "CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1" ]
+      test:
+        ['CMD-SHELL', 'curl -f http://localhost:9200/_cluster/health || exit 1']
       interval: 10s
       timeout: 5s
       retries: 10
@@ -49,13 +50,17 @@ services:
     container_name: reflofy-e2e-mock-http
     command: python -m tests.e2e.destinations.mock_http_server
     ports:
-      - "8091:8091"
+      - '8091:8091'
     volumes:
       - ./tests:/app/tests:ro
     networks:
       - reflowfy-network
     healthcheck:
-      test: [ "CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8091/health')\" || exit 1" ]
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import urllib.request; urllib.request.urlopen(''http://localhost:8091/health'')" || exit 1',
+        ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -71,13 +76,17 @@ services:
     container_name: reflofy-e2e-mock-api
     command: python -m uvicorn tests.e2e.sources.mock_api_server:app --host 0.0.0.0 --port 8092
     ports:
-      - "8092:8092"
+      - '8092:8092'
     volumes:
       - ./tests:/app/tests:ro
     networks:
       - reflowfy-network
     healthcheck:
-      test: [ "CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8092/health')\" || exit 1" ]
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import urllib.request; urllib.request.urlopen(''http://localhost:8092/health'')" || exit 1',
+        ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -101,7 +110,7 @@ services:
     depends_on:
       - e2e-zookeeper
     ports:
-      - "9095:9095"
+      - '9095:9095'
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: e2e-zookeeper:2181
@@ -113,7 +122,7 @@ services:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_SASL_ENABLED_MECHANISMS: PLAIN
-      KAFKA_OPTS: "-Djava.security.auth.login.config=/tmp/kafka_jaas.conf -Dzookeeper.sasl.client=false"
+      KAFKA_OPTS: '-Djava.security.auth.login.config=/tmp/kafka_jaas.conf -Dzookeeper.sasl.client=false'
     command:
       - bash
       - -c
@@ -138,7 +147,8 @@ services:
     networks:
       - reflowfy-network
     healthcheck:
-      test: [ "CMD-SHELL", "kafka-topics --list --bootstrap-server localhost:29092" ]
+      test:
+        ['CMD-SHELL', 'kafka-topics --list --bootstrap-server localhost:29092']
       interval: 10s
       timeout: 10s
       retries: 10
@@ -146,5 +156,3 @@ services:
 
 volumes:
   e2e-elasticsearch-data:
-
-

@@ -21,7 +21,7 @@ spec:
           - Write
           - Create
           - Describe
-        host: "*"
+        host: '*'
       # Allow consumer group access
       - resource:
           type: group
@@ -30,4 +30,4 @@ spec:
         operations:
           - Read
           - Describe
-        host: "*"
+        host: '*'

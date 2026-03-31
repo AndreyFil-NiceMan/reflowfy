@@ -1,38 +1,36 @@
 {
-  "_comment": "Example Elasticsearch/MongoDB Query Template",
-  "_usage": [
-    "Save reusable query templates as .json files in this folder.",
-    "Use Jinja2-style placeholders ({{ param_name }}) for dynamic values.",
-    "",
-    "Usage in a pipeline:",
-    "  import json",
-    "  from pathlib import Path",
-    "",
-    "  @source('my_elastic_source')",
-    "  def my_elastic_source(**overrides):",
-    "      query = json.loads(Path('queries/events_by_date.json').read_text())",
-    "      return elastic_source(base_query=query, **overrides)"
-  ],
-  "query": {
-    "bool": {
-      "must": [
-        {
-          "range": {
-            "@timestamp": {
-              "gte": "{{ start_time }}",
-              "lte": "{{ end_time }}"
-            }
-          }
-        },
-        {
-          "term": {
-            "status": "{{ status }}"
-          }
-        }
-      ]
-    }
-  },
-  "sort": [
-    { "@timestamp": { "order": "desc" } }
-  ]
+	"_comment": "Example Elasticsearch/MongoDB Query Template",
+	"_usage": [
+		"Save reusable query templates as .json files in this folder.",
+		"Use Jinja2-style placeholders ({{ param_name }}) for dynamic values.",
+		"",
+		"Usage in a pipeline:",
+		"  import json",
+		"  from pathlib import Path",
+		"",
+		"  @source('my_elastic_source')",
+		"  def my_elastic_source(**overrides):",
+		"      query = json.loads(Path('queries/events_by_date.json').read_text())",
+		"      return elastic_source(base_query=query, **overrides)"
+	],
+	"query": {
+		"bool": {
+			"must": [
+				{
+					"range": {
+						"@timestamp": {
+							"gte": "{{ start_time }}",
+							"lte": "{{ end_time }}"
+						}
+					}
+				},
+				{
+					"term": {
+						"status": "{{ status }}"
+					}
+				}
+			]
+		}
+	},
+	"sort": [{"@timestamp": {"order": "desc"}}]
 }

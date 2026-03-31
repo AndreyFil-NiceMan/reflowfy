@@ -3,7 +3,7 @@ replicaCount: 1
 image:
   repository: reflowfy-api
   pullPolicy: IfNotPresent
-  tag: "local"
+  tag: 'local'
 
 service:
   type: ClusterIP
@@ -11,7 +11,7 @@ service:
 
 ingress:
   enabled: false
-  className: ""
+  className: ''
   annotations: {}
   hosts:
     - host: reflowfy-api.local
@@ -36,15 +36,15 @@ autoscaling:
 
 # Kafka configuration
 kafka:
-  bootstrapServers: "kafka:9092"
-  topic: "reflow.jobs"
+  bootstrapServers: 'kafka:9092'
+  topic: 'reflow.jobs'
 
 # ReflowManager configuration
 reflowManager:
-  url: "http://reflow-manager:8001"
+  url: 'http://reflow-manager:8001'
 
 # Pipeline module to import
-pipelineModule: "pipelines"
+pipelineModule: 'pipelines'
 
 # Pod security context (OpenShift compatible)
 podSecurityContext:
@@ -66,4 +66,3 @@ nodeSelector: {}
 tolerations: []
 
 affinity: {}
-

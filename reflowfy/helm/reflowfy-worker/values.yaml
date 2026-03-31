@@ -3,7 +3,7 @@ replicaCount: 1
 image:
   repository: reflowfy-worker
   pullPolicy: IfNotPresent
-  tag: "local"
+  tag: 'local'
 
 resources:
   limits:
@@ -15,22 +15,22 @@ resources:
 
 # Kafka configuration
 kafka:
-  bootstrapServers: "kafka:9092"
-  topic: "reflow.jobs"
-  groupId: "reflowfy-workers"
+  bootstrapServers: 'kafka:9092'
+  topic: 'reflow.jobs'
+  groupId: 'reflowfy-workers'
 
 # PostgreSQL configuration (for job status updates)
 postgresql:
-  host: "postgresql"
+  host: 'postgresql'
   port: 5432
-  database: "reflowfy"
-  username: "reflowfy"
-  password: "reflowfy"
-  existingSecret: ""
-  existingSecretPasswordKey: "password"
+  database: 'reflowfy'
+  username: 'reflowfy'
+  password: 'reflowfy'
+  existingSecret: ''
+  existingSecretPasswordKey: 'password'
 
 # Pipeline module to import
-pipelineModule: "pipelines"
+pipelineModule: 'pipelines'
 
 # KEDA autoscaling
 keda:
@@ -61,4 +61,3 @@ nodeSelector: {}
 tolerations: []
 
 affinity: {}
-

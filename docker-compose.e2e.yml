@@ -15,11 +15,11 @@ services:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
     ports:
-      - "2182:2181"
+      - '2182:2181'
     networks:
       - reflofy-e2e-network
     healthcheck:
-      test: [ "CMD", "nc", "-z", "localhost", "2181" ]
+      test: ['CMD', 'nc', '-z', 'localhost', '2181']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -32,7 +32,7 @@ services:
       e2e-zookeeper:
         condition: service_healthy
     ports:
-      - "9094:9094"
+      - '9094:9094'
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: e2e-zookeeper:2181
@@ -46,7 +46,13 @@ services:
     networks:
       - reflofy-e2e-network
     healthcheck:
-      test: [ "CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9094" ]
+      test:
+        [
+          'CMD',
+          'kafka-broker-api-versions',
+          '--bootstrap-server',
+          'localhost:9094',
+        ]
       interval: 10s
       timeout: 10s
       retries: 5
@@ -72,11 +78,11 @@ services:
       POSTGRES_USER: reflowfy
       POSTGRES_PASSWORD: reflowfy
     ports:
-      - "5433:5432"
+      - '5433:5432'
     networks:
       - reflofy-e2e-network
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U reflowfy -d reflowfy_e2e" ]
+      test: ['CMD-SHELL', 'pg_isready -U reflowfy -d reflowfy_e2e']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -94,17 +100,18 @@ services:
       - discovery.type=single-node
       - cluster.name=reflofy-e2e-cluster
       - node.name=reflofy-e2e-node
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - 'ES_JAVA_OPTS=-Xms512m -Xmx512m'
       - xpack.security.enabled=false
       - xpack.security.enrollment.enabled=false
       - network.host=0.0.0.0
     ports:
-      - "9201:9200"
-      - "9301:9300"
+      - '9201:9200'
+      - '9301:9300'
     networks:
       - reflofy-e2e-network
     healthcheck:
-      test: [ "CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1" ]
+      test:
+        ['CMD-SHELL', 'curl -f http://localhost:9200/_cluster/health || exit 1']
       interval: 10s
       timeout: 5s
       retries: 10
@@ -129,9 +136,9 @@ services:
       e2e-kafka-init:
         condition: service_completed_successfully
     ports:
-      - "8002:8001"
+      - '8002:8001'
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - 'host.docker.internal:host-gateway'
     environment:
       DATABASE_URL: postgresql://reflowfy:reflowfy@e2e-postgres:5432/reflowfy_e2e
       KAFKA_BOOTSTRAP_SERVERS: e2e-kafka:29092
@@ -152,7 +159,7 @@ services:
     networks:
       - reflofy-e2e-network
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8001/health" ]
+      test: ['CMD', 'curl', '-f', 'http://localhost:8001/health']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -166,13 +173,17 @@ services:
     container_name: reflofy-e2e-mock-http
     command: python -m tests.e2e.destinations.mock_http_server
     ports:
-      - "8091:8091"
+      - '8091:8091'
     volumes:
       - ./tests:/app/tests:ro
     networks:
       - reflofy-e2e-network
     healthcheck:
-      test: [ "CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8091/health')\" || exit 1" ]
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import urllib.request; urllib.request.urlopen(''http://localhost:8091/health'')" || exit 1',
+        ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -186,13 +197,17 @@ services:
     container_name: reflofy-e2e-mock-api
     command: python -m uvicorn tests.e2e.sources.mock_api_server:app --host 0.0.0.0 --port 8092
     ports:
-      - "8092:8092"
+      - '8092:8092'
     volumes:
       - ./tests:/app/tests:ro
     networks:
       - reflofy-e2e-network
     healthcheck:
-      test: [ "CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8092/health')\" || exit 1" ]
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import urllib.request; urllib.request.urlopen(''http://localhost:8092/health'')" || exit 1',
+        ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -215,7 +230,7 @@ services:
       e2e-kafka-init:
         condition: service_completed_successfully
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - 'host.docker.internal:host-gateway'
     environment:
       KAFKA_BOOTSTRAP_SERVERS: e2e-kafka:29092
       KAFKA_TOPIC: e2e.reflow.jobs
@@ -246,7 +261,7 @@ services:
     depends_on:
       - e2e-kafka
     ports:
-      - "8081:8080"
+      - '8081:8080'
     environment:
       KAFKA_CLUSTERS_0_NAME: e2e-local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: e2e-kafka:29092

@@ -8,20 +8,20 @@ postgresql:
 
   # External PostgreSQL configuration (used when enabled=false)
   external:
-    host: ""              # Required if enabled=false
+    host: '' # Required if enabled=false
     port: 5432
-    database: "reflowfy"
-    username: "reflowfy"
-    password: ""          # Plain password (use existingSecret in production)
-    existingSecret: ""    # Name of K8s secret containing password
-    existingSecretPasswordKey: "password"
+    database: 'reflowfy'
+    username: 'reflowfy'
+    password: '' # Plain password (use existingSecret in production)
+    existingSecret: '' # Name of K8s secret containing password
+    existingSecretPasswordKey: 'password'
 
   # Bitnami PostgreSQL chart values (used when enabled=true)
   auth:
-    postgresPassword: "reflowfy"
-    username: "reflowfy"
-    password: "reflowfy"
-    database: "reflowfy"
+    postgresPassword: 'reflowfy'
+    username: 'reflowfy'
+    password: 'reflowfy'
+    database: 'reflowfy'
   primary:
     persistence:
       enabled: true
@@ -42,21 +42,21 @@ kafka:
   # External Kafka configuration (MANDATORY)
   # You must provide the bootstrap servers for your external Kafka cluster.
   external:
-    bootstrapServers: "kafka:9092"
+    bootstrapServers: 'kafka:9092'
 
   # SASL Authentication
   sasl:
     enabled: true
-    mechanism: "SCRAM-SHA-256"
-    securityProtocol: "SASL_PLAINTEXT"
-    username: "reflowfy"
+    mechanism: 'SCRAM-SHA-256'
+    securityProtocol: 'SASL_PLAINTEXT'
+    username: 'reflowfy'
     # Use existingSecret to avoid storing password in values.yaml
-    existingSecret: "kafka-sasl-credentials"
-    existingSecretPasswordKey: "password"
+    existingSecret: 'kafka-sasl-credentials'
+    existingSecretPasswordKey: 'password'
 
   # Common settings
-  topic: "reflow.jobs"
-  groupId: "reflowfy-workers"
+  topic: 'reflow.jobs'
+  groupId: 'reflowfy-workers'
 
 #####################################
 # REFLOWFY COMPONENTS
@@ -68,7 +68,7 @@ api:
   replicaCount: 1
   image:
     repository: image-registry.openshift-image-registry.svc:5000/kofli-dev/reflowfy-api
-    tag: "latest"
+    tag: 'latest'
     pullPolicy: Always
   service:
     type: NodePort
@@ -88,15 +88,15 @@ reflowManager:
   replicaCount: 1
   image:
     repository: image-registry.openshift-image-registry.svc:5000/kofli-dev/reflowfy-reflow-manager
-    tag: "latest"
+    tag: 'latest'
     pullPolicy: Always
   service:
     type: NodePort
     port: 8001
     # nodePort: 30001  # Optional: fix the port
   maxJobsPerSecond: 100
-  pipelineModule: "pipelines"
-  logLevel: "INFO"
+  pipelineModule: 'pipelines'
+  logLevel: 'INFO'
   resources:
     limits:
       cpu: 1000m
@@ -111,7 +111,7 @@ worker:
   replicaCount: 1
   image:
     repository: image-registry.openshift-image-registry.svc:5000/kofli-dev/reflowfy-worker
-    tag: "latest"
+    tag: 'latest'
     pullPolicy: Always
   resources:
     limits:
@@ -141,12 +141,14 @@ global:
     allowInsecureImages: false
 
 # Pod security context (set runAsNonRoot: true for OpenShift if images support it)
-podSecurityContext: {}
+podSecurityContext:
+  {}
   # runAsNonRoot: true
   # seccompProfile:
   #   type: RuntimeDefault
 
-securityContext: {}
+securityContext:
+  {}
   # allowPrivilegeEscalation: false
   # capabilities:
   #   drop:
@@ -157,5 +159,4 @@ securityContext: {}
 # UTILITY IMAGES
 #####################################
 busybox:
-  image: "busybox:1.36"
-
+  image: 'busybox:1.36'

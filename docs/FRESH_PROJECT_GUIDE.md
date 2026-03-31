@@ -5,18 +5,23 @@ This guide walks you through creating a new project that uses Reflowfy, from zer
 ## 1. Install Reflowfy
 
 ### Option A: Install from Git (Recommended)
+
 ```bash
 pip install git+https://github.com/YOUR_USERNAME/reflowfy.git
 ```
 
 ### Option B: Install from a Wheel
+
 Build the wheel first (in the source project):
+
 ```bash
 cd /path/to/reflowfy-source
 pip install build
 python -m build
 ```
+
 Then install the wheel in your new project:
+
 ```bash
 pip install /path/to/reflowfy-source/dist/reflowfy-0.1.0-py3-none-any.whl
 ```
@@ -26,6 +31,7 @@ pip install /path/to/reflowfy-source/dist/reflowfy-0.1.0-py3-none-any.whl
 ## 2. Initialize Your Project
 
 Create a new project directory and initialize it:
+
 ```bash
 mkdir my-data-project
 cd my-data-project
@@ -33,6 +39,7 @@ reflowfy init --name my_first_pipeline
 ```
 
 This creates:
+
 ```
 my-data-project/
 ├── pipelines/
@@ -49,6 +56,7 @@ my-data-project/
 ## 3. Customize Your Pipeline
 
 Edit `pipelines/my_first_pipeline.py`:
+
 ```python
 from reflowfy import Pipeline, ElasticsearchSource, KafkaDestination
 
@@ -73,14 +81,18 @@ def my_first_pipeline():
 ## 4. Test Locally
 
 Run everything locally with Docker Compose:
+
 ```bash
 reflowfy run --build
 ```
+
 Access:
+
 - API: http://localhost:8000
 - Manager: http://localhost:8001/docs
 
 Trigger a test:
+
 ```bash
 curl -X POST http://localhost:8001/run \
   -H "Content-Type: application/json" \
@@ -92,6 +104,7 @@ curl -X POST http://localhost:8001/run \
 ## 5. Build for OpenShift
 
 Build and push images to your private registry:
+
 ```bash
 reflowfy build --registry registry.lab.local --project my-project
 ```
@@ -111,6 +124,7 @@ reflowfy deploy \
 ```
 
 Get access URLs:
+
 ```bash
 oc get routes
 ```
@@ -120,6 +134,7 @@ oc get routes
 ## 7. Verify
 
 Check pod status:
+
 ```bash
 reflowfy check
 ```
@@ -128,10 +143,10 @@ reflowfy check
 
 ## CLI Command Reference
 
-| Command | Description |
-|---------|-------------|
-| `reflowfy init` | Scaffold a new project |
-| `reflowfy run` | Run locally with Docker Compose |
-| `reflowfy build` | Build & push images to registry |
-| `reflowfy deploy` | Deploy to OpenShift with Helm |
-| `reflowfy check` | Verify deployment health |
+| Command           | Description                     |
+| ----------------- | ------------------------------- |
+| `reflowfy init`   | Scaffold a new project          |
+| `reflowfy run`    | Run locally with Docker Compose |
+| `reflowfy build`  | Build & push images to registry |
+| `reflowfy deploy` | Deploy to OpenShift with Helm   |
+| `reflowfy check`  | Verify deployment health        |

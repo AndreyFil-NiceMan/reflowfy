@@ -3,13 +3,16 @@
 This guide details how to deploy Reflowfy on a private Red Hat OpenShift cluster.
 
 ## 1. Prerequisites
+
 - **Admin Access**: You need `oc` CLI access to your cluster.
 - **Image Registry**: A container registry accessible by your OpenShift cluster (e.g., the internal OpenShift registry, Harbor, or Nexus).
 
 ## 2. Prepare Images (Non-Root)
+
 We have updated the Dockerfiles to run as a non-root user (`reflowfy`, UID 1001). This is critical for OpenShift security compliance.
 
 ### Build and Push
+
 Run these commands on your machine where you have the code:
 
 ```bash
@@ -46,7 +49,7 @@ global:
 api:
   image:
     repository: <your-private-registry-url>/reflowfy/api
-    tag: "latest"
+    tag: 'latest'
   service:
     type: ClusterIP # OpenShift uses Routes, not NodePort usually
 
@@ -54,7 +57,7 @@ api:
 reflowManager:
   image:
     repository: <your-private-registry-url>/reflowfy/reflow-manager
-    tag: "latest"
+    tag: 'latest'
   service:
     type: ClusterIP
 
@@ -62,7 +65,7 @@ reflowManager:
 worker:
   image:
     repository: <your-private-registry-url>/reflowfy/worker
-    tag: "latest"
+    tag: 'latest'
 
 # Security Context (OpenShift handles User IDs automatically)
 podSecurityContext:
@@ -75,7 +78,7 @@ podSecurityContext:
 kafka:
   enabled: false
   external:
-    bootstrapServers: "<your-kafka-host>:9092"
+    bootstrapServers: '<your-kafka-host>:9092'
 ```
 
 ## 4. Deploy
@@ -92,6 +95,7 @@ helm install reflowfy ./helm/reflowfy -f openshift-values.yaml
 ```
 
 ## 5. Expose Services via Routes
+
 OpenShift uses `Routes` instead of `NodePort` or `LoadBalancer`.
 
 ```bash
@@ -103,6 +107,7 @@ oc expose svc/reflowfy-api
 ```
 
 Get the public URLs:
+
 ```bash
 oc get routes
 ```

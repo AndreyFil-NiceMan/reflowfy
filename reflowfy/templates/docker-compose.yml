@@ -1,4 +1,3 @@
-
 services:
   # PostgreSQL - Database for ReflowManager
   postgres:
@@ -9,13 +8,13 @@ services:
       POSTGRES_USER: reflowfy
       POSTGRES_PASSWORD: reflowfy
     ports:
-      - "5432:5432"
+      - '5432:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - reflowfy-network
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U reflowfy" ]
+      test: ['CMD-SHELL', 'pg_isready -U reflowfy']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -28,11 +27,11 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "5050:80"
+      - '5050:80'
     environment:
       PGADMIN_DEFAULT_EMAIL: admin@admin.com
       PGADMIN_DEFAULT_PASSWORD: admin
-      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
     networks:
       - reflowfy-network
 
@@ -48,11 +47,11 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "8001:8001"
+      - '8001:8001'
     environment:
       DATABASE_URL: postgresql://reflowfy:reflowfy@postgres:5432/reflowfy
       # Kafka settings are ignored in local mode
-      KAFKA_BOOTSTRAP_SERVERS: "ignored:9092"
+      KAFKA_BOOTSTRAP_SERVERS: 'ignored:9092'
       KAFKA_TOPIC: reflow.jobs
       MAX_JOBS_PER_SECOND: 100
       PIPELINE_MODULE: pipelines
@@ -62,7 +61,13 @@ services:
     networks:
       - reflowfy-network
     healthcheck:
-      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')" ]
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -80,7 +85,7 @@ services:
       reflow-manager:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      - '8000:8000'
     environment:
       API_HOST: 0.0.0.0
       API_PORT: 8000
@@ -89,7 +94,13 @@ services:
     networks:
       - reflowfy-network
     healthcheck:
-      test: [ "CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health')" ]
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          "import httpx; httpx.get('http://localhost:8000/health')",
+        ]
       interval: 30s
       timeout: 5s
       retries: 3

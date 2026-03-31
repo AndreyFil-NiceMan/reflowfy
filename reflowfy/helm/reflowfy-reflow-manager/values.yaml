@@ -3,7 +3,7 @@ replicaCount: 1
 image:
   repository: reflowfy-reflow-manager
   pullPolicy: IfNotPresent
-  tag: "local"
+  tag: 'local'
 
 service:
   type: ClusterIP
@@ -20,27 +20,27 @@ resources:
 # Database configuration
 postgresql:
   # Used when deployed standalone (not via umbrella chart)
-  host: "postgresql"
+  host: 'postgresql'
   port: 5432
-  database: "reflowfy"
-  username: "reflowfy"
-  password: "reflowfy"
-  existingSecret: ""
-  existingSecretPasswordKey: "password"
+  database: 'reflowfy'
+  username: 'reflowfy'
+  password: 'reflowfy'
+  existingSecret: ''
+  existingSecretPasswordKey: 'password'
 
 # Kafka configuration
 kafka:
-  bootstrapServers: "kafka:9092"
-  topic: "reflow.jobs"
+  bootstrapServers: 'kafka:9092'
+  topic: 'reflow.jobs'
 
 # Rate limiting
 maxJobsPerSecond: 100
 
 # Pipeline module to import
-pipelineModule: "pipelines"
+pipelineModule: 'pipelines'
 
 # Logging
-logLevel: "INFO"
+logLevel: 'INFO'
 
 # Pod security context (OpenShift compatible)
 podSecurityContext:
@@ -53,7 +53,7 @@ securityContext:
   capabilities:
     drop:
       - ALL
-  readOnlyRootFilesystem: false  # App needs to write to /app
+  readOnlyRootFilesystem: false # App needs to write to /app
 
 # Environment variables (additional)
 env: []

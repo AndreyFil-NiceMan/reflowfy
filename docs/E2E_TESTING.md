@@ -16,6 +16,7 @@ This guide covers how to run end-to-end tests for the Reflofy framework, includi
 ```
 
 This script will:
+
 1. Build the Reflowfy package.
 2. Install the package in the current environment (or venv).
 3. Initialize a temporary test workspace.
@@ -84,15 +85,15 @@ cd .. && pytest tests/e2e
 
 ## Service Ports
 
-| Service | Port | Description |
-|---------|------|-------------|
-| PostgreSQL (E2E) | 5433 | Test database |
-| Elasticsearch (E2E) | 9201 | Elasticsearch cluster |
-| Kafka (E2E) | 9094 | Kafka broker |
-| ReflowManager (E2E) | 8002 | Pipeline manager |
-| Kafka UI (debug) | 8081 | Kafka monitoring |
-| Mock API Server | 8092 | For API source tests |
-| Mock HTTP Server | 8091 | For HTTP destination tests |
+| Service             | Port | Description                |
+| ------------------- | ---- | -------------------------- |
+| PostgreSQL (E2E)    | 5433 | Test database              |
+| Elasticsearch (E2E) | 9201 | Elasticsearch cluster      |
+| Kafka (E2E)         | 9094 | Kafka broker               |
+| ReflowManager (E2E) | 8002 | Pipeline manager           |
+| Kafka UI (debug)    | 8081 | Kafka monitoring           |
+| Mock API Server     | 8092 | For API source tests       |
+| Mock HTTP Server    | 8091 | For HTTP destination tests |
 
 ## Running Individual Tests
 
@@ -116,11 +117,14 @@ pytest tests/e2e/destinations/test_kafka_destination.py -v
 ## Troubleshooting
 
 ### Services not starting
+
 Services run in `e2e_workspace`. Only use `docker-compose` inside that directory.
+
 ```bash
 cd e2e_workspace
 docker-compose logs -f
 ```
 
 ### Clean State
+
 Run the runner script again, as it cleans the workspace automatically.

@@ -3,4 +3,4 @@ name: reflowfy-api
 description: Reflowfy API for pipeline orchestration
 type: application
 version: 0.1.0
-appVersion: "0.1.0"
+appVersion: '0.1.0'
