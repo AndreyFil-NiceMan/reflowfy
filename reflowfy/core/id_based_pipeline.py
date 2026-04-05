@@ -2,24 +2,34 @@
 
 This module provides the IdBasedPipeline base class that allows users to create
 pipelines which iterate over a list of user-provided IDs, dynamically resolving
-the source for each ID.
+the source for each ID (or each batch of IDs when ids_batch_size > 1).
 
-Example:
+Example (single-ID mode, default):
     >>> class UserSyncPipeline(IdBasedPipeline):
     ...     name = "user_sync"
     ...     rate_limit = {"jobs_per_second": 20}
-    ...     
-    ...     def define_source(self, params, current_id):
+    ...
+    ...     def define_source(self, params, current_ids):
+    ...         # current_ids is always a list; [single_id] when ids_batch_size=1
     ...         return paginated_api_source(
     ...             base_url="https://api.example.com",
-    ...             endpoint=f"/users/{current_id}/records",
+    ...             endpoint=f"/users/{current_ids[0]}/records",
     ...         )
-    ...     
+    ...
     ...     def define_destination(self, params):
     ...         return kafka_destination(topic="user-records")
-    ...     
-    ...     def define_transformations(self, params, current_id):
+    ...
+    ...     def define_transformations(self, params, current_ids):
     ...         return [EnrichWithId()]
+
+Example (batch mode):
+    >>> class BulkSyncPipeline(IdBasedPipeline):
+    ...     name = "bulk_sync"
+    ...     ids_batch_size = 10   # 10 IDs per source resolution
+    ...
+    ...     def define_source(self, params, current_ids):
+    ...         # current_ids is a list of up to 10 IDs
+    ...         return api_source(ids=current_ids)
 """
 
 from abc import ABCMeta, abstractmethod
@@ -91,10 +101,15 @@ class IdBasedPipeline(metaclass=IdBasedPipelineMeta):
     
     # Must be set by concrete subclass
     name: str = ""
-    
+
     # Optional rate limit
     rate_limit: Optional[Dict[str, int]] = None
-    
+
+    # Number of IDs to group per source resolution.
+    # Default 1 = one source call per ID (original behaviour).
+    # Set > 1 to pass a list of IDs to define_source / define_transformations.
+    ids_batch_size: int = 1
+
     # Additional configuration
     config: Dict[str, Any] = {}
     
@@ -130,25 +145,25 @@ class IdBasedPipeline(metaclass=IdBasedPipelineMeta):
     # =========================================================================
     
     @abstractmethod
-    def define_source(self, runtime_params: Dict[str, Any], current_id: Any) -> Any:
+    def define_source(self, runtime_params: Dict[str, Any], current_ids: List[Any]) -> Any:
         """
-        Define the source to use for a specific ID.
-        
-        Called once per ID in the ids list. This is the key differentiator
-        from AbstractPipeline — each ID can have its own source configuration.
-        
+        Define the source to use for a batch of IDs.
+
+        Called once per ID-batch. When ids_batch_size=1 (default) the list
+        contains a single element; when ids_batch_size=N it contains up to N IDs.
+
         Args:
             runtime_params: Parameters provided by the user at runtime
-            current_id: The current ID being processed
-        
+            current_ids: List of IDs in the current batch
+
         Returns:
             A configured BaseSource instance
-        
+
         Example:
-            >>> def define_source(self, params, current_id):
+            >>> def define_source(self, params, current_ids):
             ...     return paginated_api_source(
             ...         base_url="https://api.example.com",
-            ...         endpoint=f"/entities/{current_id}/data",
+            ...         endpoint=f"/entities/{current_ids[0]}/data",
             ...     )
         """
         pass
@@ -172,20 +187,20 @@ class IdBasedPipeline(metaclass=IdBasedPipelineMeta):
     
     @abstractmethod
     def define_transformations(
-        self, runtime_params: Dict[str, Any], current_id: Any
+        self, runtime_params: Dict[str, Any], current_ids: List[Any]
     ) -> List[Any]:
         """
-        Define list of transformations to apply for a specific ID.
-        
+        Define list of transformations to apply for a batch of IDs.
+
         Args:
             runtime_params: Parameters provided by the user at runtime
-            current_id: The current ID being processed
-        
+            current_ids: List of IDs in the current batch
+
         Returns:
             List of BaseTransformation instances to apply in order
-        
+
         Example:
-            >>> def define_transformations(self, params, current_id):
+            >>> def define_transformations(self, params, current_ids):
             ...     return [
             ...         AddIdMetadata(),
             ...         FilterActive(),
@@ -315,11 +330,11 @@ class IdBasedPipeline(metaclass=IdBasedPipelineMeta):
     def get_transformation_names(self) -> List[str]:
         """
         Return list of all possible transformation names.
-        
-        Uses a dummy ID to get the transformation list for registration.
+
+        Uses a dummy single-element batch to get the transformation list.
         """
         try:
-            return [t.name for t in self.define_transformations({}, "__discovery__")]
+            return [t.name for t in self.define_transformations({}, ["__discovery__"])]
         except Exception:
             return []
     
@@ -338,6 +353,7 @@ class IdBasedPipeline(metaclass=IdBasedPipelineMeta):
             "type": "id_based",
             "parameters": [p.to_dict() for p in self.get_all_parameters()],
             "rate_limit": self.rate_limit,
+            "ids_batch_size": self.ids_batch_size,
             "config": self.config,
             "transformations": self.get_transformation_names(),
         }
@@ -346,27 +362,34 @@ class IdBasedPipeline(metaclass=IdBasedPipelineMeta):
     # Resolution — Per-ID source/transformation resolution
     # =========================================================================
     
+    def resolve_for_ids(
+        self, runtime_params: Dict[str, Any], ids_batch: List[Any]
+    ) -> dict:
+        """
+        Resolve source and transformations for a batch of IDs.
+
+        Called by the PipelineRunner once per ID-batch (batch size is
+        determined by the pipeline's ``ids_batch_size`` attribute).
+
+        Args:
+            runtime_params: Validated runtime parameters
+            ids_batch: List of IDs in this batch
+
+        Returns:
+            Dict with 'source', 'transformations', 'destination', 'current_ids'
+        """
+        return {
+            "source": self.define_source(runtime_params, ids_batch),
+            "transformations": self.define_transformations(runtime_params, ids_batch),
+            "destination": self.define_destination(runtime_params),
+            "current_ids": ids_batch,
+        }
+
     def resolve_for_id(
         self, runtime_params: Dict[str, Any], current_id: Any
     ) -> dict:
-        """
-        Resolve source and transformations for a specific ID.
-        
-        This is called by the PipelineRunner for each ID in the list.
-        
-        Args:
-            runtime_params: Validated runtime parameters
-            current_id: The current ID being processed
-        
-        Returns:
-            Dict with 'source', 'transformations', and 'destination'
-        """
-        return {
-            "source": self.define_source(runtime_params, current_id),
-            "transformations": self.define_transformations(runtime_params, current_id),
-            "destination": self.define_destination(runtime_params),
-            "current_id": current_id,
-        }
+        """Backward-compat shim: wraps single ID in a list and calls resolve_for_ids."""
+        return self.resolve_for_ids(runtime_params, [current_id])
     
     def resolve(self, runtime_params: Dict[str, Any]) -> "IdBasedPipeline":
         """

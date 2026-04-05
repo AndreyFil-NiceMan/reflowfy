@@ -82,16 +82,36 @@ def e2e_id_based_api(
     base_url: str = os.getenv("MOCK_API_URL", "http://localhost:8092"),
     endpoint_template: str = "/users/{id}",
     ids: Optional[List[Union[str, int]]] = None,
+    method: str = "GET",
     batch_size: int = 2,
+    batch_id_key: Optional[str] = "ids",
+    data_key: Optional[str] = None,
+    request_body: Optional[dict] = None,
+    query_params: Optional[dict] = None,
 ):
-    """Pre-configured ID-based API source for E2E tests."""
+    """
+    Pre-configured ID-based API source for E2E tests.
+
+    Mode is auto-detected from endpoint_template:
+    - ``{id}`` present → per-ID (one request per ID)
+    - No ``{id}``      → batch (one request, IDs in body)
+
+    Body shape (batch mode):
+    - ``batch_id_key="ids"`` → ``{"ids": [...]}``
+    - ``batch_id_key=None``  → ``[...]``  raw list
+    """
     from reflowfy.sources.api import id_based_api_source
 
     return id_based_api_source(
         base_url=base_url,
         endpoint_template=endpoint_template,
         ids=ids or [1, 2, 3, 4, 5],
+        method=method,
         batch_size=batch_size,
+        batch_id_key=batch_id_key,
+        data_key=data_key,
+        request_body=request_body,
+        query_params=query_params,
     )
 
 

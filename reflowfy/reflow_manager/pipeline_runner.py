@@ -16,6 +16,11 @@ CHECKPOINT_BATCH_TIMEOUT = 300  # 5 minutes timeout per batch
 CHECKPOINT_POLL_INTERVAL = 2.0  # Poll every 2 seconds
 
 
+def _chunk(lst: List, size: int) -> List[List]:
+    """Split a list into consecutive chunks of at most `size` elements."""
+    return [lst[i:i + size] for i in range(0, len(lst), size)]
+
+
 def _run_async(coro):
     """Run async code in sync context, handling nested event loops."""
     try:
@@ -520,10 +525,11 @@ class PipelineRunner:
         params = pipeline.apply_defaults(runtime_params)
         
         ids = params.get("ids", [])
-        
+        ids_batch_size = getattr(pipeline, 'ids_batch_size', 1)
+
         print(f"🚀 IdBasedPipeline dispatch starting: {pipeline_name}")
         print(f"📊 Execution ID: {execution_id}")
-        print(f"🔑 Processing {len(ids)} IDs: {ids}")
+        print(f"🔑 Processing {len(ids)} IDs (batch_size={ids_batch_size}): {ids}")
         
         # Update state to running
         self.execution_manager.update_execution_state(execution_id, "running")
@@ -543,26 +549,27 @@ class PipelineRunner:
         # Resolve destination once (shared across all IDs)
         destination = pipeline.define_destination(params)
         
-        # Phase 1: For each ID, resolve source and save jobs to database
-        print(f"  Phase 1: Saving jobs to database for {len(ids)} IDs...")
+        # Phase 1: For each ID-batch, resolve source and save jobs to database
+        id_batches = _chunk(ids, ids_batch_size)
+        print(f"  Phase 1: Saving jobs to database for {len(ids)} IDs in {len(id_batches)} batches...")
         batch_number = 1
         job_count = 0
         current_job_ids = []
-        
-        for current_id in ids:
-            print(f"    Processing ID: {current_id}")
-            
-            # Resolve source and transformations for this specific ID
-            resolved = pipeline.resolve_for_id(params, current_id)
+
+        for ids_batch in id_batches:
+            print(f"    Processing ID batch: {ids_batch}")
+
+            # Resolve source and transformations for this batch of IDs
+            resolved = pipeline.resolve_for_ids(params, ids_batch)
             source = resolved["source"]
             transformations = resolved["transformations"]
             transformation_names = [t.name for t in transformations]
-            
-            # Split this ID's source into jobs
+
+            # Split this batch's source into jobs
             for source_job in source.split_jobs(params):
                 job_id = str(uuid.uuid4())
-                
-                # Create job payload with current_id in metadata
+
+                # Create job payload with current_ids list in metadata
                 job_payload = {
                     "execution_id": execution_id,
                     "job_id": job_id,
@@ -576,7 +583,7 @@ class PipelineRunner:
                     "records": source_job.records,
                     "metadata": {
                         **context.to_dict(),
-                        "current_id": current_id,
+                        "current_ids": ids_batch,
                         "source_metadata": source_job.metadata,
                     },
                 }

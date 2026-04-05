@@ -19,5 +19,7 @@ from tests.e2e.test_pipelines import crash_recovery_test_pipeline
 from tests.e2e.test_pipelines import dlq_test_pipeline
 from tests.e2e.test_pipelines import transformation_test_pipeline
 from tests.e2e.test_pipelines import id_based_pipeline_test
+from tests.e2e.test_pipelines import id_based_api_batch_pipeline_test
+from tests.e2e.test_pipelines import id_based_api_advanced_pipeline_test
 from tests.e2e.test_pipelines import shared_sources
 from tests.e2e.test_pipelines import shared_destinations

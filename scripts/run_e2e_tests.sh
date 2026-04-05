@@ -69,7 +69,7 @@ log_error() {
 
 cleanup() {
     log_info "Cleaning up..."
-    
+
     if [ "$SKIP_DOCKER" = false ]; then
         if [ -d "$WORKSPACE" ]; then
             log_info "Stopping Docker Compose services..."
@@ -77,11 +77,11 @@ cleanup() {
             (cd "$WORKSPACE" && docker compose -f docker-compose.e2e-infra.yml down --remove-orphans 2>/dev/null || true)
         fi
     fi
-    
+
     log_info "Removing workspace and dist folders..."
     rm -rf "$WORKSPACE"
     rm -rf "$DIST_DIR"
-    
+
     log_success "Cleanup complete"
 }
 
@@ -91,9 +91,9 @@ wait_for_service() {
     local url=$1
     local name=$2
     local max_wait=${3:-60}
-    
+
     log_info "Waiting for $name at $url..."
-    
+
     local waited=0
     while [ $waited -lt $max_wait ]; do
         if curl -sf "$url" > /dev/null 2>&1; then
@@ -105,7 +105,7 @@ wait_for_service() {
         echo -n "."
     done
     echo ""
-    
+
     log_error "$name not available after ${max_wait}s"
     return 1
 }
@@ -113,7 +113,7 @@ wait_for_service() {
 wait_for_kafka() {
     local max_wait=${1:-90}
     log_info "Waiting for Kafka to be healthy..."
-    
+
     local waited=0
     while [ $waited -lt $max_wait ]; do
         if docker exec reflofy-e2e-kafka kafka-topics --list --bootstrap-server localhost:29092 > /dev/null 2>&1; then
@@ -125,7 +125,7 @@ wait_for_kafka() {
         echo -n "."
     done
     echo ""
-    
+
     log_error "Kafka not ready after ${max_wait}s"
     log_info "Kafka logs:"
     docker logs reflofy-e2e-kafka 2>&1 | tail -30
@@ -173,6 +173,11 @@ fi
 log_info "Installing $WHEEL_FILE..."
 pip install --force-reinstall "$WHEEL_FILE" || {
     log_error "Failed to install package"
+    exit 1
+}
+log_info "Installing test dependencies..."
+pip install "pytest-asyncio>=0.21.0" || {
+    log_error "Failed to install pytest-asyncio"
     exit 1
 }
 log_success "Reflowfy installed successfully"
@@ -231,16 +236,16 @@ log_info "Modifying docker-compose.yml for E2E..."
 sed -i 's/container_name: reflowfy-/container_name: reflofy-e2e-/g' docker-compose.yml
 
 # Change ports to E2E ports (5432->5433, 8001->8002, 8000->8003)
-sed -i 's/"5432:5432"/"5433:5432"/g' docker-compose.yml
-sed -i 's/"8001:8001"/"8002:8001"/g' docker-compose.yml
-sed -i 's/"8000:8000"/"8003:8000"/g' docker-compose.yml
-sed -i 's/"5050:80"/"5051:80"/g' docker-compose.yml
+sed -i "s/'5432:5432'/'5433:5432'/g" docker-compose.yml
+sed -i "s/'8001:8001'/'8002:8001'/g" docker-compose.yml
+sed -i "s/'8000:8000'/'8003:8000'/g" docker-compose.yml
+sed -i "s/'5050:80'/'5051:80'/g" docker-compose.yml
 
 # Add environment variables for E2E test sources (elasticsearch, sql, mock servers)
 sed -i '/EXECUTION_MODE: local/a\      ELASTICSEARCH_URL: http://reflofy-e2e-elasticsearch:9200\n      SQL_CONNECTION_URL: postgresql://reflowfy:reflowfy@postgres:5432/reflowfy\n      MOCK_HTTP_URL: http://reflofy-e2e-mock-http:8091/webhook\n      MOCK_API_URL: http://reflofy-e2e-mock-api:8092\n      DLQ_POLL_INTERVAL_SECONDS: 5' docker-compose.yml
 
 # Point Kafka to the internal e2e-kafka container
-sed -i 's/KAFKA_BOOTSTRAP_SERVERS: "ignored:9092"/KAFKA_BOOTSTRAP_SERVERS: "reflofy-e2e-kafka:29092"/g' docker-compose.yml
+sed -i "s|KAFKA_BOOTSTRAP_SERVERS: 'ignored:9092'|KAFKA_BOOTSTRAP_SERVERS: 'reflofy-e2e-kafka:29092'|g" docker-compose.yml
 
 # Change PIPELINE_MODULE to load E2E test pipelines
 sed -i 's/PIPELINE_MODULE: pipelines/PIPELINE_MODULE: tests.e2e.test_pipelines/g' docker-compose.yml
@@ -276,7 +281,7 @@ log_success "Workspace configured for E2E"
 # Step 3: Run Services
 if [ "$SKIP_DOCKER" = false ]; then
     log_info "Step 3: Starting Services..."
-    
+
     # Clean up any leftover containers/networks from previous runs
     log_info "Cleaning up previous E2E state..."
     docker compose down --remove-orphans 2>/dev/null || true
@@ -313,10 +318,10 @@ if [ "$SKIP_DOCKER" = false ]; then
         log_error "reflowfy run failed"
         exit 1
     }
-    
+
     # Wait for services
     log_info "Waiting for services to be healthy..."
-    
+
     # Wait for PostgreSQL
     log_info "Waiting for PostgreSQL..."
     for i in $(seq 1 30); do
@@ -330,10 +335,10 @@ if [ "$SKIP_DOCKER" = false ]; then
         fi
         sleep 2
     done
-    
+
     wait_for_service "http://localhost:9201/_cluster/health" "Elasticsearch" 90 || exit 1
     wait_for_service "http://localhost:8002/health" "ReflowManager" 120 || exit 1
-    
+
     # Wait for mock services used in E2E
     wait_for_service "http://localhost:8091/health" "Mock HTTP server" 60 || exit 1
     wait_for_service "http://localhost:8092/health" "Mock API server" 60 || {
@@ -342,15 +347,15 @@ if [ "$SKIP_DOCKER" = false ]; then
 
     # Initialize test data
     log_info "Initializing test data..."
-    
+
     log_info "  - PostgreSQL data..."
     export SQL_CONNECTION_URL="postgresql://reflowfy:reflowfy@localhost:5433/reflowfy"
     python3 tests/e2e/sources/init_sql_test_data.py || log_warning "Failed to init SQL data"
-    
+
     log_info "  - Elasticsearch data..."
     export ELASTICSEARCH_URL="http://localhost:9201"
     python3 tests/e2e/sources/init_elastic_test_data.py || log_warning "Failed to init Elastic data"
-    
+
     # Export Kafka SASL config for tests running on host
     export E2E_KAFKA_SERVERS="localhost:9095"
     export KAFKA_SECURITY_PROTOCOL="SASL_PLAINTEXT"

@@ -15,9 +15,22 @@ Endpoints:
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, HTTPException, Query, Header
+from fastapi import FastAPI, HTTPException, Query, Header, Request
 from pydantic import BaseModel
 import uvicorn
+
+
+class BatchRequest(BaseModel):
+    ids: List[int]
+
+
+class BulkPatchRequest(BaseModel):
+    ids: List[int]
+    active_only: bool = False
+
+
+class ProductLookupRequest(BaseModel):
+    product_ids: List[str]
 
 app = FastAPI(title="Mock API Server for E2E Tests")
 
@@ -169,6 +182,105 @@ async def get_product(product_id: str):
     return product
 
 
+@app.post("/users/search")
+async def search_users_raw(request: Request):
+    """
+    Fetch users by a **raw JSON array** body: ``[1, 2, 3]``
+
+    Tests ``batch_id_key=None`` in IDBasedAPISource — the body is sent
+    as a plain list, not wrapped in an object.
+
+    Returns:
+        {"results": [...matched users...], "total": N}
+    """
+    body = await request.json()
+    if not isinstance(body, list):
+        raise HTTPException(status_code=400, detail="Expected a JSON array body, e.g. [1, 2, 3]")
+    id_set = set(body)
+    matched = [u for u in USERS if u["id"] in id_set]
+    return {"results": matched, "total": len(matched)}
+
+
+@app.patch("/users/bulk")
+async def bulk_patch_users(body: BulkPatchRequest):
+    """
+    Bulk-fetch users with optional active filter.
+
+    Tests ``method="PATCH"`` + ``request_body`` merging in IDBasedAPISource.
+
+    Request body: ``{"ids": [...], "active_only": bool}``
+    Returns:
+        {"updated": [...active/all matched users...], "skipped": [...inactive...], "count": N}
+    """
+    id_set = set(body.ids)
+    matched = [u for u in USERS if u["id"] in id_set]
+    if body.active_only:
+        updated = [u for u in matched if u["active"]]
+        skipped = [u for u in matched if not u["active"]]
+    else:
+        updated = matched
+        skipped = []
+    return {"updated": updated, "skipped": skipped, "count": len(updated)}
+
+
+@app.post("/users/{user_id}/enrich")
+async def enrich_user(user_id: int, request: Request):
+    """
+    Per-ID POST endpoint that returns enriched user data.
+
+    Tests per-ID POST mode (``{id}`` in endpoint template, ``method="POST"``).
+
+    Request body: ``{"context": "...", "source_id": "..."}`` (any JSON object)
+    Returns: user record with an added ``enrichment`` sub-object.
+    """
+    user = next((u for u in USERS if u["id"] == user_id), None)
+    if not user:
+        raise HTTPException(status_code=404, detail=f"User {user_id} not found")
+    body = await request.json()
+    return {
+        **user,
+        "enrichment": {
+            "context": body.get("context", ""),
+            "source_id": body.get("source_id", str(user_id)),
+            "score": round(user_id * 1.5, 2),
+        },
+    }
+
+
+@app.post("/products/lookup")
+async def lookup_products(body: ProductLookupRequest):
+    """
+    Batch-lookup products using a custom body key (``product_ids``).
+
+    Tests ``batch_id_key="product_ids"`` in IDBasedAPISource.
+
+    Request body: ``{"product_ids": ["prod_1", "prod_2", ...]}``
+    Returns:
+        {"items": [...found products...], "not_found": [...missing IDs...], "count": N}
+    """
+    id_set = set(body.product_ids)
+    items = [p for p in PRODUCTS if p["id"] in id_set]
+    found_ids = {p["id"] for p in items}
+    not_found = [pid for pid in body.product_ids if pid not in found_ids]
+    return {"items": items, "not_found": not_found, "count": len(items)}
+
+
+@app.post("/users/batch")
+async def batch_users(request: BatchRequest):
+    """
+    Fetch multiple users by a list of IDs (batch POST).
+
+    Request body:
+        {"ids": [1, 2, 3, ...]}
+
+    Returns:
+        {"users": [...matched users...], "count": N}
+    """
+    id_set = set(request.ids)
+    matched = [u for u in USERS if u["id"] in id_set]
+    return {"users": matched, "count": len(matched)}
+
+
 @app.head("/users")
 async def users_head():
     """HEAD request for health check."""
@@ -193,6 +305,11 @@ if __name__ == "__main__":
     print("     - GET /products (cursor pagination)")
     print("     - GET /products/{id}")
     print("     - GET /health")
+    print("     - POST /users/batch (batch fetch, object body {ids:[...]})")
+    print("     - POST /users/search (batch fetch, raw list body [1,2,3])")
+    print("     - PATCH /users/bulk (bulk patch with active_only filter)")
+    print("     - POST /users/{id}/enrich (per-ID POST with enrichment)")
+    print("     - POST /products/lookup (product batch by product_ids key)")
     print("")
     
     uvicorn.run(app, host="0.0.0.0", port=8092)
