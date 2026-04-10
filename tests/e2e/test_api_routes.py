@@ -9,7 +9,6 @@ Tests the three fixes made to reflowfy/api/routes.py:
 Uses FastAPI's TestClient — no running services required.
 """
 
-from typing import Any, Dict, List
 from unittest.mock import MagicMock
 
 import pytest
@@ -21,10 +20,10 @@ from reflowfy.core.abstract_pipeline import AbstractPipeline, PipelineParameter
 from reflowfy.core.id_based_pipeline import IdBasedPipeline
 from reflowfy.execution.base import ExecutionState, ExecutionStatus
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_status(state: ExecutionState, error: str | None = None) -> ExecutionStatus:
     return ExecutionStatus(
@@ -58,13 +57,21 @@ def _build_app(*pipelines) -> tuple[FastAPI, MagicMock, MagicMock]:
 # Test Pipelines
 # ---------------------------------------------------------------------------
 
+
 class _NoParmsPipeline(AbstractPipeline):
     name = "_test_no_params"
 
-    def define_parameters(self): return []
-    def define_source(self, p): return MagicMock()
-    def define_destination(self, p): return MagicMock()
-    def define_transformations(self, p): return []
+    def define_parameters(self):
+        return []
+
+    def define_source(self, p):
+        return MagicMock()
+
+    def define_destination(self, p):
+        return MagicMock()
+
+    def define_transformations(self, p):
+        return []
 
 
 class _TypedParamsPipeline(AbstractPipeline):
@@ -72,15 +79,22 @@ class _TypedParamsPipeline(AbstractPipeline):
 
     def define_parameters(self):
         return [
-            PipelineParameter(name="flag", param_type=bool, required=True, description="A boolean flag"),
+            PipelineParameter(
+                name="flag", param_type=bool, required=True, description="A boolean flag"
+            ),
             PipelineParameter(name="count", param_type=int, required=False, default=10),
             PipelineParameter(name="threshold", param_type=float, required=False, default=0.5),
             PipelineParameter(name="label", param_type=str, required=False, default="default"),
         ]
 
-    def define_source(self, p): return MagicMock()
-    def define_destination(self, p): return MagicMock()
-    def define_transformations(self, p): return []
+    def define_source(self, p):
+        return MagicMock()
+
+    def define_destination(self, p):
+        return MagicMock()
+
+    def define_transformations(self, p):
+        return []
 
 
 class _IdBasedTestPipeline(IdBasedPipeline):
@@ -91,23 +105,36 @@ class _IdBasedTestPipeline(IdBasedPipeline):
             PipelineParameter(name="env", param_type=str, required=False, default="prod"),
         ]
 
-    def define_source(self, p, ids): return MagicMock()
-    def define_destination(self, p): return MagicMock()
-    def define_transformations(self, p, ids): return []
+    def define_source(self, p, ids):
+        return MagicMock()
+
+    def define_destination(self, p):
+        return MagicMock()
+
+    def define_transformations(self, p, ids):
+        return []
 
 
 class _IdBasedNoExtraParamsPipeline(IdBasedPipeline):
     name = "_test_id_based_no_extra"
 
-    def define_parameters(self): return []
-    def define_source(self, p, ids): return MagicMock()
-    def define_destination(self, p): return MagicMock()
-    def define_transformations(self, p, ids): return []
+    def define_parameters(self):
+        return []
+
+    def define_source(self, p, ids):
+        return MagicMock()
+
+    def define_destination(self, p):
+        return MagicMock()
+
+    def define_transformations(self, p, ids):
+        return []
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def no_params_client():
@@ -136,6 +163,7 @@ def id_based_no_extra_client():
 # ---------------------------------------------------------------------------
 # 1. No-params pipeline
 # ---------------------------------------------------------------------------
+
 
 class TestNoParmsPipeline:
     def test_run_returns_200(self, no_params_client):
@@ -180,6 +208,7 @@ class TestNoParmsPipeline:
 # ---------------------------------------------------------------------------
 # 2. Typed query parameters (Fix 1: bool / int / float correctly parsed)
 # ---------------------------------------------------------------------------
+
 
 class TestTypedQueryParams:
     def test_bool_true_accepted(self, typed_client):
@@ -278,6 +307,7 @@ class TestTypedQueryParams:
 # 3. IdBasedPipeline — ids in request body (Fix 2)
 # ---------------------------------------------------------------------------
 
+
 class TestIdBasedRouteBody:
     def test_ids_in_body_accepted(self, id_based_client):
         client, local, _ = id_based_client
@@ -367,6 +397,7 @@ class TestIdBasedRouteBody:
 # 4. Failure returns HTTP 422 (Fix 3)
 # ---------------------------------------------------------------------------
 
+
 class TestFailureResponse:
     def _make_failing_app(self, pipeline):
         app = FastAPI()
@@ -419,6 +450,7 @@ class TestFailureResponse:
 # ---------------------------------------------------------------------------
 # 5. Rate limit forwarded to executor
 # ---------------------------------------------------------------------------
+
 
 class TestRateLimit:
     def test_rate_limit_passed_to_executor(self, no_params_client):

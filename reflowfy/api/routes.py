@@ -1,6 +1,6 @@
 """Dynamic route generation for pipelines."""
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Literal
 from inspect import Parameter, Signature
 
 import pydantic
@@ -80,6 +80,17 @@ def _run_body(
     )
 
 
+def _param_annotation(p: Any):
+    """Return the type annotation for a PipelineParameter.
+
+    Parameters with `choices` become a Literal type so that
+    Swagger UI renders them as a dropdown.
+    """
+    if p.choices:
+        return Literal[tuple(p.choices)]
+    return p.param_type
+
+
 def _create_id_based_route(
     app: FastAPI,
     pipeline: Any,
@@ -98,13 +109,13 @@ def _create_id_based_route(
     fields: Dict[str, Any] = {"ids": (List[Any], ...)}
     for p in extra_params:
         default = ... if p.required else p.default
-        fields[p.name] = (p.param_type, default)
+        fields[p.name] = (_param_annotation(p), default)
 
     BodyModel = pydantic.create_model(f"{pipeline_name}_Body", **fields)
 
     async def run_pipeline(
         body: BodyModel,
-        mode: str = Query("distributed", description="Execution mode: 'local' or 'distributed'"),
+        mode: Literal["local", "distributed"] = Query("distributed", description="Execution mode: 'local' or 'distributed'"),
         rate_limit: float = Query(None, description="Override rate limit (jobs per second)"),
     ):
         """
@@ -151,7 +162,7 @@ def _create_standard_route(
         "mode",
         Parameter.KEYWORD_ONLY,
         default=Query("distributed", description="Execution mode: 'local' or 'distributed'"),
-        annotation=str,
+        annotation=Literal["local", "distributed"],
     )
     rate_limit_param = Parameter(
         "rate_limit",
@@ -169,7 +180,7 @@ def _create_standard_route(
                     p.default if not p.required else ...,
                     description=p.description or f"Runtime parameter: {p.name}",
                 ),
-                annotation=p.param_type,
+                annotation=_param_annotation(p),
             )
             for p in param_objects
         ]
@@ -191,7 +202,7 @@ def _create_standard_route(
         )
     else:
         async def run_pipeline(
-            mode: str = Query("distributed", description="Execution mode: 'local' or 'distributed'"),
+            mode: Literal["local", "distributed"] = Query("distributed", description="Execution mode: 'local' or 'distributed'"),
             rate_limit: float = Query(None, description="Override rate limit (jobs per second)"),
         ):
             """Execute pipeline (no runtime parameters)."""
