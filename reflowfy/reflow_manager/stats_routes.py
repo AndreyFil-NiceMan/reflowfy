@@ -19,7 +19,7 @@ router = APIRouter(prefix="/stats", tags=["Stats"])
 async def get_overview_stats(db: Session = Depends(get_db)):
     """
     Global dashboard statistics across all pipelines.
-    
+
     Returns total executions, jobs by state, success rate, and DLQ summary.
     """
     # Execution counts by state
@@ -78,7 +78,7 @@ async def get_overview_stats(db: Session = Depends(get_db)):
 async def get_pipeline_stats(db: Session = Depends(get_db)):
     """
     Statistics grouped by pipeline name.
-    
+
     Returns execution counts, job totals, and success rate per pipeline.
     """
     # Execution counts per pipeline
@@ -151,7 +151,7 @@ async def get_pipeline_detail(
 ):
     """
     Detailed statistics for a single pipeline, including recent executions.
-    
+
     Args:
         pipeline_name: Name of the pipeline
         limit: Number of recent executions to return (default 10)
@@ -238,7 +238,7 @@ async def get_failure_stats(
 ):
     """
     Recent failures across all (or a specific) pipeline.
-    
+
     Args:
         pipeline_name: Optional filter by pipeline
         limit: Number of failed executions to return (default 20)
@@ -289,7 +289,7 @@ async def get_dlq_stats(
 ):
     """
     DLQ statistics with per-pipeline breakdown.
-    
+
     Args:
         pipeline_name: Optional filter to a single pipeline
     """

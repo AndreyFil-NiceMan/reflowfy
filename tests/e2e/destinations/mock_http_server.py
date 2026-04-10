@@ -14,7 +14,7 @@ Usage:
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 import uvicorn
 

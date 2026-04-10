@@ -2,7 +2,6 @@
 
 import pytest
 from unittest.mock import MagicMock, patch
-import httpx
 
 from reflowfy.sources.api import (
     PaginatedAPISource,

@@ -31,7 +31,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def init_db() -> None:
     """
     Initialize database tables.
-    
+
     Creates all tables defined in models if they don't exist.
     """
     Base.metadata.create_all(bind=engine)
@@ -40,10 +40,10 @@ def init_db() -> None:
 def get_db() -> Generator[Session, None, None]:
     """
     Dependency to get database session.
-    
+
     Yields:
         Database session
-    
+
     Usage:
         @app.get("/endpoint")
         def endpoint(db: Session = Depends(get_db)):

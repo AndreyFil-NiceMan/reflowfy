@@ -13,10 +13,10 @@ def get_kafka_config(
 ) -> Dict[str, Any]:
     """
     Get Kafka configuration for aiokafka.
-    
+
     Reads from environment variables with optional overrides.
     Sets client_id to SASL username.
-    
+
     Returns:
         Dict with aiokafka configuration
     """
@@ -25,7 +25,7 @@ def get_kafka_config(
     protocol = security_protocol or os.getenv("KAFKA_SECURITY_PROTOCOL", "PLAINTEXT")
     mechanism = sasl_mechanism or os.getenv("KAFKA_SASL_MECHANISM", "SCRAM-SHA-256")
     servers = bootstrap_servers or os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-    
+
     # Ensure servers is a list
     if isinstance(servers, str):
         if "," in servers:
@@ -36,7 +36,7 @@ def get_kafka_config(
     config: Dict[str, Any] = {
         "bootstrap_servers": servers,
     }
-    
+
     # Add SASL config if credentials provided
     if username and password:
         config.update({
@@ -46,7 +46,7 @@ def get_kafka_config(
             "sasl_plain_password": password,
             "client_id": username,  # client_id = username as requested
         })
-    
+
     return config
 
 

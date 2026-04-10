@@ -11,10 +11,10 @@ from reflowfy.worker.executor import WorkerExecutor
 class KafkaJobConsumer:
     """
     Async Kafka consumer that processes Reflowfy jobs.
-    
+
     Consumes jobs from the reflow.jobs topic and executes them asynchronously.
     """
-    
+
     def __init__(
         self,
         bootstrap_servers: Union[str, List[str]],
@@ -30,7 +30,7 @@ class KafkaJobConsumer:
     ):
         """
         Initialize async Kafka consumer.
-        
+
         Args:
             bootstrap_servers: Kafka broker addresses
             topic: Topic to consume from
@@ -47,21 +47,21 @@ class KafkaJobConsumer:
             self.bootstrap_servers = [s.strip() for s in bootstrap_servers.split(",") if s.strip()]
         else:
             self.bootstrap_servers = bootstrap_servers
-            
+
         self.topic = topic
         self.group_id = group_id
         self.auto_offset_reset = auto_offset_reset
-        
+
         # SASL config
         self.security_protocol = security_protocol
         self.sasl_mechanism = sasl_mechanism
         self.sasl_username = sasl_username
         self.sasl_password = sasl_password
-        
+
         self.consumer: Optional[AIOKafkaConsumer] = None
         self.executor = WorkerExecutor(database_url=database_url)
         self._running = False
-    
+
     async def start(self):
         """Start consuming and processing jobs asynchronously."""
         # Build consumer kwargs
@@ -73,7 +73,7 @@ class KafkaJobConsumer:
             "retry_backoff_ms": 500,
             "metadata_max_age_ms": 30000,
         }
-        
+
         # Add SASL config if credentials provided
         if self.sasl_username and self.sasl_password:
             consumer_kwargs.update({
@@ -83,15 +83,15 @@ class KafkaJobConsumer:
                 "sasl_plain_password": self.sasl_password,
                 "client_id": self.sasl_username,  # client_id = username
             })
-        
+
         self.consumer = AIOKafkaConsumer(self.topic, **consumer_kwargs)
-        
+
         # Retry starting consumer with backoff (handle GroupCoordinatorNotAvailableError)
         max_retries = 10
         for attempt in range(max_retries):
             try:
                 await self.consumer.start()
-                print(f"✓ Kafka consumer connected successfully")
+                print("✓ Kafka consumer connected successfully")
                 break
             except KafkaError as e:
                 if attempt < max_retries - 1:
@@ -102,43 +102,43 @@ class KafkaJobConsumer:
                 else:
                     print(f"❌ Failed to start consumer after {max_retries} attempts")
                     raise
-        
+
         self._running = True
-        
+
         try:
             async for msg in self.consumer:
                 if not self._running:
                     break
-                
+
                 # Process message
                 try:
                     job_payload = json.loads(msg.value.decode("utf-8"))
-                    
+
                     print(f"📦 Received job: {job_payload.get('job_id', 'unknown')}")
-                    
+
                     # Execute job asynchronously
                     success = await self.executor.execute_job(job_payload)
-                    
+
                     if success:
                         # Commit offset on success
                         await self.consumer.commit()
                     else:
                         # On failure, don't commit - job will be retried
                         print("⚠️  Job failed, will retry")
-                
+
                 except json.JSONDecodeError as e:
                     print(f"❌ Invalid job payload: {e}")
                     # Commit anyway to skip bad message
                     await self.consumer.commit()
-                
+
                 except Exception as e:
                     print(f"❌ Job processing error: {e}")
                     # Don't commit - will retry
-        
+
         finally:
             await self.consumer.stop()
             await self.executor.close()
-    
+
     async def stop(self):
         """Stop consuming."""
         self._running = False

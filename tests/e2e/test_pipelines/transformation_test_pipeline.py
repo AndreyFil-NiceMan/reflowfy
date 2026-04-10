@@ -9,7 +9,6 @@ Used for E2E testing of the transformation system.
 
 from reflowfy import (
     AbstractPipeline,
-    PipelineParameter,
     transformation,
 )
 from tests.e2e.test_pipelines.shared_sources import e2e_mock

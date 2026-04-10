@@ -23,13 +23,13 @@ def _build_images(registry: str, project: str, push: bool, no_cache: bool = Fals
         "reflowfy-reflow-manager": "reflow-manager",
         "reflowfy-worker": "worker",
     }
-    
+
     build_context = Path(".")
-    
+
     if not (build_context / "pipelines").exists():
         console.print("⚠️  No 'pipelines/' folder found in current directory.", style="yellow")
         console.print("   Make sure you're in your project root or run 'reflowfy init' first.", style="yellow")
-    
+
     for image_name, dockerfile_name in image_map.items():
         base_image = f"{registry}/{project}/{image_name}"
         if custom_tag:
@@ -46,14 +46,14 @@ def _build_images(registry: str, project: str, push: bool, no_cache: bool = Fals
         dockerfile = f"Dockerfile.{dockerfile_name}" 
         dockerfiles_path = get_dockerfiles_path()
         dockerfile_full = dockerfiles_path / dockerfile
-        
+
         python_image = os.getenv("PYTHON_IMAGE", "python:3.11-slim")
         console.print(f"📦 Building [bold]{image_name}[/bold] (Dockerfile: {dockerfile_full}, Base: {python_image})...", style="yellow")
 
         try:
              docker.build(str(build_context), file=str(dockerfile_full), tags=tags, cache=not no_cache, build_args={"PYTHON_IMAGE": python_image})
              console.print(f"✅ Built [bold]{', '.join(tags)}[/bold]", style="green")
-             
+
              if push:
                  for tag in tags:
                      console.print(f"🚀 Pushing [bold]{tag}[/bold]...", style="blue")
@@ -81,7 +81,7 @@ def register(app: typer.Typer):
         Build and push Reflowfy images to a private registry (OpenShift Ready).
         """
         project = project or "reflowfy"
-        
+
         if not registry:
             console.print("❌ Registry is required. Set --registry or REGISTRY in .env", style="red")
             if not Path(".env").exists():

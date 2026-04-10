@@ -41,20 +41,20 @@ def register(app: typer.Typer):
         namespace = namespace or "reflowfy"
         project = project or namespace
         kafka_topic = kafka_topic or "reflow.jobs"
-        
+
         if not registry:
             console.print("❌ Registry is required. Set --registry or REGISTRY in .env", style="red")
             if not Path(".env").exists():
                  console.print("⚠️  No .env file found in current directory.", style="yellow")
             raise typer.Exit(code=1)
-        
+
         if not kafka:
             console.print("❌ Kafka is required. Set --kafka or KAFKA_BOOTSTRAP_SERVERS in .env", style="red")
             raise typer.Exit(code=1)
-        
+
         # Determine image tag
         image_tag = tag or getattr(reflowfy, "__version__", "latest")
-        
+
         console.print(Panel(f"🚀 Deploying Reflowfy (tag: {image_tag}) to namespace: [bold cyan]{namespace}[/bold cyan]"))
 
         try:
@@ -77,17 +77,17 @@ def register(app: typer.Typer):
             "--set", "api.image.pullPolicy=Always",
             "--set", "reflowManager.image.pullPolicy=Always",
             "--set", "worker.image.pullPolicy=Always",
-            "--set", f"kafka.external.bootstrapServers={kafka.replace(',', '\\,')}",
+            "--set", "kafka.external.bootstrapServers=" + kafka.replace(",", "\\,"),
             "--set", f"kafka.topic={kafka_topic}",
             "--set", f"busybox.image={busybox_image}",
             "--set", "api.service.type=ClusterIP",
             "--set", "reflowManager.service.type=ClusterIP",
         ]
-        
+
         # Image pull secret
         if image_pull_secret:
             cmd.extend(["--set", f"global.imagePullSecrets[0].name={image_pull_secret}"])
-        
+
         # PostgreSQL configuration
         if deploy_postgres:
             cmd.extend(["--set", "postgresql.enabled=true"])
@@ -100,7 +100,7 @@ def register(app: typer.Typer):
 
                 cmd.extend(["--set", f"postgresql.image.repository={repo}"])
                 cmd.extend(["--set", f"postgresql.image.tag={tag}"])
-                
+
                 # If a custom repository is provided, clear the registry to prevent prepending specific defaults
                 cmd.extend(["--set", "postgresql.image.registry="])
                 # Enable insecure images to bypass Bitnami's check for unrecognized images
@@ -110,7 +110,7 @@ def register(app: typer.Typer):
             if not db_url:
                  console.print("❌ DATABASE_URL is required when DEPLOY_POSTGRES is false.", style="red")
                  raise typer.Exit(code=1)
-            
+
             try:
                 url = urlparse(db_url)
                 console.print(f"🔗 Configuring external PostgreSQL: {url.hostname}:{url.port or 5432}", style="blue")
@@ -125,7 +125,7 @@ def register(app: typer.Typer):
             except Exception as e:
                 console.print(f"❌ Failed to parse DATABASE_URL: {e}", style="red")
                 raise typer.Exit(code=1)
-        
+
         # KEDA configuration
         if keda:
             cmd.extend([
@@ -141,8 +141,8 @@ def register(app: typer.Typer):
 
         console.print("\n📋 [bold]Helm Command:[/bold]")
         console.print(" \\\n  ".join(cmd), style="cyan")
-        
-        console.print(f"\n🔧 Running Helm upgrade...", style="yellow")
+
+        console.print("\n🔧 Running Helm upgrade...", style="yellow")
         try:
             subprocess.run(cmd, check=True)
             console.print("✅ Helm upgrade successful", style="green")

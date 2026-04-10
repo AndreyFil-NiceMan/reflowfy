@@ -264,7 +264,7 @@ class TestExecutionStatsProgress:
         assert stats["jobs_completed"] == stats["total_jobs"]
         assert stats["jobs_failed"] == 0
         
-        print(f"✅ Stats contain all expected fields")
+        print("✅ Stats contain all expected fields")
 
 
 if __name__ == "__main__":

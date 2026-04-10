@@ -123,7 +123,7 @@ def check_postgres():
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         
-        print(f"✅ PostgreSQL is running")
+        print("✅ PostgreSQL is running")
         engine.dispose()
         
     except Exception as e:
@@ -140,7 +140,7 @@ def check_kafka():
             "bootstrap.servers": KAFKA_BOOTSTRAP_SERVERS,
         })
         
-        metadata = admin_client.list_topics(timeout=5.0)
+        admin_client.list_topics(timeout=5.0)
         print(f"✅ Kafka is running at {KAFKA_BOOTSTRAP_SERVERS}")
         
     except Exception as e:
@@ -155,7 +155,7 @@ def check_mock_api():
     try:
         response = httpx.get(f"{MOCK_API_URL}/health", timeout=5.0)
         if response.status_code != 200:
-            pytest.skip(f"Mock API server unhealthy")
+            pytest.skip("Mock API server unhealthy")
         
         print(f"✅ Mock API server is running at {MOCK_API_URL}")
         
@@ -171,7 +171,7 @@ def check_mock_http():
     try:
         response = httpx.get(f"{MOCK_HTTP_URL}/health", timeout=5.0)
         if response.status_code != 200:
-            pytest.skip(f"Mock HTTP server unhealthy")
+            pytest.skip("Mock HTTP server unhealthy")
         
         print(f"✅ Mock HTTP server is running at {MOCK_HTTP_URL}")
         

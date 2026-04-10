@@ -17,33 +17,33 @@ def main():
     """Worker main entry point."""
     import asyncio
     from reflowfy import __version__
-    
+
     print("=" * 60)
     print("🚀 Starting Reflowfy Worker (Async)")
     print(f"📦 Version: {__version__}")
     print("=" * 60)
-    
+
     # Register signal handlers
     signal.signal(signal.SIGTERM, handle_shutdown)
     signal.signal(signal.SIGINT, handle_shutdown)
-    
+
     # Auto-discover and load pipelines (registers transformations)
     pipeline_module = os.getenv("PIPELINE_MODULE", "pipelines")
     discover_and_load_pipelines(pipeline_module)
     print()
-    
+
     # Get configuration from environment
     kafka_bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     kafka_topic = os.getenv("KAFKA_TOPIC", "reflow.jobs")
     kafka_group_id = os.getenv("KAFKA_GROUP_ID", "reflowfy-workers")
     database_url = os.getenv("DATABASE_URL", "postgresql://reflowfy:reflowfy@localhost:5432/reflowfy")
-    
+
     # SASL Authentication config
     security_protocol = os.getenv("KAFKA_SECURITY_PROTOCOL")
     sasl_mechanism = os.getenv("KAFKA_SASL_MECHANISM")
     sasl_username = os.getenv("KAFKA_SASL_USERNAME")
     sasl_password = os.getenv("KAFKA_SASL_PASSWORD")
-    
+
     print(f"Kafka brokers: {kafka_bootstrap_servers}")
     print(f"Topic: {kafka_topic}")
     print(f"Consumer group: {kafka_group_id}")
@@ -51,7 +51,7 @@ def main():
         print(f"SASL: {security_protocol or 'SASL_PLAINTEXT'} / {sasl_mechanism or 'SCRAM-SHA-256'}")
     print(f"Database: {database_url.split('@')[-1] if '@' in database_url else database_url}")  # Hide credentials
     print()
-    
+
     # Create consumer
     consumer = KafkaJobConsumer(
         bootstrap_servers=kafka_bootstrap_servers,
@@ -63,7 +63,7 @@ def main():
         sasl_username=sasl_username,
         sasl_password=sasl_password,
     )
-    
+
     try:
         print("Worker ready, waiting for jobs...\n")
         # Run async consumer in event loop

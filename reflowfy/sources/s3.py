@@ -9,14 +9,14 @@ from reflowfy.sources.base import BaseSource, SourceJob, SourceError
 class S3Source(BaseSource):
     """
     AWS S3 source connector with pagination.
-    
+
     Supports:
     - Listing objects with prefix filtering
     - Continuation token-based pagination
     - Reading object contents (JSON, CSV, text)
     - Runtime parameter resolution (Jinja2)
     """
-    
+
     def __init__(
         self,
         bucket: str,
@@ -33,7 +33,7 @@ class S3Source(BaseSource):
     ):
         """
         Initialize S3 source.
-        
+
         Args:
             bucket: S3 bucket name
             prefix: Object key prefix filter
@@ -62,7 +62,7 @@ class S3Source(BaseSource):
         }
         super().__init__(config)
         self._client = None
-    
+
     def _get_client(self):
         """Get or create S3 client."""
         if self._client is None:
@@ -70,37 +70,37 @@ class S3Source(BaseSource):
                 "service_name": "s3",
                 "region_name": self.config["region_name"],
             }
-            
+
             if self.config.get("aws_access_key_id"):
                 client_kwargs["aws_access_key_id"] = self.config["aws_access_key_id"]
                 client_kwargs["aws_secret_access_key"] = self.config["aws_secret_access_key"]
-            
+
             if self.config.get("endpoint_url"):
                 client_kwargs["endpoint_url"] = self.config["endpoint_url"]
-            
+
             self._client = boto3.client(**client_kwargs)
-        
+
         return self._client
-    
+
     def _matches_pattern(self, key: str) -> bool:
         """Check if key matches file pattern."""
         pattern = self.config.get("file_pattern")
         if not pattern:
             return True
-        
+
         import fnmatch
         return fnmatch.fnmatch(key.split("/")[-1], pattern)
-    
+
     def _read_object_content(self, key: str) -> Any:
         """Read and parse object content."""
         client = self._get_client()
         bucket = self.config["bucket"]
         content_type = self.config["content_type"]
-        
+
         try:
             response = client.get_object(Bucket=bucket, Key=key)
             body = response["Body"].read()
-            
+
             if content_type == "json":
                 import json
                 return json.loads(body.decode("utf-8"))
@@ -113,30 +113,30 @@ class S3Source(BaseSource):
                 return body.decode("utf-8")
             else:
                 return body
-                
+
         except ClientError as e:
             raise SourceError("s3", f"Failed to read object {key}: {e}", e)
-    
+
     def fetch(self, runtime_params: Dict[str, Any], limit: Optional[int] = None) -> List[Any]:
         """
         Fetch data from S3 (local mode).
-        
+
         Args:
             runtime_params: Runtime parameters for template resolution
             limit: Optional limit for testing
-        
+
         Returns:
             List of records (object contents or metadata)
         """
         resolved_config = self.resolve_parameters(runtime_params)
         client = self._get_client()
-        
+
         bucket = resolved_config["bucket"]
         prefix = resolved_config["prefix"]
         read_content = resolved_config["read_content"]
-        
+
         records = []
-        
+
         try:
             paginator = client.get_paginator("list_objects_v2")
             page_iterator = paginator.paginate(
@@ -144,12 +144,12 @@ class S3Source(BaseSource):
                 Prefix=prefix,
                 PaginationConfig={"PageSize": min(limit or 1000, 1000)}
             )
-            
+
             for page in page_iterator:
                 for obj in page.get("Contents", []):
                     if not self._matches_pattern(obj["Key"]):
                         continue
-                    
+
                     if read_content:
                         content = self._read_object_content(obj["Key"])
                         if isinstance(content, list):
@@ -163,38 +163,38 @@ class S3Source(BaseSource):
                             "last_modified": obj["LastModified"].isoformat(),
                             "etag": obj["ETag"],
                         })
-                    
+
                     if limit and len(records) >= limit:
                         return records[:limit]
-            
+
             return records
-            
+
         except ClientError as e:
             raise SourceError("s3", f"Failed to fetch data: {e}", e)
-    
+
     def split_jobs(
         self, runtime_params: Dict[str, Any], batch_size: int = 1000
     ) -> Iterator[SourceJob]:
         """
         Split S3 objects into jobs using pagination.
-        
+
         Each page of objects becomes one job.
-        
+
         Args:
             runtime_params: Runtime parameters for template resolution
             batch_size: Objects per job (uses config page_size if not specified)
-        
+
         Yields:
             SourceJob instances
         """
         resolved_config = self.resolve_parameters(runtime_params)
         client = self._get_client()
-        
+
         bucket = resolved_config["bucket"]
         prefix = resolved_config["prefix"]
         page_size = resolved_config.get("page_size", batch_size)
         read_content = resolved_config["read_content"]
-        
+
         try:
             paginator = client.get_paginator("list_objects_v2")
             page_iterator = paginator.paginate(
@@ -202,23 +202,23 @@ class S3Source(BaseSource):
                 Prefix=prefix,
                 PaginationConfig={"PageSize": page_size}
             )
-            
+
             page_num = 0
-            
+
             for page in page_iterator:
                 contents = page.get("Contents", [])
                 if not contents:
                     continue
-                
+
                 # Filter by pattern
                 filtered_objects = [
                     obj for obj in contents
                     if self._matches_pattern(obj["Key"])
                 ]
-                
+
                 if not filtered_objects:
                     continue
-                
+
                 # Build records
                 records = []
                 for obj in filtered_objects:
@@ -235,7 +235,7 @@ class S3Source(BaseSource):
                             "last_modified": obj["LastModified"].isoformat(),
                             "etag": obj["ETag"],
                         })
-                
+
                 yield SourceJob(
                     records=records,
                     metadata={
@@ -246,12 +246,12 @@ class S3Source(BaseSource):
                         "record_count": len(records),
                     },
                 )
-                
+
                 page_num += 1
-                
+
         except ClientError as e:
             raise SourceError("s3", f"Failed to split jobs: {e}", e)
-    
+
     def health_check(self) -> bool:
         """Check S3 bucket accessibility."""
         try:
@@ -277,7 +277,7 @@ def s3_source(
 ) -> S3Source:
     """
     Factory function for S3 source.
-    
+
     Example:
         >>> source = s3_source(
         ...     bucket="my-data-bucket",

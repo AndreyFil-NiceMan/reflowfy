@@ -11,13 +11,12 @@ Example:
             scroll="2m",
             size=1000,
         )
-    
+
     # Then in a pipeline:
     def define_source(self, params):
         return production_elastic(index="my-specific-index")
 """
 
-from functools import wraps
 from typing import Callable, Dict, Optional, TypeVar
 
 F = TypeVar("F", bound=Callable)
@@ -25,25 +24,25 @@ F = TypeVar("F", bound=Callable)
 
 class SourceRegistry:
     """Registry for reusable source factory functions."""
-    
+
     _sources: Dict[str, Callable] = {}
-    
+
     @classmethod
     def register(cls, name: str, factory: Callable) -> None:
         """Register a source factory function."""
         cls._sources[name] = factory
         print(f"✓ Registered reusable source: {name}")
-    
+
     @classmethod
     def get(cls, name: str) -> Optional[Callable]:
         """Get a source factory by name."""
         return cls._sources.get(name)
-    
+
     @classmethod
     def list_all(cls) -> list:
         """List all registered source names."""
         return list(cls._sources.keys())
-    
+
     @classmethod
     def clear(cls) -> None:
         """Clear all registered sources (for testing)."""
@@ -56,13 +55,13 @@ source_registry = SourceRegistry()
 def source(name: str) -> Callable[[F], F]:
     """
     Decorator to register a reusable source configuration.
-    
+
     Args:
         name: Unique name for this source configuration
-    
+
     Returns:
         Decorator that registers the function and returns it unchanged
-    
+
     Example:
         @source("production_elastic")
         def production_elastic(**overrides):

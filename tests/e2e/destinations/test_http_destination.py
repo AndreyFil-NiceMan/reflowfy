@@ -50,7 +50,7 @@ def reset_mock_http(check_mock_http):
     """Reset mock HTTP server data before each test."""
     try:
         httpx.delete(f"{MOCK_HTTP_URL}/reset", timeout=5.0)
-    except:
+    except Exception:
         pass
     yield
 
@@ -170,7 +170,7 @@ class TestHttpDestinationPipeline:
         assert "_test_pipeline" in sample_record
         assert sample_record["_test_pipeline"] == "http_dest_test"
         
-        print(f"✅ Records have correct format with _destination_type='http'")
+        print("✅ Records have correct format with _destination_type='http'")
 
 
 if __name__ == "__main__":

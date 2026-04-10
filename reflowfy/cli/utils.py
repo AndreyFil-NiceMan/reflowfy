@@ -1,6 +1,5 @@
 """Shared utilities for CLI commands."""
 
-import os
 from pathlib import Path
 from rich.console import Console
 
@@ -19,17 +18,17 @@ def get_helm_chart_path() -> Path:
     local_chart = Path("./helm/reflowfy")
     if local_chart.exists() and (local_chart / "Chart.yaml").exists():
         return local_chart
-    
+
     # Priority 1.5: Local development from root (./reflowfy/helm/reflowfy)
     root_chart = Path("reflowfy/helm/reflowfy")
     if root_chart.exists() and (root_chart / "Chart.yaml").exists():
         return root_chart
-    
+
     # Priority 2: Bundled in package
     bundled_chart = get_package_path() / "helm" / "reflowfy"
     if bundled_chart.exists():
         return bundled_chart
-    
+
     raise FileNotFoundError(
         "Helm chart not found. Ensure you're in the project root or have installed reflowfy with bundled charts."
     )
@@ -40,6 +39,6 @@ def get_dockerfiles_path() -> Path:
     # Priority 1: Current directory (User project or Development mode)
     if Path("Dockerfile.api").exists() or Path("Dockerfile.reflow-manager").exists():
         return Path(".")
-    
+
     # Priority 2: Templates bundled in package (Production/Init mode)
     return get_package_path() / "templates"

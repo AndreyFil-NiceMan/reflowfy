@@ -8,7 +8,6 @@ interrupted and recovered.
 
 from reflowfy import (
     AbstractPipeline,
-    PipelineParameter,
     transformation,
 )
 from tests.e2e.test_pipelines.shared_sources import e2e_mock

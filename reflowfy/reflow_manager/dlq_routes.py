@@ -32,12 +32,12 @@ async def schedule_dlq_job(
 ):
     """
     Schedule a job for DLQ processing.
-    
+
     The job will be processed after the specified delay (or default delay).
     """
     delay_minutes = request.delay_minutes if request.delay_minutes is not None else DLQ_DEFAULT_DELAY_MINUTES
     scheduled_at = datetime.utcnow() + timedelta(minutes=delay_minutes)
-    
+
     dlq_job = DLQJob(
         job_payload=request.job_payload,
         pipeline_name=request.pipeline_name,
@@ -47,11 +47,11 @@ async def schedule_dlq_job(
         retry_count=0,
         max_retries=DLQ_MAX_RETRIES,
     )
-    
+
     db.add(dlq_job)
     db.commit()
     db.refresh(dlq_job)
-    
+
     return dlq_job.to_dict()
 
 
@@ -65,15 +65,15 @@ async def list_dlq_jobs(
 ):
     """List DLQ jobs with optional filters."""
     query = db.query(DLQJob)
-    
+
     if pipeline_name:
         query = query.filter(DLQJob.pipeline_name == pipeline_name)
     if status_filter:
         query = query.filter(DLQJob.status == status_filter)
-    
+
     total = query.count()
     jobs = query.order_by(DLQJob.created_at.desc()).offset(offset).limit(limit).all()
-    
+
     return {
         "jobs": [job.to_dict() for job in jobs],
         "total": total,
@@ -87,13 +87,13 @@ async def get_dlq_job(
 ):
     """Get a specific DLQ job by ID."""
     job = db.query(DLQJob).filter(DLQJob.id == job_id).first()
-    
+
     if not job:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"DLQ job {job_id} not found",
         )
-    
+
     return job.to_dict()
 
 
@@ -104,22 +104,22 @@ async def cancel_dlq_job(
 ):
     """Cancel a pending DLQ job."""
     job = db.query(DLQJob).filter(DLQJob.id == job_id).first()
-    
+
     if not job:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"DLQ job {job_id} not found",
         )
-    
+
     if job.status != "pending":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Cannot cancel job with status '{job.status}'",
         )
-    
+
     job.status = "cancelled"
     db.commit()
-    
+
     return {"message": f"DLQ job {job_id} cancelled"}
 
 
@@ -130,28 +130,28 @@ async def dispatch_dlq_job(
 ):
     """Dispatch a specific DLQ job immediately (bypass scheduler)."""
     scheduler = get_dlq_scheduler()
-    
+
     if not scheduler:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="DLQ scheduler not initialized",
         )
-    
+
     try:
         execution_id = scheduler.process_job_immediately(db, job_id)
-        
+
         if not execution_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"DLQ job {job_id} not found",
             )
-        
+
         return {
             "dispatched_count": 1,
             "execution_id": execution_id,
             "message": f"DLQ job {job_id} dispatched successfully",
         }
-    
+
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -171,29 +171,29 @@ async def dispatch_pipeline_dlq_jobs(
 ):
     """Dispatch all pending DLQ jobs for a pipeline immediately."""
     scheduler = get_dlq_scheduler()
-    
+
     if not scheduler:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="DLQ scheduler not initialized",
         )
-    
+
     try:
         count, execution_id = scheduler.process_pipeline_immediately(db, pipeline_name)
-        
+
         if count == 0:
             return {
                 "dispatched_count": 0,
                 "execution_id": None,
                 "message": f"No pending DLQ jobs found for pipeline '{pipeline_name}'",
             }
-        
+
         return {
             "dispatched_count": count,
             "execution_id": execution_id,
             "message": f"Dispatched {count} DLQ job(s) for pipeline '{pipeline_name}'",
         }
-    
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

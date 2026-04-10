@@ -8,7 +8,7 @@ All sources use explicit keyword arguments for full IDE autocomplete.
 """
 
 import os
-from typing import Dict, List, Optional, Union
+from typing import List, Optional, Union
 
 from reflowfy import source
 from reflowfy.sources.mock import mock_source, generate_sample_data

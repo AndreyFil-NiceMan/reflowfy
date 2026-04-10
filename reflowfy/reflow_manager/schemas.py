@@ -49,7 +49,7 @@ class DestinationConfig(BaseModel):
 
 class JobPayload(BaseModel):
     """Validated job payload sent to workers via Kafka.
-    
+
     This schema ensures job messages have the required structure
     before being dispatched to workers.
     """
@@ -60,6 +60,6 @@ class JobPayload(BaseModel):
     transformations: List[str] = []
     destination: DestinationConfig
     metadata: Dict[str, Any] = {}
-    
+
     class Config:
         extra = "allow"  # Allow additional fields for extensibility

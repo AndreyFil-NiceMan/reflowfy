@@ -14,8 +14,6 @@ os.environ["KAFKA_BOOTSTRAP_SERVERS"] = "localhost:9093"
 os.environ["KAFKA_TOPIC"] = "reflow.jobs"
 
 # Import pipeline definitions - this triggers auto-registration
-import simple_test_pipeline
-import elastic_test_pipeline
 
 # Start the API
 from reflowfy.api.app import main

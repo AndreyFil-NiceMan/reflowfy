@@ -6,13 +6,15 @@ Used for E2E testing of the PaginatedAPISource connector.
 """
 
 import os
+
+
 from reflowfy import (
     AbstractPipeline,
     PipelineParameter,
     transformation,
 )
-from tests.e2e.test_pipelines.shared_sources import e2e_paginated_api
 from tests.e2e.test_pipelines.shared_destinations import e2e_console
+from tests.e2e.test_pipelines.shared_sources import e2e_paginated_api
 
 
 @transformation("api_add_source_info")
@@ -39,10 +41,10 @@ MOCK_API_URL = os.getenv("MOCK_API_URL", "http://localhost:8092")
 
 class E2EApiSourceTestPipeline(AbstractPipeline):
     """E2E test pipeline for paginated API source."""
-    
+
     name = "e2e_api_source_test"
     rate_limit = {"jobs_per_second": 10}
-    
+
     def define_parameters(self):
         return [
             PipelineParameter(
@@ -67,18 +69,18 @@ class E2EApiSourceTestPipeline(AbstractPipeline):
                 default=10,
             ),
         ]
-    
-    def define_source(self, params):
+
+    def define_source(self, runtime_params):
         return e2e_paginated_api(
-            base_url=params.get("base_url", MOCK_API_URL),
-            endpoint=params.get("endpoint", "/users"),
-            page_size=params.get("page_size", 10),
+            base_url=runtime_params.get("base_url", MOCK_API_URL),
+            endpoint=runtime_params.get("endpoint", "/users"),
+            page_size=runtime_params.get("page_size", 10),
         )
-    
-    def define_destination(self, params):
+
+    def define_destination(self, runtime_params):
         return e2e_console()
-    
-    def define_transformations(self, params):
+
+    def define_transformations(self, runtime_params):
         return [
             api_log_record_count(),
             api_add_source_info(),

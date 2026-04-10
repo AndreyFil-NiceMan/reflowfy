@@ -1,6 +1,5 @@
 """Kafka destination connector using aiokafka."""
 
-import os
 import json
 from typing import Any, Dict, List, Optional, Union
 from aiokafka import AIOKafkaProducer
@@ -11,14 +10,14 @@ from reflowfy.destinations.base import BaseDestination, DestinationError, RetryC
 class KafkaDestination(BaseDestination):
     """
     Kafka destination connector using aiokafka.
-    
+
     Supports:
     - SASL authentication (SCRAM-SHA-256)
     - Configurable serialization (JSON by default)
     - Compression
     - Error handling
     """
-    
+
     def __init__(
         self,
         bootstrap_servers: Union[str, List[str]],
@@ -34,7 +33,7 @@ class KafkaDestination(BaseDestination):
     ):
         """
         Initialize Kafka destination.
-        
+
         Args:
             bootstrap_servers: Kafka broker addresses (comma-separated)
             topic: Target topic
@@ -56,7 +55,7 @@ class KafkaDestination(BaseDestination):
             "sasl_password": sasl_password,
             **producer_config,
         }
-        
+
         # Parse bootstrap_servers if it's a comma-separated string
         if isinstance(bootstrap_servers, str) and "," in bootstrap_servers:
              config["bootstrap_servers"] = [s.strip() for s in bootstrap_servers.split(",") if s.strip()]
@@ -64,7 +63,7 @@ class KafkaDestination(BaseDestination):
         super().__init__(config, retry_config)
         self._producer: Optional[AIOKafkaProducer] = None
         self._started = False
-    
+
     async def _get_producer(self) -> AIOKafkaProducer:
         """Get or create async Kafka producer."""
         if self._producer is None or not self._started:
@@ -73,7 +72,7 @@ class KafkaDestination(BaseDestination):
                 "bootstrap_servers": self.config["bootstrap_servers"],
                 "compression_type": self.config.get("compression_type", "gzip"),
             }
-            
+
             # Add SASL config if credentials provided
             username = self.config.get("sasl_username")
             password = self.config.get("sasl_password")
@@ -85,60 +84,60 @@ class KafkaDestination(BaseDestination):
                     "sasl_plain_password": password,
                     "client_id": username,  # client_id = username
                 })
-            
+
             self._producer = AIOKafkaProducer(**producer_kwargs)
             await self._producer.start()
             self._started = True
-        
+
         return self._producer
-    
+
     async def send(self, records: List[Any], metadata: Optional[Dict[str, Any]] = None) -> None:
         """
         Send records to Kafka topic.
-        
+
         Args:
             records: List of records to send
             metadata: Optional metadata to include in message headers
-        
+
         Raises:
             DestinationError: If send fails
         """
         producer = await self._get_producer()
         topic = self.config["topic"]
-        
+
         try:
             for record in records:
                 # Serialize record to JSON
                 value = json.dumps(record).encode("utf-8")
-                
+
                 # Prepare headers
                 headers = []
                 if metadata:
                     for k, v in metadata.items():
                         if isinstance(v, str):
                             headers.append((k, v.encode("utf-8")))
-                
+
                 # Send message
                 await producer.send_and_wait(
                     topic=topic,
                     value=value,
                     headers=headers if headers else None,
                 )
-        
+
         except KafkaError as e:
             raise DestinationError("kafka", f"Failed to send to topic '{topic}': {e}", e)
         except Exception as e:
             raise DestinationError("kafka", f"Unexpected error: {e}", e)
-    
+
     async def health_check(self) -> bool:
         """Check Kafka cluster connectivity."""
         try:
-            producer = await self._get_producer()
+            await self._get_producer()
             # If we can get the producer, the connection is healthy
             return True
         except Exception:
             return False
-    
+
     async def close(self):
         """Close producer connection."""
         if self._producer and self._started:
@@ -160,7 +159,7 @@ def kafka_destination(
 ) -> KafkaDestination:
     """
     Factory function for Kafka destination.
-    
+
     Example:
         >>> destination = kafka_destination(
         ...     bootstrap_servers="kafka:9092",

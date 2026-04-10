@@ -1,6 +1,5 @@
 """HTTP destination for webhooks and APIs."""
 
-import json
 from typing import Any, Dict, List, Optional
 import httpx
 from reflowfy.destinations.base import BaseDestination, DestinationError, RetryConfig
@@ -9,14 +8,14 @@ from reflowfy.destinations.base import BaseDestination, DestinationError, RetryC
 class HttpDestination(BaseDestination):
     """
     HTTP destination for sending data to webhooks and APIs.
-    
+
     Supports:
     - Configurable authentication (Bearer, API key, Basic)
     - Request batching
     - Timeout configuration
     - Custom headers
     """
-    
+
     def __init__(
         self,
         url: str,
@@ -30,7 +29,7 @@ class HttpDestination(BaseDestination):
     ):
         """
         Initialize HTTP destination.
-        
+
         Args:
             url: Target URL
             method: HTTP method (POST, PUT, PATCH)
@@ -52,36 +51,36 @@ class HttpDestination(BaseDestination):
         }
         super().__init__(config, retry_config)
         self._client: Optional[httpx.AsyncClient] = None
-    
+
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create async HTTP client."""
         if self._client is None:
             headers = dict(self.config["headers"])
-            
+
             # Add authentication
             auth_type = self.config.get("auth_type")
             auth_token = self.config.get("auth_token")
-            
+
             if auth_type == "bearer" and auth_token:
                 headers["Authorization"] = f"Bearer {auth_token}"
             elif auth_type == "apikey" and auth_token:
                 headers["X-API-Key"] = auth_token
-            
+
             self._client = httpx.AsyncClient(
                 headers=headers,
                 timeout=self.config["timeout"],
             )
-        
+
         return self._client
-    
+
     async def send(self, records: List[Any], metadata: Optional[Dict[str, Any]] = None) -> None:
         """
         Send records to HTTP endpoint.
-        
+
         Args:
             records: List of records to send
             metadata: Optional metadata to include in request
-        
+
         Raises:
             DestinationError: If send fails
         """
@@ -89,7 +88,7 @@ class HttpDestination(BaseDestination):
         url = self.config["url"]
         method = self.config["method"]
         batch_requests = self.config["batch_requests"]
-        
+
         try:
             if batch_requests:
                 # Send all records in one request
@@ -97,10 +96,10 @@ class HttpDestination(BaseDestination):
                     "records": records,
                     "metadata": metadata or {},
                 }
-                
+
                 response = await client.request(method, url, json=payload)
                 response.raise_for_status()
-            
+
             else:
                 # Send each record as a separate request
                 for record in records:
@@ -108,10 +107,10 @@ class HttpDestination(BaseDestination):
                         "record": record,
                         "metadata": metadata or {},
                     }
-                    
+
                     response = await client.request(method, url, json=payload)
                     response.raise_for_status()
-        
+
         except httpx.HTTPStatusError as e:
             raise DestinationError(
                 "http",
@@ -122,7 +121,7 @@ class HttpDestination(BaseDestination):
             raise DestinationError("http", f"Request failed: {e}", e)
         except Exception as e:
             raise DestinationError("http", f"Unexpected error: {e}", e)
-    
+
     async def health_check(self) -> bool:
         """Check if HTTP endpoint is accessible."""
         try:
@@ -131,12 +130,12 @@ class HttpDestination(BaseDestination):
             try:
                 response = await client.head(self.config["url"], timeout=5.0)
                 return response.status_code < 500
-            except:
+            except Exception:
                 response = await client.request("OPTIONS", self.config["url"], timeout=5.0)
                 return response.status_code < 500
         except Exception:
             return False
-    
+
     async def close(self):
         """Close HTTP client."""
         if self._client:
@@ -156,7 +155,7 @@ def http_destination(
 ) -> HttpDestination:
     """
     Factory function for HTTP destination.
-    
+
     Example:
         >>> destination = http_destination(
         ...     url="https://api.example.com/webhook",

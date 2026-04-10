@@ -1,7 +1,7 @@
 """Database models for ReflowManager."""
 
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 from sqlalchemy import Column, String, Integer, Float, Text, DateTime, ForeignKey, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -12,12 +12,12 @@ Base = declarative_base()
 class Execution(Base):
     """
     Pipeline execution record.
-    
+
     Tracks the state and progress of a pipeline execution.
     """
-    
+
     __tablename__ = "executions"
-    
+
     execution_id = Column(String(255), primary_key=True)
     pipeline_name = Column(String(255), nullable=False, index=True)
     state = Column(String(50), nullable=False, index=True)  # pending, running, paused, completed, failed
@@ -30,10 +30,10 @@ class Execution(Base):
     completed_at = Column(DateTime, nullable=True)
     error_message = Column(Text, nullable=True)
     runtime_params = Column(JSON, nullable=True)
-    
+
     # Relationship to jobs
     jobs = relationship("Job", back_populates="execution", cascade="all, delete-orphan")
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation."""
         return {
@@ -55,18 +55,18 @@ class Execution(Base):
 class RateLimitState(Base):
     """
     Rate limiter token bucket state.
-    
+
     Stores the current token count for each pipeline's rate limiter.
     """
-    
+
     __tablename__ = "rate_limit_state"
-    
+
     pipeline_name = Column(String(255), primary_key=True)
     tokens = Column(Float, nullable=False)
     max_tokens = Column(Float, nullable=False)
     refill_rate = Column(Float, nullable=False)  # tokens per second
     last_update = Column(DateTime, nullable=False)
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation."""
         return {
@@ -81,36 +81,36 @@ class RateLimitState(Base):
 class Job(Base):
     """
     Job record for pipeline execution.
-    
+
     Stores job payload for dispatch and tracking data for progress.
     """
-    
+
     __tablename__ = "jobs"
-    
+
     job_id = Column(String(255), primary_key=True)
     execution_id = Column(String(255), ForeignKey("executions.execution_id"), nullable=False, index=True)
-    
+
     # Job data
     job_payload = Column(JSON, nullable=False)
     batch_number = Column(Integer, nullable=True)
-    
+
     # State tracking
     state = Column(String(50), nullable=False, index=True)  # pending, dispatched, completed, failed
-    
+
     # Worker results
     processed_records = Column(Integer, default=0)
     error_message = Column(Text, nullable=True)
     stats = Column(JSON, nullable=True)
-    
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     dispatched_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
-    
+
     # Relationship to execution
     execution = relationship("Execution", back_populates="jobs")
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation."""
         return {
@@ -135,12 +135,12 @@ Checkpoint = Job
 class DLQJob(Base):
     """
     Dead Letter Queue job for scheduled reflow.
-    
+
     Stores jobs from external services to be processed at a scheduled time.
     """
-    
+
     __tablename__ = "dlq_jobs"
-    
+
     id = Column(Integer, primary_key=True, autoincrement=True)
     job_payload = Column(JSON, nullable=False)
     pipeline_name = Column(String(255), nullable=False, index=True)
@@ -154,7 +154,7 @@ class DLQJob(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     processed_at = Column(DateTime, nullable=True)
     execution_id = Column(String(255), nullable=True)
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation."""
         return {
@@ -177,12 +177,12 @@ class DLQJob(Base):
 class DLQJobArchive(Base):
     """
     Archived permanently failed DLQ jobs.
-    
+
     Jobs are moved here after exceeding max_retries for historical tracking.
     """
-    
+
     __tablename__ = "dlq_jobs_archive"
-    
+
     id = Column(Integer, primary_key=True)  # Preserves original ID
     job_payload = Column(JSON, nullable=False)
     pipeline_name = Column(String(255), nullable=False, index=True)
@@ -192,7 +192,7 @@ class DLQJobArchive(Base):
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, nullable=False)
     archived_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation."""
         return {

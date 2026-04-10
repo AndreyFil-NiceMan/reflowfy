@@ -1,30 +1,32 @@
 """REST API sources with pagination support."""
 
-from abc import abstractmethod
 from typing import Any, Dict, Iterator, List, Optional, Union
+
 import httpx
-from reflowfy.sources.base import BaseSource, SourceJob, SourceError
+
+from reflowfy.sources.base import BaseSource, SourceError, SourceJob
+from reflowfy.sources.schemas import IDBasedAPISourceConfig, PaginatedAPISourceConfig
 
 
 class PaginatedAPISource(BaseSource):
     """
     Paginated REST API source.
-    
+
     Supports multiple pagination styles:
     - offset: Uses offset/limit parameters
     - page: Uses page/per_page parameters
     - cursor: Uses cursor token in response
     - link: Uses Link header (RFC 5988)
     """
-    
+
     def __init__(
         self,
         base_url: str,
         endpoint: str,
         method: str = "GET",
-        headers: Optional[Dict[str, str]] = None,
-        auth_type: Optional[str] = None,
-        auth_token: Optional[str] = None,
+        headers: Dict[str, str] | None = None,
+        auth_type: str | None = None,
+        auth_token: str | None = None,
         pagination_type: str = "offset",
         page_size: int = 100,
         offset_param: str = "offset",
@@ -34,13 +36,13 @@ class PaginatedAPISource(BaseSource):
         cursor_param: str = "cursor",
         cursor_response_key: str = "next_cursor",
         data_key: str = "data",
-        total_key: Optional[str] = "total",
+        total_key: str | None = "total",
         timeout: float = 30.0,
         **kwargs,
     ):
         """
         Initialize Paginated API source.
-        
+
         Args:
             base_url: Base API URL (e.g., "https://api.example.com")
             endpoint: API endpoint (e.g., "/users")
@@ -82,37 +84,37 @@ class PaginatedAPISource(BaseSource):
         }
         super().__init__(config)
         self._client: Optional[httpx.Client] = None
-    
+
     def _get_client(self) -> httpx.Client:
         """Get or create HTTP client."""
         if self._client is None:
             headers = dict(self.config["headers"])
-            
+
             # Add authentication
             auth_type = self.config.get("auth_type")
             auth_token = self.config.get("auth_token")
-            
+
             if auth_type == "bearer" and auth_token:
                 headers["Authorization"] = f"Bearer {auth_token}"
             elif auth_type == "apikey" and auth_token:
                 headers["X-API-Key"] = auth_token
-            
+
             self._client = httpx.Client(
                 base_url=self.config["base_url"],
                 headers=headers,
                 timeout=self.config["timeout"],
             )
-        
+
         return self._client
-    
+
     def _extract_data(self, response_data: Any) -> List[Any]:
         """Extract records from response using data_key."""
         data_key = self.config["data_key"]
-        
+
         if not data_key:
             # Response is the array itself
             return response_data if isinstance(response_data, list) else [response_data]
-        
+
         keys = data_key.split(".")
         result = response_data
         for key in keys:
@@ -120,9 +122,9 @@ class PaginatedAPISource(BaseSource):
                 result = result.get(key, [])
             else:
                 return []
-        
+
         return result if isinstance(result, list) else [result]
-    
+
     def _get_next_cursor(self, response_data: Any) -> Optional[str]:
         """Extract next cursor from response."""
         cursor_key = self.config["cursor_response_key"]
@@ -134,27 +136,30 @@ class PaginatedAPISource(BaseSource):
             else:
                 return None
         return result
-    
+
     def fetch(self, runtime_params: Dict[str, Any], limit: Optional[int] = None) -> List[Any]:
         """
         Fetch data from API (local mode).
-        
+
         Args:
             runtime_params: Runtime parameters
             limit: Optional limit for testing
-        
+
         Returns:
             List of records
         """
         resolved_config = self.resolve_parameters(runtime_params)
+        if resolved_config is None:
+            raise SourceError("api", "No valid configuration resolved", None)
+
         client = self._get_client()
-        
+
         endpoint = resolved_config["endpoint"]
         page_size = min(limit or resolved_config["page_size"], resolved_config["page_size"])
         pagination_type = resolved_config["pagination_type"]
-        
+
         records = []
-        
+
         try:
             if pagination_type == "offset":
                 params = {
@@ -168,76 +173,83 @@ class PaginatedAPISource(BaseSource):
                 }
             else:
                 params = {}
-            
+
             response = client.request(resolved_config["method"], endpoint, params=params)
             response.raise_for_status()
-            
+
             data = response.json()
             records = self._extract_data(data)
-            
+
             if limit:
                 records = records[:limit]
-            
+
             return records
-            
+
         except httpx.HTTPStatusError as e:
             raise SourceError("api", f"HTTP {e.response.status_code}: {e.response.text}", e)
         except httpx.RequestError as e:
             raise SourceError("api", f"Request failed: {e}", e)
-    
+
     def split_jobs(
         self, runtime_params: Dict[str, Any], batch_size: int = 1000
     ) -> Iterator[SourceJob]:
         """
         Split API data into jobs using pagination.
-        
+
         Args:
             runtime_params: Runtime parameters
             batch_size: Records per job (uses config page_size)
-        
+
         Yields:
             SourceJob instances
         """
-        resolved_config = self.resolve_parameters(runtime_params)
+        _raw = self.resolve_parameters(runtime_params)
+        if _raw is None:
+            raise SourceError("api", "No valid configuration resolved", None)
+        try:
+            resolved_config = PaginatedAPISourceConfig(**_raw)
+        except Exception as exc:
+            raise SourceError("api", f"Invalid configuration: {exc}", exc)
+
         client = self._get_client()
-        
-        endpoint = resolved_config["endpoint"]
-        page_size = resolved_config["page_size"]
-        pagination_type = resolved_config["pagination_type"]
-        
+
+        endpoint = resolved_config.endpoint
+        page_size = resolved_config.page_size
+        pagination_type = resolved_config.pagination_type
+
         page_num = 0
         offset = 0
         cursor = None
-        
+
         try:
             while True:
                 # Build params based on pagination type
                 if pagination_type == "offset":
                     params = {
-                        resolved_config["offset_param"]: offset,
-                        resolved_config["limit_param"]: page_size,
+                        resolved_config.offset_param: offset,
+                        resolved_config.limit_param: page_size,
                     }
                 elif pagination_type == "page":
                     params = {
-                        resolved_config["page_param"]: page_num + 1,
-                        resolved_config["per_page_param"]: page_size,
+                        resolved_config.page_param: page_num + 1,
+                        resolved_config.per_page_param: page_size,
                     }
                 elif pagination_type == "cursor":
-                    params = {resolved_config["limit_param"]: page_size}
+                    params: Dict[str, Any] = {resolved_config.limit_param: page_size}
                     if cursor:
-                        params[resolved_config["cursor_param"]] = cursor
+                        params[resolved_config.cursor_param] = cursor
                 else:
                     params = {}
-                
-                response = client.request(resolved_config["method"], endpoint, params=params)
+
+                response = client.request(resolved_config.method, endpoint, params=params)
                 response.raise_for_status()
-                
+
                 data = response.json()
                 records = self._extract_data(data)
-                
+
                 if not records:
                     break
-                
+
                 yield SourceJob(
                     records=records,
                     metadata={
@@ -248,10 +260,10 @@ class PaginatedAPISource(BaseSource):
                         "endpoint": endpoint,
                     },
                 )
-                
+
                 page_num += 1
                 offset += len(records)
-                
+
                 # Check for next page
                 if pagination_type == "cursor":
                     cursor = self._get_next_cursor(data)
@@ -260,12 +272,12 @@ class PaginatedAPISource(BaseSource):
                 elif len(records) < page_size:
                     # Last page for offset/page pagination
                     break
-                    
+
         except httpx.HTTPStatusError as e:
             raise SourceError("api", f"HTTP {e.response.status_code}: {e.response.text}", e)
         except httpx.RequestError as e:
             raise SourceError("api", f"Request failed: {e}", e)
-    
+
     def health_check(self) -> bool:
         """Check if API is accessible."""
         try:
@@ -275,6 +287,7 @@ class PaginatedAPISource(BaseSource):
         except Exception:
             # Try GET if HEAD fails
             try:
+                client = self._get_client()
                 response = client.request("GET", self.config["endpoint"], timeout=5.0)
                 return response.status_code < 500
             except Exception:
@@ -465,7 +478,9 @@ class IDBasedAPISource(BaseSource):
             response.raise_for_status()
             return self._extract_records(response.json())
         except httpx.HTTPStatusError as e:
-            raise SourceError("id_based_api", f"HTTP {e.response.status_code}: {e.response.text}", e)
+            raise SourceError(
+                "id_based_api", f"HTTP {e.response.status_code}: {e.response.text}", e
+            )
         except httpx.RequestError as e:
             raise SourceError("id_based_api", f"Request failed: {e}", e)
 
@@ -516,16 +531,23 @@ class IDBasedAPISource(BaseSource):
         Yields:
             SourceJob instances.
         """
-        resolved_config = self.resolve_parameters(runtime_params)
+        _raw = self.resolve_parameters(runtime_params)
+        if _raw is None:
+            raise SourceError("id_based_api", "No valid configuration resolved", None)
+        try:
+            resolved_config = IDBasedAPISourceConfig(**_raw)
+        except Exception as exc:
+            raise SourceError("id_based_api", f"Invalid configuration: {exc}", exc)
+
         ids = self._get_all_ids(runtime_params)
-        batch_size = resolved_config.get("batch_size", batch_size)
+        batch_size = resolved_config.batch_size
         batch_num = 0
 
         if not self._is_per_id_mode():
             # Batch mode: one request → split response records into jobs
             records = self._fetch_batch(ids)
             for i in range(0, len(records), batch_size):
-                chunk = records[i:i + batch_size]
+                chunk = records[i : i + batch_size]
                 if chunk:
                     yield SourceJob(
                         records=chunk,
@@ -540,7 +562,7 @@ class IDBasedAPISource(BaseSource):
 
         # Per-ID mode: group IDs into batches, fetch each individually
         for i in range(0, len(ids), batch_size):
-            id_batch = ids[i:i + batch_size]
+            id_batch = ids[i : i + batch_size]
             records = []
             for id_value in id_batch:
                 record = self._fetch_by_id(id_value)
@@ -581,7 +603,7 @@ def paginated_api_source(
 ) -> PaginatedAPISource:
     """
     Factory function for paginated API source.
-    
+
     Example:
         >>> source = paginated_api_source(
         ...     base_url="https://api.example.com",

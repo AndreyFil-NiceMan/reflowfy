@@ -1,7 +1,7 @@
 """FastAPI application for ReflowManager service."""
 
 import os
-from typing import Dict, Any, List, Optional
+from typing import Optional
 from fastapi import FastAPI, HTTPException, Depends, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -10,20 +10,18 @@ from dotenv import load_dotenv
 # Load .env file if present
 load_dotenv()
 
-from reflowfy import __version__
+from reflowfy import __version__  # noqa: E402
 
-from reflowfy.reflow_manager.database import get_db, init_db
-from reflowfy.reflow_manager.manager import ReflowManager
-from reflowfy.reflow_manager.schemas import (
-    CreateExecutionRequest,
+from reflowfy.reflow_manager.database import get_db, init_db  # noqa: E402
+from reflowfy.reflow_manager.manager import ReflowManager  # noqa: E402
+from reflowfy.reflow_manager.schemas import (  # noqa: E402
     UpdateExecutionStateRequest,
-    DispatchJobsRequest,
     CheckpointRequest,
     RunPipelineRequest,
 )
-from reflowfy.reflow_manager.dlq_routes import router as dlq_router
-from reflowfy.reflow_manager.stats_routes import router as stats_router
-from reflowfy.reflow_manager.dlq_scheduler import (
+from reflowfy.reflow_manager.dlq_routes import router as dlq_router  # noqa: E402
+from reflowfy.reflow_manager.stats_routes import router as stats_router  # noqa: E402
+from reflowfy.reflow_manager.dlq_scheduler import (  # noqa: E402
     init_dlq_scheduler,
     stop_dlq_scheduler,
 )
@@ -73,7 +71,7 @@ def _get_kafka_config() -> dict:
 def get_reflow_manager(db: Session = Depends(get_db)) -> ReflowManager:
     """Get ReflowManager instance with database session."""
     config = _get_kafka_config()
-    
+
     return ReflowManager(
         db_session=db,
         **config,
@@ -107,13 +105,13 @@ async def update_execution_state(
         state=request.state,
         error_message=request.error_message,
     )
-    
+
     if not execution:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Execution '{execution_id}' not found",
         )
-    
+
     return execution.to_dict()
 
 
@@ -124,13 +122,13 @@ async def pause_execution(
 ):
     """Pause an execution."""
     execution = manager.pause_execution(execution_id)
-    
+
     if not execution:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Execution '{execution_id}' not found",
         )
-    
+
     return {"message": "Execution paused", "execution": execution.to_dict()}
 
 
@@ -141,13 +139,13 @@ async def resume_execution(
 ):
     """Resume a paused execution."""
     execution = manager.resume_execution(execution_id)
-    
+
     if not execution:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Execution '{execution_id}' not found or not paused",
         )
-    
+
     return {"message": "Execution resumed", "execution": execution.to_dict()}
 
 
@@ -167,7 +165,7 @@ async def create_checkpoint(
             processed_records=request.processed_records,
         )
         return checkpoint.to_dict()
-    
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -198,21 +196,21 @@ async def run_pipeline(
 ):
     """
     Run a pipeline (async endpoint).
-    
+
     Returns immediately with 202 Accepted and execution details.
     Job splitting and dispatching happens in the background.
-    
+
     Use GET /executions/{execution_id} to check progress.
-    
+
     Set dry_run=true to preview jobs without executing.
     """
     import uuid
     from reflowfy.core.registry import pipeline_registry
-    
+
     try:
         # Generate execution ID if not provided
         execution_id = request.execution_id or str(uuid.uuid4())
-        
+
         # Validate pipeline exists before accepting
         pipeline = pipeline_registry.get(request.pipeline_name)
         if not pipeline:
@@ -220,22 +218,22 @@ async def run_pipeline(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Pipeline '{request.pipeline_name}' not found in registry",
             )
-        
+
         # Get ReflowManager config from environment
         config = _get_kafka_config()
-        
+
         # Create initial execution record (pending state)
         manager = ReflowManager(
             db_session=db,
             **config,
         )
-        
-        execution = manager.create_execution(
+
+        manager.create_execution(
             execution_id=execution_id,
             pipeline_name=request.pipeline_name,
             runtime_params=request.runtime_params or {},
         )
-        
+
         # Schedule job dispatching in background
         background_tasks.add_task(
             _dispatch_pipeline_jobs,
@@ -245,7 +243,7 @@ async def run_pipeline(
             rate_limit_override=request.rate_limit,
             mode=request.mode,
         )
-        
+
         # Return immediately with execution details
         return {
             "execution_id": execution_id,
@@ -254,10 +252,10 @@ async def run_pipeline(
             "message": "Pipeline execution accepted. Jobs are being dispatched in background.",
             "status_url": f"/executions/{execution_id}",
         }
-    
+
     except HTTPException:
         raise
-    
+
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -276,22 +274,22 @@ def _dispatch_pipeline_jobs(
 ):
     """Background task to dispatch pipeline jobs."""
     from reflowfy.reflow_manager.database import SessionLocal
-    
+
     # Create a new database session for background task
     db = SessionLocal()
-    
+
     try:
         config = _get_kafka_config()
-        
+
         # Override execution_mode if mode was specified in the request
         if mode:
             config["execution_mode"] = mode
-        
+
         manager = ReflowManager(
             db_session=db,
             **config,
         )
-        
+
         # Run the pipeline (this updates the existing execution record)
         manager._run_pipeline_jobs(
             execution_id=execution_id,
@@ -299,18 +297,18 @@ def _dispatch_pipeline_jobs(
             runtime_params=runtime_params,
             rate_limit_override=rate_limit_override,
         )
-        
+
     except Exception as e:
         import traceback
         print(f"❌ Background job dispatch failed: {e}")
         traceback.print_exc()
-        
+
         # Update execution state to failed
         try:
             manager.update_execution_state(execution_id, "failed", error_message=str(e))
-        except:
+        except Exception:
             pass
-    
+
     finally:
         db.close()
 
@@ -325,13 +323,13 @@ async def get_execution_stats(
     """Get detailed execution statistics."""
     try:
         stats = manager.get_execution_stats(execution_id)
-        
+
         if not stats:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Execution '{execution_id}' not found",
             )
-        
+
         return stats
     except HTTPException:
         raise
@@ -349,34 +347,31 @@ async def get_execution_stats(
 @app.on_event("startup")
 async def startup_event():
     """Initialize database and load pipelines on startup."""
-    import importlib
-    import pkgutil
-    from pathlib import Path
-    
+
     print("=" * 60)
     print("🚀 Starting ReflowManager service...")
     print(f"📦 Version: {__version__}")
     print("=" * 60)
-    
+
     # Initialize database
     print("Initializing database...")
     init_db()
     print("✓ Database initialized")
-    
+
     # Load pipelines using global discovery
     from reflowfy.core.pipeline_discovery import discover_and_load_pipelines
     pipeline_module = os.getenv("PIPELINE_MODULE", "pipelines")
     print(f"\n📂 Loading pipelines from '{pipeline_module}'...")
-    loaded_count = discover_and_load_pipelines(pipeline_module)
-    
+    discover_and_load_pipelines(pipeline_module)
+
     print(f"\n✓ Kafka: {os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092')}")
     print(f"✓ Topic: {os.getenv('KAFKA_TOPIC', 'reflow.jobs')}")
     print(f"✓ Rate limit: {os.getenv('MAX_JOBS_PER_SECOND', '100')} jobs/sec")
-    
+
     # Check for interrupted executions and recover
     print("\n🔄 Checking for interrupted executions...")
     await _recover_interrupted_executions()
-    
+
     # Initialize DLQ scheduler
     print("\n📬 Initializing DLQ scheduler...")
     try:
@@ -389,7 +384,7 @@ async def startup_event():
                 **config,
             )
             return manager.pipeline_runner
-        
+
         init_dlq_scheduler(pipeline_runner_factory)
         print("✅ DLQ Scheduler initialized")
     except Exception as e:
@@ -400,25 +395,25 @@ async def _recover_interrupted_executions():
     """Find and resume any executions that were interrupted by a crash."""
     import asyncio
     from reflowfy.reflow_manager.database import SessionLocal
-    
+
     db = SessionLocal()
     try:
         config = _get_kafka_config()
-        
+
         manager = ReflowManager(
             db_session=db,
             **config,
         )
-        
+
         # Find interrupted executions
         interrupted = manager.execution_manager.get_interrupted_executions()
-        
+
         if not interrupted:
             print("  ✓ No interrupted executions found")
             return
-        
+
         print(f"  Found {len(interrupted)} interrupted execution(s)")
-        
+
         # Resume each in a background thread (don't block startup)
         for execution in interrupted:
             print(f"  → Scheduling resume for: {execution.execution_id}")
@@ -428,9 +423,9 @@ async def _recover_interrupted_executions():
                 _resume_execution_sync,
                 execution.execution_id,
             )
-        
+
         print(f"  ✓ Scheduled {len(interrupted)} execution(s) for recovery")
-    
+
     finally:
         db.close()
 
@@ -438,23 +433,23 @@ async def _recover_interrupted_executions():
 def _resume_execution_sync(execution_id: str):
     """Synchronously resume an execution (runs in thread pool)."""
     from reflowfy.reflow_manager.database import SessionLocal
-    
+
     db = SessionLocal()
     try:
         config = _get_kafka_config()
-        
+
         manager = ReflowManager(
             db_session=db,
             **config,
         )
-        
+
         manager.pipeline_runner.resume_execution(execution_id)
-    
+
     except Exception as e:
         import traceback
         print(f"❌ Failed to resume execution {execution_id}: {e}")
         traceback.print_exc()
-    
+
     finally:
         db.close()
 
@@ -473,16 +468,16 @@ async def shutdown_event():
 def main():
     """Run the FastAPI application."""
     import uvicorn
-    
+
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "8001"))
-    
+
     print("=" * 60)
     print("🔧 ReflowManager Service")
     print("=" * 60)
     print(f"🌐 Server starting on http://{host}:{port}")
     print(f"📖 API docs at http://localhost:{port}/docs\n")
-    
+
     uvicorn.run(app, host=host, port=port)
 
 

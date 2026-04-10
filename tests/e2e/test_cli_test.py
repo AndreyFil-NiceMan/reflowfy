@@ -6,7 +6,6 @@ limit enforcement, and error handling.
 """
 
 import os
-import sys
 import pytest
 import tempfile
 import shutil

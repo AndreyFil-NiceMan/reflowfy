@@ -13,7 +13,6 @@ Just run the API and call the /test endpoint!
 
 from reflowfy import (
     AbstractPipeline,
-    PipelineParameter,
     BaseTransformation,
 )
 from reflowfy.sources.mock import mock_source, generate_sample_data

@@ -13,7 +13,6 @@ Endpoints:
     GET /products - Paginated products with cursor pagination
 """
 
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Query, Header, Request
 from pydantic import BaseModel

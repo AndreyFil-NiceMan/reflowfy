@@ -116,9 +116,9 @@ def verify_data(engine):
             ORDER BY cnt DESC
         """))
         
-        print(f"\n📊 Data summary:")
+        print("\n📊 Data summary:")
         print(f"   Total records: {count}")
-        print(f"   By status:")
+        print("   By status:")
         for row in result:
             print(f"     - {row[0]}: {row[1]}")
 

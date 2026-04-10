@@ -4,7 +4,6 @@ Example pipeline - Copy this template to create your own pipelines.
 
 from reflowfy import (
     AbstractPipeline,
-    PipelineParameter,
     BaseTransformation,
     elastic_source,
     kafka_destination,

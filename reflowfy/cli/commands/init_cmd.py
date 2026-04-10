@@ -23,9 +23,9 @@ def register(app: typer.Typer):
 
         target_dir = Path(path)
         target_dir.mkdir(parents=True, exist_ok=True)
-        
+
         console.print(Panel(f"📦 Initializing Reflowfy project in: {target_dir.absolute()}"))
-        
+
         # Create all 4 component directories
         for folder in ["pipelines", "sources", "destinations", "transformations", "queries"]:
             folder_dir = target_dir / folder
@@ -35,7 +35,7 @@ def register(app: typer.Typer):
             if not init_file.exists():
                 init_file.write_text("")
             console.print(f"  ✅ Created {folder}/", style="green")
-        
+
         # Create sample pipeline
         pipelines_dir = target_dir / "pipelines"
         sample_pipeline = pipelines_dir / f"{name}.py"
@@ -43,10 +43,10 @@ def register(app: typer.Typer):
             template_path = get_package_path() / "templates" / "pipeline_template.py"
             if not template_path.exists():
                  template_path = Path("reflowfy/templates/pipeline_template.py")
-            
+
             content = template_path.read_text()
             sample_pipeline.write_text(content)
-            
+
         except Exception as e:
             console.print(f"⚠️  Could not load pipeline template: {e}", style="yellow")
             class_name = "".join(word.capitalize() for word in name.split("_"))
@@ -63,9 +63,9 @@ class {class_name}(AbstractPipeline):
     def define_destination(self, params): return []
     def define_transformations(self, params): return []
 ''')
-        
+
         console.print(f"  ✅ Created pipeline: pipelines/{name}.py", style="green")
-        
+
         # Create sample source
         source_file = target_dir / "sources" / "example_source.py"
         try:
@@ -74,10 +74,10 @@ class {class_name}(AbstractPipeline):
                 template_path = Path("reflowfy/templates/source_template.py")
             if template_path.exists():
                 source_file.write_text(template_path.read_text())
-                console.print(f"  ✅ Created source: sources/example_source.py", style="green")
+                console.print("  ✅ Created source: sources/example_source.py", style="green")
         except Exception as e:
             console.print(f"  ⚠️ Could not create example source: {e}", style="yellow")
-        
+
         # Create sample destination
         dest_file = target_dir / "destinations" / "example_destination.py"
         try:
@@ -86,10 +86,10 @@ class {class_name}(AbstractPipeline):
                 template_path = Path("reflowfy/templates/destination_template.py")
             if template_path.exists():
                 dest_file.write_text(template_path.read_text())
-                console.print(f"  ✅ Created destination: destinations/example_destination.py", style="green")
+                console.print("  ✅ Created destination: destinations/example_destination.py", style="green")
         except Exception as e:
             console.print(f"  ⚠️ Could not create example destination: {e}", style="yellow")
-        
+
         # Create sample transformation
         transform_file = target_dir / "transformations" / "example_transform.py"
         try:
@@ -98,10 +98,10 @@ class {class_name}(AbstractPipeline):
                 template_path = Path("reflowfy/templates/transformation_template.py")
             if template_path.exists():
                 transform_file.write_text(template_path.read_text())
-                console.print(f"  ✅ Created transformation: transformations/example_transform.py", style="green")
+                console.print("  ✅ Created transformation: transformations/example_transform.py", style="green")
         except Exception as e:
             console.print(f"  ⚠️ Could not create example transformation: {e}", style="yellow")
-        
+
         # Create sample query templates (SQL + JSON)
         for tpl_name, out_name in [("query_template.sql", "example_query.sql"), ("query_template.json", "example_query.json")]:
             query_file = target_dir / "queries" / out_name
@@ -114,7 +114,7 @@ class {class_name}(AbstractPipeline):
                     console.print(f"  ✅ Created query: queries/{out_name}", style="green")
             except Exception as e:
                 console.print(f"  ⚠️ Could not create {out_name}: {e}", style="yellow")
-        
+
         # Copy Dockerfiles if not present
         try:
             src_path = get_dockerfiles_path()
@@ -126,22 +126,22 @@ class {class_name}(AbstractPipeline):
                     console.print(f"  ✅ Copied {dockerfile}", style="green")
         except Exception as e:
             console.print(f"  ⚠️ Could not copy Dockerfiles: {e}", style="yellow")
-        
+
         # Generate .env file from template
         try:
             env_template_path = get_package_path() / "templates" / ".env.template"
             if not env_template_path.exists():
                 env_template_path = Path("reflowfy/templates/.env.template")
-            
+
             env_dest = target_dir / ".env"
             if env_template_path.exists() and not env_dest.exists():
                 shutil.copy(env_template_path, env_dest)
-                console.print(f"  ✅ Created .env (configure your settings here)", style="green")
+                console.print("  ✅ Created .env (configure your settings here)", style="green")
             elif env_dest.exists():
-                console.print(f"  ⚠️ .env already exists, skipping", style="yellow")
+                console.print("  ⚠️ .env already exists, skipping", style="yellow")
         except Exception as e:
             console.print(f"  ⚠️ Could not create .env: {e}", style="yellow")
-        
+
         console.print(Panel(f"""
 🎉 Project initialized!
 

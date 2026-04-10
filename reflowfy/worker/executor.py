@@ -2,7 +2,6 @@
 
 import os
 import time
-import asyncio
 import traceback
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -17,7 +16,7 @@ from reflowfy.reflow_manager.models import Job
 
 class JobStats:
     """Statistics for a job execution."""
-    
+
     def __init__(self):
         """Initialize job statistics."""
         self.start_time = time.time()
@@ -28,11 +27,11 @@ class JobStats:
         self.destination_write_time = 0
         self.error = None
         self.success = False
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         duration = self.end_time - self.start_time if self.end_time else 0
-        
+
         return {
             "start_time": self.start_time,
             "end_time": self.end_time,
@@ -51,7 +50,7 @@ class JobStats:
 class WorkerExecutor:
     """
     Executes jobs on worker nodes with async I/O.
-    
+
     Responsibilities:
     1. Load transformations from registry
     2. Apply transformations to records
@@ -60,11 +59,11 @@ class WorkerExecutor:
     5. Rate limiting
     6. Update job status directly in PostgreSQL (async)
     """
-    
+
     def __init__(self, database_url: Optional[str] = None):
         """
         Initialize worker executor.
-        
+
         Args:
             database_url: PostgreSQL connection URL
         """
@@ -72,13 +71,13 @@ class WorkerExecutor:
             "DATABASE_URL",
             "postgresql://reflowfy:reflowfy@localhost:5432/reflowfy"
         )
-        
+
         # Convert sync URL to async (postgresql:// -> postgresql+asyncpg://)
         if sync_url.startswith("postgresql://"):
             self.database_url = sync_url.replace("postgresql://", "postgresql+asyncpg://", 1)
         else:
             self.database_url = sync_url
-        
+
         # Create async database engine and session factory
         self._engine = create_async_engine(
             self.database_url,
@@ -93,34 +92,34 @@ class WorkerExecutor:
             class_=AsyncSession,
             expire_on_commit=False,
         )
-    
+
     async def execute_job(self, job_payload: Dict[str, Any]) -> bool:
         """
         Execute a single job asynchronously.
-        
+
         Args:
             job_payload: Job payload from Kafka
-        
+
         Returns:
             True if successful, False otherwise
         """
         # Initialize statistics
         stats = JobStats()
-        
+
         execution_id = job_payload.get("execution_id", "unknown")
         job_id = job_payload.get("job_id", "unknown")
-        pipeline_name = job_payload.get("pipeline_name", "unknown")
-        
+        _pipeline_name = job_payload.get("pipeline_name", "unknown")
+
         try:
             # Extract job data
             transformation_names = job_payload.get("transformations", [])
             destination_config = job_payload.get("destination", {})
             records = job_payload.get("records", [])
             metadata = job_payload.get("metadata", {})
-            
+
             # Track input records
             stats.records_input = len(records)
-            
+
             if not records:
                 print(f"⚠️  Job {job_id}: No records to process")
                 stats.success = True
@@ -128,76 +127,76 @@ class WorkerExecutor:
                 stats.end_time = time.time()
                 await self._update_job_in_db(execution_id, job_id, stats)
                 return True
-            
+
             print(f"🔄 Processing job {job_id}: {len(records)} records")
-            
+
             # Load and apply transformations (CPU-bound, stays sync)
             transformed_records = records
-            
+
             for transformation_name in transformation_names:
                 print(f"  🔄 Applying: {transformation_name}")
-                
+
                 # Track transformation start time
                 transform_start = time.time()
-                
+
                 # Load transformation from registry
                 transformation = transformation_registry.create_instance(transformation_name)
-                
+
                 # Apply transformation (CPU-bound)
                 transformed_records = transformation.apply(transformed_records, metadata)
-                
+
                 # Track transformation time
                 transform_duration = time.time() - transform_start
                 stats.transformation_times[transformation_name] = round(transform_duration, 3)
-                
+
                 print(f"  ✓ {transformation_name}: {len(transformed_records)} records ({transform_duration:.2f}s)")
-            
+
             # Track output records
             stats.records_output = len(transformed_records)
-            
+
             # Create destination instance
             destination = self._create_destination(destination_config)
-            
+
             # Health check (async)
             if not await destination.health_check():
-                print(f"❌ Destination health check failed")
+                print("❌ Destination health check failed")
                 stats.success = False
                 stats.error = "Destination health check failed"
                 stats.end_time = time.time()
                 await self._update_job_in_db(execution_id, job_id, stats)
                 return False
-            
+
             # Send to destination and track time (async)
             print(f"  📤 Sending {len(transformed_records)} records to destination...")
             dest_start = time.time()
             await destination.send_with_retry(transformed_records, metadata)
             stats.destination_write_time = time.time() - dest_start
-            
+
             # Mark as successful
             stats.success = True
             stats.end_time = time.time()
-            
+
             print(f"✓ Job {job_id} completed successfully (duration: {stats.end_time - stats.start_time:.2f}s)\n")
-            
+
             # Update job status in PostgreSQL (async)
             await self._update_job_in_db(execution_id, job_id, stats)
-            
+
             return True
-        
+
         except Exception as e:
             print(f"❌ Job {job_id} failed: {e}")
             traceback.print_exc()
-            
+
             # Mark as failed
             stats.success = False
             stats.error = str(e)
             stats.end_time = time.time()
-            
+
             # Update job status in PostgreSQL (async)
             await self._update_job_in_db(execution_id, job_id, stats)
-            
+
             return False
-    
+
     async def _update_job_in_db(
         self,
         execution_id: str,
@@ -206,10 +205,10 @@ class WorkerExecutor:
     ):
         """
         Update job status directly in PostgreSQL asynchronously.
-        
+
         Note: Only updates the jobs table. The reflow manager syncs
         execution counts from the jobs table via _sync_counts_from_db().
-        
+
         Args:
             execution_id: Execution ID
             job_id: Job ID
@@ -218,10 +217,10 @@ class WorkerExecutor:
         async with self._async_session() as db:
             try:
                 from sqlalchemy import update
-                
+
                 state = "completed" if stats.success else "failed"
                 now = datetime.utcnow()
-                
+
                 # Update job state
                 update_data = {
                     "state": state,
@@ -230,10 +229,10 @@ class WorkerExecutor:
                     "processed_records": stats.records_output,
                     "stats": stats.to_dict(),
                 }
-                
+
                 if stats.error:
                     update_data["error_message"] = stats.error
-                
+
                 # Update the job using async execute
                 stmt = (
                     update(Job)
@@ -241,33 +240,33 @@ class WorkerExecutor:
                     .values(**update_data)
                 )
                 result = await db.execute(stmt)
-                
+
                 if result.rowcount == 0:
                     print(f"  ⚠️  Job {job_id} not found in database")
                     await db.rollback()
                     return
-                
+
                 await db.commit()
-                print(f"  ✓ Updated job status in database")
-                
+                print("  ✓ Updated job status in database")
+
             except Exception as e:
                 print(f"  ⚠️  Failed to update database: {e}")
                 await db.rollback()
 
-    
+
     def _create_destination(self, destination_config: Dict[str, Any]) -> Any:
         """
         Create destination instance from config.
-        
+
         Args:
             destination_config: Destination configuration
-        
+
         Returns:
             Destination instance
         """
         dest_type = destination_config.get("type", "")
         config = destination_config.get("config", {})
-        
+
         if dest_type == "KafkaDestination":
             return KafkaDestination(**config)
         elif dest_type == "HttpDestination":
@@ -276,7 +275,7 @@ class WorkerExecutor:
             return ConsoleDestination(**config)
         else:
             raise ValueError(f"Unknown destination type: {dest_type}")
-    
+
     async def close(self):
         """Close database connections."""
         if self._engine:

@@ -128,9 +128,9 @@ def verify_data(client: Elasticsearch):
         }
     )
     
-    print(f"\n📊 Data summary:")
+    print("\n📊 Data summary:")
     print(f"   Total documents: {count}")
-    print(f"   By status:")
+    print("   By status:")
     
     for bucket in agg_result["aggregations"]["by_status"]["buckets"]:
         print(f"     - {bucket['key']}: {bucket['doc_count']}")

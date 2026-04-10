@@ -20,7 +20,7 @@ def register(app: typer.Typer):
         from rich.panel import Panel
 
         console.print(Panel("🚀 Starting Local Development Stack"))
-        
+
         if build:
             console.print("🔨 Building images with --no-cache...", style="yellow")
             try:
@@ -33,7 +33,7 @@ def register(app: typer.Typer):
         cmd = ["docker", "compose", "up"]
         if detach:
             cmd.append("-d")
-            
+
         try:
             subprocess.run(cmd)
         except KeyboardInterrupt:

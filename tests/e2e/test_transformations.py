@@ -115,7 +115,7 @@ class TestTransformationChain:
         assert "_computed_category" in sample_record, "Missing _computed_category from step 2"
         assert sample_record["_computed_category"] in ["even", "odd"]
         
-        print(f"✅ All transformation fields present in records")
+        print("✅ All transformation fields present in records")
     
     def test_transformation_chain_order(self, client, check_mock_http):
         """

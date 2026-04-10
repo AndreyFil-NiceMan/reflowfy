@@ -88,7 +88,8 @@ def register(app: typer.Typer):
         is_id_based = isinstance(pipeline, IdBasedPipeline)
 
         if is_id_based:
-            console.print(f"[bold cyan]🔑 Pipeline type: IdBasedPipeline[/bold cyan]")
+            batch_size = pipeline.ids_batch_size
+            console.print(f"[bold cyan]🔑 Pipeline type: IdBasedPipeline (ids_batch_size={batch_size})[/bold cyan]")
 
         # Prompt for parameters
         # IdBasedPipeline uses get_all_parameters() which includes built-in 'ids'
@@ -96,7 +97,7 @@ def register(app: typer.Typer):
         parameters = pipeline.get_all_parameters() if is_id_based else pipeline.define_parameters()
 
         if parameters:
-            console.print(f"\n[bold]📝 Pipeline parameters:[/bold]")
+            console.print("\n[bold]📝 Pipeline parameters:[/bold]")
             for param in parameters:
                 # Build prompt label
                 label = f"  {param.name}"
@@ -122,7 +123,7 @@ def register(app: typer.Typer):
                     default_str = None
 
                 # Prompt
-                if param.param_type == bool:
+                if param.param_type is bool:
                     if default_val is not None:
                         value = Confirm.ask(f"    → {param.name}", default=bool(default_val))
                     else:
@@ -151,9 +152,15 @@ def register(app: typer.Typer):
                 console.print("[red]❌ No IDs provided. 'ids' parameter is required.[/red]")
                 raise typer.Exit(1)
 
-            console.print(f"\n[bold]🔑 Processing {len(ids)} IDs:[/bold] {ids}")
+            # Chunk IDs into batches according to ids_batch_size
+            batch_size = pipeline.ids_batch_size
+            ids_batches = [ids[i:i + batch_size] for i in range(0, len(ids), batch_size)]
+            console.print(
+                f"\n[bold]🔑 Processing {len(ids)} IDs "
+                f"in {len(ids_batches)} batch(es) (batch_size={batch_size}):[/bold] {ids}"
+            )
 
-            # Destination is shared across all IDs
+            # Destination is shared across all batches
             try:
                 destination = pipeline.define_destination(params)
             except Exception as e:
@@ -172,14 +179,15 @@ def register(app: typer.Typer):
                 runtime_params=params,
             )
 
-            for current_id in ids:
-                console.print(f"\n[bold cyan]━━━ ID: {current_id} ━━━[/bold cyan]")
+            for batch_num, ids_batch in enumerate(ids_batches, 1):
+                batch_label = f"Batch {batch_num}/{len(ids_batches)}: {ids_batch}"
+                console.print(f"\n[bold cyan]━━━ {batch_label} ━━━[/bold cyan]")
 
                 try:
-                    source = pipeline.define_source(params, current_id)
-                    transformations = pipeline.define_transformations(params, current_id)
+                    source = pipeline.define_source(params, ids_batch)
+                    transformations = pipeline.define_transformations(params, ids_batch)
                 except Exception as e:
-                    console.print(f"[red]❌ Setup failed for ID '{current_id}': {e}[/red]")
+                    console.print(f"[red]❌ Setup failed for batch {ids_batch}: {e}[/red]")
                     traceback.print_exc()
                     continue
 
@@ -191,22 +199,23 @@ def register(app: typer.Typer):
                 try:
                     records = source.fetch(params, limit=limit)
                 except Exception as e:
-                    console.print(f"  [red]❌ Source fetch failed for '{current_id}': {e}[/red]")
+                    console.print(f"  [red]❌ Source fetch failed for batch {ids_batch}: {e}[/red]")
                     traceback.print_exc()
                     continue
 
                 console.print(f"  [green]✓ Fetched {len(records)} records[/green]")
 
                 if not records:
-                    console.print(f"  [yellow]⚠️ No records for ID: {current_id}[/yellow]")
+                    console.print(f"  [yellow]⚠️ No records for batch: {ids_batch}[/yellow]")
                     continue
 
                 # Apply transformations
                 transformed = records
+                meta = {**context.to_dict(), "current_ids": ids_batch}
                 for t in transformations:
                     console.print(f"    [cyan]Applying {t.__class__.__name__}...[/cyan]")
                     try:
-                        transformed = t.apply(transformed, {**context.to_dict(), "current_id": current_id})
+                        transformed = t.apply(transformed, meta)
                         console.print(f"    [green]✓ {t.__class__.__name__}: {len(transformed)} records[/green]")
                     except Exception as e:
                         console.print(f"    [red]❌ {t.__class__.__name__} failed: {e}[/red]")
@@ -220,19 +229,23 @@ def register(app: typer.Typer):
 
                 # Send to destination or dry-run
                 if not dry_run:
+                    batch_meta = {"current_ids": ids_batch}
                     try:
-                        async def _send_id(recs=transformed, meta={"current_id": current_id}):
-                            await destination.send_with_retry(recs, meta)
-                        asyncio.run(_send_id())
+                        async def _send_batch(recs=transformed, m=batch_meta):
+                            await destination.send_with_retry(recs, m)
+                        asyncio.run(_send_batch())
                         console.print(f"  [green]✓ Sent {len(transformed)} records[/green]")
                     except Exception as e:
-                        console.print(f"  [red]❌ Send failed for '{current_id}': {e}[/red]")
+                        console.print(f"  [red]❌ Send failed for batch {ids_batch}: {e}[/red]")
 
                 total_records += len(transformed)
 
             if dry_run:
-                console.print(f"\n[yellow]🏜️  Dry run — skipping destination send[/yellow]")
-            console.print(f"\n[bold green]✅ Test complete: {len(ids)} IDs, {total_records} records processed[/bold green]")
+                console.print("\n[yellow]🏜️  Dry run — skipping destination send[/yellow]")
+            console.print(
+                f"\n[bold green]✅ Test complete: {len(ids)} IDs "
+                f"({len(ids_batches)} batches), {total_records} records processed[/bold green]"
+            )
             return
 
         # ================================================================
@@ -294,7 +307,7 @@ def register(app: typer.Typer):
 
         # Send to destination or dry-run
         if dry_run:
-            console.print(f"\n[yellow]🏜️  Dry run — skipping destination send[/yellow]")
+            console.print("\n[yellow]🏜️  Dry run — skipping destination send[/yellow]")
             console.print(f"\n[bold green]✅ Test complete: {len(transformed)} records processed[/bold green]")
         else:
             console.print(f"\n[cyan]Sending {len(transformed)} records to destination...[/cyan]")
