@@ -6,8 +6,11 @@ WORKDIR /app
 # Install Reflowfy
 RUN pip install --no-cache-dir reflowfy
 
-# Copy user pipelines
+# Copy user pipelines and components
 COPY pipelines/ pipelines/
+COPY sources/ sources/
+COPY transformations/ transformations/
+COPY destinations/ destinations/
 
 # Environment variables
 ENV PYTHONUNBUFFERED=1

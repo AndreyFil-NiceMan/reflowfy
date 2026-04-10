@@ -10,6 +10,7 @@
 #   ./scripts/run_e2e_tests.sh destinations # Run only destination tests
 #   ./scripts/run_e2e_tests.sh dx           # Run only Developer Experience tests
 #   ./scripts/run_e2e_tests.sh --no-docker  # Skip services start (assume running)
+#   ./scripts/run_e2e_tests.sh --keep-docker # Keep Docker running after tests finish
 # ==============================================================================
 
 set -e
@@ -29,6 +30,7 @@ DIST_DIR="$PROJECT_ROOT/dist"
 # Parse arguments
 TEST_SUITE="all"
 SKIP_DOCKER=false
+KEEP_DOCKER=false
 
 for arg in "$@"; do
     case $arg in
@@ -46,6 +48,9 @@ for arg in "$@"; do
              ;;
         --no-docker)
             SKIP_DOCKER=true
+            ;;
+        --keep-docker)
+            KEEP_DOCKER=true
             ;;
     esac
 done
@@ -69,6 +74,16 @@ log_error() {
 
 cleanup() {
     log_info "Cleaning up..."
+
+    if [ "$KEEP_DOCKER" = true ]; then
+        log_warning "Skipping Docker teardown (--keep-docker). Services are still running."
+        log_info "  To stop manually: cd $WORKSPACE && docker compose down --remove-orphans"
+        log_info "  And: cd $WORKSPACE && docker compose -f docker-compose.e2e-infra.yml down --remove-orphans"
+        log_info "Removing dist folder only (keeping workspace)..."
+        rm -rf "$DIST_DIR"
+        log_success "Cleanup complete (Docker left running)"
+        return
+    fi
 
     if [ "$SKIP_DOCKER" = false ]; then
         if [ -d "$WORKSPACE" ]; then
