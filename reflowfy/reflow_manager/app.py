@@ -242,6 +242,7 @@ async def run_pipeline(
             runtime_params=request.runtime_params or {},
             rate_limit_override=request.rate_limit,
             mode=request.mode,
+            enable_duplicate_jobs=request.enable_duplicate_jobs,
         )
 
         # Return immediately with execution details
@@ -271,6 +272,7 @@ def _dispatch_pipeline_jobs(
     runtime_params: dict,
     rate_limit_override: Optional[float] = None,
     mode: Optional[str] = None,
+    enable_duplicate_jobs: Optional[bool] = None,
 ):
     """Background task to dispatch pipeline jobs."""
     from reflowfy.reflow_manager.database import SessionLocal
@@ -296,6 +298,7 @@ def _dispatch_pipeline_jobs(
             pipeline_name=pipeline_name,
             runtime_params=runtime_params,
             rate_limit_override=rate_limit_override,
+            enable_duplicate_jobs=enable_duplicate_jobs,
         )
 
     except Exception as e:

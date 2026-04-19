@@ -25,3 +25,4 @@ from tests.e2e.test_pipelines import shared_sources as shared_sources
 from tests.e2e.test_pipelines import shared_destinations as shared_destinations
 from tests.e2e.test_pipelines import rate_limit_test_pipeline as rate_limit_test_pipeline
 from tests.e2e.test_pipelines import advanced_transformation_pipeline as advanced_transformation_pipeline
+from tests.e2e.test_pipelines import dedup_test_pipeline as dedup_test_pipeline

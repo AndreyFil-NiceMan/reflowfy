@@ -39,6 +39,7 @@ class RunPipelineRequest(BaseModel):
     rate_limit: Optional[float] = None
     execution_id: Optional[str] = None
     mode: Optional[str] = None  # "local" or "distributed" (defaults to EXECUTION_MODE env var)
+    enable_duplicate_jobs: Optional[bool] = None  # None = use pipeline default; True = allow duplicates; False = each unique job runs at most once
 
 
 class DestinationConfig(BaseModel):

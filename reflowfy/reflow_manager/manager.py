@@ -128,9 +128,13 @@ class ReflowManager:
         return self.pipeline_runner.run_pipeline(pipeline_name, runtime_params, execution_id, rate_limit_override)
 
     def _run_pipeline_jobs(self, execution_id: str, pipeline_name: str,
-                          runtime_params: Dict[str, Any], 
-                          rate_limit_override: Optional[float] = None) -> None:
-        return self.pipeline_runner._run_pipeline_jobs(execution_id, pipeline_name, runtime_params, rate_limit_override)
+                          runtime_params: Dict[str, Any],
+                          rate_limit_override: Optional[float] = None,
+                          enable_duplicate_jobs: Optional[bool] = None) -> None:
+        return self.pipeline_runner._run_pipeline_jobs(
+            execution_id, pipeline_name, runtime_params,
+            rate_limit_override, enable_duplicate_jobs,
+        )
 
     # ===== Statistics =====
 

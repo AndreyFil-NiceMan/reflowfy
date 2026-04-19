@@ -248,8 +248,16 @@ class AbstractPipeline(metaclass=PipelineMeta):
     # Additional configuration
     config: Dict[str, Any] = {}
 
+    # Duplicate job control:
+    #   True  = jobs may run multiple times (default, current behavior)
+    #   False = each unique job (by content hash) runs at most once
+    enable_duplicate_jobs: bool = True
+
     def __init__(
-        self, rate_limit: Optional[Dict[str, int]] = None, config: Optional[Dict[str, Any]] = None
+        self,
+        rate_limit: Optional[Dict[str, int]] = None,
+        config: Optional[Dict[str, Any]] = None,
+        enable_duplicate_jobs: Optional[bool] = None,
     ):
         """
         Initialize the abstract pipeline.
@@ -257,11 +265,15 @@ class AbstractPipeline(metaclass=PipelineMeta):
         Args:
             rate_limit: Rate limiting configuration
             config: Additional configuration options
+            enable_duplicate_jobs: True = jobs may run multiple times (default);
+                False = each unique job (by content hash) runs at most once
         """
         if rate_limit is not None:
             self.rate_limit = rate_limit
         if config is not None:
             self.config = config
+        if enable_duplicate_jobs is not None:
+            self.enable_duplicate_jobs = enable_duplicate_jobs
 
         # Validate pipeline name
         if not self.name:
@@ -537,6 +549,7 @@ class AbstractPipeline(metaclass=PipelineMeta):
             "rate_limit": self.rate_limit,
             "config": self.config,
             "transformations": self.get_transformation_names(),
+            "enable_duplicate_jobs": self.enable_duplicate_jobs,
         }
 
     def __repr__(self) -> str:

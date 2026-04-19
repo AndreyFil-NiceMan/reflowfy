@@ -1,5 +1,7 @@
 """Pipeline execution runner for ReflowManager."""
 
+import hashlib
+import json
 import time
 import uuid
 import asyncio
@@ -19,6 +21,42 @@ CHECKPOINT_POLL_INTERVAL = 2.0  # Poll every 2 seconds
 def _chunk(lst: List, size: int) -> List[List]:
     """Split a list into consecutive chunks of at most `size` elements."""
     return [lst[i:i + size] for i in range(0, len(lst), size)]
+
+
+# Keys that indicate date/time values — stripped from source_metadata before hashing
+# so the job ID stays stable across runs even when these fields change.
+_DATE_KEY_PATTERNS = ("date", "time", "timestamp", "created_at", "updated_at")
+
+
+def _filter_volatile_keys(d: dict) -> dict:
+    """Remove date/time keys from a dict to keep only stable content."""
+    return {k: v for k, v in d.items()
+            if not any(pat in k.lower() for pat in _DATE_KEY_PATTERNS)}
+
+
+def generate_job_id(
+    pipeline_name: str,
+    transformations: list,
+    destination_type: str,
+    destination_config: dict,
+    records: list,
+    source_metadata: dict,
+) -> str:
+    """Return a deterministic SHA256 job ID derived from stable job content.
+
+    Used when enable_duplicate_jobs=False to ensure the same data always
+    produces the same job ID across pipeline runs.
+    """
+    stable = {
+        "pipeline_name": pipeline_name,
+        "transformations": sorted(transformations),
+        "destination_type": destination_type,
+        "destination_config": destination_config,
+        "records": records,
+        "source_metadata": _filter_volatile_keys(source_metadata or {}),
+    }
+    content = json.dumps(stable, sort_keys=True, default=str)
+    return hashlib.sha256(content.encode()).hexdigest()
 
 
 def _run_async(coro):
@@ -301,6 +339,7 @@ class PipelineRunner:
         pipeline_name: str,
         runtime_params: Dict[str, Any],
         rate_limit_override: Optional[float] = None,
+        enable_duplicate_jobs: Optional[bool] = None,
     ) -> None:
         """
         Dispatch pipeline jobs for an existing execution.
@@ -312,6 +351,9 @@ class PipelineRunner:
             pipeline_name: Name of the registered pipeline
             runtime_params: Runtime parameters for the pipeline
             rate_limit_override: Optional override for jobs per second
+            enable_duplicate_jobs: True = jobs may run multiple times (default);
+                False = each unique job (by content hash) runs at most once.
+                None falls back to the pipeline's own enable_duplicate_jobs setting.
         """
         from reflowfy.core.registry import pipeline_registry
         from reflowfy.core.execution_context import ExecutionContext
@@ -322,6 +364,10 @@ class PipelineRunner:
         if not pipeline:
             raise ValueError(f"Pipeline '{pipeline_name}' not found in registry")
 
+        # Resolve effective duplicate setting: API override > pipeline default
+        if enable_duplicate_jobs is None:
+            enable_duplicate_jobs = getattr(pipeline, "enable_duplicate_jobs", True)
+
         # Check if this is an IdBasedPipeline — use per-ID execution flow
         if isinstance(pipeline, IdBasedPipeline):
             self._run_id_based_pipeline_jobs(
@@ -330,6 +376,7 @@ class PipelineRunner:
                 pipeline_name=pipeline_name,
                 runtime_params=runtime_params,
                 rate_limit_override=rate_limit_override,
+                enable_duplicate_jobs=enable_duplicate_jobs,
             )
             return
 
@@ -364,7 +411,20 @@ class PipelineRunner:
         current_job_ids = []
 
         for source_job in pipeline.source.split_jobs(runtime_params):
-            job_id = str(uuid.uuid4())
+            if enable_duplicate_jobs:
+                job_id = str(uuid.uuid4())
+            else:
+                job_id = generate_job_id(
+                    pipeline_name=pipeline_name,
+                    transformations=pipeline.get_transformation_names(),
+                    destination_type=pipeline.destination.__class__.__name__,
+                    destination_config=pipeline.destination.config,
+                    records=source_job.records,
+                    source_metadata=source_job.metadata or {},
+                )
+                if self.job_manager.get_job(job_id):
+                    print(f"  [no-dup] Skipping job {job_id[:12]}... (already exists)")
+                    continue
 
             # Create job payload
             job_payload = {
@@ -502,6 +562,7 @@ class PipelineRunner:
         pipeline_name: str,
         runtime_params: Dict[str, Any],
         rate_limit_override: Optional[float] = None,
+        enable_duplicate_jobs: Optional[bool] = None,
     ) -> None:
         """
         Dispatch jobs for an IdBasedPipeline.
@@ -516,8 +577,14 @@ class PipelineRunner:
             pipeline_name: Name of the pipeline
             runtime_params: Runtime parameters (must include 'ids')
             rate_limit_override: Optional override for jobs per second
+            enable_duplicate_jobs: True = jobs may run multiple times (default);
+                False = each unique job (by content hash) runs at most once.
         """
         from reflowfy.core.execution_context import ExecutionContext
+
+        # Resolve effective duplicate setting: caller override > pipeline default
+        if enable_duplicate_jobs is None:
+            enable_duplicate_jobs = getattr(pipeline, "enable_duplicate_jobs", True)
 
         # Validate parameters
         pipeline.resolve(runtime_params)
@@ -566,7 +633,20 @@ class PipelineRunner:
 
             # Split this batch's source into jobs
             for source_job in source.split_jobs(params):
-                job_id = str(uuid.uuid4())
+                if enable_duplicate_jobs:
+                    job_id = str(uuid.uuid4())
+                else:
+                    job_id = generate_job_id(
+                        pipeline_name=pipeline_name,
+                        transformations=transformation_names,
+                        destination_type=destination.__class__.__name__,
+                        destination_config=destination.config,
+                        records=source_job.records,
+                        source_metadata=source_job.metadata or {},
+                    )
+                    if self.job_manager.get_job(job_id):
+                        print(f"  [no-dup] Skipping job {job_id[:12]}... (already exists)")
+                        continue
 
                 # Create job payload with current_ids list in metadata
                 job_payload = {
