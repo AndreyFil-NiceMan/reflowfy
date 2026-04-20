@@ -1,6 +1,7 @@
 """FastAPI application for ReflowManager service."""
 
 import os
+from datetime import datetime
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Depends, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,9 +22,15 @@ from reflowfy.reflow_manager.schemas import (  # noqa: E402
 )
 from reflowfy.reflow_manager.dlq_routes import router as dlq_router  # noqa: E402
 from reflowfy.reflow_manager.stats_routes import router as stats_router  # noqa: E402
+from reflowfy.reflow_manager.schedule_routes import router as schedule_router  # noqa: E402
 from reflowfy.reflow_manager.dlq_scheduler import (  # noqa: E402
     init_dlq_scheduler,
     stop_dlq_scheduler,
+)
+from reflowfy.reflow_manager.pipeline_scheduler import (  # noqa: E402
+    init_pipeline_scheduler,
+    stop_pipeline_scheduler,
+    get_pipeline_scheduler,
 )
 
 
@@ -48,6 +55,9 @@ app.include_router(dlq_router)
 
 # Include Stats router
 app.include_router(stats_router)
+
+# Include Schedule router
+app.include_router(schedule_router)
 
 
 # Helper to get Kafka configuration from environment (including SASL)
@@ -234,6 +244,11 @@ async def run_pipeline(
             runtime_params=request.runtime_params or {},
         )
 
+        # Reset cron schedule timer if this pipeline is scheduled,
+        # so the next auto-run is one interval after this manual trigger.
+        _reset_pipeline_schedule_if_needed(db, request.pipeline_name)
+        db.commit()
+
         # Schedule job dispatching in background
         background_tasks.add_task(
             _dispatch_pipeline_jobs,
@@ -264,6 +279,18 @@ async def run_pipeline(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to start pipeline: {str(e)}",
         )
+
+
+def _reset_pipeline_schedule_if_needed(db: Session, pipeline_name: str) -> None:
+    """Recalculate next_run_at after a manual trigger for a scheduled pipeline."""
+    from reflowfy.core.registry import pipeline_registry
+    scheduler = get_pipeline_scheduler()
+    if scheduler is None:
+        return
+    pipeline = pipeline_registry.get(pipeline_name)
+    if pipeline is None or not getattr(pipeline, "is_scheduled", False):
+        return
+    scheduler.reset_schedule(db, pipeline_name, triggered_at=datetime.utcnow())
 
 
 def _dispatch_pipeline_jobs(
@@ -393,6 +420,33 @@ async def startup_event():
     except Exception as e:
         print(f"⚠️ Failed to initialize DLQ scheduler: {e}")
 
+    # Initialize Pipeline Scheduler (cron-based)
+    print("\n⏰ Initializing Pipeline Scheduler...")
+    try:
+        def pipeline_scheduler_factory():
+            from reflowfy.reflow_manager.database import SessionLocal
+            db = SessionLocal()
+            config = _get_kafka_config()
+            manager = ReflowManager(
+                db_session=db,
+                **config,
+            )
+            return manager.pipeline_runner
+
+        scheduler = init_pipeline_scheduler(pipeline_scheduler_factory)
+
+        from reflowfy.reflow_manager.database import SessionLocal as _SL
+        sync_db = _SL()
+        try:
+            scheduler.sync_schedules_from_registry(sync_db)
+            sync_db.commit()
+            print("✅ Pipeline Scheduler initialized and schedules synced")
+        finally:
+            sync_db.close()
+
+    except Exception as e:
+        print(f"⚠️  Failed to initialize Pipeline Scheduler: {e}")
+
 
 async def _recover_interrupted_executions():
     """Find and resume any executions that were interrupted by a crash."""
@@ -453,16 +507,12 @@ def _resume_execution_sync(execution_id: str):
         print(f"❌ Failed to resume execution {execution_id}: {e}")
         traceback.print_exc()
 
-    finally:
-        db.close()
 
-
-
-# Shutdown event
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Cleanup on shutdown."""
+    """Gracefully stop background schedulers on service shutdown."""
     print("\n🛑 Shutting down ReflowManager service...")
+    stop_pipeline_scheduler()
     stop_dlq_scheduler()
     print("✅ Shutdown complete")
 

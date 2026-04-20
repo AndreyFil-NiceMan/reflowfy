@@ -35,7 +35,7 @@ spec:
             - -c
             - |
               echo "Waiting for ReflowManager at $REFLOW_MANAGER_HOST:$REFLOW_MANAGER_PORT..."
-              until nc -z $REFLOW_MANAGER_HOST $REFLOW_MANAGER_PORT; do 
+              until nc -w 1 $REFLOW_MANAGER_HOST $REFLOW_MANAGER_PORT </dev/null; do
                 echo "ReflowManager not ready, sleeping 2s..."
                 sleep 2
               done
@@ -46,7 +46,7 @@ spec:
               first_broker=$(echo $KAFKA_BOOTSTRAP_SERVERS | cut -d, -f1)
               host=$(echo $first_broker | cut -d: -f1)
               port=$(echo $first_broker | cut -d: -f2)
-              until nc -z $host $port; do 
+              until nc -w 1 $host $port </dev/null; do
                 echo "Kafka not ready ($host:$port), sleeping 2s..."
                 sleep 2
               done

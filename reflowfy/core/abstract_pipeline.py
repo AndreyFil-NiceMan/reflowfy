@@ -253,6 +253,10 @@ class AbstractPipeline(metaclass=PipelineMeta):
     #   False = each unique job (by content hash) runs at most once
     enable_duplicate_jobs: bool = True
 
+    # Optional cron schedule for automatic execution (e.g. "*/5 * * * *").
+    # None means the pipeline is never auto-scheduled.
+    schedule: Optional[str] = None
+
     def __init__(
         self,
         rate_limit: Optional[Dict[str, int]] = None,
@@ -284,6 +288,17 @@ class AbstractPipeline(metaclass=PipelineMeta):
                 f"Pipeline name '{self.name}' must contain only alphanumeric "
                 "characters, underscores, or hyphens"
             )
+
+        # Validate cron expression if schedule is set
+        if self.schedule is not None:
+            try:
+                from croniter import croniter as _croniter
+                if not _croniter.is_valid(self.schedule):
+                    raise ValueError(
+                        f"Pipeline '{self.name}' has invalid cron expression: '{self.schedule}'"
+                    )
+            except ImportError:
+                pass  # croniter not installed; validated at runtime by scheduler
 
     @abstractmethod
     def define_source(self, runtime_params: Dict[str, Any]) -> Any:
@@ -541,6 +556,11 @@ class AbstractPipeline(metaclass=PipelineMeta):
             )
         return self._transformations
 
+    @property
+    def is_scheduled(self) -> bool:
+        """Return True if this pipeline has a cron schedule configured."""
+        return self.schedule is not None
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize pipeline metadata for API responses."""
         return {
@@ -550,6 +570,8 @@ class AbstractPipeline(metaclass=PipelineMeta):
             "config": self.config,
             "transformations": self.get_transformation_names(),
             "enable_duplicate_jobs": self.enable_duplicate_jobs,
+            "schedule": self.schedule,
+            "is_scheduled": self.is_scheduled,
         }
 
     def __repr__(self) -> str:

@@ -51,6 +51,9 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "slow: mark test as slow-running"
     )
+    config.addinivalue_line(
+        "markers", "schedule: mark test as pipeline schedule related"
+    )
 
 def pytest_collection_modifyitems(config, items):
     """Add e2e marker to all tests in this directory."""
@@ -72,6 +75,8 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.kafka)
         if "test_auto_registration" in fspath_str or "test_decorator" in fspath_str or "test_cli" in fspath_str:
             item.add_marker(pytest.mark.dx)
+        if "test_schedule" in fspath_str:
+            item.add_marker(pytest.mark.schedule)
 
 
 # ============================================================================

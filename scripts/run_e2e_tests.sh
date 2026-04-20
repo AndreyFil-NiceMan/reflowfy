@@ -9,6 +9,7 @@
 #   ./scripts/run_e2e_tests.sh sources      # Run only source tests
 #   ./scripts/run_e2e_tests.sh destinations # Run only destination tests
 #   ./scripts/run_e2e_tests.sh dx           # Run only Developer Experience tests
+#   ./scripts/run_e2e_tests.sh schedule     # Run only pipeline schedule tests
 #   ./scripts/run_e2e_tests.sh --no-docker  # Skip services start (assume running)
 #   ./scripts/run_e2e_tests.sh --keep-docker # Keep Docker running after tests finish
 # ==============================================================================
@@ -42,6 +43,9 @@ for arg in "$@"; do
             ;;
         dx)
             TEST_SUITE="dx"
+            ;;
+        schedule)
+            TEST_SUITE="schedule"
             ;;
         all)
              TEST_SUITE="all"
@@ -400,6 +404,9 @@ case $TEST_SUITE in
         ;;
     dx)
         pytest tests/e2e/test_auto_registration.py tests/e2e/test_decorator_components.py tests/e2e/test_cli_scaffolding.py tests/e2e/test_cli_build.py tests/e2e/test_cli_run.py tests/e2e/test_cli_check.py tests/e2e/test_cli_deploy.py tests/e2e/test_cli_test.py -v --tb=short -ra
+        ;;
+    schedule)
+        pytest tests/e2e/test_schedule.py -v --tb=short -ra
         ;;
     all)
         pytest tests/e2e/ -v --tb=short -ra

@@ -206,3 +206,40 @@ class DLQJobArchive(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "archived_at": self.archived_at.isoformat() if self.archived_at else None,
         }
+
+
+class PipelineSchedule(Base):
+    """
+    Persistent cron schedule state for a scheduled pipeline.
+
+    One row per pipeline. The scheduler reads next_run_at on every poll
+    and fires an execution when it has elapsed.
+
+    Manual triggers (POST /run) update last_triggered_at and recalculate
+    next_run_at to prevent overlapping executions.
+    """
+
+    __tablename__ = "pipeline_schedules"
+
+    pipeline_name = Column(String(255), primary_key=True)
+    cron_expression = Column(String(255), nullable=False)
+    next_run_at = Column(DateTime, nullable=False)
+    last_triggered_at = Column(DateTime, nullable=True)
+    last_execution_id = Column(String(255), nullable=True)
+    # Stored as string to avoid SQLAlchemy Boolean portability quirks
+    enabled = Column(String(10), default="true", nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary representation."""
+        return {
+            "pipeline_name": self.pipeline_name,
+            "cron_expression": self.cron_expression,
+            "next_run_at": self.next_run_at.isoformat() if self.next_run_at else None,
+            "last_triggered_at": self.last_triggered_at.isoformat() if self.last_triggered_at else None,
+            "last_execution_id": self.last_execution_id,
+            "enabled": self.enabled == "true",
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
