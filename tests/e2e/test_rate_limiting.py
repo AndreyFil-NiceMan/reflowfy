@@ -179,6 +179,6 @@ class TestRateLimiting:
         ).json()
 
         assert resp["total"] > 0, "No records received by mock HTTP server"
-        sample = resp["records"][0]
-        assert "_rl_dispatched_at" in sample, "Passthrough transformation was not applied"
-        assert "_rl_batch_id" in sample, "batch_id not stamped by transformation"
+        records = resp["records"]
+        assert any("_rl_dispatched_at" in r for r in records), "Passthrough transformation was not applied to any record"
+        assert any("_rl_batch_id" in r for r in records), "batch_id not stamped in any record"

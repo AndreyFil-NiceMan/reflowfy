@@ -50,7 +50,7 @@ class DistributedExecutor(BaseExecutor):
         pipeline: Any,
         runtime_params: Dict[str, Any],
         execution_id: Optional[str] = None,
-        rate_limit_override: Optional[Dict[str, Any]] = None,
+        rate_limit_override: Optional[float] = None,
     ) -> ExecutionStatus:
         """
         Execute pipeline in distributed mode via ReflowManager.
@@ -66,7 +66,7 @@ class DistributedExecutor(BaseExecutor):
             pipeline: Pipeline instance
             runtime_params: Runtime parameters
             execution_id: Optional execution ID
-            rate_limit_override: Optional rate limit override (e.g., {"jobs_per_second": 10})
+            rate_limit_override: Optional jobs-per-second override (e.g., 10)
 
         Returns:
             ExecutionStatus (initial - jobs dispatched but processing async)
@@ -88,10 +88,7 @@ class DistributedExecutor(BaseExecutor):
 
             client = self._get_client()
 
-            # Extract rate limit if provided
-            rate_limit = None
-            if rate_limit_override:
-                rate_limit = rate_limit_override.get("jobs_per_second")
+            rate_limit = rate_limit_override
 
             # Call ReflowManager's /run endpoint - it handles everything
             print("📝 Sending run request to ReflowManager...")

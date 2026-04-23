@@ -215,6 +215,23 @@ class JobManager:
         counts["total"] = total
         return counts
 
+    def bulk_set_total_batches(self, execution_id: str, total_batches: int) -> None:
+        """Update total_batches in every job's metadata payload for an execution.
+
+        Casts job_payload to jsonb before calling jsonb_set because SQLAlchemy maps
+        Column(JSON) to PostgreSQL's json type, and jsonb_set only accepts jsonb.
+        """
+        from sqlalchemy import text
+        self.db.execute(
+            text(
+                "UPDATE jobs "
+                "SET job_payload = jsonb_set(job_payload::jsonb, '{metadata,total_batches}', :val::jsonb) "
+                "WHERE execution_id = :eid"
+            ),
+            {"val": str(total_batches), "eid": execution_id},
+        )
+        self.db.commit()
+
     def get_first_incomplete_batch(self, execution_id: str) -> Optional[int]:
         """
         Find the first batch with pending or dispatched jobs.

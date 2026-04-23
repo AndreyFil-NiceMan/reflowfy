@@ -170,6 +170,7 @@ class ReflowManager:
             "jobs_pending": job_counts.get("pending", 0),
             "jobs_completed": job_counts.get("completed", 0),
             "jobs_failed": job_counts.get("failed", 0),
+            "deduplicated_jobs": execution.deduplicated_jobs or 0,
             "current_checkpoint": current_checkpoint,
             "created_at": execution.created_at.isoformat() if execution.created_at else None,
             "updated_at": execution.updated_at.isoformat() if execution.updated_at else None,

@@ -26,6 +26,7 @@ class JobStats:
         self.transformation_times = {}
         self.destination_write_time = 0
         self.error = None
+        self.error_traceback = None
         self.success = False
 
     def to_dict(self) -> Dict[str, Any]:
@@ -185,11 +186,13 @@ class WorkerExecutor:
 
         except Exception as e:
             print(f"❌ Job {job_id} failed: {e}")
-            traceback.print_exc()
+            tb_str = traceback.format_exc()
+            print(tb_str)
 
-            # Mark as failed
+            # Mark as failed — capture both summary and full traceback
             stats.success = False
             stats.error = str(e)
+            stats.error_traceback = tb_str
             stats.end_time = time.time()
 
             # Update job status in PostgreSQL (async)
@@ -232,6 +235,8 @@ class WorkerExecutor:
 
                 if stats.error:
                     update_data["error_message"] = stats.error
+                if stats.error_traceback:
+                    update_data["error_traceback"] = stats.error_traceback
 
                 # Update the job using async execute
                 stmt = (

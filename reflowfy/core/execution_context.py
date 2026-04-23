@@ -29,6 +29,10 @@ class ExecutionContext:
     runtime_params: Dict[str, Any] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.utcnow)
+    batch_number: int = 0
+    total_batches: int = 0
+    retry_count: int = 0
+    is_retry: bool = False
 
     def __post_init__(self):
         """Initialize batch_id if not provided."""
@@ -44,6 +48,10 @@ class ExecutionContext:
             "runtime_params": self.runtime_params,
             "metadata": self.metadata,
             "created_at": self.created_at.isoformat(),
+            "batch_number": self.batch_number,
+            "total_batches": self.total_batches,
+            "retry_count": self.retry_count,
+            "is_retry": self.is_retry,
         }
 
 

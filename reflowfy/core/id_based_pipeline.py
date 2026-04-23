@@ -7,7 +7,7 @@ the source for each ID (or each batch of IDs when ids_batch_size > 1).
 Example (single-ID mode, default):
     >>> class UserSyncPipeline(IdBasedPipeline):
     ...     name = "user_sync"
-    ...     rate_limit = {"jobs_per_second": 20}
+    ...     rate_limit = 20
     ...
     ...     def define_source(self, params, current_ids):
     ...         # current_ids is always a list; [single_id] when ids_batch_size=1
@@ -95,7 +95,7 @@ class IdBasedPipeline(metaclass=IdBasedPipelineMeta):
 
     Attributes:
         name: Unique pipeline identifier (must be set by subclass)
-        rate_limit: Optional rate limiting config (e.g., {"jobs_per_second": 50})
+        rate_limit: Optional rate limiting config (e.g., 50)
         config: Additional pipeline-specific configuration
     """
 
@@ -103,7 +103,7 @@ class IdBasedPipeline(metaclass=IdBasedPipelineMeta):
     name: str = ""
 
     # Optional rate limit
-    rate_limit: Optional[Dict[str, int]] = None
+    rate_limit: Optional[float] = None
 
     # Number of IDs to group per source resolution.
     # Default 1 = one source call per ID (original behaviour).
@@ -115,7 +115,7 @@ class IdBasedPipeline(metaclass=IdBasedPipelineMeta):
 
     def __init__(
         self,
-        rate_limit: Optional[Dict[str, int]] = None,
+        rate_limit: Optional[float] = None,
         config: Optional[Dict[str, Any]] = None,
     ):
         """
@@ -236,7 +236,7 @@ class IdBasedPipeline(metaclass=IdBasedPipelineMeta):
 
     def define_rate_limit(
         self, runtime_params: Dict[str, Any]
-    ) -> Optional[Dict[str, int]]:
+    ) -> Optional[float]:
         """
         Define rate limit configuration based on runtime parameters.
 
@@ -246,7 +246,7 @@ class IdBasedPipeline(metaclass=IdBasedPipelineMeta):
             runtime_params: Parameters provided by the user at runtime
 
         Returns:
-            Rate limit config dict or None
+            Jobs per second (float) or None
         """
         return self.rate_limit
 

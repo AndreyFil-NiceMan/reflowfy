@@ -140,6 +140,13 @@ class ExecutionManager:
 
         return self.update_execution_state(execution_id, "running")
 
+    def update_deduplicated_count(self, execution_id: str, count: int) -> None:
+        """Set the deduplicated_jobs count for an execution."""
+        execution = self.get_execution(execution_id)
+        if execution:
+            execution.deduplicated_jobs = count
+            self.db.commit()
+
     def get_interrupted_executions(self) -> List[Execution]:
         """
         Find executions that were running when the service crashed.

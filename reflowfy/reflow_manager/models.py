@@ -25,6 +25,7 @@ class Execution(Base):
     jobs_dispatched = Column(Integer, default=0)
     jobs_completed = Column(Integer, default=0)
     jobs_failed = Column(Integer, default=0)
+    deduplicated_jobs = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     completed_at = Column(DateTime, nullable=True)
@@ -44,6 +45,7 @@ class Execution(Base):
             "jobs_dispatched": self.jobs_dispatched,
             "jobs_completed": self.jobs_completed,
             "jobs_failed": self.jobs_failed,
+            "deduplicated_jobs": self.deduplicated_jobs or 0,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
@@ -100,6 +102,7 @@ class Job(Base):
     # Worker results
     processed_records = Column(Integer, default=0)
     error_message = Column(Text, nullable=True)
+    error_traceback = Column(Text, nullable=True)
     stats = Column(JSON, nullable=True)
 
     # Timestamps
@@ -116,10 +119,12 @@ class Job(Base):
         return {
             "job_id": self.job_id,
             "execution_id": self.execution_id,
+            "job_payload": self.job_payload,
             "state": self.state,
             "batch_number": self.batch_number,
             "processed_records": self.processed_records,
             "error_message": self.error_message,
+            "error_traceback": self.error_traceback,
             "stats": self.stats,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,

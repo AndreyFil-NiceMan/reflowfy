@@ -7,7 +7,7 @@ based on runtime parameters.
 Example:
     >>> class MyPipeline(AbstractPipeline):
     ...     name = "my_pipeline"
-    ...     rate_limit = {"jobs_per_second": 20}
+    ...     rate_limit = 20
     ...
     ...     def define_parameters(self):
     ...         return [
@@ -47,6 +47,20 @@ class PipelineMeta(ABCMeta):
 
         # Only register concrete pipelines (not the base class)
         if name != "AbstractPipeline" and bases:
+            # Validate cron expression at class-definition time (before instantiation)
+            schedule = namespace.get("schedule")
+            if schedule is not None:
+                try:
+                    from croniter import croniter as _croniter
+                    if not _croniter.is_valid(schedule):
+                        raise ValueError(
+                            f"Pipeline '{namespace.get('name', name)}' has invalid cron "
+                            f"expression: '{schedule}'. "
+                            f"(reflowfy uses 5-field cron: minute hour day month weekday)"
+                        )
+                except ImportError:
+                    pass  # croniter not installed; validated at runtime by scheduler
+
             # Check if this is a concrete pipeline with a name
             if "name" in namespace and namespace["name"]:
                 # Import here to avoid circular dependency
@@ -235,7 +249,7 @@ class AbstractPipeline(metaclass=PipelineMeta):
 
     Attributes:
         name: Unique pipeline identifier (must be set by subclass)
-        rate_limit: Optional rate limiting config (e.g., {"jobs_per_second": 50})
+        rate_limit: Optional rate limiting config (e.g., 50)
         config: Additional pipeline-specific configuration
     """
 
@@ -243,7 +257,7 @@ class AbstractPipeline(metaclass=PipelineMeta):
     name: str = ""
 
     # Optional rate limit (can be overridden per-request via define_rate_limit)
-    rate_limit: Optional[Dict[str, int]] = None
+    rate_limit: Optional[float] = None
 
     # Additional configuration
     config: Dict[str, Any] = {}
@@ -259,7 +273,7 @@ class AbstractPipeline(metaclass=PipelineMeta):
 
     def __init__(
         self,
-        rate_limit: Optional[Dict[str, int]] = None,
+        rate_limit: Optional[float] = None,
         config: Optional[Dict[str, Any]] = None,
         enable_duplicate_jobs: Optional[bool] = None,
     ):
@@ -388,7 +402,7 @@ class AbstractPipeline(metaclass=PipelineMeta):
         """
         return []
 
-    def define_rate_limit(self, runtime_params: Dict[str, Any]) -> Optional[Dict[str, int]]:
+    def define_rate_limit(self, runtime_params: Dict[str, Any]) -> Optional[float]:
         """
         Define rate limit configuration based on runtime parameters.
 
@@ -399,13 +413,13 @@ class AbstractPipeline(metaclass=PipelineMeta):
             runtime_params: Parameters provided by the user at runtime
 
         Returns:
-            Rate limit config dict or None
+            Jobs per second (float) or None
 
         Example:
             >>> def define_rate_limit(self, params):
             ...     if params.get("env") == "production":
-            ...         return {"jobs_per_second": 10}  # Slower for prod
-            ...     return {"jobs_per_second": 100}  # Faster for dev
+            ...         return 10  # Slower for prod
+            ...     return 100  # Faster for dev
         """
         return self.rate_limit
 

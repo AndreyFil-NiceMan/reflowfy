@@ -7,35 +7,15 @@ Used for E2E testing of the PaginatedAPISource connector.
 
 import os
 
-
-from reflowfy import (
-    AbstractPipeline,
-    PipelineParameter,
-    transformation,
+from reflowfy import AbstractPipeline, PipelineParameter
+from tests.e2e.test_pipelines.sources import e2e_paginated_api
+from tests.e2e.test_pipelines.destinations import e2e_console
+from tests.e2e.test_pipelines.transformations import (
+    api_log_record_count,
+    api_add_source_info,
 )
-from tests.e2e.test_pipelines.shared_destinations import e2e_console
-from tests.e2e.test_pipelines.shared_sources import e2e_paginated_api
 
-
-@transformation("api_add_source_info")
-def api_add_source_info(records, context):
-    """Add source metadata to records."""
-    for record in records:
-        record["_source_type"] = "api"
-        record["_test_pipeline"] = "e2e_api_source_test"
-    return records
-
-
-@transformation("api_log_record_count")
-def api_log_record_count(records, context):
-    """Log the number of records processed."""
-    print(f"  📊 API Source: Processing {len(records)} records")
-    return records
-
-
-# Configuration from environment
-# Inside Docker, this will be http://e2e-mock-api:8092
-# Outside Docker (e.g., running tests locally), it defaults to localhost:8092
+# Inside Docker: http://e2e-mock-api:8092 — outside Docker defaults to localhost:8092
 MOCK_API_URL = os.getenv("MOCK_API_URL", "http://localhost:8092")
 
 
@@ -43,7 +23,7 @@ class E2EApiSourceTestPipeline(AbstractPipeline):
     """E2E test pipeline for paginated API source."""
 
     name = "e2e_api_source_test"
-    rate_limit = {"jobs_per_second": 10}
+    rate_limit = 10
 
     def define_parameters(self):
         return [

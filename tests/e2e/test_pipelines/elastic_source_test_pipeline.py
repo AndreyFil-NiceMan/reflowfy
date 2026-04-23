@@ -3,40 +3,26 @@ Elasticsearch Source Test Pipeline.
 
 Pipeline that reads from Elasticsearch and outputs to console.
 Uses a JSON query template loaded from queries/events_by_timestamp.json.
-Used for E2E testing of the ElasticSource connector.
 """
 
 import json
 from pathlib import Path
 
-from reflowfy import (
-    AbstractPipeline,
-    PipelineParameter,
-    transformation,
-)
-from tests.e2e.test_pipelines.shared_destinations import e2e_console
-from tests.e2e.test_pipelines.shared_sources import e2e_elastic
+from reflowfy import AbstractPipeline, PipelineParameter
+from tests.e2e.test_pipelines.sources import e2e_elastic
+from tests.e2e.test_pipelines.destinations import e2e_console
+from tests.e2e.test_pipelines.transformations import add_source_info
 
-# Load query from the queries/ folder
 QUERIES_DIR = Path(__file__).parent / "queries"
 ELASTIC_QUERY = json.loads((QUERIES_DIR / "events_by_timestamp.json").read_text())
 INDEX_NAME = "e2e-test-events"
-
-
-@transformation("add_source_info")
-def add_source_info(records, context):
-    """Add source metadata to records."""
-    for record in records:
-        record["_source_type"] = "elasticsearch"
-        record["_test_pipeline"] = "elastic_source_test"
-    return records
 
 
 class E2EElasticSourceTestPipeline(AbstractPipeline):
     """E2E test pipeline for Elasticsearch source."""
 
     name = "e2e_elastic_source_test"
-    rate_limit = {"jobs_per_second": 10}
+    rate_limit = 10
 
     def define_parameters(self):
         return [

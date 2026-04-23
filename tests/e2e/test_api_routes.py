@@ -461,7 +461,7 @@ class TestRateLimit:
             params={"mode": "local", "rate_limit": "5.0"},
         )
         _, kwargs = local.execute.call_args
-        assert kwargs["rate_limit_override"] == {"jobs_per_second": 5.0}
+        assert kwargs["rate_limit_override"] == 5.0
 
     def test_no_rate_limit_passes_none(self, no_params_client):
         client, local, _ = no_params_client

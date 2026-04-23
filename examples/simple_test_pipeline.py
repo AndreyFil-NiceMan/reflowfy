@@ -122,7 +122,7 @@ pipeline = build_pipeline(
         AddProcessingInfo(),
     ],
     destination=destination,
-    rate_limit={"jobs_per_second": 10},
+    rate_limit=10,
 )
 
 pipeline_registry.register(pipeline)

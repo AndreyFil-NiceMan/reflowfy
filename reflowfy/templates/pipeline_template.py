@@ -90,7 +90,7 @@ class SimpleTestPipeline(AbstractPipeline):
     """
 
     name = "simple_test_pipeline"
-    rate_limit = {"jobs_per_second": 10}
+    rate_limit = 10
 
     def define_parameters(self):
         """No parameters needed for this simple test pipeline."""

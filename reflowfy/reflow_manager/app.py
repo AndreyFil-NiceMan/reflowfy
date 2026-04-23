@@ -90,9 +90,18 @@ def get_reflow_manager(db: Session = Depends(get_db)) -> ReflowManager:
 
 # ===== Health Check =====
 
+_db_ready: bool = False  # set to True after successful init_db()
+
+
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
+    """Health check endpoint. Returns 503 until the DB is initialized."""
+    if not _db_ready:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=503,
+            content={"status": "starting", "service": "reflow-manager", "version": __version__},
+        )
     return {
         "status": "healthy",
         "service": "reflow-manager",
@@ -183,15 +192,56 @@ async def create_checkpoint(
         )
 
 
+@app.get("/executions/{execution_id}/jobs")
+async def get_jobs(
+    execution_id: str,
+    state: Optional[str] = None,
+    manager: ReflowManager = Depends(get_reflow_manager),
+):
+    """Get jobs for an execution."""
+    jobs = manager.job_manager.get_jobs(execution_id, state)
+    return [job.to_dict() for job in jobs]
+
+
+@app.get("/executions/{execution_id}/errors")
+async def get_execution_errors(
+    execution_id: str,
+    manager: ReflowManager = Depends(get_reflow_manager),
+):
+    """Get all failed jobs with their error messages and tracebacks."""
+    failed_jobs = manager.job_manager.get_jobs(execution_id, state="failed")
+    if not failed_jobs:
+        execution = manager.get_execution(execution_id)
+        if not execution:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Execution '{execution_id}' not found",
+            )
+    return [
+        {
+            "job_id": job.job_id,
+            "batch_number": job.batch_number,
+            "error_message": job.error_message,
+            "error_traceback": job.error_traceback,
+            "failed_at": job.completed_at.isoformat() if job.completed_at else None,
+        }
+        for job in failed_jobs
+    ]
+
+
 @app.get("/executions/{execution_id}/checkpoints")
 async def get_checkpoints(
     execution_id: str,
     state: Optional[str] = None,
     manager: ReflowManager = Depends(get_reflow_manager),
 ):
-    """Get jobs (checkpoints) for an execution."""
+    """Deprecated: use GET /executions/{id}/jobs instead."""
+    from fastapi.responses import JSONResponse
     jobs = manager.job_manager.get_jobs(execution_id, state)
-    return [job.to_dict() for job in jobs]
+    return JSONResponse(
+        content=[job.to_dict() for job in jobs],
+        headers={"Deprecation": "true", "Link": f'/executions/{execution_id}/jobs; rel="successor-version"'},
+    )
 
 
 
@@ -383,9 +433,11 @@ async def startup_event():
     print(f"📦 Version: {__version__}")
     print("=" * 60)
 
-    # Initialize database
+    # Initialize database (retries internally until DB is ready)
+    global _db_ready
     print("Initializing database...")
     init_db()
+    _db_ready = True
     print("✓ Database initialized")
 
     # Load pipelines using global discovery

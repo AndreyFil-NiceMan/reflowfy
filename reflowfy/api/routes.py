@@ -47,7 +47,7 @@ def _run_body(
         executor = distributed_executor
         mode_label = "distributed"
 
-    rate_limit_override = {"jobs_per_second": rate_limit} if rate_limit else None
+    rate_limit_override = rate_limit
 
     print(f"\n{'=' * 60}")
     print(f"Running pipeline: {pipeline_name} (mode: {mode_label})")

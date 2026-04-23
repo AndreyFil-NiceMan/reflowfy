@@ -30,7 +30,7 @@ class ExamplePipeline(AbstractPipeline):
     """
     
     name = "example_pipeline"
-    rate_limit = {"jobs_per_second": 50}
+    rate_limit = 50
     
     def define_parameters(self):
         """Define your runtime parameters here."""

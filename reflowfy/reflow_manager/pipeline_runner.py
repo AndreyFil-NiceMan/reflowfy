@@ -64,14 +64,20 @@ def _run_async(coro):
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        # No running loop - safe to use asyncio.run()
+        # No running loop — safe to call asyncio.run directly.
         return asyncio.run(coro)
     else:
-        # Loop is already running - run in separate thread
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            future = pool.submit(asyncio.run, coro)
-            return future.result()
+        # A loop is already running (e.g. Jupyter, pytest-asyncio).
+        # Use nest_asyncio if available for clean re-entry; otherwise
+        # fall back to a separate thread to avoid deadlocks.
+        try:
+            import nest_asyncio
+            nest_asyncio.apply()
+            return asyncio.get_event_loop().run_until_complete(coro)
+        except ImportError:
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(asyncio.run, coro).result()
 
 
 
@@ -144,13 +150,22 @@ class PipelineRunner:
             runtime_params=runtime_params,
         )
 
-        # Run the job dispatch
-        self._run_pipeline_jobs(
-            execution_id=execution_id,
-            pipeline_name=pipeline_name,
-            runtime_params=runtime_params,
-            rate_limit_override=rate_limit_override,
-        )
+        # Run the job dispatch; always leave execution in a terminal state
+        try:
+            self._run_pipeline_jobs(
+                execution_id=execution_id,
+                pipeline_name=pipeline_name,
+                runtime_params=runtime_params,
+                rate_limit_override=rate_limit_override,
+            )
+        except Exception as exc:
+            try:
+                self.execution_manager.update_execution_state(
+                    execution_id, "failed", error_message=str(exc)
+                )
+            except Exception:
+                pass
+            raise
 
         # Refresh execution to get final counts
         execution = self.execution_manager.get_execution(execution_id)
@@ -214,7 +229,7 @@ class PipelineRunner:
         # Determine effective rate limit
         effective_rate_limit = rate_limit_override
         if effective_rate_limit is None and pipeline.rate_limit:
-            effective_rate_limit = pipeline.rate_limit.get("jobs_per_second")
+            effective_rate_limit = pipeline.rate_limit
 
         # Check if we're in local execution mode
         # In local mode, dispatched jobs that weren't completed are orphaned
@@ -400,7 +415,7 @@ class PipelineRunner:
         # Determine effective rate limit
         effective_rate_limit = rate_limit_override
         if effective_rate_limit is None and pipeline.rate_limit:
-            effective_rate_limit = pipeline.rate_limit.get("jobs_per_second")
+            effective_rate_limit = pipeline.rate_limit
 
         print(f"Splitting source data into jobs (rate: {effective_rate_limit}/sec)...")
 
@@ -408,6 +423,7 @@ class PipelineRunner:
         print("  Phase 1: Saving jobs to database...")
         batch_number = 1
         job_count = 0
+        dedup_count = 0
         current_job_ids = []
 
         for source_job in pipeline.source.split_jobs(runtime_params):
@@ -424,7 +440,11 @@ class PipelineRunner:
                 )
                 if self.job_manager.get_job(job_id):
                     print(f"  [no-dup] Skipping job {job_id[:12]}... (already exists)")
+                    dedup_count += 1
                     continue
+
+            # Set current batch number on context before embedding in payload
+            context.batch_number = batch_number
 
             # Create job payload
             job_payload = {
@@ -465,6 +485,19 @@ class PipelineRunner:
 
         # Set total_jobs correctly (once, after all jobs saved)
         self._set_total_jobs(execution_id, job_count)
+
+        # Persist dedup count so it shows in stats
+        if dedup_count > 0:
+            self.execution_manager.update_deduplicated_count(execution_id, dedup_count)
+            print(f"  Deduplicated {dedup_count} jobs (content hash match)")
+
+        # Back-fill total_batches into every job's metadata payload (best-effort)
+        try:
+            self.job_manager.bulk_set_total_batches(execution_id, batch_number)
+        except Exception as _e:
+            self.job_manager.db.rollback()
+            print(f"  Warning: could not back-fill total_batches ({_e}); continuing")
+
         print(f"  Saved {job_count} jobs to database in {batch_number} batches")
 
         # Phase 2: Dispatch and wait for each batch
@@ -540,7 +573,10 @@ class PipelineRunner:
             print(f"    Batch {current_batch_num}: {completed} completed, {failed} failed")
 
         # Final state update - sync actual counts from database
-        dispatched, completed, failed = self._sync_counts_from_db(execution_id)
+        try:
+            dispatched, completed, failed = self._sync_counts_from_db(execution_id)
+        except Exception:
+            dispatched, completed, failed = total_dispatched, total_completed, total_failed
 
         # Determine final state based on actual DB counts
         total_finished = completed + failed
@@ -610,7 +646,7 @@ class PipelineRunner:
         # Determine effective rate limit
         effective_rate_limit = rate_limit_override
         if effective_rate_limit is None and pipeline.rate_limit:
-            effective_rate_limit = pipeline.rate_limit.get("jobs_per_second")
+            effective_rate_limit = pipeline.rate_limit
 
         # Resolve destination once (shared across all IDs)
         destination = pipeline.define_destination(params)
@@ -620,6 +656,7 @@ class PipelineRunner:
         print(f"  Phase 1: Saving jobs to database for {len(ids)} IDs in {len(id_batches)} batches...")
         batch_number = 1
         job_count = 0
+        dedup_count = 0
         current_job_ids = []
 
         for ids_batch in id_batches:
@@ -646,7 +683,11 @@ class PipelineRunner:
                     )
                     if self.job_manager.get_job(job_id):
                         print(f"  [no-dup] Skipping job {job_id[:12]}... (already exists)")
+                        dedup_count += 1
                         continue
+
+                # Set current batch number on context before embedding in payload
+                context.batch_number = batch_number
 
                 # Create job payload with current_ids list in metadata
                 job_payload = {
@@ -688,6 +729,19 @@ class PipelineRunner:
 
         # Set total_jobs correctly (once, after all jobs saved)
         self._set_total_jobs(execution_id, job_count)
+
+        # Persist dedup count so it shows in stats
+        if dedup_count > 0:
+            self.execution_manager.update_deduplicated_count(execution_id, dedup_count)
+            print(f"  Deduplicated {dedup_count} jobs (content hash match)")
+
+        # Back-fill total_batches into every job's metadata payload (best-effort)
+        try:
+            self.job_manager.bulk_set_total_batches(execution_id, batch_number)
+        except Exception as _e:
+            self.job_manager.db.rollback()
+            print(f"  Warning: could not back-fill total_batches ({_e}); continuing")
+
         print(f"  Saved {job_count} jobs to database in {batch_number} batches (from {len(ids)} IDs)")
 
         # Phase 2: Dispatch and wait for each batch (reuses existing logic)
@@ -761,7 +815,10 @@ class PipelineRunner:
             print(f"    Batch {current_batch_num}: {completed} completed, {failed} failed")
 
         # Final state update - sync actual counts from database
-        dispatched, completed, failed = self._sync_counts_from_db(execution_id)
+        try:
+            dispatched, completed, failed = self._sync_counts_from_db(execution_id)
+        except Exception:
+            dispatched, completed, failed = total_dispatched, total_completed, total_failed
 
         # Determine final state based on actual DB counts
         total_finished = completed + failed

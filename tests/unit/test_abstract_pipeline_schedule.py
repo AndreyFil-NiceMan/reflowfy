@@ -46,19 +46,17 @@ def test_is_scheduled_true_when_schedule_set():
     assert p.is_scheduled is True
 
 
-def test_invalid_cron_raises_on_init():
-    # The metaclass catches errors during auto-registration (class definition).
-    # A direct constructor call must still raise for users who instantiate manually.
-    class _BadCronPipeline(AbstractPipeline):
-        name = "bad_cron_pipeline_unit"
-        schedule = "not-a-valid-cron"
+def test_invalid_cron_raises_at_class_definition():
+    # The metaclass validates the cron expression at class-definition time,
+    # so the ValueError fires before instantiation ever happens.
+    with pytest.raises(ValueError, match="invalid cron"):
+        class _BadCronPipeline(AbstractPipeline):
+            name = "bad_cron_pipeline_unit"
+            schedule = "not-a-valid-cron"
 
-        def define_source(self, params): return MagicMock()
-        def define_destination(self, params): return MagicMock()
-        def define_transformations(self, params): return []
-
-    with pytest.raises(ValueError, match="invalid cron expression"):
-        _BadCronPipeline()
+            def define_source(self, params): return MagicMock()
+            def define_destination(self, params): return MagicMock()
+            def define_transformations(self, params): return []
 
 
 def test_schedule_in_to_dict():

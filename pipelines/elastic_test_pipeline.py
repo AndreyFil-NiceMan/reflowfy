@@ -123,7 +123,7 @@ class ElasticTestPipeline(AbstractPipeline):
     """
     
     name = "elastic_test_pipeline"
-    rate_limit = {"jobs_per_second": 20}
+    rate_limit = 20
     
     def define_parameters(self):
         """Define runtime parameters for this pipeline."""

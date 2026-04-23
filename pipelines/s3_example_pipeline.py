@@ -24,7 +24,7 @@ class S3JsonPipeline(AbstractPipeline):
     """
     
     name = "s3_json_pipeline"
-    rate_limit = {"jobs_per_second": 10}
+    rate_limit = 10
     
     def define_parameters(self):
         return [

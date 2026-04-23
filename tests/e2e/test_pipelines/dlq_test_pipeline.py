@@ -13,7 +13,7 @@ class DLQTestPipelineAuto(AbstractPipeline):
     """Pipeline for testing automatic DLQ processing."""
     
     name = "test_pipeline_auto"
-    rate_limit = {"jobs_per_second": 100}
+    rate_limit = 100
     
     def define_source(self, params):
         return e2e_mock(data=[{"dlq_test": True}])
