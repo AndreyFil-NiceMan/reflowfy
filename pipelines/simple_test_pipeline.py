@@ -28,7 +28,7 @@ class UppercaseNames(BaseTransformation):
     
     name = "uppercase_names"
     
-    def apply(self, records, context):
+    def apply(self, records, runtime_params):
         """Convert first_name and last_name to uppercase."""
         transformed = []
         
@@ -51,7 +51,7 @@ class FilterActiveUsers(BaseTransformation):
     
     name = "filter_active_users"
     
-    def apply(self, records, context):
+    def apply(self, records, runtime_params):
         """Keep only records where active=True."""
         return [r for r in records if r.get("active", False)]
 
@@ -61,9 +61,9 @@ class AddProcessingInfo(BaseTransformation):
     
     name = "add_processing_info"
     
-    def apply(self, records, context):
+    def apply(self, records, runtime_params):
         """Add processing information from context."""
-        execution_id = context.get("execution_id", "unknown")
+        execution_id = runtime_params.get("execution_id", "unknown")
         
         for record in records:
             record["_processed_by"] = "reflowfy"

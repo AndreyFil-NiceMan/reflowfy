@@ -1,16 +1,18 @@
-"""HTTP destination for webhooks and APIs."""
+"""API destination for webhooks and REST endpoints."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 import httpx
 from reflowfy.destinations.base import BaseDestination, DestinationError, RetryConfig
 
 
-class HttpDestination(BaseDestination):
+class ApiDestination(BaseDestination):
     """
-    HTTP destination for sending data to webhooks and APIs.
+    API destination for sending data to webhooks and REST endpoints.
 
     Supports:
     - Configurable authentication (Bearer, API key, Basic)
+    - URL query parameters
+    - Custom static body fields merged into every request
     - Request batching
     - Timeout configuration
     - Custom headers
@@ -25,10 +27,12 @@ class HttpDestination(BaseDestination):
         auth_token: Optional[str] = None,
         timeout: float = 30.0,
         batch_requests: bool = False,
+        params: Optional[Dict[str, str]] = None,
+        body: Optional[Dict[str, Any]] = None,
         retry_config: Optional[RetryConfig] = None,
     ):
         """
-        Initialize HTTP destination.
+        Initialize API destination.
 
         Args:
             url: Target URL
@@ -38,6 +42,8 @@ class HttpDestination(BaseDestination):
             auth_token: Authentication token/credentials
             timeout: Request timeout in seconds
             batch_requests: Whether to send all records in one request
+            params: URL query parameters appended to every request
+            body: Static fields merged into every request body alongside records
             retry_config: Optional retry configuration
         """
         config = {
@@ -48,6 +54,8 @@ class HttpDestination(BaseDestination):
             "auth_token": auth_token,
             "timeout": timeout,
             "batch_requests": batch_requests,
+            "params": params,
+            "body": body,
         }
         super().__init__(config, retry_config)
         self._client: Optional[httpx.AsyncClient] = None
@@ -57,7 +65,6 @@ class HttpDestination(BaseDestination):
         if self._client is None:
             headers = dict(self.config["headers"])
 
-            # Add authentication
             auth_type = self.config.get("auth_type")
             auth_token = self.config.get("auth_token")
 
@@ -73,60 +80,57 @@ class HttpDestination(BaseDestination):
 
         return self._client
 
+    def _build_payload(self, data: Any) -> Dict[str, Any]:
+        """Merge static body fields with record data."""
+        return dict(self.config.get("body") or {})
+
     async def send(self, records: List[Any], metadata: Optional[Dict[str, Any]] = None) -> None:
         """
-        Send records to HTTP endpoint.
+        Send records to the API endpoint.
 
         Args:
             records: List of records to send
-            metadata: Optional metadata to include in request
+            metadata: Optional metadata (unused in payload, available for subclasses)
 
         Raises:
-            DestinationError: If send fails
+            DestinationError: If the request fails
         """
         client = await self._get_client()
         url = self.config["url"]
         method = self.config["method"]
-        batch_requests = self.config["batch_requests"]
+        params = self.config.get("params")
 
         try:
-            if batch_requests:
-                # Send all records in one request
-                payload = {
-                    "records": records,
-                    "metadata": metadata or {},
-                }
+            if self.config["batch_requests"]:
+                payload = self._build_payload(records)
+                payload["records"] = records
 
-                response = await client.request(method, url, json=payload)
+                response = await client.request(method, url, json=payload, params=params)
                 response.raise_for_status()
 
             else:
-                # Send each record as a separate request
                 for record in records:
-                    payload = {
-                        "record": record,
-                        "metadata": metadata or {},
-                    }
+                    payload = self._build_payload(record)
+                    payload["record"] = record
 
-                    response = await client.request(method, url, json=payload)
+                    response = await client.request(method, url, json=payload, params=params)
                     response.raise_for_status()
 
         except httpx.HTTPStatusError as e:
             raise DestinationError(
-                "http",
+                "api",
                 f"HTTP {e.response.status_code}: {e.response.text}",
                 e,
             )
         except httpx.RequestError as e:
-            raise DestinationError("http", f"Request failed: {e}", e)
+            raise DestinationError("api", f"Request failed: {e}", e)
         except Exception as e:
-            raise DestinationError("http", f"Unexpected error: {e}", e)
+            raise DestinationError("api", f"Unexpected error: {e}", e)
 
     async def health_check(self) -> bool:
-        """Check if HTTP endpoint is accessible."""
+        """Check if the API endpoint is accessible."""
         try:
             client = await self._get_client()
-            # Try a HEAD request first, fall back to OPTIONS
             try:
                 response = await client.head(self.config["url"], timeout=5.0)
                 return response.status_code < 500
@@ -143,7 +147,7 @@ class HttpDestination(BaseDestination):
             self._client = None
 
 
-def http_destination(
+def api_destination(
     url: str,
     method: str = "POST",
     headers: Optional[Dict[str, str]] = None,
@@ -151,21 +155,24 @@ def http_destination(
     auth_token: Optional[str] = None,
     timeout: float = 30.0,
     batch_requests: bool = False,
+    params: Optional[Dict[str, str]] = None,
+    body: Optional[Dict[str, Any]] = None,
     retry_config: Optional[RetryConfig] = None,
-) -> HttpDestination:
+) -> ApiDestination:
     """
-    Factory function for HTTP destination.
+    Factory function for API destination.
 
     Example:
-        >>> destination = http_destination(
-        ...     url="https://api.example.com/webhook",
-        ...     method="POST",
+        >>> destination = api_destination(
+        ...     url="https://api.example.com/ingest",
         ...     auth_type="bearer",
         ...     auth_token="secret-token",
-        ...     batch_requests=True
+        ...     params={"tenant_id": "acme", "env": "prod"},
+        ...     body={"source": "reflowfy", "version": "2"},
+        ...     batch_requests=True,
         ... )
     """
-    return HttpDestination(
+    return ApiDestination(
         url=url,
         method=method,
         headers=headers,
@@ -173,5 +180,7 @@ def http_destination(
         auth_token=auth_token,
         timeout=timeout,
         batch_requests=batch_requests,
+        params=params,
+        body=body,
         retry_config=retry_config,
     )

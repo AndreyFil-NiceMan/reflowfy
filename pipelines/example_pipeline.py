@@ -16,7 +16,7 @@ class MyTransformation(BaseTransformation):
     
     name = "my_transform"
     
-    def apply(self, records, context):
+    def apply(self, records, runtime_params):
         """Transform records."""
         # Your transformation logic here
         return records

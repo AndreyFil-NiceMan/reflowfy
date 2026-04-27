@@ -9,7 +9,7 @@ from typing import Dict, Optional
 
 from reflowfy import destination
 from reflowfy.destinations.console import console_destination
-from reflowfy.destinations.http import http_destination
+from reflowfy.destinations.api import api_destination
 
 
 @destination("e2e_http")
@@ -22,8 +22,8 @@ def e2e_http(
     batch_requests: bool = True,
     timeout: float = 30.0,
 ):
-    """Pre-configured HTTP webhook destination for E2E tests."""
-    return http_destination(
+    """Pre-configured API webhook destination for E2E tests."""
+    return api_destination(
         url=url,
         method=method,
         headers=headers or {"Content-Type": "application/json"},

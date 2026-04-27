@@ -9,8 +9,8 @@ import json
 from pathlib import Path
 
 from reflowfy import AbstractPipeline, PipelineParameter
-from tests.e2e.test_pipelines.sources import e2e_elastic
 from tests.e2e.test_pipelines.destinations import e2e_console
+from tests.e2e.test_pipelines.sources import e2e_elastic
 from tests.e2e.test_pipelines.transformations import add_source_info
 
 QUERIES_DIR = Path(__file__).parent / "queries"
@@ -30,7 +30,7 @@ class E2EElasticSourceTestPipeline(AbstractPipeline):
             PipelineParameter(name="end_time", required=True),
         ]
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         return e2e_elastic(
             index=INDEX_NAME,
             base_query=ELASTIC_QUERY,
@@ -38,8 +38,8 @@ class E2EElasticSourceTestPipeline(AbstractPipeline):
             size=50,
         )
 
-    def define_destination(self, params):
+    def define_destination(self, runtime_params):
         return e2e_console(max_records_display=5)
 
-    def define_transformations(self, params):
+    def define_transformations(self, runtime_params):
         return [add_source_info()]

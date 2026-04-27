@@ -5,7 +5,7 @@ Tests pause/resume functionality and stats progress tracking.
 
 Prerequisites:
     - ReflowManager running on localhost:8002
-    - Mock HTTP server running (for e2e_http_dest_test pipeline)
+    - Mock HTTP server running (for e2e_api_dest_test pipeline)
 
 Run with:
     pytest tests/e2e/test_execution_lifecycle.py -v
@@ -108,14 +108,15 @@ class TestPauseExecution:
         """
         # Start a fast pipeline (default high rate)
         response = client.post("/run", json={
-            "pipeline_name": "e2e_http_dest_test",
+            "pipeline_name": "e2e_api_dest_test",
+            "runtime_params": {"tenant_id": "lifecycle-test", "env": "staging"},
         })
         assert response.status_code == 202
         execution_id = response.json()["execution_id"]
-        
+
         # Wait for completion
         _wait_for_state(client, execution_id, "completed", max_wait=120)
-        
+
         # Try to pause a completed execution — API accepts it
         response = client.post(f"/executions/{execution_id}/pause")
         assert response.status_code in [200, 400, 404]
@@ -238,14 +239,15 @@ class TestExecutionStatsProgress:
         """Verify stats response contains all expected fields."""
         # Start a fast pipeline
         response = client.post("/run", json={
-            "pipeline_name": "e2e_http_dest_test",
+            "pipeline_name": "e2e_api_dest_test",
+            "runtime_params": {"tenant_id": "lifecycle-stats-test", "env": "staging"},
         })
         assert response.status_code == 202
         execution_id = response.json()["execution_id"]
-        
+
         # Wait for completion
         _wait_for_state(client, execution_id, "completed", max_wait=120)
-        
+
         stats = client.get(f"/executions/{execution_id}/stats").json()
         
         # Verify all expected fields are present

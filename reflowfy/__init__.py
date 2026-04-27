@@ -16,7 +16,7 @@ from reflowfy.transformations.base import BaseTransformation
 from reflowfy.sources.elastic import elastic_source
 from reflowfy.sources.sql import sql_source
 from reflowfy.destinations.kafka import kafka_destination
-from reflowfy.destinations.http import http_destination
+from reflowfy.destinations.api import api_destination
 from reflowfy.destinations.console import console_destination
 
 # Decorators for reusable components
@@ -24,7 +24,7 @@ from reflowfy.sources.decorators import source, source_registry
 from reflowfy.destinations.decorators import destination, destination_registry
 from reflowfy.transformations.decorators import transformation
 
-__version__ = "0.37"
+__version__ = "0.38"
 
 __all__ = [
     "AbstractPipeline",
@@ -35,7 +35,7 @@ __all__ = [
     "elastic_source",
     "sql_source",
     "kafka_destination",
-    "http_destination",
+    "api_destination",
     "console_destination",
     # Decorators
     "source",

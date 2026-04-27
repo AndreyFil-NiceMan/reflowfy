@@ -38,7 +38,7 @@ class BaseTransformation(metaclass=TransformationMeta):
         >>> class XmlToJson(BaseTransformation):
         ...     name = "xml_to_json"
         ...     
-        ...     def apply(self, records, context):
+        ...     def apply(self, records, runtime_params):
         ...         return [self.parse_xml(r) for r in records]
         ...     
         ...     def parse_xml(self, record):
@@ -52,13 +52,17 @@ class BaseTransformation(metaclass=TransformationMeta):
     name: str = ""
 
     @abstractmethod
-    def apply(self, records: List[Any], context: Dict[str, Any]) -> List[Any]:
+    def apply(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
         """
         Apply transformation to a batch of records.
 
         Args:
             records: List of records to transform
-            context: Execution context (execution_id, runtime_params, etc.)
+            runtime_params: Flat dict of all pipeline params — both the user-supplied runtime
+                parameters (e.g. env, multiplier) and execution-context keys (execution_id,
+                batch_id, pipeline_name, created_at, current_ids for id-based pipelines).
+                This is the same dict that define_source / define_destination receive.
+                Mutations are visible to subsequent transformations and the destination.
 
         Returns:
             Transformed list of records

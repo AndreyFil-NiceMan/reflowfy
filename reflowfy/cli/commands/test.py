@@ -183,9 +183,13 @@ def register(app: typer.Typer):
                 batch_label = f"Batch {batch_num}/{len(ids_batches)}: {ids_batch}"
                 console.print(f"\n[bold cyan]━━━ {batch_label} ━━━[/bold cyan]")
 
+                # Use a fresh per-batch copy so define_source enrichments don't
+                # accumulate across batches.
+                batch_params = dict(params)
+
                 try:
-                    source = pipeline.define_source(params, ids_batch)
-                    transformations = pipeline.define_transformations(params, ids_batch)
+                    source = pipeline.define_source(batch_params, ids_batch)
+                    transformations = pipeline.define_transformations(batch_params, ids_batch)
                 except Exception as e:
                     console.print(f"[red]❌ Setup failed for batch {ids_batch}: {e}[/red]")
                     traceback.print_exc()
@@ -209,9 +213,16 @@ def register(app: typer.Typer):
                     console.print(f"  [yellow]⚠️ No records for batch: {ids_batch}[/yellow]")
                     continue
 
-                # Apply transformations
+                # Build flat mutable runtime_params for this batch's chain.
                 transformed = records
-                meta = {**context.to_dict(), "current_ids": ids_batch}
+                meta = dict(batch_params)
+                meta.update({
+                    "execution_id": context.execution_id,
+                    "batch_id": context.batch_id,
+                    "pipeline_name": context.pipeline_name,
+                    "created_at": context.created_at.isoformat(),
+                    "current_ids": ids_batch,
+                })
                 for t in transformations:
                     console.print(f"    [cyan]Applying {t.__class__.__name__}...[/cyan]")
                     try:
@@ -252,11 +263,14 @@ def register(app: typer.Typer):
         # AbstractPipeline: standard execution (existing flow)
         # ================================================================
 
+        # Use a per-test copy so define_source enrichments are captured.
+        test_params = dict(params)
+
         # Initialize source, transformations, destination
         try:
-            source = pipeline.define_source(params)
-            transformations = pipeline.define_transformations(params)
-            destination = pipeline.define_destination(params)
+            source = pipeline.define_source(test_params)
+            transformations = pipeline.define_transformations(test_params)
+            destination = pipeline.define_destination(test_params)
         except Exception as e:
             console.print(f"[red]❌ Pipeline setup failed: {e}[/red]")
             traceback.print_exc()
@@ -269,7 +283,7 @@ def register(app: typer.Typer):
         # Fetch records
         console.print(f"\n[cyan]Fetching records (limit={limit})...[/cyan]")
         try:
-            records = source.fetch(params, limit=limit)
+            records = source.fetch(test_params, limit=limit)
         except Exception as e:
             console.print(f"[red]❌ Source fetch failed: {e}[/red]")
             traceback.print_exc()
@@ -285,15 +299,24 @@ def register(app: typer.Typer):
         context = ExecutionContext(
             execution_id=str(uuid.uuid4()),
             pipeline_name=pipeline.name,
-            runtime_params=params,
+            runtime_params=test_params,
         )
+
+        # Build flat mutable runtime_params for the transformation chain.
+        flat_test_params = dict(test_params)
+        flat_test_params.update({
+            "execution_id": context.execution_id,
+            "batch_id": context.batch_id,
+            "pipeline_name": context.pipeline_name,
+            "created_at": context.created_at.isoformat(),
+        })
 
         # Apply transformations
         transformed = records
         for t in transformations:
             console.print(f"  [cyan]Applying {t.__class__.__name__}...[/cyan]")
             try:
-                transformed = t.apply(transformed, context.to_dict())
+                transformed = t.apply(transformed, flat_test_params)
                 console.print(f"  [green]✓ {t.__class__.__name__}: {len(transformed)} records[/green]")
             except Exception as e:
                 console.print(f"  [red]❌ {t.__class__.__name__} failed: {e}[/red]")

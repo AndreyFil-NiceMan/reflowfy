@@ -8,11 +8,11 @@ Used for E2E testing of the IDBasedAPISource connector.
 import os
 
 from reflowfy import AbstractPipeline, PipelineParameter
-from tests.e2e.test_pipelines.sources import e2e_id_based_api
 from tests.e2e.test_pipelines.destinations import e2e_console
+from tests.e2e.test_pipelines.sources import e2e_id_based_api
 from tests.e2e.test_pipelines.transformations import (
-    api_id_log_record_count,
     api_id_add_source_info,
+    api_id_log_record_count,
 )
 
 # Inside Docker: http://e2e-mock-api:8092 — outside Docker defaults to localhost:8092
@@ -50,17 +50,17 @@ class E2EApiIdSourceTestPipeline(AbstractPipeline):
             ),
         ]
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         return e2e_id_based_api(
-            base_url=params.get("base_url", MOCK_API_URL),
-            ids=params.get("ids", [1, 2, 3, 4, 5]),
-            batch_size=params.get("batch_size", 2),
+            base_url=runtime_params.get("base_url", MOCK_API_URL),
+            ids=runtime_params.get("ids", [1, 2, 3, 4, 5]),
+            batch_size=runtime_params.get("batch_size", 2),
         )
 
-    def define_destination(self, params):
+    def define_destination(self, runtime_params):
         return e2e_console()
 
-    def define_transformations(self, params):
+    def define_transformations(self, runtime_params):
         return [
             api_id_log_record_count(),
             api_id_add_source_info(),

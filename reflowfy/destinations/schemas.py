@@ -4,7 +4,7 @@ These schemas provide runtime validation for destination configurations,
 ensuring type safety and clear error messages.
 """
 
-from typing import Dict, Literal, Optional
+from typing import Any, Dict, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -34,8 +34,8 @@ class KafkaDestinationConfig(BaseModel):
         return v.strip()
 
 
-class HttpDestinationConfig(BaseModel):
-    """Configuration for HttpDestination."""
+class ApiDestinationConfig(BaseModel):
+    """Configuration for ApiDestination."""
 
     url: str = Field(..., description="Target URL")
     method: Literal["POST", "PUT", "PATCH"] = Field(default="POST", description="HTTP method")
@@ -48,6 +48,12 @@ class HttpDestinationConfig(BaseModel):
     batch_requests: bool = Field(
         default=False, description="Send all records in one request"
     )
+    params: Optional[Dict[str, str]] = Field(
+        default=None, description="URL query parameters appended to every request"
+    )
+    body: Optional[Dict[str, Any]] = Field(
+        default=None, description="Static fields merged into every request body alongside records"
+    )
 
     @field_validator("url")
     @classmethod
@@ -55,6 +61,7 @@ class HttpDestinationConfig(BaseModel):
         if not v.startswith(("http://", "https://")):
             raise ValueError("url must start with http:// or https://")
         return v
+
 
 
 class ConsoleDestinationConfig(BaseModel):

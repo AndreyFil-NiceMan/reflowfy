@@ -395,7 +395,8 @@ class PipelineRunner:
             )
             return
 
-        # Resolve pipeline with runtime params (for AbstractPipeline)
+        # Resolve pipeline with runtime params (for AbstractPipeline).
+        # _resolved_params includes defaults + any keys added by define_source.
         if hasattr(pipeline, 'resolve'):
             pipeline.resolve(runtime_params)
 
@@ -405,11 +406,15 @@ class PipelineRunner:
         # Update state to running
         self.execution_manager.update_execution_state(execution_id, "running")
 
+        # Use enriched params (define_source may have added keys) for the context
+        # so workers receive them in job metadata.
+        enriched_params = getattr(pipeline, '_resolved_params', runtime_params)
+
         # Create execution context
         context = ExecutionContext(
             execution_id=execution_id,
             pipeline_name=pipeline_name,
-            runtime_params=runtime_params,
+            runtime_params=enriched_params,
         )
 
         # Determine effective rate limit
@@ -662,14 +667,16 @@ class PipelineRunner:
         for ids_batch in id_batches:
             print(f"    Processing ID batch: {ids_batch}")
 
-            # Resolve source and transformations for this batch of IDs
+            # Resolve source and transformations for this batch of IDs.
+            # batch_params is a per-batch copy of params enriched by define_source.
             resolved = pipeline.resolve_for_ids(params, ids_batch)
             source = resolved["source"]
             transformations = resolved["transformations"]
             transformation_names = [t.name for t in transformations]
+            batch_params = resolved.get("batch_params", params)
 
             # Split this batch's source into jobs
-            for source_job in source.split_jobs(params):
+            for source_job in source.split_jobs(batch_params):
                 if enable_duplicate_jobs:
                     job_id = str(uuid.uuid4())
                 else:
@@ -689,7 +696,11 @@ class PipelineRunner:
                 # Set current batch number on context before embedding in payload
                 context.batch_number = batch_number
 
-                # Create job payload with current_ids list in metadata
+                # Create job payload with current_ids list in metadata.
+                # runtime_params in metadata is the batch-enriched version so
+                # workers receive any keys added by define_source.
+                context_dict = context.to_dict()
+                context_dict["runtime_params"] = dict(batch_params)
                 job_payload = {
                     "execution_id": execution_id,
                     "job_id": job_id,
@@ -702,7 +713,7 @@ class PipelineRunner:
                     "rate_limit": pipeline.rate_limit,
                     "records": source_job.records,
                     "metadata": {
-                        **context.to_dict(),
+                        **context_dict,
                         "current_ids": ids_batch,
                         "source_metadata": source_job.metadata,
                     },

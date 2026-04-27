@@ -64,7 +64,7 @@ def test_dynamic_transformation_decorator():
     from reflowfy.transformations.registry import transformation_registry
     
     @transformation("e2e_dynamic_transform")
-    def my_transform(records, context):
+    def my_transform(records, runtime_params):
         for r in records:
             r["dynamic"] = True
         return records

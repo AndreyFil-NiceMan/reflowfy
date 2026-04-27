@@ -49,12 +49,9 @@ class FilterByStatus(BaseTransformation):
     def __init__(self, allowed_status="active"):
         self.allowed_status = allowed_status
     
-    def apply(self, records, context):
+    def apply(self, records, runtime_params):
         """Filter records by status."""
-        filter_status = context.get("runtime_params", {}).get(
-            "filter_status", 
-            self.allowed_status
-        )
+        filter_status = runtime_params.get("filter_status", self.allowed_status)
         
         filtered = [
             r for r in records 
@@ -71,10 +68,10 @@ class EnrichWithProcessingInfo(BaseTransformation):
     
     name = "enrich_processing_info"
     
-    def apply(self, records, context):
+    def apply(self, records, runtime_params):
         """Add processing metadata."""
-        execution_id = context.get("execution_id", "unknown")
-        pipeline_name = context.get("pipeline_name", "unknown")
+        execution_id = runtime_params.get("execution_id", "unknown")
+        pipeline_name = runtime_params.get("pipeline_name", "unknown")
         
         for record in records:
             record["_reflofy_processed"] = {
@@ -92,7 +89,7 @@ class FormatEventData(BaseTransformation):
     
     name = "format_event_data"
     
-    def apply(self, records, context):
+    def apply(self, records, runtime_params):
         """Format event data fields."""
         for record in records:
             event_type = record.get("event_type", "unknown")

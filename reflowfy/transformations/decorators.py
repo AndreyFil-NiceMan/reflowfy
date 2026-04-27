@@ -6,7 +6,7 @@ and auto-registers it.
 
 Example:
     @transformation("uppercase_names")
-    def uppercase_names(records, context):
+    def uppercase_names(records, runtime_params):
         for r in records:
             if "name" in r:
                 r["name"] = r["name"].upper()
@@ -26,7 +26,7 @@ def transformation(name: str):
 
     The decorated function becomes a callable that returns a BaseTransformation
     instance when called. The function signature should be:
-        def my_transform(records: List[Any], context: Dict[str, Any]) -> List[Any]
+        def my_transform(records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]
 
     Args:
         name: Unique name for this transformation
@@ -36,7 +36,7 @@ def transformation(name: str):
 
     Example:
         @transformation("filter_active")
-        def filter_active(records, context):
+        def filter_active(records, runtime_params):
             return [r for r in records if r.get("active")]
 
         # Use in pipeline:
@@ -52,7 +52,7 @@ def transformation(name: str):
             (BaseTransformation,),
             {
                 'name': name,
-                'apply': lambda self, records, context: func(records, context),
+                'apply': lambda self, records, runtime_params: func(records, runtime_params),
                 '__doc__': func.__doc__ or f"Transformation: {name}",
                 '__module__': func.__module__,
             }

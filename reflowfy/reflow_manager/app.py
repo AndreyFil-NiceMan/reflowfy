@@ -109,6 +109,31 @@ async def health_check():
     }
 
 
+# ===== Pipeline Registry =====
+
+
+@app.get("/pipelines/{pipeline_name}")
+async def get_pipeline(pipeline_name: str):
+    """Get metadata for a registered pipeline by name."""
+    from reflowfy.core.registry import pipeline_registry
+
+    pipeline = pipeline_registry.get(pipeline_name)
+    if not pipeline:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Pipeline '{pipeline_name}' not found in registry",
+        )
+    return pipeline.to_dict()
+
+
+@app.get("/pipelines")
+async def list_pipelines():
+    """List all registered pipelines."""
+    from reflowfy.core.registry import pipeline_registry
+
+    return [p.to_dict() for p in pipeline_registry.list_all()]
+
+
 # ===== Execution Management =====
 
 

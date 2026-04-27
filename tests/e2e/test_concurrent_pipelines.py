@@ -65,7 +65,8 @@ class TestConcurrentDifferentPipelines:
         
         # Start both pipelines
         response_http = client.post("/run", json={
-            "pipeline_name": "e2e_http_dest_test",
+            "pipeline_name": "e2e_api_dest_test",
+            "runtime_params": {"tenant_id": "concurrent-test", "env": "staging"},
         })
         assert response_http.status_code == 202
         http_exec_id = response_http.json()["execution_id"]
@@ -118,13 +119,15 @@ class TestConcurrentSamePipeline:
         """
         # Start the same pipeline twice
         response_1 = client.post("/run", json={
-            "pipeline_name": "e2e_http_dest_test",
+            "pipeline_name": "e2e_api_dest_test",
+            "runtime_params": {"tenant_id": "concurrent-run-1", "env": "staging"},
         })
         assert response_1.status_code == 202
         exec_id_1 = response_1.json()["execution_id"]
-        
+
         response_2 = client.post("/run", json={
-            "pipeline_name": "e2e_http_dest_test",
+            "pipeline_name": "e2e_api_dest_test",
+            "runtime_params": {"tenant_id": "concurrent-run-2", "env": "staging"},
         })
         assert response_2.status_code == 202
         exec_id_2 = response_2.json()["execution_id"]
@@ -133,8 +136,8 @@ class TestConcurrentSamePipeline:
         assert exec_id_1 != exec_id_2
         
         # Both should have the same pipeline name
-        assert response_1.json()["pipeline_name"] == "e2e_http_dest_test"
-        assert response_2.json()["pipeline_name"] == "e2e_http_dest_test"
+        assert response_1.json()["pipeline_name"] == "e2e_api_dest_test"
+        assert response_2.json()["pipeline_name"] == "e2e_api_dest_test"
         
         # Wait for both to complete
         stats_1 = _wait_for_completion(client, exec_id_1)

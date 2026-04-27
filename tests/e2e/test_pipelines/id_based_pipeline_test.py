@@ -8,7 +8,7 @@ Two pipelines for testing the IdBasedPipeline feature:
 
 from reflowfy import IdBasedPipeline, PipelineParameter
 from tests.e2e.test_pipelines.sources import e2e_mock
-from tests.e2e.test_pipelines.destinations import e2e_console
+from tests.e2e.test_pipelines.destinations import e2e_console, e2e_http
 from tests.e2e.test_pipelines.transformations import (
     id_pipeline_add_metadata,
     id_pipeline_enrich,
@@ -52,7 +52,7 @@ class E2EIdBasedPipelineTest(IdBasedPipeline):
         return e2e_mock(data=data, batch_size=5)
 
     def define_destination(self, params):
-        return e2e_console(pretty_print=False, max_records_display=3)
+        return e2e_http()
 
     def define_transformations(self, params, current_ids):
         return [

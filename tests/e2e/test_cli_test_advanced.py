@@ -334,7 +334,7 @@ from reflowfy import AbstractPipeline
 class _TagTransformation:
     name = "tag_records"
 
-    def apply(self, records, context):
+    def apply(self, records, runtime_params):
         for r in records:
             r["_tagged"] = True
         return records
@@ -372,7 +372,7 @@ from reflowfy import AbstractPipeline
 class _FailTransformation:
     name = "always_fail"
 
-    def apply(self, records, context):
+    def apply(self, records, runtime_params):
         raise RuntimeError("deliberate failure in transformation")
 
 

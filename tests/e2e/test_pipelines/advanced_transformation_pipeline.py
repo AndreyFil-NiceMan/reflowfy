@@ -9,14 +9,14 @@ Four pipelines for testing transformation context features:
 """
 
 from reflowfy import AbstractPipeline
-from tests.e2e.test_pipelines.sources import e2e_mock
 from tests.e2e.test_pipelines.destinations import e2e_http
+from tests.e2e.test_pipelines.sources import e2e_mock
 from tests.e2e.test_pipelines.transformations import (
-    ctx_probe,
-    ctx_runtime_params,
+    ctx_batch_id,
     ctx_enrich,
     ctx_maybe_fail,
-    ctx_batch_id,
+    ctx_probe,
+    ctx_runtime_params,
 )
 
 
@@ -26,13 +26,13 @@ class E2EContextProbePipeline(AbstractPipeline):
     name = "e2e_context_probe"
     rate_limit = 50
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         return e2e_mock(count=20, batch_size=10)
 
-    def define_destination(self, params):
+    def define_destination(self, runtime_params):
         return e2e_http()
 
-    def define_transformations(self, params):
+    def define_transformations(self, runtime_params):
         return [ctx_probe()]
 
 
@@ -42,13 +42,13 @@ class E2ERuntimeParamsPipeline(AbstractPipeline):
     name = "e2e_runtime_params"
     rate_limit = 50
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         return e2e_mock(count=10, batch_size=10)
 
-    def define_destination(self, params):
+    def define_destination(self, runtime_params):
         return e2e_http()
 
-    def define_transformations(self, params):
+    def define_transformations(self, runtime_params):
         return [ctx_runtime_params()]
 
 
@@ -58,13 +58,13 @@ class E2EErrorTolerantPipeline(AbstractPipeline):
     name = "e2e_error_tolerant"
     rate_limit = 50
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         return e2e_mock(count=10, batch_size=10)
 
-    def define_destination(self, params):
+    def define_destination(self, runtime_params):
         return e2e_http()
 
-    def define_transformations(self, params):
+    def define_transformations(self, runtime_params):
         return [ctx_enrich(), ctx_maybe_fail()]
 
 
@@ -74,11 +74,11 @@ class E2EBatchIdentityPipeline(AbstractPipeline):
     name = "e2e_batch_identity"
     rate_limit = 50
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         return e2e_mock(count=30, batch_size=10)
 
-    def define_destination(self, params):
+    def define_destination(self, runtime_params):
         return e2e_http()
 
-    def define_transformations(self, params):
+    def define_transformations(self, runtime_params):
         return [ctx_batch_id()]

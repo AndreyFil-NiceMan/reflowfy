@@ -55,7 +55,8 @@ class LocalExecutor(BaseExecutor):
         if isinstance(pipeline, IdBasedPipeline):
             return self._execute_id_based(pipeline, runtime_params, execution_id)
 
-        # Resolve pipeline with runtime params (for AbstractPipeline)
+        # Resolve pipeline with runtime params (for AbstractPipeline).
+        # _resolved_params includes defaults + any keys added by define_source.
         if hasattr(pipeline, 'resolve'):
             pipeline.resolve(runtime_params)
 
@@ -65,6 +66,20 @@ class LocalExecutor(BaseExecutor):
             pipeline_name=pipeline.name,
             runtime_params=runtime_params,
         )
+
+        # Build flat mutable runtime_params for the transformation chain.
+        # Starts from _resolved_params (includes define_source enrichments),
+        # then merges execution-context keys on top.
+        flat_runtime_params = dict(getattr(pipeline, '_resolved_params', runtime_params))
+        flat_runtime_params.update({
+            "execution_id": context.execution_id,
+            "batch_id": context.batch_id,
+            "pipeline_name": context.pipeline_name,
+            "created_at": context.created_at.isoformat(),
+            "batch_number": context.batch_number,
+            "is_retry": context.is_retry,
+            "retry_count": context.retry_count,
+        })
 
         # Initialize status
         status = ExecutionStatus(
@@ -98,7 +113,7 @@ class LocalExecutor(BaseExecutor):
                     transformation.validate_input(transformed_records)
                     transformed_records = transformation.apply(
                         transformed_records,
-                        context.to_dict(),
+                        flat_runtime_params,
                     )
                     transformation.validate_output(transformed_records)
 
@@ -116,7 +131,7 @@ class LocalExecutor(BaseExecutor):
 
             pipeline.destination.send_with_retry(
                 transformed_records,
-                metadata=context.to_dict(),
+                metadata=flat_runtime_params,
             )
 
             print("✓ Records sent successfully")
@@ -189,13 +204,15 @@ class LocalExecutor(BaseExecutor):
             for current_id in ids:
                 print(f"\n  Processing ID: {current_id}")
 
-                # Resolve source and transformations for this ID
+                # Resolve source and transformations for this ID.
+                # batch_params is a per-ID copy enriched by define_source.
                 resolved = pipeline.resolve_for_id(params, current_id)
                 source = resolved["source"]
                 transformations = resolved["transformations"]
+                batch_params = resolved.get("batch_params", params)
 
                 # 1. Fetch data
-                records = source.fetch(params, limit=self.max_records)
+                records = source.fetch(batch_params, limit=self.max_records)
                 if not records:
                     print(f"  ⚠️ No records for ID: {current_id}")
                     status.completed_jobs += 1
@@ -204,23 +221,30 @@ class LocalExecutor(BaseExecutor):
                 print(f"  ✓ Fetched {len(records)} records for {current_id}")
                 total_records_fetched += len(records)
 
-                # 2. Apply transformations
+                # 2. Build flat mutable runtime_params for this ID's chain.
                 transformed_records = records
-                id_context = {**context.to_dict(), "current_id": current_id}
+                flat_id_params = dict(batch_params)
+                flat_id_params.update({
+                    "execution_id": context.execution_id,
+                    "batch_id": context.batch_id,
+                    "pipeline_name": context.pipeline_name,
+                    "created_at": context.created_at.isoformat(),
+                    "current_ids": [current_id],
+                })
 
                 for transformation in transformations:
                     print(f"  🔄 Applying: {transformation.name}")
                     transformation.validate_input(transformed_records)
                     transformed_records = transformation.apply(
                         transformed_records,
-                        id_context,
+                        flat_id_params,
                     )
                     transformation.validate_output(transformed_records)
 
                 # 3. Send to destination
                 destination.send_with_retry(
                     transformed_records,
-                    metadata=id_context,
+                    metadata=flat_id_params,
                 )
 
                 total_records_sent += len(transformed_records)

@@ -72,8 +72,8 @@ def _register_builtin_destinations() -> None:
         pass
 
     try:
-        from reflowfy.destinations.http import HTTPDestination
-        DestinationFactory.register("http", HTTPDestination)
+        from reflowfy.destinations.api import ApiDestination
+        DestinationFactory.register("api", ApiDestination)
     except ImportError:
         pass
 

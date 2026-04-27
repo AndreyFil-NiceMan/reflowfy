@@ -12,6 +12,7 @@
 #   ./scripts/run_e2e_tests.sh schedule     # Run only pipeline schedule tests
 #   ./scripts/run_e2e_tests.sh --no-docker  # Skip services start (assume running)
 #   ./scripts/run_e2e_tests.sh --keep-docker # Keep Docker running after tests finish
+#   ./scripts/run_e2e_tests.sh --test-file tests/e2e/test_runtime_params_flow.py  # Run specific file
 # ==============================================================================
 
 set -e
@@ -30,9 +31,11 @@ DIST_DIR="$PROJECT_ROOT/dist"
 
 # Parse arguments
 TEST_SUITE="all"
+TEST_FILE=""
 SKIP_DOCKER=false
 KEEP_DOCKER=false
 
+prev_arg=""
 for arg in "$@"; do
     case $arg in
         sources)
@@ -56,7 +59,15 @@ for arg in "$@"; do
         --keep-docker)
             KEEP_DOCKER=true
             ;;
+        --test-file)
+            ;;
+        *)
+            if [ "$prev_arg" = "--test-file" ]; then
+                TEST_FILE="$arg"
+            fi
+            ;;
     esac
+    prev_arg="$arg"
 done
 
 # Functions
@@ -395,23 +406,27 @@ log_info "Step 4: Running E2E Tests..."
 # Let's run from PROJECT_ROOT but pointing to the running services (configured via default ports)
 cd "$PROJECT_ROOT"
 
-case $TEST_SUITE in
-    sources)
-        pytest tests/e2e/sources/ -v --tb=short
-        ;;
-    destinations)
-        pytest tests/e2e/destinations/ -v --tb=short -ra
-        ;;
-    dx)
-        pytest tests/e2e/test_auto_registration.py tests/e2e/test_decorator_components.py tests/e2e/test_cli_scaffolding.py tests/e2e/test_cli_build.py tests/e2e/test_cli_run.py tests/e2e/test_cli_check.py tests/e2e/test_cli_deploy.py tests/e2e/test_cli_test.py -v --tb=short -ra
-        ;;
-    schedule)
-        pytest tests/e2e/test_schedule.py -v --tb=short -ra
-        ;;
-    all)
-        pytest tests/e2e/ -v --tb=short -ra
-        ;;
-esac
+if [ -n "$TEST_FILE" ]; then
+    pytest "$TEST_FILE" -v --tb=short -ra
+else
+    case $TEST_SUITE in
+        sources)
+            pytest tests/e2e/sources/ -v --tb=short
+            ;;
+        destinations)
+            pytest tests/e2e/destinations/ -v --tb=short -ra
+            ;;
+        dx)
+            pytest tests/e2e/test_auto_registration.py tests/e2e/test_decorator_components.py tests/e2e/test_cli_scaffolding.py tests/e2e/test_cli_build.py tests/e2e/test_cli_run.py tests/e2e/test_cli_check.py tests/e2e/test_cli_deploy.py tests/e2e/test_cli_test.py -v --tb=short -ra
+            ;;
+        schedule)
+            pytest tests/e2e/test_schedule.py -v --tb=short -ra
+            ;;
+        all)
+            pytest tests/e2e/ -v --tb=short -ra
+            ;;
+    esac
+fi
 
 TEST_EXIT_CODE=$?
 

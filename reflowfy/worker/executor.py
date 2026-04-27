@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 from reflowfy.transformations.registry import transformation_registry
 from reflowfy.destinations.kafka import KafkaDestination
-from reflowfy.destinations.http import HttpDestination
+from reflowfy.destinations.api import ApiDestination
 from reflowfy.destinations.console import ConsoleDestination
 from reflowfy.reflow_manager.models import Job
 
@@ -118,6 +118,26 @@ class WorkerExecutor:
             records = job_payload.get("records", [])
             metadata = job_payload.get("metadata", {})
 
+            # Build a single flat mutable runtime_params dict.
+            # User params are the base; execution-context keys are merged on top
+            # (they are reserved and cannot be shadowed by user params).
+            # This same dict is passed through every transformation so mutations
+            # made by one transformation are visible to subsequent ones and to
+            # the destination.
+            runtime_params = dict(metadata.get("runtime_params", {}))
+            runtime_params.update({
+                "execution_id": metadata.get("execution_id", ""),
+                "batch_id": metadata.get("batch_id", ""),
+                "pipeline_name": metadata.get("pipeline_name", ""),
+                "created_at": metadata.get("created_at", ""),
+                "batch_number": metadata.get("batch_number", 0),
+                "total_batches": metadata.get("total_batches", 0),
+                "retry_count": metadata.get("retry_count", 0),
+                "is_retry": metadata.get("is_retry", False),
+            })
+            if "current_ids" in metadata:
+                runtime_params["current_ids"] = metadata["current_ids"]
+
             # Track input records
             stats.records_input = len(records)
 
@@ -143,8 +163,8 @@ class WorkerExecutor:
                 # Load transformation from registry
                 transformation = transformation_registry.create_instance(transformation_name)
 
-                # Apply transformation (CPU-bound)
-                transformed_records = transformation.apply(transformed_records, metadata)
+                # Apply transformation — pass the shared mutable runtime_params
+                transformed_records = transformation.apply(transformed_records, runtime_params)
 
                 # Track transformation time
                 transform_duration = time.time() - transform_start
@@ -170,7 +190,7 @@ class WorkerExecutor:
             # Send to destination and track time (async)
             print(f"  📤 Sending {len(transformed_records)} records to destination...")
             dest_start = time.time()
-            await destination.send_with_retry(transformed_records, metadata)
+            await destination.send_with_retry(transformed_records, runtime_params)
             stats.destination_write_time = time.time() - dest_start
 
             # Mark as successful
@@ -274,8 +294,8 @@ class WorkerExecutor:
 
         if dest_type == "KafkaDestination":
             return KafkaDestination(**config)
-        elif dest_type == "HttpDestination":
-            return HttpDestination(**config)
+        elif dest_type == "ApiDestination":
+            return ApiDestination(**config)
         elif dest_type == "ConsoleDestination":
             return ConsoleDestination(**config)
         else:

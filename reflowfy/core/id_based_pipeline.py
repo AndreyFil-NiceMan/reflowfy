@@ -371,18 +371,34 @@ class IdBasedPipeline(metaclass=IdBasedPipelineMeta):
         Called by the PipelineRunner once per ID-batch (batch size is
         determined by the pipeline's ``ids_batch_size`` attribute).
 
+        Uses a per-batch copy of runtime_params so that any keys added by
+        define_source (source enrichments) don't bleed into subsequent batches.
+        The enrichments are returned separately so callers can inject them into
+        the job payload metadata, making them available to workers.
+
         Args:
             runtime_params: Validated runtime parameters
             ids_batch: List of IDs in this batch
 
         Returns:
-            Dict with 'source', 'transformations', 'destination', 'current_ids'
+            Dict with 'source', 'transformations', 'destination', 'current_ids',
+            'source_enrichments' (keys added by define_source), 'batch_params'
+            (the full per-batch param dict including enrichments).
         """
+        # Use a fresh copy per batch — prevents enrichments from one batch
+        # leaking into the next batch's runtime_params.
+        batch_params = dict(runtime_params)
+        source = self.define_source(batch_params, ids_batch)
+        source_enrichments = {
+            k: batch_params[k] for k in batch_params if k not in runtime_params
+        }
         return {
-            "source": self.define_source(runtime_params, ids_batch),
-            "transformations": self.define_transformations(runtime_params, ids_batch),
-            "destination": self.define_destination(runtime_params),
+            "source": source,
+            "transformations": self.define_transformations(batch_params, ids_batch),
+            "destination": self.define_destination(batch_params),
             "current_ids": ids_batch,
+            "source_enrichments": source_enrichments,
+            "batch_params": batch_params,
         }
 
     def resolve_for_id(

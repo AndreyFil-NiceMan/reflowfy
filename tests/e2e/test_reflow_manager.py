@@ -57,7 +57,8 @@ class TestRateLimiting:
         response = client.post(
             "/run",
             json={
-                "pipeline_name": "e2e_http_dest_test",
+                "pipeline_name": "e2e_api_dest_test",
+                "runtime_params": {"tenant_id": "rate-limit-test", "env": "staging"},
                 "rate_limit": 5,  # 5 jobs per second
             },
         )

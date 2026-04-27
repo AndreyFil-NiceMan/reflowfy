@@ -7,8 +7,8 @@ interrupted and recovered.
 """
 
 from reflowfy import AbstractPipeline
-from tests.e2e.test_pipelines.sources import e2e_mock
 from tests.e2e.test_pipelines.destinations import e2e_http
+from tests.e2e.test_pipelines.sources import e2e_mock
 from tests.e2e.test_pipelines.transformations import crash_recovery_add_info
 
 
@@ -19,12 +19,12 @@ class CrashRecoveryTestPipeline(AbstractPipeline):
     # High default rate — crash recovery test overrides to slow via RunPipelineRequest
     rate_limit = 50
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         # 500 items / 10 batch_size = 50 jobs. At 0.5 jobs/sec override ≈ 100 seconds
         return e2e_mock(count=500, batch_size=10)
 
-    def define_destination(self, params):
+    def define_destination(self, runtime_params):
         return e2e_http()
 
-    def define_transformations(self, params):
+    def define_transformations(self, runtime_params):
         return [crash_recovery_add_info()]

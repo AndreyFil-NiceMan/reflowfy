@@ -171,7 +171,7 @@ services:
       context: .
       dockerfile: Dockerfile.worker
     container_name: reflofy-e2e-mock-http
-    command: python -m tests.e2e.destinations.mock_http_server
+    command: python -m tests.e2e.destinations.mock_api_server
     ports:
       - '8091:8091'
     volumes:

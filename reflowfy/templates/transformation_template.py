@@ -13,18 +13,20 @@ class ExampleTransform(BaseTransformation):
 
     name = "example_transform"
 
-    def apply(self, records, context):
+    def apply(self, records, runtime_params):
         """
         Transform a batch of records.
 
         Args:
             records: List of record dicts
-            context: Execution context (execution_id, runtime_params, etc.)
+            runtime_params: Flat dict of user params + execution-context keys
+                (execution_id, batch_id, pipeline_name, created_at, …).
+                Mutations are visible to subsequent transformations and the destination.
 
         Returns:
             Transformed list of records
         """
-        execution_id = context.get("execution_id", "unknown")
+        execution_id = runtime_params.get("execution_id", "unknown")
         for record in records:
             record["_processed_by"] = "reflowfy"
             record["_execution_id"] = execution_id

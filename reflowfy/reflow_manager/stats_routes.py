@@ -156,16 +156,32 @@ async def get_pipeline_detail(
         pipeline_name: Name of the pipeline
         limit: Number of recent executions to return (default 10)
     """
-    # Check pipeline exists
+    # Check pipeline exists in execution history
     exec_count = db.query(func.count(Execution.execution_id)).filter(
         Execution.pipeline_name == pipeline_name,
     ).scalar()
 
     if exec_count == 0:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No executions found for pipeline '{pipeline_name}'",
-        )
+        # No executions yet — try the pipeline registry for static metadata
+        from reflowfy.core.registry import pipeline_registry
+        pipeline_obj = pipeline_registry.get(pipeline_name)
+        if not pipeline_obj:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Pipeline '{pipeline_name}' not found in registry or execution history",
+            )
+        pipeline_meta = pipeline_obj.to_dict()
+        return {
+            "pipeline_name": pipeline_name,
+            "total_executions": 0,
+            "executions_by_state": {},
+            "total_jobs": 0,
+            "jobs_completed": 0,
+            "jobs_failed": 0,
+            "success_rate": 100.0,
+            "recent_executions": [],
+            **{k: v for k, v in pipeline_meta.items() if k != "name"},
+        }
 
     # Execution counts by state
     exec_rows = db.query(

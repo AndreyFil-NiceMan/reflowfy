@@ -179,13 +179,14 @@ class {class_name}(BaseTransformation):
 
     name = "{name}"
 
-    def apply(self, records, context):
+    def apply(self, records, runtime_params):
         """
         Transform a batch of records.
 
         Args:
             records: List of record dicts
-            context: Execution context (execution_id, runtime_params, etc.)
+            runtime_params: Flat dict of user params + execution-context keys.
+                Mutations written here are visible to subsequent transformations.
 
         Returns:
             Transformed list of records

@@ -20,7 +20,7 @@ def test_pipelines_auto_registered():
     # Check that our main test pipelines are present
     pipeline_names = [p.name for p in pipelines]
     assert "e2e_elastic_source_test" in pipeline_names
-    assert "e2e_http_dest_test" in pipeline_names
+    assert "e2e_api_dest_test" in pipeline_names
     assert "e2e_transformation_test" in pipeline_names
 
 
