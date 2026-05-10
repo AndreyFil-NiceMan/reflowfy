@@ -7,8 +7,8 @@ Two pipelines for testing the IdBasedPipeline feature:
 """
 
 from reflowfy import IdBasedPipeline, PipelineParameter
-from tests.e2e.test_pipelines.sources import e2e_mock
 from tests.e2e.test_pipelines.destinations import e2e_console, e2e_http
+from tests.e2e.test_pipelines.sources import e2e_mock
 from tests.e2e.test_pipelines.transformations import (
     id_pipeline_add_metadata,
     id_pipeline_enrich,
@@ -37,8 +37,9 @@ class E2EIdBasedPipelineTest(IdBasedPipeline):
             ),
         ]
 
-    def define_source(self, params, current_ids):
-        records_per_id = params.get("records_per_id", 10)
+    def define_source(self, runtime_params):
+        current_ids = runtime_params.get("current_ids", [])
+        records_per_id = runtime_params.get("records_per_id", 10)
         data = [
             {
                 "id": f"{current_id}_record_{i}",
@@ -51,10 +52,10 @@ class E2EIdBasedPipelineTest(IdBasedPipeline):
         ]
         return e2e_mock(data=data, batch_size=5)
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         return e2e_http()
 
-    def define_transformations(self, params, current_ids):
+    def define_transformations(self, records, runtime_params):
         return [
             id_pipeline_add_metadata(),
             id_pipeline_enrich(),
@@ -83,8 +84,9 @@ class E2EIdBasedBatchPipelineTest(IdBasedPipeline):
             ),
         ]
 
-    def define_source(self, params, current_ids):
-        records_per_id = params.get("records_per_id", 5)
+    def define_source(self, runtime_params):
+        current_ids = runtime_params.get("current_ids", [])
+        records_per_id = runtime_params.get("records_per_id", 5)
         data = [
             {
                 "id": f"{current_id}_record_{i}",
@@ -96,10 +98,10 @@ class E2EIdBasedBatchPipelineTest(IdBasedPipeline):
         ]
         return e2e_mock(data=data, batch_size=5)
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         return e2e_console(pretty_print=False, max_records_display=3)
 
-    def define_transformations(self, params, current_ids):
+    def define_transformations(self, records, runtime_params):
         return [
             id_pipeline_add_metadata(),
             id_pipeline_enrich(),

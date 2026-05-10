@@ -22,13 +22,13 @@ class E2ESlowRatePipeline(AbstractPipeline):
     name = "e2e_slow_rate"
     rate_limit = 1
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         return e2e_mock(count=5, batch_size=1)
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         return e2e_http()
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return [rl_passthrough()]
 
 
@@ -38,13 +38,13 @@ class E2EFastRatePipeline(AbstractPipeline):
     name = "e2e_fast_rate"
     rate_limit = 500
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         return e2e_mock(count=50, batch_size=10)
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         return e2e_http()
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return [rl_passthrough()]
 
 
@@ -54,11 +54,11 @@ class E2ERateLimitOverridePipeline(AbstractPipeline):
     name = "e2e_rate_override"
     rate_limit = 500
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         return e2e_mock(count=5, batch_size=1)
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         return e2e_http()
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return [rl_passthrough()]

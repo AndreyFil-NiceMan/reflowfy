@@ -109,10 +109,13 @@ class LocalExecutor(BaseExecutor):
 
             print(f"✓ Fetched {len(records)} records")
 
-            # 2. Apply transformations
+            # 2. Resolve transformations from current records/runtime params
+            transformations = list(pipeline.define_transformations(records, flat_runtime_params))
+
+            # 3. Apply transformations
             transformed_records = records
 
-            for transformation in pipeline.transformations:
+            for transformation in transformations:
                 print(f"🔄 Applying transformation: {transformation.name}")
 
                 try:
@@ -132,10 +135,11 @@ class LocalExecutor(BaseExecutor):
                         original_error=e,
                     )
 
-            # 3. Send to destination
+            # 4. Resolve destination from post-transformation records and send
+            destination = pipeline.define_destination(transformed_records, flat_runtime_params)
             print(f"📤 Sending {len(transformed_records)} records to destination...")
 
-            pipeline.destination.send_with_retry(
+            destination.send_with_retry(
                 transformed_records,
                 metadata=flat_runtime_params,
             )
@@ -200,9 +204,6 @@ class LocalExecutor(BaseExecutor):
 
         print(f"🔍 IdBasedPipeline local execution: {len(ids)} IDs")
 
-        # Resolve destination once (shared)
-        destination = pipeline.define_destination(params)
-
         total_records_fetched = 0
         total_records_sent = 0
 
@@ -210,11 +211,10 @@ class LocalExecutor(BaseExecutor):
             for current_id in ids:
                 print(f"\n  Processing ID: {current_id}")
 
-                # Resolve source and transformations for this ID.
+                # Resolve source for this ID.
                 # batch_params is a per-ID copy enriched by define_source.
                 resolved = pipeline.resolve_for_id(params, current_id)
                 source = resolved["source"]
-                transformations = resolved["transformations"]
                 batch_params = resolved.get("batch_params", params)
 
                 # 1. Fetch data
@@ -241,6 +241,10 @@ class LocalExecutor(BaseExecutor):
                     is_retry=context.is_retry,
                     current_ids=[current_id],
                 )
+                flat_id_params["current_id"] = current_id
+
+                # Resolve transformations from current records/runtime params.
+                transformations = list(pipeline.define_transformations(records, flat_id_params))
 
                 for transformation in transformations:
                     print(f"  🔄 Applying: {transformation.name}")
@@ -251,7 +255,11 @@ class LocalExecutor(BaseExecutor):
                     )
                     transformation.validate_output(transformed_records)
 
-                # 3. Send to destination
+                # 3. Resolve destination from post-transformation records and send.
+                destination = pipeline.define_destination(
+                    transformed_records,
+                    flat_id_params,
+                )
                 destination.send_with_retry(
                     transformed_records,
                     metadata=flat_id_params,

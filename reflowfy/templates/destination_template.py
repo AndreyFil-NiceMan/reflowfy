@@ -17,7 +17,7 @@ def example_kafka(**overrides):
     Usage in a pipeline:
         from destinations.example_destination import example_kafka
 
-        def define_destination(self, params):
+        def define_destination(self, records, runtime_params):
             return example_kafka(topic="my-output-topic")
     """
     return kafka_destination(

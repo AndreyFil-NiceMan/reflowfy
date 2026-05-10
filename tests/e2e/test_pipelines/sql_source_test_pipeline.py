@@ -32,17 +32,17 @@ class E2ESqlSourceTestPipeline(AbstractPipeline):
             PipelineParameter(name="filter_status", required=False, default="active"),
         ]
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         return e2e_sql(
             query=SQL_QUERY,
             id_column="id",
             batch_size=50,
         )
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         return e2e_console(pretty_print=True, max_records_display=5)
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return [
             sql_filter_by_status(),
             sql_add_source_info(),

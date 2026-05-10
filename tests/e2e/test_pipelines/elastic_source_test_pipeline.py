@@ -38,8 +38,8 @@ class E2EElasticSourceTestPipeline(AbstractPipeline):
             size=50,
         )
 
-    def define_destination(self, runtime_params):
+    def define_destination(self, records, runtime_params):
         return e2e_console(max_records_display=5)
 
-    def define_transformations(self, runtime_params):
+    def define_transformations(self, records, runtime_params):
         return [add_source_info()]

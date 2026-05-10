@@ -1,10 +1,11 @@
 """Initialize a new Reflowfy project."""
 
 import shutil
-import typer
 from pathlib import Path
 
-from reflowfy.cli.utils import console, get_package_path, get_dockerfiles_path
+import typer
+
+from reflowfy.cli.utils import console, get_dockerfiles_path, get_package_path
 
 
 def register(app: typer.Typer):
@@ -42,7 +43,7 @@ def register(app: typer.Typer):
         try:
             template_path = get_package_path() / "templates" / "pipeline_template.py"
             if not template_path.exists():
-                 template_path = Path("reflowfy/templates/pipeline_template.py")
+                template_path = Path("reflowfy/templates/pipeline_template.py")
 
             content = template_path.read_text()
             sample_pipeline.write_text(content)
@@ -59,9 +60,9 @@ from reflowfy import AbstractPipeline
 
 class {class_name}(AbstractPipeline):
     name = "{name}"
-    def define_source(self, params): return []
-    def define_destination(self, params): return []
-    def define_transformations(self, params): return []
+    def define_source(self, runtime_params): return []
+    def define_destination(self, records, runtime_params): return []
+    def define_transformations(self, records, runtime_params): return []
 ''')
 
         console.print(f"  ✅ Created pipeline: pipelines/{name}.py", style="green")
@@ -86,7 +87,9 @@ class {class_name}(AbstractPipeline):
                 template_path = Path("reflowfy/templates/destination_template.py")
             if template_path.exists():
                 dest_file.write_text(template_path.read_text())
-                console.print("  ✅ Created destination: destinations/example_destination.py", style="green")
+                console.print(
+                    "  ✅ Created destination: destinations/example_destination.py", style="green"
+                )
         except Exception as e:
             console.print(f"  ⚠️ Could not create example destination: {e}", style="yellow")
 
@@ -98,12 +101,18 @@ class {class_name}(AbstractPipeline):
                 template_path = Path("reflowfy/templates/transformation_template.py")
             if template_path.exists():
                 transform_file.write_text(template_path.read_text())
-                console.print("  ✅ Created transformation: transformations/example_transform.py", style="green")
+                console.print(
+                    "  ✅ Created transformation: transformations/example_transform.py",
+                    style="green",
+                )
         except Exception as e:
             console.print(f"  ⚠️ Could not create example transformation: {e}", style="yellow")
 
         # Create sample query templates (SQL + JSON)
-        for tpl_name, out_name in [("query_template.sql", "example_query.sql"), ("query_template.json", "example_query.json")]:
+        for tpl_name, out_name in [
+            ("query_template.sql", "example_query.sql"),
+            ("query_template.json", "example_query.json"),
+        ]:
             query_file = target_dir / "queries" / out_name
             try:
                 template_path = get_package_path() / "templates" / tpl_name
@@ -118,7 +127,12 @@ class {class_name}(AbstractPipeline):
         # Copy Dockerfiles if not present
         try:
             src_path = get_dockerfiles_path()
-            for dockerfile in ["Dockerfile.api", "Dockerfile.reflow-manager", "Dockerfile.worker", "docker-compose.yml"]:
+            for dockerfile in [
+                "Dockerfile.api",
+                "Dockerfile.reflow-manager",
+                "Dockerfile.worker",
+                "docker-compose.yml",
+            ]:
                 src_file = src_path / dockerfile
                 dest_file = target_dir / dockerfile
                 if src_file.exists() and not dest_file.exists():
@@ -142,7 +156,9 @@ class {class_name}(AbstractPipeline):
         except Exception as e:
             console.print(f"  ⚠️ Could not create .env: {e}", style="yellow")
 
-        console.print(Panel(f"""
+        console.print(
+            Panel(
+                f"""
 🎉 Project initialized!
 
 Project structure:
@@ -159,4 +175,7 @@ Next steps:
   4. reflowfy new pipeline|source|destination|transformation <name>
   5. reflowfy run --build    (test locally)
   6. reflowfy deploy        (deploy to OpenShift - reads from .env)
-""", style="bold green"))
+""",
+                style="bold green",
+            )
+        )

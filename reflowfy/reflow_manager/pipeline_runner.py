@@ -1,6 +1,7 @@
 """Pipeline execution runner for ReflowManager."""
 
 import asyncio
+import copy
 import hashlib
 import json
 import time
@@ -35,8 +36,6 @@ def _filter_volatile_keys(d: dict) -> dict:
 def generate_job_id(
     pipeline_name: str,
     transformations: list,
-    destination_type: str,
-    destination_config: dict,
     records: list,
     source_metadata: dict,
 ) -> str:
@@ -48,8 +47,6 @@ def generate_job_id(
     stable = {
         "pipeline_name": pipeline_name,
         "transformations": sorted(transformations),
-        "destination_type": destination_type,
-        "destination_config": destination_config,
         "records": records,
         "source_metadata": _filter_volatile_keys(source_metadata or {}),
     }
@@ -424,17 +421,6 @@ class PipelineRunner:
         if hasattr(pipeline, "resolve"):
             pipeline.resolve(runtime_params)
 
-        resolved_transformations = list(pipeline.transformations)
-        transformation_names = [t.name for t in resolved_transformations]
-        transformation_specs = [
-            {
-                "name": t.name,
-                "module": t.__class__.__module__,
-                "class_name": t.__class__.__name__,
-            }
-            for t in resolved_transformations
-        ]
-
         print(f"🚀 Job dispatch starting: {pipeline_name}")
         print(f"📊 Execution ID: {execution_id}")
 
@@ -466,15 +452,35 @@ class PipelineRunner:
         dedup_count = 0
         current_job_ids = []
 
-        for source_job in pipeline.source.split_jobs(runtime_params):
+        for source_job in pipeline.source.split_jobs(enriched_params):
+            # Use per-job params so in-place enrichment does not bleed across jobs.
+            job_params = dict(enriched_params)
+
+            # Resolve transformation chain and destination for this source job.
+            resolved_transformations = list(
+                pipeline.define_transformations(source_job.records, job_params)
+            )
+            transformed_preview = copy.deepcopy(source_job.records)
+            for t in resolved_transformations:
+                transformed_preview = t.apply(transformed_preview, job_params)
+
+            destination = pipeline.define_destination(transformed_preview, job_params)
+            transformation_names = [t.name for t in resolved_transformations]
+            transformation_specs = [
+                {
+                    "name": t.name,
+                    "module": t.__class__.__module__,
+                    "class_name": t.__class__.__name__,
+                }
+                for t in resolved_transformations
+            ]
+
             if enable_duplicate_jobs:
                 job_id = str(uuid.uuid4())
             else:
                 job_id = generate_job_id(
                     pipeline_name=pipeline_name,
                     transformations=transformation_names,
-                    destination_type=pipeline.destination.__class__.__name__,
-                    destination_config=pipeline.destination.config,
                     records=source_job.records,
                     source_metadata=source_job.metadata or {},
                 )
@@ -486,6 +492,10 @@ class PipelineRunner:
             # Set current batch number on context before embedding in payload
             context.batch_number = batch_number
 
+            # Ensure workers receive per-job enriched runtime params.
+            context_dict = context.to_dict()
+            context_dict["runtime_params"] = dict(job_params)
+
             # Create job payload
             job_payload = {
                 "execution_id": execution_id,
@@ -494,13 +504,13 @@ class PipelineRunner:
                 "transformations": transformation_names,
                 "transformation_specs": transformation_specs,
                 "destination": {
-                    "type": pipeline.destination.__class__.__name__,
-                    "config": pipeline.destination.config,
+                    "type": destination.__class__.__name__,
+                    "config": destination.config,
                 },
                 "rate_limit": pipeline.rate_limit,
                 "records": source_job.records,
                 "metadata": {
-                    **context.to_dict(),
+                    **context_dict,
                     "source_metadata": source_job.metadata,
                 },
             }
@@ -698,9 +708,6 @@ class PipelineRunner:
         if effective_rate_limit is None and pipeline.rate_limit:
             effective_rate_limit = pipeline.rate_limit
 
-        # Resolve destination once (shared across all IDs)
-        destination = pipeline.define_destination(params)
-
         # Phase 1: For each ID-batch, resolve source and save jobs to database
         id_batches = _chunk(ids, ids_batch_size)
         print(
@@ -714,32 +721,44 @@ class PipelineRunner:
         for ids_batch in id_batches:
             print(f"    Processing ID batch: {ids_batch}")
 
-            # Resolve source and transformations for this batch of IDs.
+            # Resolve source for this batch of IDs.
             # batch_params is a per-batch copy of params enriched by define_source.
             resolved = pipeline.resolve_for_ids(params, ids_batch)
             source = resolved["source"]
-            transformations = resolved["transformations"]
-            transformation_names = [t.name for t in transformations]
-            transformation_specs = [
-                {
-                    "name": t.name,
-                    "module": t.__class__.__module__,
-                    "class_name": t.__class__.__name__,
-                }
-                for t in transformations
-            ]
             batch_params = resolved.get("batch_params", params)
 
             # Split this batch's source into jobs
             for source_job in source.split_jobs(batch_params):
+                # Per-job params start from batch params and include source metadata.
+                job_params = dict(batch_params)
+                if source_job.metadata:
+                    for key, value in source_job.metadata.items():
+                        if key not in job_params:
+                            job_params[key] = value
+
+                transformations = list(
+                    pipeline.define_transformations(source_job.records, job_params)
+                )
+                transformed_preview = copy.deepcopy(source_job.records)
+                for t in transformations:
+                    transformed_preview = t.apply(transformed_preview, job_params)
+
+                destination = pipeline.define_destination(transformed_preview, job_params)
+                transformation_names = [t.name for t in transformations]
+                transformation_specs = [
+                    {
+                        "name": t.name,
+                        "module": t.__class__.__module__,
+                        "class_name": t.__class__.__name__,
+                    }
+                    for t in transformations
+                ]
                 if enable_duplicate_jobs:
                     job_id = str(uuid.uuid4())
                 else:
                     job_id = generate_job_id(
                         pipeline_name=pipeline_name,
                         transformations=transformation_names,
-                        destination_type=destination.__class__.__name__,
-                        destination_config=destination.config,
                         records=source_job.records,
                         source_metadata=source_job.metadata or {},
                     )
@@ -752,10 +771,10 @@ class PipelineRunner:
                 context.batch_number = batch_number
 
                 # Create job payload with current_ids list in metadata.
-                # runtime_params in metadata is the batch-enriched version so
-                # workers receive any keys added by define_source.
+                # runtime_params in metadata is the per-job enriched version so
+                # workers receive any keys added by define_source and job metadata.
                 context_dict = context.to_dict()
-                context_dict["runtime_params"] = dict(batch_params)
+                context_dict["runtime_params"] = dict(job_params)
                 job_payload = {
                     "execution_id": execution_id,
                     "job_id": job_id,

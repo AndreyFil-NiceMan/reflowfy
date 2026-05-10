@@ -98,13 +98,13 @@ class {class_name}(AbstractPipeline):
     def define_parameters(self):
         return []
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         return MockSource()
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         return MockDestination()
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return []
 '''
     with open(filepath, "w") as f:

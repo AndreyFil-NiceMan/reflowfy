@@ -1,7 +1,8 @@
 """Scaffold new Reflowfy components."""
 
-import typer
 from pathlib import Path
+
+import typer
 
 
 def register(app: typer.Typer):
@@ -16,6 +17,7 @@ def register(app: typer.Typer):
     ):
         """Create a new pipeline file."""
         from rich.console import Console
+
         console = Console()
 
         target = Path("pipelines") / f"{name}.py"
@@ -49,19 +51,19 @@ class {class_name}(AbstractPipeline):
             # PipelineParameter(name="param", required=True, description="..."),
         ]
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         # Return a configured source
         # from reflowfy import elastic_source
         # return elastic_source(url="http://elasticsearch:9200", index="my-index")
         pass
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         # Return a configured destination
         # from reflowfy import kafka_destination
         # return kafka_destination(bootstrap_servers="kafka:9092", topic="output")
         pass
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return []
 ''')
         console.print(f"✅ Created pipeline: {target}", style="green")
@@ -72,6 +74,7 @@ class {class_name}(AbstractPipeline):
     ):
         """Create a new reusable source configuration."""
         from rich.console import Console
+
         console = Console()
 
         target = Path("sources") / f"{name}.py"
@@ -99,7 +102,7 @@ def {name}(**overrides):
     Usage in a pipeline:
         from sources.{name} import {name}
 
-        def define_source(self, params):
+        def define_source(self, runtime_params):
             return {name}(index="my-index")
     """
     # Example: return elastic_source(url=os.getenv("ELASTIC_URL"), **overrides)
@@ -113,6 +116,7 @@ def {name}(**overrides):
     ):
         """Create a new reusable destination configuration."""
         from rich.console import Console
+
         console = Console()
 
         target = Path("destinations") / f"{name}.py"
@@ -140,7 +144,7 @@ def {name}(**overrides):
     Usage in a pipeline:
         from destinations.{name} import {name}
 
-        def define_destination(self, params):
+        def define_destination(self, records, runtime_params):
             return {name}(topic="my-topic")
     """
     # Example: return kafka_destination(bootstrap_servers=os.getenv("KAFKA_SERVERS"), **overrides)
@@ -154,6 +158,7 @@ def {name}(**overrides):
     ):
         """Create a new reusable transformation."""
         from rich.console import Console
+
         console = Console()
 
         target = Path("transformations") / f"{name}.py"

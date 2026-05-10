@@ -36,10 +36,10 @@ class E2EDedupOffPipeline(AbstractPipeline):
     def define_source(self, runtime_params):
         return e2e_mock(count=5, batch_size=5, data=_FIXED_DATA)
 
-    def define_destination(self, runtime_params):
+    def define_destination(self, records, runtime_params):
         return e2e_console()
 
-    def define_transformations(self, runtime_params):
+    def define_transformations(self, records, runtime_params):
         return []
 
 
@@ -56,8 +56,8 @@ class E2EDedupOnPipeline(AbstractPipeline):
     def define_source(self, runtime_params):
         return e2e_mock(count=5, batch_size=5, data=_FIXED_DATA)
 
-    def define_destination(self, runtime_params):
+    def define_destination(self, records, runtime_params):
         return e2e_console()
 
-    def define_transformations(self, runtime_params):
+    def define_transformations(self, records, runtime_params):
         return []

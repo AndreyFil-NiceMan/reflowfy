@@ -23,8 +23,8 @@ class E2ERuntimeParamsDestinationPipeline(AbstractPipeline):
         runtime_params["tenant"] = "acme"
         return e2e_mock(count=10, batch_size=10)
 
-    def define_destination(self, runtime_params):
+    def define_destination(self, records, runtime_params):
         return e2e_http_runtime_params(runtime_params)
 
-    def define_transformations(self, runtime_params):
+    def define_transformations(self, records, runtime_params):
         return [params_step1_enrich(), params_step2_verify()]

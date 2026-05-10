@@ -17,11 +17,11 @@ class E2EKafkaDestTestPipeline(AbstractPipeline):
     name = "e2e_kafka_dest_test"
     rate_limit = 10
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         return e2e_mock(count=100, batch_size=10)
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         return e2e_kafka()
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return [kafka_add_dest_info()]

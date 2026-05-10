@@ -19,10 +19,10 @@ Example:
     ...             return elastic_source(...)
     ...         return mock_source(...)
     ...
-    ...     def define_destination(self, params):
+    ...     def define_destination(self, records, params):
     ...         return console_destination()
     ...
-    ...     def define_transformations(self, params):
+    ...     def define_transformations(self, records, params):
     ...         return [MyTransformation()]
 """
 
@@ -52,6 +52,7 @@ class PipelineMeta(ABCMeta):
             if schedule is not None:
                 try:
                     from croniter import croniter as _croniter
+
                     if not _croniter.is_valid(schedule):
                         raise ValueError(
                             f"Pipeline '{namespace.get('name', name)}' has invalid cron "
@@ -307,6 +308,7 @@ class AbstractPipeline(metaclass=PipelineMeta):
         if self.schedule is not None:
             try:
                 from croniter import croniter as _croniter
+
                 if not _croniter.is_valid(self.schedule):
                     raise ValueError(
                         f"Pipeline '{self.name}' has invalid cron expression: '{self.schedule}'"
@@ -334,38 +336,44 @@ class AbstractPipeline(metaclass=PipelineMeta):
         pass
 
     @abstractmethod
-    def define_destination(self, runtime_params: Dict[str, Any]) -> Any:
+    def define_destination(self, records: List[Any], runtime_params: Dict[str, Any]) -> Any:
         """
-        Define the destination to use based on runtime parameters.
+        Define the destination to use based on post-transformation records and runtime params.
 
         Args:
+            records: Post-transformation records for the current job/batch
             runtime_params: Parameters provided by the user at runtime
 
         Returns:
             A configured BaseDestination instance
 
         Example:
-            >>> def define_destination(self, params):
-            ...     if params.get("output") == "kafka":
-            ...         return kafka_destination(topic="output")
+            >>> def define_destination(self, records, params):
+            ...     if len(records) > 1000:
+            ...         return kafka_destination(topic="bulk-output")
             ...     return console_destination()
         """
         pass
 
     @abstractmethod
-    def define_transformations(self, runtime_params: Dict[str, Any]) -> List[Any]:
+    def define_transformations(
+        self, records: List[Any], runtime_params: Dict[str, Any]
+    ) -> List[Any]:
         """
-        Define list of transformations to apply based on runtime parameters.
+        Define list of transformations to apply based on records and runtime parameters.
 
         Args:
+            records: Current records for this job/batch (before transformations)
             runtime_params: Parameters provided by the user at runtime
 
         Returns:
             List of BaseTransformation instances to apply in order
 
         Example:
-            >>> def define_transformations(self, params):
+            >>> def define_transformations(self, records, params):
             ...     transforms = [FilterActive()]
+            ...     if len(records) > 1000:
+            ...         transforms.append(ChunkLargePayloads())
             ...     if params.get("uppercase"):
             ...         transforms.append(UppercaseNames())
             ...     return transforms
@@ -495,7 +503,7 @@ class AbstractPipeline(metaclass=PipelineMeta):
         This is used for worker registration.
         """
         try:
-            return [t.name for t in self.define_transformations({})]
+            return [t.name for t in self.define_transformations([], {})]
         except Exception:
             return []
 
@@ -538,8 +546,10 @@ class AbstractPipeline(metaclass=PipelineMeta):
 
         self._resolved_params = params
         self._source = self.define_source(params)
-        self._destination = self.define_destination(params)
-        self._transformations = self.define_transformations(params)
+        # destination and transformations are resolved per-job/per-batch,
+        # once records are available.
+        self._destination = None
+        self._transformations = None
 
         return self
 

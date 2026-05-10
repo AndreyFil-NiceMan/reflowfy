@@ -28,13 +28,13 @@ class E2EScheduledTestPipeline(AbstractPipeline):
     name = "e2e_scheduled_test"
     schedule = "* * * * *"
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         return e2e_mock(count=5, batch_size=5)
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         return e2e_http()
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return []
 
 
@@ -44,13 +44,13 @@ class E2EScheduledSlowPipeline(AbstractPipeline):
     name = "e2e_scheduled_slow_test"
     schedule = "0 * * * *"
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         return e2e_mock(count=5, batch_size=5)
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         return e2e_http()
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return []
 
 
@@ -61,11 +61,11 @@ class E2EScheduledNoDuplicatesPipeline(AbstractPipeline):
     schedule = "0 0 1 1 *"  # once a year — never auto-fires during tests
     enable_duplicate_jobs = False
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         return e2e_mock(data=_NO_DUP_FIXED_DATA, batch_size=5)
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         return e2e_http()
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return []

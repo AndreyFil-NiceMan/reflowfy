@@ -1,17 +1,18 @@
 """Unit tests for ApiDestination."""
 
-import pytest
-import httpx
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
+import pytest
 
 from reflowfy.destinations.api import ApiDestination, api_destination
 from reflowfy.destinations.base import DestinationError
 from reflowfy.destinations.schemas import ApiDestinationConfig
 
-
 # ============================================================================
 # Factory & config
 # ============================================================================
+
 
 class TestApiDestinationFactory:
     def test_factory_returns_instance(self):
@@ -49,6 +50,7 @@ class TestApiDestinationFactory:
 # Schema validation
 # ============================================================================
 
+
 class TestApiDestinationConfig:
     def test_valid_config(self):
         cfg = ApiDestinationConfig(url="https://api.example.com/webhook")
@@ -81,6 +83,7 @@ class TestApiDestinationConfig:
 # Payload building
 # ============================================================================
 
+
 class TestBuildPayload:
     def test_empty_body_returns_empty_dict(self):
         dest = api_destination(url="https://example.com")
@@ -102,6 +105,7 @@ class TestBuildPayload:
 # ============================================================================
 # Send — batch mode
 # ============================================================================
+
 
 class TestSendBatch:
     @pytest.fixture
@@ -182,6 +186,7 @@ class TestSendBatch:
 # Send — individual mode
 # ============================================================================
 
+
 class TestSendIndividual:
     @pytest.fixture
     def mock_response(self):
@@ -245,6 +250,7 @@ class TestSendIndividual:
 # Authentication
 # ============================================================================
 
+
 class TestAuthentication:
     async def _capture_headers(self, dest):
         captured = {}
@@ -287,6 +293,7 @@ class TestAuthentication:
 # ============================================================================
 # Error handling
 # ============================================================================
+
 
 class TestErrorHandling:
     @pytest.fixture
@@ -338,6 +345,7 @@ class TestErrorHandling:
 # ============================================================================
 # Health check
 # ============================================================================
+
 
 class TestHealthCheck:
     async def test_health_check_true_on_2xx(self):

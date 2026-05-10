@@ -1,18 +1,18 @@
 """Test a pipeline locally without Docker."""
 
+import asyncio
+import importlib.util
+import json
 import os
 import sys
-import json
-import asyncio
 import traceback
-import importlib.util
 import uuid
-import typer
 from pathlib import Path
 
-from reflowfy.core.execution_context import ExecutionContext
+import typer
 
 from reflowfy.cli.utils import console
+from reflowfy.core.execution_context import ExecutionContext
 
 
 def register(app: typer.Typer):
@@ -20,9 +20,15 @@ def register(app: typer.Typer):
 
     @app.command()
     def test(
-        pipeline_file: str = typer.Argument(..., help="Path to the pipeline file (e.g., pipelines/my_pipeline.py)"),
-        limit: int = typer.Option(100, "--limit", "-l", help="Maximum number of records to process"),
-        dry_run: bool = typer.Option(False, "--dry-run", help="Print records instead of sending to destination"),
+        pipeline_file: str = typer.Argument(
+            ..., help="Path to the pipeline file (e.g., pipelines/my_pipeline.py)"
+        ),
+        limit: int = typer.Option(
+            100, "--limit", "-l", help="Maximum number of records to process"
+        ),
+        dry_run: bool = typer.Option(
+            False, "--dry-run", help="Print records instead of sending to destination"
+        ),
     ):
         """
         Test a pipeline locally without Docker.
@@ -31,7 +37,7 @@ def register(app: typer.Typer):
         with a record limit (default 100).
         """
         from rich.panel import Panel
-        from rich.prompt import Prompt, Confirm
+        from rich.prompt import Confirm, Prompt
 
         pipeline_path = Path(pipeline_file).resolve()
         if not pipeline_path.exists():
@@ -39,7 +45,9 @@ def register(app: typer.Typer):
             raise typer.Exit(1)
 
         # Load the pipeline file
-        console.print(Panel(f"🧪 Testing pipeline from: [bold]{pipeline_path.name}[/bold]", style="cyan"))
+        console.print(
+            Panel(f"🧪 Testing pipeline from: [bold]{pipeline_path.name}[/bold]", style="cyan")
+        )
 
         # Ensure cwd is in sys.path for imports
         cwd = os.getcwd()
@@ -61,10 +69,13 @@ def register(app: typer.Typer):
 
         # Find registered pipelines
         from reflowfy.core.registry import pipeline_registry
+
         pipelines = pipeline_registry.list_all()
 
         if not pipelines:
-            console.print("[red]❌ No pipelines found in the file. Make sure your pipeline is registered.[/red]")
+            console.print(
+                "[red]❌ No pipelines found in the file. Make sure your pipeline is registered.[/red]"
+            )
             raise typer.Exit(1)
 
         # If multiple pipelines, let user choose
@@ -85,11 +96,14 @@ def register(app: typer.Typer):
 
         # Detect pipeline type
         from reflowfy.core.id_based_pipeline import IdBasedPipeline
+
         is_id_based = isinstance(pipeline, IdBasedPipeline)
 
         if is_id_based:
             batch_size = pipeline.ids_batch_size
-            console.print(f"[bold cyan]🔑 Pipeline type: IdBasedPipeline (ids_batch_size={batch_size})[/bold cyan]")
+            console.print(
+                f"[bold cyan]🔑 Pipeline type: IdBasedPipeline (ids_batch_size={batch_size})[/bold cyan]"
+            )
 
         # Prompt for parameters
         # IdBasedPipeline uses get_all_parameters() which includes built-in 'ids'
@@ -129,12 +143,17 @@ def register(app: typer.Typer):
                     else:
                         value = Confirm.ask(f"    → {param.name}")
                 else:
-                    raw = Prompt.ask(f"    → {param.name}", default=default_str if default_str is not None else ...)
+                    raw = Prompt.ask(
+                        f"    → {param.name}",
+                        default=default_str if default_str is not None else ...,
+                    )
                     value = param.coerce(raw)
 
                 # Validate choices
                 if param.choices and value not in param.choices:
-                    console.print(f"[yellow]⚠️  '{value}' not in choices {param.choices}, using anyway[/yellow]")
+                    console.print(
+                        f"[yellow]⚠️  '{value}' not in choices {param.choices}, using anyway[/yellow]"
+                    )
 
                 params[param.name] = value
         else:
@@ -154,21 +173,11 @@ def register(app: typer.Typer):
 
             # Chunk IDs into batches according to ids_batch_size
             batch_size = pipeline.ids_batch_size
-            ids_batches = [ids[i:i + batch_size] for i in range(0, len(ids), batch_size)]
+            ids_batches = [ids[i : i + batch_size] for i in range(0, len(ids), batch_size)]
             console.print(
                 f"\n[bold]🔑 Processing {len(ids)} IDs "
                 f"in {len(ids_batches)} batch(es) (batch_size={batch_size}):[/bold] {ids}"
             )
-
-            # Destination is shared across all batches
-            try:
-                destination = pipeline.define_destination(params)
-            except Exception as e:
-                console.print(f"[red]❌ Destination setup failed: {e}[/red]")
-                traceback.print_exc()
-                raise typer.Exit(1)
-
-            console.print(f"[bold]📤 Destination:[/bold] {destination}")
 
             total_records = 0
 
@@ -186,22 +195,22 @@ def register(app: typer.Typer):
                 # Use a fresh per-batch copy so define_source enrichments don't
                 # accumulate across batches.
                 batch_params = dict(params)
+                batch_params["current_ids"] = list(ids_batch)
+                batch_params["current_id"] = ids_batch[0] if ids_batch else None
 
                 try:
-                    source = pipeline.define_source(batch_params, ids_batch)
-                    transformations = pipeline.define_transformations(batch_params, ids_batch)
+                    source = pipeline.define_source(batch_params)
                 except Exception as e:
                     console.print(f"[red]❌ Setup failed for batch {ids_batch}: {e}[/red]")
                     traceback.print_exc()
                     continue
 
                 console.print(f"  [bold]🔌 Source:[/bold] {source}")
-                console.print(f"  [bold]🔄 Transformations:[/bold] {[t.__class__.__name__ for t in transformations]}")
 
                 # Fetch records
                 console.print(f"  [cyan]Fetching records (limit={limit})...[/cyan]")
                 try:
-                    records = source.fetch(params, limit=limit)
+                    records = source.fetch(batch_params, limit=limit)
                 except Exception as e:
                     console.print(f"  [red]❌ Source fetch failed for batch {ids_batch}: {e}[/red]")
                     traceback.print_exc()
@@ -216,34 +225,52 @@ def register(app: typer.Typer):
                 # Build flat mutable runtime_params for this batch's chain.
                 transformed = records
                 meta = dict(batch_params)
-                meta.update({
-                    "execution_id": context.execution_id,
-                    "batch_id": context.batch_id,
-                    "pipeline_name": context.pipeline_name,
-                    "created_at": context.created_at.isoformat(),
-                    "current_ids": ids_batch,
-                })
+                meta.update(
+                    {
+                        "execution_id": context.execution_id,
+                        "batch_id": context.batch_id,
+                        "pipeline_name": context.pipeline_name,
+                        "created_at": context.created_at.isoformat(),
+                        "current_ids": ids_batch,
+                        "current_id": ids_batch[0] if ids_batch else None,
+                    }
+                )
+
+                transformations = list(pipeline.define_transformations(records, meta))
+                console.print(
+                    f"  [bold]🔄 Transformations:[/bold] {[t.__class__.__name__ for t in transformations]}"
+                )
+
                 for t in transformations:
                     console.print(f"    [cyan]Applying {t.__class__.__name__}...[/cyan]")
                     try:
                         transformed = t.apply(transformed, meta)
-                        console.print(f"    [green]✓ {t.__class__.__name__}: {len(transformed)} records[/green]")
+                        console.print(
+                            f"    [green]✓ {t.__class__.__name__}: {len(transformed)} records[/green]"
+                        )
                     except Exception as e:
                         console.print(f"    [red]❌ {t.__class__.__name__} failed: {e}[/red]")
                         traceback.print_exc()
                         break
 
                 # Show sample output
-                console.print(f"  [bold]📋 Sample ({min(2, len(transformed))} of {len(transformed)}):[/bold]")
+                console.print(
+                    f"  [bold]📋 Sample ({min(2, len(transformed))} of {len(transformed)}):[/bold]"
+                )
                 for i, record in enumerate(transformed[:2]):
-                    console.print(f"    [dim]Record {i+1}:[/dim] {json.dumps(record, default=str, indent=2)[:400]}")
+                    console.print(
+                        f"    [dim]Record {i + 1}:[/dim] {json.dumps(record, default=str, indent=2)[:400]}"
+                    )
 
                 # Send to destination or dry-run
                 if not dry_run:
-                    batch_meta = {"current_ids": ids_batch}
                     try:
-                        async def _send_batch(recs=transformed, m=batch_meta):
+                        destination = pipeline.define_destination(transformed, meta)
+                        console.print(f"  [bold]📤 Destination:[/bold] {destination}")
+
+                        async def _send_batch(recs=transformed, m=meta):
                             await destination.send_with_retry(recs, m)
+
                         asyncio.run(_send_batch())
                         console.print(f"  [green]✓ Sent {len(transformed)} records[/green]")
                     except Exception as e:
@@ -266,19 +293,15 @@ def register(app: typer.Typer):
         # Use a per-test copy so define_source enrichments are captured.
         test_params = dict(params)
 
-        # Initialize source, transformations, destination
+        # Initialize source
         try:
             source = pipeline.define_source(test_params)
-            transformations = pipeline.define_transformations(test_params)
-            destination = pipeline.define_destination(test_params)
         except Exception as e:
             console.print(f"[red]❌ Pipeline setup failed: {e}[/red]")
             traceback.print_exc()
             raise typer.Exit(1)
 
         console.print(f"\n[bold]🔌 Source:[/bold] {source}")
-        console.print(f"[bold]🔄 Transformations:[/bold] {[t.__class__.__name__ for t in transformations]}")
-        console.print(f"[bold]📤 Destination:[/bold] {destination}")
 
         # Fetch records
         console.print(f"\n[cyan]Fetching records (limit={limit})...[/cyan]")
@@ -304,45 +327,65 @@ def register(app: typer.Typer):
 
         # Build flat mutable runtime_params for the transformation chain.
         flat_test_params = dict(test_params)
-        flat_test_params.update({
-            "execution_id": context.execution_id,
-            "batch_id": context.batch_id,
-            "pipeline_name": context.pipeline_name,
-            "created_at": context.created_at.isoformat(),
-        })
+        flat_test_params.update(
+            {
+                "execution_id": context.execution_id,
+                "batch_id": context.batch_id,
+                "pipeline_name": context.pipeline_name,
+                "created_at": context.created_at.isoformat(),
+            }
+        )
 
-        # Apply transformations
+        # Resolve and apply transformations
+        transformations = list(pipeline.define_transformations(records, flat_test_params))
+        console.print(
+            f"[bold]🔄 Transformations:[/bold] {[t.__class__.__name__ for t in transformations]}"
+        )
+
         transformed = records
         for t in transformations:
             console.print(f"  [cyan]Applying {t.__class__.__name__}...[/cyan]")
             try:
                 transformed = t.apply(transformed, flat_test_params)
-                console.print(f"  [green]✓ {t.__class__.__name__}: {len(transformed)} records[/green]")
+                console.print(
+                    f"  [green]✓ {t.__class__.__name__}: {len(transformed)} records[/green]"
+                )
             except Exception as e:
                 console.print(f"  [red]❌ {t.__class__.__name__} failed: {e}[/red]")
                 traceback.print_exc()
                 raise typer.Exit(1)
 
         # Show sample output
-        console.print(f"\n[bold]📋 Sample output ({min(3, len(transformed))} of {len(transformed)} records):[/bold]")
+        console.print(
+            f"\n[bold]📋 Sample output ({min(3, len(transformed))} of {len(transformed)} records):[/bold]"
+        )
         for i, record in enumerate(transformed[:3]):
-            console.print(f"  [dim]Record {i+1}:[/dim] {json.dumps(record, default=str, indent=2)[:500]}")
+            console.print(
+                f"  [dim]Record {i + 1}:[/dim] {json.dumps(record, default=str, indent=2)[:500]}"
+            )
 
         # Send to destination or dry-run
         if dry_run:
             console.print("\n[yellow]🏜️  Dry run — skipping destination send[/yellow]")
-            console.print(f"\n[bold green]✅ Test complete: {len(transformed)} records processed[/bold green]")
+            console.print(
+                f"\n[bold green]✅ Test complete: {len(transformed)} records processed[/bold green]"
+            )
         else:
             console.print(f"\n[cyan]Sending {len(transformed)} records to destination...[/cyan]")
             try:
+                destination = pipeline.define_destination(transformed, flat_test_params)
+                console.print(f"[bold]📤 Destination:[/bold] {destination}")
+
                 async def _send():
                     if not await destination.health_check():
                         console.print("[red]❌ Destination health check failed[/red]")
                         raise typer.Exit(1)
-                    await destination.send_with_retry(transformed, {})
+                    await destination.send_with_retry(transformed, flat_test_params)
 
                 asyncio.run(_send())
-                console.print(f"[bold green]✅ Test complete: {len(transformed)} records sent successfully[/bold green]")
+                console.print(
+                    f"[bold green]✅ Test complete: {len(transformed)} records sent successfully[/bold green]"
+                )
             except Exception as e:
                 console.print(f"[red]❌ Destination send failed: {e}[/red]")
                 traceback.print_exc()

@@ -12,7 +12,7 @@ Example:
         )
 
     # Then in a pipeline:
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         return production_kafka(topic="my-output")
 """
 

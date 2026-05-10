@@ -20,13 +20,13 @@ class E2ETransformationTestPipeline(AbstractPipeline):
     name = "e2e_transformation_test"
     rate_limit = 50
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         return e2e_mock(count=50, batch_size=10)
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         return e2e_http()
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return [
             transform_add_timestamp(),
             transform_enrich_record(),

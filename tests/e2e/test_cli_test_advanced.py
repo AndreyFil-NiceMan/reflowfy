@@ -9,10 +9,11 @@ are written inline as mock objects.
 """
 
 import os
-import pytest
-import tempfile
 import shutil
+import tempfile
 from unittest.mock import patch
+
+import pytest
 from typer.testing import CliRunner
 
 from reflowfy.cli.main import app
@@ -24,6 +25,7 @@ runner = CliRunner()
 # ---------------------------------------------------------------------------
 # Fixtures (mirrors test_cli_test.py)
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def temp_workspace():
@@ -57,6 +59,7 @@ def clean_pipeline_registry():
 # Pipeline file writers
 # ---------------------------------------------------------------------------
 
+
 def _write_file(workspace, filename, content):
     os.makedirs(os.path.join(workspace, "pipelines"), exist_ok=True)
     path = os.path.join(workspace, "pipelines", filename)
@@ -78,8 +81,8 @@ class IntParamPipeline(AbstractPipeline):
     def define_parameters(self):
         return [PipelineParameter(name="count", param_type=int, default=10)]
 
-    def define_source(self, params):
-        count = params.get("count", 10)
+    def define_source(self, runtime_params):
+        count = runtime_params.get("count", 10)
 
         class _Src:
             def fetch(self, p, limit=None):
@@ -87,7 +90,7 @@ class IntParamPipeline(AbstractPipeline):
 
         return _Src()
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         class _Dest:
             async def send_with_retry(self, records, metadata):
                 pass
@@ -95,7 +98,7 @@ class IntParamPipeline(AbstractPipeline):
                 return True
         return _Dest()
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return []
 """
     return _write_file(workspace, "int_param_pipeline.py", content)
@@ -114,8 +117,8 @@ class FloatParamPipeline(AbstractPipeline):
     def define_parameters(self):
         return [PipelineParameter(name="ratio", param_type=float, default=1.0)]
 
-    def define_source(self, params):
-        ratio = params.get("ratio", 1.0)
+    def define_source(self, runtime_params):
+        ratio = runtime_params.get("ratio", 1.0)
 
         class _Src:
             def fetch(self, p, limit=None):
@@ -123,7 +126,7 @@ class FloatParamPipeline(AbstractPipeline):
 
         return _Src()
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         class _Dest:
             async def send_with_retry(self, records, metadata):
                 pass
@@ -131,7 +134,7 @@ class FloatParamPipeline(AbstractPipeline):
                 return True
         return _Dest()
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return []
 """
     return _write_file(workspace, "float_param_pipeline.py", content)
@@ -150,8 +153,8 @@ class BoolParamPipeline(AbstractPipeline):
     def define_parameters(self):
         return [PipelineParameter(name="enabled", param_type=bool, default=False)]
 
-    def define_source(self, params):
-        enabled = params.get("enabled", False)
+    def define_source(self, runtime_params):
+        enabled = runtime_params.get("enabled", False)
 
         class _Src:
             def fetch(self, p, limit=None):
@@ -159,7 +162,7 @@ class BoolParamPipeline(AbstractPipeline):
 
         return _Src()
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         class _Dest:
             async def send_with_retry(self, records, metadata):
                 pass
@@ -167,7 +170,7 @@ class BoolParamPipeline(AbstractPipeline):
                 return True
         return _Dest()
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return []
 """
     return _write_file(workspace, "bool_param_pipeline.py", content)
@@ -186,8 +189,8 @@ class DefaultParamPipeline(AbstractPipeline):
     def define_parameters(self):
         return [PipelineParameter(name="env", param_type=str, default="hello")]
 
-    def define_source(self, params):
-        env = params.get("env", "hello")
+    def define_source(self, runtime_params):
+        env = runtime_params.get("env", "hello")
 
         class _Src:
             def fetch(self, p, limit=None):
@@ -195,7 +198,7 @@ class DefaultParamPipeline(AbstractPipeline):
 
         return _Src()
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         class _Dest:
             async def send_with_retry(self, records, metadata):
                 pass
@@ -203,7 +206,7 @@ class DefaultParamPipeline(AbstractPipeline):
                 return True
         return _Dest()
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return []
 """
     return _write_file(workspace, "default_param_pipeline.py", content)
@@ -229,13 +232,13 @@ class ChoicesParamPipeline(AbstractPipeline):
             )
         ]
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         class _Src:
             def fetch(self, p, limit=None):
                 return [{"id": 1}]
         return _Src()
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         class _Dest:
             async def send_with_retry(self, records, metadata):
                 pass
@@ -243,7 +246,7 @@ class ChoicesParamPipeline(AbstractPipeline):
                 return True
         return _Dest()
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return []
 """
     return _write_file(workspace, "choices_param_pipeline.py", content)
@@ -270,26 +273,26 @@ class _Dest:
 class AlphaPipeline(AbstractPipeline):
     name = "multi_alpha"
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         return _Src()
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         return _Dest()
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return []
 
 
 class BetaPipeline(AbstractPipeline):
     name = "multi_beta"
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         return _Src()
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         return _Dest()
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return []
 """
     return _write_file(workspace, "multi_pipeline.py", content)
@@ -305,13 +308,14 @@ class CliTestIdBasedPipeline(IdBasedPipeline):
     name = "cli_id_based_test"
     ids_batch_size = {ids_batch_size}
 
-    def define_source(self, params, current_ids):
+    def define_source(self, runtime_params):
+        current_ids = runtime_params.get("current_ids", [])
         class _Src:
             def fetch(self, p, limit=None):
                 return [{{"id": cid}} for cid in current_ids]
         return _Src()
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         class _Dest:
             async def send_with_retry(self, records, metadata):
                 pass
@@ -319,7 +323,7 @@ class CliTestIdBasedPipeline(IdBasedPipeline):
                 return True
         return _Dest()
 
-    def define_transformations(self, params, current_ids):
+    def define_transformations(self, records, runtime_params):
         return []
 """
     return _write_file(workspace, "id_based_pipeline.py", content)
@@ -343,13 +347,13 @@ class _TagTransformation:
 class TaggedPipeline(AbstractPipeline):
     name = "tagged_pipeline_test"
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         class _Src:
             def fetch(self, p, limit=None):
                 return [{"id": 1}, {"id": 2}]
         return _Src()
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         class _Dest:
             async def send_with_retry(self, records, metadata):
                 pass
@@ -357,7 +361,7 @@ class TaggedPipeline(AbstractPipeline):
                 return True
         return _Dest()
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return [_TagTransformation()]
 """
     return _write_file(workspace, "transform_pipeline.py", content)
@@ -379,13 +383,13 @@ class _FailTransformation:
 class FailTransformPipeline(AbstractPipeline):
     name = "fail_transform_test"
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         class _Src:
             def fetch(self, p, limit=None):
                 return [{"id": 1}]
         return _Src()
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         class _Dest:
             async def send_with_retry(self, records, metadata):
                 pass
@@ -393,7 +397,7 @@ class FailTransformPipeline(AbstractPipeline):
                 return True
         return _Dest()
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return [_FailTransformation()]
 """
     return _write_file(workspace, "failing_transform_pipeline.py", content)
@@ -408,13 +412,13 @@ from reflowfy import AbstractPipeline
 class EmptySourcePipeline(AbstractPipeline):
     name = "empty_source_test"
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         class _Src:
             def fetch(self, p, limit=None):
                 return []
         return _Src()
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         class _Dest:
             async def send_with_retry(self, records, metadata):
                 pass
@@ -422,7 +426,7 @@ class EmptySourcePipeline(AbstractPipeline):
                 return True
         return _Dest()
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return []
 """
     return _write_file(workspace, "empty_source_pipeline.py", content)
@@ -437,13 +441,13 @@ from reflowfy import AbstractPipeline
 class FailHealthPipeline(AbstractPipeline):
     name = "fail_health_test"
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         class _Src:
             def fetch(self, p, limit=None):
                 return [{"id": 1}]
         return _Src()
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         class _Dest:
             async def send_with_retry(self, records, metadata):
                 pass
@@ -451,7 +455,7 @@ class FailHealthPipeline(AbstractPipeline):
                 return False
         return _Dest()
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return []
 """
     return _write_file(workspace, "fail_health_pipeline.py", content)
@@ -466,13 +470,13 @@ from reflowfy import AbstractPipeline
 class FailSendPipeline(AbstractPipeline):
     name = "fail_send_test"
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         class _Src:
             def fetch(self, p, limit=None):
                 return [{"id": 1}]
         return _Src()
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         class _Dest:
             async def send_with_retry(self, records, metadata):
                 raise ConnectionError("destination is down")
@@ -480,7 +484,7 @@ class FailSendPipeline(AbstractPipeline):
                 return True
         return _Dest()
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return []
 """
     return _write_file(workspace, "fail_send_pipeline.py", content)
@@ -489,6 +493,7 @@ class FailSendPipeline(AbstractPipeline):
 # ---------------------------------------------------------------------------
 # Tests: parameter type coercion
 # ---------------------------------------------------------------------------
+
 
 class TestCliTestParameters:
     """Verify that parameter values are correctly coerced by param.coerce()."""
@@ -590,6 +595,7 @@ class TestCliTestParameters:
 # Tests: IdBasedPipeline
 # ---------------------------------------------------------------------------
 
+
 class TestCliTestIdBased:
     """Verify IdBasedPipeline-specific behaviour in the test command."""
 
@@ -614,9 +620,7 @@ class TestCliTestIdBased:
             result = runner.invoke(app, ["test", path, "--dry-run"])
 
         assert result.exit_code == 0, result.stdout
-        assert "3 batch" in result.stdout, (
-            f"Expected '3 batch(es)' in output:\n{result.stdout}"
-        )
+        assert "3 batch" in result.stdout, f"Expected '3 batch(es)' in output:\n{result.stdout}"
 
     def test_id_based_no_ids_exits(self, temp_workspace):
         """Empty ids list exits with code 1 and a clear error message."""
@@ -638,9 +642,7 @@ class TestCliTestIdBased:
             result = runner.invoke(app, ["test", path, "--dry-run"])
 
         assert result.exit_code == 0, result.stdout
-        assert "Dry run" in result.stdout, (
-            f"Expected 'Dry run' in output:\n{result.stdout}"
-        )
+        assert "Dry run" in result.stdout, f"Expected 'Dry run' in output:\n{result.stdout}"
 
     def test_id_based_source_fetch_failure_continues(self, temp_workspace):
         """
@@ -656,7 +658,8 @@ class PartialFailPipeline(IdBasedPipeline):
     name = "partial_fail_id_based"
     ids_batch_size = 2
 
-    def define_source(self, params, current_ids):
+    def define_source(self, runtime_params):
+        current_ids = runtime_params.get("current_ids", [])
         class _Src:
             def fetch(self, p, limit=None):
                 if 1 in current_ids:
@@ -664,7 +667,7 @@ class PartialFailPipeline(IdBasedPipeline):
                 return [{"id": cid} for cid in current_ids]
         return _Src()
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         class _Dest:
             async def send_with_retry(self, records, metadata):
                 pass
@@ -672,7 +675,7 @@ class PartialFailPipeline(IdBasedPipeline):
                 return True
         return _Dest()
 
-    def define_transformations(self, params, current_ids):
+    def define_transformations(self, records, runtime_params):
         return []
 """
         path = _write_file(temp_workspace, "partial_fail_pipeline.py", content)
@@ -692,6 +695,7 @@ class PartialFailPipeline(IdBasedPipeline):
 # ---------------------------------------------------------------------------
 # Tests: transformation application
 # ---------------------------------------------------------------------------
+
 
 class TestCliTestTransformationApplication:
     """Verify that transformations are applied to records during the test command."""
@@ -725,6 +729,7 @@ class TestCliTestTransformationApplication:
 # Tests: edge cases
 # ---------------------------------------------------------------------------
 
+
 class TestCliTestEdgeCases:
     """Verify edge-case behaviour in the test command."""
 
@@ -735,9 +740,9 @@ class TestCliTestEdgeCases:
         result = runner.invoke(app, ["test", path, "--dry-run"])
 
         assert result.exit_code == 0, result.stdout
-        assert (
-            "No records" in result.stdout or "0 records" in result.stdout
-        ), f"Expected 'No records' message:\n{result.stdout}"
+        assert "No records" in result.stdout or "0 records" in result.stdout, (
+            f"Expected 'No records' message:\n{result.stdout}"
+        )
 
     def test_destination_health_check_failure_exits(self, temp_workspace):
         """health_check returning False should cause exit code 1."""
@@ -745,9 +750,7 @@ class TestCliTestEdgeCases:
 
         result = runner.invoke(app, ["test", path])
 
-        assert result.exit_code == 1, (
-            f"Expected exit 1 on health_check failure:\n{result.stdout}"
-        )
+        assert result.exit_code == 1, f"Expected exit 1 on health_check failure:\n{result.stdout}"
         assert "health" in result.stdout.lower(), (
             f"Expected 'health check' error in output:\n{result.stdout}"
         )
@@ -758,9 +761,7 @@ class TestCliTestEdgeCases:
 
         result = runner.invoke(app, ["test", path])
 
-        assert result.exit_code == 1, (
-            f"Expected exit 1 on send failure:\n{result.stdout}"
-        )
+        assert result.exit_code == 1, f"Expected exit 1 on send failure:\n{result.stdout}"
         assert (
             "failed" in result.stdout.lower()
             or "error" in result.stdout.lower()
@@ -776,10 +777,10 @@ from reflowfy import AbstractPipeline
 class SetupFailPipeline(AbstractPipeline):
     name = "setup_fail_test"
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         raise RuntimeError("source configuration error")
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         class _Dest:
             async def send_with_retry(self, records, metadata):
                 pass
@@ -787,16 +788,14 @@ class SetupFailPipeline(AbstractPipeline):
                 return True
         return _Dest()
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return []
 """
         path = _write_file(temp_workspace, "setup_fail.py", content)
 
         result = runner.invoke(app, ["test", path])
 
-        assert result.exit_code == 1, (
-            f"Expected exit 1 on setup failure:\n{result.stdout}"
-        )
+        assert result.exit_code == 1, f"Expected exit 1 on setup failure:\n{result.stdout}"
         assert "setup" in result.stdout.lower() or "failed" in result.stdout.lower(), (
             f"Expected setup error message:\n{result.stdout}"
         )

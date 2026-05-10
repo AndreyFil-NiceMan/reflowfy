@@ -183,13 +183,13 @@ class TestCronValidation:
                 name = "bad_cron_test_pipeline_dx"
                 schedule = "not-a-cron"
 
-                def define_source(self, params):
+                def define_source(self, runtime_params):
                     return MockSource(data=[])
 
-                def define_destination(self, params):
+                def define_destination(self, records, runtime_params):
                     return ConsoleDestination()
 
-                def define_transformations(self, params):
+                def define_transformations(self, records, runtime_params):
                     return []
 
     @pytest.mark.dx
@@ -204,13 +204,13 @@ class TestCronValidation:
             name = "good_cron_test_pipeline_dx"
             schedule = "*/5 * * * *"
 
-            def define_source(self, params):
+            def define_source(self, runtime_params):
                 return MockSource(data=[])
 
-            def define_destination(self, params):
+            def define_destination(self, records, runtime_params):
                 return ConsoleDestination()
 
-            def define_transformations(self, params):
+            def define_transformations(self, records, runtime_params):
                 return []
 
         # Should be registered without error
@@ -228,13 +228,13 @@ class TestCronValidation:
                 name = "six_field_cron_pipeline_dx"
                 schedule = "0 */5 * * * ?"  # 6 fields — Quartz style, not valid in croniter
 
-                def define_source(self, params):
+                def define_source(self, runtime_params):
                     return MockSource(data=[])
 
-                def define_destination(self, params):
+                def define_destination(self, records, runtime_params):
                     return ConsoleDestination()
 
-                def define_transformations(self, params):
+                def define_transformations(self, records, runtime_params):
                     return []
 
 

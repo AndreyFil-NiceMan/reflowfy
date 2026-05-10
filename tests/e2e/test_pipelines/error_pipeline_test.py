@@ -30,8 +30,8 @@ class ErrorPipelineTest(AbstractPipeline):
     def define_source(self, runtime_params):
         return e2e_mock(count=10, batch_size=10)
 
-    def define_destination(self, runtime_params):
+    def define_destination(self, records, runtime_params):
         return console_destination()
 
-    def define_transformations(self, runtime_params):
+    def define_transformations(self, records, runtime_params):
         return [AlwaysFailTransformation()]

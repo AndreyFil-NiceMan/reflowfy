@@ -57,10 +57,10 @@ class E2EApiIdSourceTestPipeline(AbstractPipeline):
             batch_size=runtime_params.get("batch_size", 2),
         )
 
-    def define_destination(self, runtime_params):
+    def define_destination(self, records, runtime_params):
         return e2e_console()
 
-    def define_transformations(self, runtime_params):
+    def define_transformations(self, records, runtime_params):
         return [
             api_id_log_record_count(),
             api_id_add_source_info(),

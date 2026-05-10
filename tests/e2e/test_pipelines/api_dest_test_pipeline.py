@@ -54,7 +54,7 @@ class E2EApiDestTestPipeline(AbstractPipeline):
     def define_source(self, runtime_params):
         return e2e_mock(count=100, batch_size=10)
 
-    def define_destination(self, runtime_params):
+    def define_destination(self, records, runtime_params):
         return api_destination(
             url=MOCK_HTTP_URL,
             method="POST",
@@ -74,5 +74,5 @@ class E2EApiDestTestPipeline(AbstractPipeline):
             },
         )
 
-    def define_transformations(self, runtime_params):
+    def define_transformations(self, records, runtime_params):
         return [api_add_dest_info()]

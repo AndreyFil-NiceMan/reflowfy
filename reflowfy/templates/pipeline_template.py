@@ -5,7 +5,7 @@ Auto-registered — no need to call pipeline_registry.register().
 
 Perfect for testing the Reflowfy framework locally:
 - No Elasticsearch needed
-- No Kafka needed  
+- No Kafka needed
 - No databases needed
 - Uses mock data source
 - Prints to console
@@ -17,13 +17,13 @@ from reflowfy import (
     AbstractPipeline,
     BaseTransformation,
 )
-from reflowfy.sources.mock import mock_source, generate_sample_data
 from reflowfy.destinations.console import console_destination
-
+from reflowfy.sources.mock import generate_sample_data, mock_source
 
 # ============================================================================
 # Transformations
 # ============================================================================
+
 
 class UppercaseNames(BaseTransformation):
     """Transform names to uppercase."""
@@ -96,21 +96,21 @@ class SimpleTestPipeline(AbstractPipeline):
         """No parameters needed for this simple test pipeline."""
         return []
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         """Return mock data source."""
         return mock_source(
             data=SAMPLE_DATA,
             batch_size=10,
         )
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         """Return console destination."""
         return console_destination(
             pretty_print=True,
             max_records_display=10,
         )
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         """Return transformation pipeline."""
         return [
             FilterActiveUsers(),

@@ -53,7 +53,8 @@ class E2ERawListSearchPipeline(IdBasedPipeline):
             ),
         ]
 
-    def define_source(self, runtime_params, current_ids):
+    def define_source(self, runtime_params):
+        current_ids = runtime_params.get("current_ids", [])
         return e2e_id_based_api(
             endpoint_template="/users/search",
             ids=current_ids,
@@ -63,10 +64,10 @@ class E2ERawListSearchPipeline(IdBasedPipeline):
             batch_size=runtime_params.get("batch_size", 5),
         )
 
-    def define_destination(self, runtime_params):
+    def define_destination(self, records, runtime_params):
         return e2e_console(pretty_print=False, max_records_display=3)
 
-    def define_transformations(self, runtime_params, current_ids):
+    def define_transformations(self, records, runtime_params):
         return [
             raw_list_tag_source(),
             raw_list_count_records(),
@@ -111,7 +112,8 @@ class E2EPatchBulkPipeline(IdBasedPipeline):
             ),
         ]
 
-    def define_source(self, runtime_params, current_ids):
+    def define_source(self, runtime_params):
+        current_ids = runtime_params.get("current_ids", [])
         return e2e_id_based_api(
             endpoint_template="/users/bulk",
             ids=current_ids,
@@ -122,10 +124,10 @@ class E2EPatchBulkPipeline(IdBasedPipeline):
             batch_size=runtime_params.get("batch_size", 4),
         )
 
-    def define_destination(self, runtime_params):
+    def define_destination(self, records, runtime_params):
         return e2e_console(pretty_print=False, max_records_display=3)
 
-    def define_transformations(self, runtime_params, current_ids):
+    def define_transformations(self, records, runtime_params):
         return [
             patch_add_metadata(),
             patch_compute_stats(),
@@ -161,7 +163,8 @@ class E2EPerIdPostPipeline(IdBasedPipeline):
             ),
         ]
 
-    def define_source(self, runtime_params, current_ids):
+    def define_source(self, runtime_params):
+        current_ids = runtime_params.get("current_ids", [])
         return e2e_id_based_api(
             endpoint_template="/users/{id}/enrich",
             ids=current_ids,
@@ -170,10 +173,10 @@ class E2EPerIdPostPipeline(IdBasedPipeline):
             batch_size=runtime_params.get("batch_size", 5),
         )
 
-    def define_destination(self, runtime_params):
+    def define_destination(self, records, runtime_params):
         return e2e_console(pretty_print=False, max_records_display=3)
 
-    def define_transformations(self, runtime_params, current_ids):
+    def define_transformations(self, records, runtime_params):
         return [per_id_verify_enrichment()]
 
 
@@ -208,7 +211,8 @@ class E2EProductsBatchPipeline(IdBasedPipeline):
             ),
         ]
 
-    def define_source(self, runtime_params, current_ids):
+    def define_source(self, runtime_params):
+        current_ids = runtime_params.get("current_ids", [])
         return e2e_id_based_api(
             endpoint_template="/products/lookup",
             ids=current_ids,
@@ -218,10 +222,10 @@ class E2EProductsBatchPipeline(IdBasedPipeline):
             batch_size=runtime_params.get("batch_size", 5),
         )
 
-    def define_destination(self, runtime_params):
+    def define_destination(self, records, runtime_params):
         return e2e_console(pretty_print=False, max_records_display=3)
 
-    def define_transformations(self, runtime_params, current_ids):
+    def define_transformations(self, records, runtime_params):
         return [
             products_tag_category(),
             products_add_tax(),

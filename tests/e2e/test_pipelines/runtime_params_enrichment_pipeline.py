@@ -33,10 +33,10 @@ class E2EParamsEnrichPipeline(AbstractPipeline):
         runtime_params["injected_by_source"] = "hello_from_source"
         return e2e_mock(count=10, batch_size=10)
 
-    def define_destination(self, runtime_params):
+    def define_destination(self, records, runtime_params):
         return e2e_http()
 
-    def define_transformations(self, runtime_params):
+    def define_transformations(self, records, runtime_params):
         return [params_step1_enrich(), params_step2_verify()]
 
 
@@ -52,12 +52,13 @@ class E2EIdBasedParamsEnrichPipeline(IdBasedPipeline):
     name = "e2e_id_based_params_enrich"
     rate_limit = 50
 
-    def define_source(self, runtime_params, current_ids):
+    def define_source(self, runtime_params):
+        current_ids = runtime_params.get("current_ids", [])
         runtime_params["injected_by_source"] = f"source_for_{current_ids[0]}"
         return e2e_mock(count=5, batch_size=5)
 
-    def define_destination(self, runtime_params):
+    def define_destination(self, records, runtime_params):
         return e2e_http()
 
-    def define_transformations(self, runtime_params, current_ids):
+    def define_transformations(self, records, runtime_params):
         return [params_step1_enrich(), params_step2_verify()]

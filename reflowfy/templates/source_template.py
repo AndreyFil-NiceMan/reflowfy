@@ -17,7 +17,7 @@ def example_elastic(**overrides):
     Usage in a pipeline:
         from sources.example_source import example_elastic
 
-        def define_source(self, params):
+        def define_source(self, runtime_params):
             return example_elastic(index="my-specific-index")
     """
     return elastic_source(

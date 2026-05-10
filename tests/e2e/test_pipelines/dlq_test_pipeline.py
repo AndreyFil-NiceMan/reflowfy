@@ -18,10 +18,10 @@ class DLQTestPipelineAuto(AbstractPipeline):
     def define_source(self, runtime_params):
         return e2e_mock(data=[{"dlq_test": True}])
 
-    def define_destination(self, runtime_params):
+    def define_destination(self, records, runtime_params):
         return e2e_console(pretty_print=False)
 
-    def define_transformations(self, runtime_params):
+    def define_transformations(self, records, runtime_params):
         return []
 
 
@@ -33,10 +33,10 @@ class DLQTestPipelineBatch(AbstractPipeline):
     def define_source(self, runtime_params):
         return e2e_mock(data=[{"batch_test": True}])
 
-    def define_destination(self, runtime_params):
+    def define_destination(self, records, runtime_params):
         return e2e_console(pretty_print=False)
 
-    def define_transformations(self, runtime_params):
+    def define_transformations(self, records, runtime_params):
         return []
 
 
@@ -48,8 +48,8 @@ class DLQTestPipelineDispatch(AbstractPipeline):
     def define_source(self, runtime_params):
         return e2e_mock(data=[{"batch_test": True}])
 
-    def define_destination(self, runtime_params):
+    def define_destination(self, records, runtime_params):
         return e2e_console(pretty_print=False)
 
-    def define_transformations(self, runtime_params):
+    def define_transformations(self, records, runtime_params):
         return []

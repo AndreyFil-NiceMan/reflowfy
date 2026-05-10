@@ -23,8 +23,8 @@ class CrashRecoveryTestPipeline(AbstractPipeline):
         # 500 items / 10 batch_size = 50 jobs. At 0.5 jobs/sec override ≈ 100 seconds
         return e2e_mock(count=500, batch_size=10)
 
-    def define_destination(self, runtime_params):
+    def define_destination(self, records, runtime_params):
         return e2e_http()
 
-    def define_transformations(self, runtime_params):
+    def define_transformations(self, records, runtime_params):
         return [crash_recovery_add_info()]

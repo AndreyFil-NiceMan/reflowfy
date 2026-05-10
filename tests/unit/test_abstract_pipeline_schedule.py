@@ -1,7 +1,8 @@
 """Unit tests for AbstractPipeline schedule attribute."""
 
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from reflowfy.core.abstract_pipeline import AbstractPipeline
 from reflowfy.core.registry import pipeline_registry
@@ -11,26 +12,26 @@ class _ScheduledPipeline(AbstractPipeline):
     name = "test_scheduled_pipeline_unit"
     schedule = "*/5 * * * *"
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         return MagicMock()
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         return MagicMock()
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return []
 
 
 class _UnscheduledPipeline(AbstractPipeline):
     name = "test_unscheduled_pipeline_unit"
 
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         return MagicMock()
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         return MagicMock()
 
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return []
 
 
@@ -50,13 +51,19 @@ def test_invalid_cron_raises_at_class_definition():
     # The metaclass validates the cron expression at class-definition time,
     # so the ValueError fires before instantiation ever happens.
     with pytest.raises(ValueError, match="invalid cron"):
+
         class _BadCronPipeline(AbstractPipeline):
             name = "bad_cron_pipeline_unit"
             schedule = "not-a-valid-cron"
 
-            def define_source(self, params): return MagicMock()
-            def define_destination(self, params): return MagicMock()
-            def define_transformations(self, params): return []
+            def define_source(self, runtime_params):
+                return MagicMock()
+
+            def define_destination(self, records, runtime_params):
+                return MagicMock()
+
+            def define_transformations(self, records, runtime_params):
+                return []
 
 
 def test_schedule_in_to_dict():

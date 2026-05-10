@@ -57,10 +57,10 @@ class E2EApiSourceTestPipeline(AbstractPipeline):
             page_size=runtime_params.get("page_size", 10),
         )
 
-    def define_destination(self, runtime_params):
+    def define_destination(self, records, runtime_params):
         return e2e_console()
 
-    def define_transformations(self, runtime_params):
+    def define_transformations(self, records, runtime_params):
         return [
             api_log_record_count(),
             api_add_source_info(),

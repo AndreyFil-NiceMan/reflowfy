@@ -7,8 +7,8 @@ into a single POST request so define_source is called once per batch.
 """
 
 from reflowfy import IdBasedPipeline, PipelineParameter
-from tests.e2e.test_pipelines.sources import e2e_id_based_api
 from tests.e2e.test_pipelines.destinations import e2e_console
+from tests.e2e.test_pipelines.sources import e2e_id_based_api
 from tests.e2e.test_pipelines.transformations import (
     api_batch_add_metadata,
     api_batch_filter_active,
@@ -39,20 +39,21 @@ class E2EIdBasedAPIBatchPipelineTest(IdBasedPipeline):
             ),
         ]
 
-    def define_source(self, params, current_ids):
+    def define_source(self, runtime_params):
+        current_ids = runtime_params.get("current_ids", [])
         return e2e_id_based_api(
             endpoint_template="/users/batch",
             ids=current_ids,
             method="POST",
-            batch_size=params.get("batch_size", 5),
+            batch_size=runtime_params.get("batch_size", 5),
             batch_id_key="ids",
             data_key="users",
         )
 
-    def define_destination(self, params):
+    def define_destination(self, records, runtime_params):
         return e2e_console(pretty_print=False, max_records_display=5)
 
-    def define_transformations(self, params, current_ids):
+    def define_transformations(self, records, runtime_params):
         return [
             api_batch_add_metadata(),
             api_batch_filter_active(),

@@ -13,7 +13,7 @@ Example:
         )
 
     # Then in a pipeline:
-    def define_source(self, params):
+    def define_source(self, runtime_params):
         return production_elastic(index="my-specific-index")
 """
 

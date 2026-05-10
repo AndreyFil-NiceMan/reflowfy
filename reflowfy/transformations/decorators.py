@@ -13,7 +13,7 @@ Example:
         return records
 
     # Then in a pipeline:
-    def define_transformations(self, params):
+    def define_transformations(self, records, runtime_params):
         return [uppercase_names()]
 """
 
@@ -40,7 +40,7 @@ def transformation(name: str):
             return [r for r in records if r.get("active")]
 
         # Use in pipeline:
-        def define_transformations(self, params):
+        def define_transformations(self, records, runtime_params):
             return [filter_active()]  # Instantiate to use
     """
     def decorator(func: Callable) -> type:
