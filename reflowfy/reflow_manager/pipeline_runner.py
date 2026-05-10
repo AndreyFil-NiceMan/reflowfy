@@ -1,16 +1,15 @@
 """Pipeline execution runner for ReflowManager."""
 
+import asyncio
 import hashlib
 import json
 import time
 import uuid
-import asyncio
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
+from reflowfy.reflow_manager.dispatcher import JobDispatcher
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
-from reflowfy.reflow_manager.dispatcher import JobDispatcher
-
 
 # Checkpoint batch configuration
 CHECKPOINT_BATCH_SIZE = 25  # Jobs per checkpoint batch
@@ -20,7 +19,7 @@ CHECKPOINT_POLL_INTERVAL = 2.0  # Poll every 2 seconds
 
 def _chunk(lst: List, size: int) -> List[List]:
     """Split a list into consecutive chunks of at most `size` elements."""
-    return [lst[i:i + size] for i in range(0, len(lst), size)]
+    return [lst[i : i + size] for i in range(0, len(lst), size)]
 
 
 # Keys that indicate date/time values — stripped from source_metadata before hashing
@@ -30,8 +29,7 @@ _DATE_KEY_PATTERNS = ("date", "time", "timestamp", "created_at", "updated_at")
 
 def _filter_volatile_keys(d: dict) -> dict:
     """Remove date/time keys from a dict to keep only stable content."""
-    return {k: v for k, v in d.items()
-            if not any(pat in k.lower() for pat in _DATE_KEY_PATTERNS)}
+    return {k: v for k, v in d.items() if not any(pat in k.lower() for pat in _DATE_KEY_PATTERNS)}
 
 
 def generate_job_id(
@@ -72,13 +70,14 @@ def _run_async(coro):
         # fall back to a separate thread to avoid deadlocks.
         try:
             import nest_asyncio
+
             nest_asyncio.apply()
             return asyncio.get_event_loop().run_until_complete(coro)
         except ImportError:
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 return pool.submit(asyncio.run, coro).result()
-
 
 
 class PipelineRunner:
@@ -208,8 +207,9 @@ class PipelineRunner:
         if not pipeline:
             print(f"⚠️ Pipeline '{pipeline_name}' not in registry, marking execution as failed")
             self.execution_manager.update_execution_state(
-                execution_id, "failed", 
-                error_message=f"Pipeline '{pipeline_name}' not found in registry during recovery"
+                execution_id,
+                "failed",
+                error_message=f"Pipeline '{pipeline_name}' not found in registry during recovery",
             )
             return
 
@@ -235,18 +235,26 @@ class PipelineRunner:
         # In local mode, dispatched jobs that weren't completed are orphaned
         # (the executor that was processing them died with the restart)
         from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
+
         is_local_mode = isinstance(self.dispatcher, LocalDispatcher)
 
         if is_local_mode:
             # Reset any "dispatched" jobs back to "pending" - they need re-dispatch
             # because the local executor that was processing them is gone
             from reflowfy.reflow_manager.models import Job
-            orphaned = self.job_manager.db.query(Job).filter(
-                Job.execution_id == execution_id,
-                Job.state == "dispatched",
-            ).all()
+
+            orphaned = (
+                self.job_manager.db.query(Job)
+                .filter(
+                    Job.execution_id == execution_id,
+                    Job.state == "dispatched",
+                )
+                .all()
+            )
             if orphaned:
-                print(f"  ⚠️ Local mode: Resetting {len(orphaned)} orphaned dispatched jobs to pending")
+                print(
+                    f"  ⚠️ Local mode: Resetting {len(orphaned)} orphaned dispatched jobs to pending"
+                )
                 for job in orphaned:
                     job.state = "pending"
                 self.job_manager.db.commit()
@@ -256,11 +264,15 @@ class PipelineRunner:
         total_jobs = job_counts.get("total", 0)
 
         # Find max batch number
-        from reflowfy.reflow_manager.models import Job
         from sqlalchemy import func
-        max_batch_result = self.job_manager.db.query(func.max(Job.batch_number)).filter(
-            Job.execution_id == execution_id
-        ).scalar()
+
+        from reflowfy.reflow_manager.models import Job
+
+        max_batch_result = (
+            self.job_manager.db.query(func.max(Job.batch_number))
+            .filter(Job.execution_id == execution_id)
+            .scalar()
+        )
         max_batch = max_batch_result or 0
 
         # Sync current counts
@@ -269,21 +281,29 @@ class PipelineRunner:
         # Resume from first incomplete batch
         for current_batch_num in range(first_incomplete_batch, max_batch + 1):
             # Load pending jobs for this batch
-            jobs = self.job_manager.get_pending_jobs_by_batch_number(execution_id, current_batch_num)
+            jobs = self.job_manager.get_pending_jobs_by_batch_number(
+                execution_id, current_batch_num
+            )
 
             if not jobs:
                 # Batch might already be complete, check dispatched jobs
-                dispatched_jobs = self.job_manager.db.query(Job).filter(
-                    Job.execution_id == execution_id,
-                    Job.batch_number == current_batch_num,
-                    Job.state == "dispatched",
-                ).all()
+                dispatched_jobs = (
+                    self.job_manager.db.query(Job)
+                    .filter(
+                        Job.execution_id == execution_id,
+                        Job.batch_number == current_batch_num,
+                        Job.state == "dispatched",
+                    )
+                    .all()
+                )
 
                 if dispatched_jobs:
                     # In distributed mode, wait for already-dispatched jobs
                     # (workers may still be processing them via Kafka)
                     job_ids = [job.job_id for job in dispatched_jobs]
-                    print(f"    Waiting for {len(dispatched_jobs)} dispatched jobs in batch {current_batch_num}...")
+                    print(
+                        f"    Waiting for {len(dispatched_jobs)} dispatched jobs in batch {current_batch_num}..."
+                    )
                     completed, failed = self._wait_for_batch_completion(
                         job_ids=job_ids,
                         timeout=CHECKPOINT_BATCH_TIMEOUT,
@@ -303,11 +323,13 @@ class PipelineRunner:
             # concurrent executions of the same pipeline from contending
             # on the same rate limiter bucket
             rate_limit_key = f"{pipeline_name}:{execution_id}"
-            dispatched = _run_async(self.dispatcher.dispatch_jobs_batch(
-                jobs=job_payloads,
-                pipeline_name=rate_limit_key,
-                rate_limit=effective_rate_limit,
-            ))
+            dispatched = _run_async(
+                self.dispatcher.dispatch_jobs_batch(
+                    jobs=job_payloads,
+                    pipeline_name=rate_limit_key,
+                    rate_limit=effective_rate_limit,
+                )
+            )
 
             # Mark jobs as dispatched
             self.job_manager.mark_jobs_dispatched(job_ids)
@@ -346,7 +368,9 @@ class PipelineRunner:
             print(f"  Warning: Only {total_finished} of {total_jobs} jobs finished")
 
         self.execution_manager.update_execution_state(execution_id, final_state)
-        print(f"✓ Resumed execution {final_state}: {dispatched} dispatched, {completed} completed, {failed} failed")
+        print(
+            f"✓ Resumed execution {final_state}: {dispatched} dispatched, {completed} completed, {failed} failed"
+        )
 
     def _run_pipeline_jobs(
         self,
@@ -370,9 +394,9 @@ class PipelineRunner:
                 False = each unique job (by content hash) runs at most once.
                 None falls back to the pipeline's own enable_duplicate_jobs setting.
         """
-        from reflowfy.core.registry import pipeline_registry
         from reflowfy.core.execution_context import ExecutionContext
         from reflowfy.core.id_based_pipeline import IdBasedPipeline
+        from reflowfy.core.registry import pipeline_registry
 
         # Load pipeline from registry
         pipeline = pipeline_registry.get(pipeline_name)
@@ -397,8 +421,19 @@ class PipelineRunner:
 
         # Resolve pipeline with runtime params (for AbstractPipeline).
         # _resolved_params includes defaults + any keys added by define_source.
-        if hasattr(pipeline, 'resolve'):
+        if hasattr(pipeline, "resolve"):
             pipeline.resolve(runtime_params)
+
+        resolved_transformations = list(pipeline.transformations)
+        transformation_names = [t.name for t in resolved_transformations]
+        transformation_specs = [
+            {
+                "name": t.name,
+                "module": t.__class__.__module__,
+                "class_name": t.__class__.__name__,
+            }
+            for t in resolved_transformations
+        ]
 
         print(f"🚀 Job dispatch starting: {pipeline_name}")
         print(f"📊 Execution ID: {execution_id}")
@@ -408,7 +443,7 @@ class PipelineRunner:
 
         # Use enriched params (define_source may have added keys) for the context
         # so workers receive them in job metadata.
-        enriched_params = getattr(pipeline, '_resolved_params', runtime_params)
+        enriched_params = getattr(pipeline, "_resolved_params", runtime_params)
 
         # Create execution context
         context = ExecutionContext(
@@ -437,7 +472,7 @@ class PipelineRunner:
             else:
                 job_id = generate_job_id(
                     pipeline_name=pipeline_name,
-                    transformations=pipeline.get_transformation_names(),
+                    transformations=transformation_names,
                     destination_type=pipeline.destination.__class__.__name__,
                     destination_config=pipeline.destination.config,
                     records=source_job.records,
@@ -456,7 +491,8 @@ class PipelineRunner:
                 "execution_id": execution_id,
                 "job_id": job_id,
                 "pipeline_name": pipeline_name,
-                "transformations": pipeline.get_transformation_names(),
+                "transformations": transformation_names,
+                "transformation_specs": transformation_specs,
                 "destination": {
                     "type": pipeline.destination.__class__.__name__,
                     "config": pipeline.destination.config,
@@ -508,6 +544,7 @@ class PipelineRunner:
         # Phase 2: Dispatch and wait for each batch
         # Check if we're in local mode (no need to poll for completion)
         from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
+
         is_local_mode = isinstance(self.dispatcher, LocalDispatcher)
 
         if is_local_mode:
@@ -521,7 +558,9 @@ class PipelineRunner:
 
         for current_batch_num in range(1, batch_number + 1):
             # Load jobs for this batch from database
-            jobs = self.job_manager.get_pending_jobs_by_batch_number(execution_id, current_batch_num)
+            jobs = self.job_manager.get_pending_jobs_by_batch_number(
+                execution_id, current_batch_num
+            )
 
             if not jobs:
                 continue
@@ -529,18 +568,22 @@ class PipelineRunner:
             job_ids = [job.job_id for job in jobs]
             job_payloads = [job.job_payload for job in jobs]
 
-            print(f"    {'Executing' if is_local_mode else 'Dispatching'} batch {current_batch_num} ({len(jobs)} jobs)...")
+            print(
+                f"    {'Executing' if is_local_mode else 'Dispatching'} batch {current_batch_num} ({len(jobs)} jobs)..."
+            )
 
             # Dispatch (in local mode, this executes jobs synchronously)
             # Use execution-scoped key for rate limiting to prevent
             # concurrent executions of the same pipeline from contending
             # on the same rate limiter bucket
             rate_limit_key = f"{pipeline_name}:{execution_id}"
-            dispatched = _run_async(self.dispatcher.dispatch_jobs_batch(
-                jobs=job_payloads,
-                pipeline_name=rate_limit_key,
-                rate_limit=effective_rate_limit,
-            ))
+            dispatched = _run_async(
+                self.dispatcher.dispatch_jobs_batch(
+                    jobs=job_payloads,
+                    pipeline_name=rate_limit_key,
+                    rate_limit=effective_rate_limit,
+                )
+            )
 
             # Mark jobs as dispatched in database
             self.job_manager.mark_jobs_dispatched(job_ids)
@@ -594,7 +637,9 @@ class PipelineRunner:
 
         self.execution_manager.update_execution_state(execution_id, final_state)
 
-        print(f"Execution {final_state}: {dispatched} dispatched, {completed} completed, {failed} failed")
+        print(
+            f"Execution {final_state}: {dispatched} dispatched, {completed} completed, {failed} failed"
+        )
 
     def _run_id_based_pipeline_jobs(
         self,
@@ -632,7 +677,7 @@ class PipelineRunner:
         params = pipeline.apply_defaults(runtime_params)
 
         ids = params.get("ids", [])
-        ids_batch_size = getattr(pipeline, 'ids_batch_size', 1)
+        ids_batch_size = getattr(pipeline, "ids_batch_size", 1)
 
         print(f"🚀 IdBasedPipeline dispatch starting: {pipeline_name}")
         print(f"📊 Execution ID: {execution_id}")
@@ -658,7 +703,9 @@ class PipelineRunner:
 
         # Phase 1: For each ID-batch, resolve source and save jobs to database
         id_batches = _chunk(ids, ids_batch_size)
-        print(f"  Phase 1: Saving jobs to database for {len(ids)} IDs in {len(id_batches)} batches...")
+        print(
+            f"  Phase 1: Saving jobs to database for {len(ids)} IDs in {len(id_batches)} batches..."
+        )
         batch_number = 1
         job_count = 0
         dedup_count = 0
@@ -673,6 +720,14 @@ class PipelineRunner:
             source = resolved["source"]
             transformations = resolved["transformations"]
             transformation_names = [t.name for t in transformations]
+            transformation_specs = [
+                {
+                    "name": t.name,
+                    "module": t.__class__.__module__,
+                    "class_name": t.__class__.__name__,
+                }
+                for t in transformations
+            ]
             batch_params = resolved.get("batch_params", params)
 
             # Split this batch's source into jobs
@@ -706,6 +761,7 @@ class PipelineRunner:
                     "job_id": job_id,
                     "pipeline_name": pipeline_name,
                     "transformations": transformation_names,
+                    "transformation_specs": transformation_specs,
                     "destination": {
                         "type": destination.__class__.__name__,
                         "config": destination.config,
@@ -753,11 +809,14 @@ class PipelineRunner:
             self.job_manager.db.rollback()
             print(f"  Warning: could not back-fill total_batches ({_e}); continuing")
 
-        print(f"  Saved {job_count} jobs to database in {batch_number} batches (from {len(ids)} IDs)")
+        print(
+            f"  Saved {job_count} jobs to database in {batch_number} batches (from {len(ids)} IDs)"
+        )
 
         # Phase 2: Dispatch and wait for each batch (reuses existing logic)
         # Check if we're in local mode (no need to poll for completion)
         from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
+
         is_local_mode = isinstance(self.dispatcher, LocalDispatcher)
 
         if is_local_mode:
@@ -771,7 +830,9 @@ class PipelineRunner:
 
         for current_batch_num in range(1, batch_number + 1):
             # Load jobs for this batch from database
-            jobs = self.job_manager.get_pending_jobs_by_batch_number(execution_id, current_batch_num)
+            jobs = self.job_manager.get_pending_jobs_by_batch_number(
+                execution_id, current_batch_num
+            )
 
             if not jobs:
                 continue
@@ -779,16 +840,20 @@ class PipelineRunner:
             job_ids = [job.job_id for job in jobs]
             job_payloads = [job.job_payload for job in jobs]
 
-            print(f"    {'Executing' if is_local_mode else 'Dispatching'} batch {current_batch_num} ({len(jobs)} jobs)...")
+            print(
+                f"    {'Executing' if is_local_mode else 'Dispatching'} batch {current_batch_num} ({len(jobs)} jobs)..."
+            )
 
             # Dispatch (in local mode, this executes jobs synchronously)
             # Use execution-scoped key for rate limiting
             rate_limit_key = f"{pipeline_name}:{execution_id}"
-            dispatched = _run_async(self.dispatcher.dispatch_jobs_batch(
-                jobs=job_payloads,
-                pipeline_name=rate_limit_key,
-                rate_limit=effective_rate_limit,
-            ))
+            dispatched = _run_async(
+                self.dispatcher.dispatch_jobs_batch(
+                    jobs=job_payloads,
+                    pipeline_name=rate_limit_key,
+                    rate_limit=effective_rate_limit,
+                )
+            )
 
             # Mark jobs as dispatched in database
             self.job_manager.mark_jobs_dispatched(job_ids)
@@ -841,7 +906,9 @@ class PipelineRunner:
 
         self.execution_manager.update_execution_state(execution_id, final_state)
 
-        print(f"IdBasedPipeline {final_state}: {dispatched} dispatched, {completed} completed, {failed} failed ({len(ids)} IDs)")
+        print(
+            f"IdBasedPipeline {final_state}: {dispatched} dispatched, {completed} completed, {failed} failed ({len(ids)} IDs)"
+        )
 
     def _set_total_jobs(self, execution_id: str, total: int) -> None:
         """Set total_jobs for an execution (uses SET, not +=)."""
@@ -952,9 +1019,9 @@ class PipelineRunner:
             return {k: self._serialize_for_json(v) for k, v in obj.items()}
         elif isinstance(obj, (list, tuple)):
             return [self._serialize_for_json(item) for item in obj]
-        elif hasattr(obj, 'to_dict'):
+        elif hasattr(obj, "to_dict"):
             return self._serialize_for_json(obj.to_dict())
-        elif hasattr(obj, '__dict__'):
+        elif hasattr(obj, "__dict__"):
             return self._serialize_for_json(obj.__dict__)
         else:
             return str(obj)

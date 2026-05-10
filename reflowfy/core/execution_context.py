@@ -1,10 +1,11 @@
 """Execution context for passing runtime state through the pipeline."""
 
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, Optional
-import uuid
-from jinja2 import Environment, BaseLoader, TemplateSyntaxError, UndefinedError
+
+from jinja2 import BaseLoader, Environment, TemplateSyntaxError, UndefinedError
 
 
 @dataclass
@@ -53,6 +54,82 @@ class ExecutionContext:
             "retry_count": self.retry_count,
             "is_retry": self.is_retry,
         }
+
+
+def build_flat_runtime_params(
+    base_params: Dict[str, Any],
+    *,
+    execution_id: str,
+    batch_id: str,
+    pipeline_name: str,
+    created_at: str,
+    batch_number: int = 0,
+    total_batches: int = 0,
+    retry_count: int = 0,
+    is_retry: bool = False,
+    current_ids: Optional[list[Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Build a flat mutable runtime_params dict shared by a transformation chain.
+
+    User/runtime values are used as the base. Reserved execution-context keys are
+    merged on top so they cannot be shadowed by user input.
+
+    Args:
+        base_params: Base runtime parameters (user params + optional enrichments)
+        execution_id: Execution identifier
+        batch_id: Execution batch identifier
+        pipeline_name: Pipeline name
+        created_at: ISO timestamp
+        batch_number: Current batch number
+        total_batches: Total batch count (if known)
+        retry_count: Retry attempt count
+        is_retry: Whether this is a retry run
+        current_ids: Optional ID list for IdBasedPipeline jobs
+
+    Returns:
+        Flat mutable dict for transformations and destination metadata
+    """
+    runtime_params = dict(base_params)
+    runtime_params.update(
+        {
+            "execution_id": execution_id,
+            "batch_id": batch_id,
+            "pipeline_name": pipeline_name,
+            "created_at": created_at,
+            "batch_number": batch_number,
+            "total_batches": total_batches,
+            "retry_count": retry_count,
+            "is_retry": is_retry,
+        }
+    )
+    if current_ids is not None:
+        runtime_params["current_ids"] = current_ids
+    return runtime_params
+
+
+def build_flat_runtime_params_from_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Build flat runtime_params from serialized job metadata.
+
+    Args:
+        metadata: Job metadata payload created by PipelineRunner
+
+    Returns:
+        Flat mutable dict for worker transformation execution
+    """
+    return build_flat_runtime_params(
+        metadata.get("runtime_params", {}) or {},
+        execution_id=metadata.get("execution_id", ""),
+        batch_id=metadata.get("batch_id", ""),
+        pipeline_name=metadata.get("pipeline_name", ""),
+        created_at=metadata.get("created_at", ""),
+        batch_number=metadata.get("batch_number", 0),
+        total_batches=metadata.get("total_batches", 0),
+        retry_count=metadata.get("retry_count", 0),
+        is_retry=metadata.get("is_retry", False),
+        current_ids=metadata.get("current_ids") if "current_ids" in metadata else None,
+    )
 
 
 class ParameterResolver:
@@ -128,7 +205,8 @@ class ParameterResolver:
             if "{{" in obj:
                 # Simple regex-based extraction
                 import re
-                matches = re.findall(r'\{\{\s*(\w+)\s*\}\}', obj)
+
+                matches = re.findall(r"\{\{\s*(\w+)\s*\}\}", obj)
                 params.update(matches)
 
         return params

@@ -1,7 +1,7 @@
 """Base transformation class with automatic registration."""
 
 from abc import ABCMeta, abstractmethod
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 class TransformationMeta(ABCMeta):
@@ -18,11 +18,12 @@ class TransformationMeta(ABCMeta):
         cls = super().__new__(mcs, name, bases, namespace)
 
         # Only register concrete transformations (not the base class)
-        if name != 'BaseTransformation' and bases:
+        if name != "BaseTransformation" and bases:
             # Check if this is a concrete transformation with a name
-            if 'name' in namespace and namespace['name']:
+            if "name" in namespace and namespace["name"]:
                 # Import here to avoid circular dependency
                 from reflowfy.transformations.registry import transformation_registry
+
                 transformation_registry.register(cls)
 
         return cls
@@ -37,10 +38,10 @@ class BaseTransformation(metaclass=TransformationMeta):
     Example:
         >>> class XmlToJson(BaseTransformation):
         ...     name = "xml_to_json"
-        ...     
+        ...
         ...     def apply(self, records, runtime_params):
         ...         return [self.parse_xml(r) for r in records]
-        ...     
+        ...
         ...     def parse_xml(self, record):
         ...         # Custom XML parsing logic
         ...         return {"parsed": record}
@@ -103,7 +104,9 @@ class BaseTransformation(metaclass=TransformationMeta):
 class TransformationError(Exception):
     """Raised when a transformation fails."""
 
-    def __init__(self, transformation_name: str, message: str, original_error: Exception = None):
+    def __init__(
+        self, transformation_name: str, message: str, original_error: Optional[Exception] = None
+    ):
         self.transformation_name = transformation_name
         self.original_error = original_error
         super().__init__(f"Transformation '{transformation_name}' failed: {message}")

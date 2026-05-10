@@ -3,8 +3,9 @@
 import os
 import signal
 import sys
-from reflowfy.worker.consumer import KafkaJobConsumer
+
 from reflowfy.core.pipeline_discovery import discover_and_load_pipelines
+from reflowfy.worker.consumer import KafkaJobConsumer
 
 
 def handle_shutdown(signum, frame):
@@ -16,11 +17,18 @@ def handle_shutdown(signum, frame):
 def main():
     """Worker main entry point."""
     import asyncio
+
+    import reflowfy as reflowfy_pkg
     from reflowfy import __version__
+
+    build_version = os.getenv("REFLOWFY_BUILD_VERSION") or os.getenv("GIT_SHA")
 
     print("=" * 60)
     print("🚀 Starting Reflowfy Worker (Async)")
     print(f"📦 Version: {__version__}")
+    if build_version:
+        print(f"🔖 Build: {build_version}")
+    print(f"📂 Package path: {reflowfy_pkg.__file__}")
     print("=" * 60)
 
     # Register signal handlers
@@ -36,7 +44,9 @@ def main():
     kafka_bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     kafka_topic = os.getenv("KAFKA_TOPIC", "reflow.jobs")
     kafka_group_id = os.getenv("KAFKA_GROUP_ID", "reflowfy-workers")
-    database_url = os.getenv("DATABASE_URL", "postgresql://reflowfy:reflowfy@localhost:5432/reflowfy")
+    database_url = os.getenv(
+        "DATABASE_URL", "postgresql://reflowfy:reflowfy@localhost:5432/reflowfy"
+    )
 
     # SASL Authentication config
     security_protocol = os.getenv("KAFKA_SECURITY_PROTOCOL")
@@ -48,8 +58,12 @@ def main():
     print(f"Topic: {kafka_topic}")
     print(f"Consumer group: {kafka_group_id}")
     if sasl_username:
-        print(f"SASL: {security_protocol or 'SASL_PLAINTEXT'} / {sasl_mechanism or 'SCRAM-SHA-256'}")
-    print(f"Database: {database_url.split('@')[-1] if '@' in database_url else database_url}")  # Hide credentials
+        print(
+            f"SASL: {security_protocol or 'SASL_PLAINTEXT'} / {sasl_mechanism or 'SCRAM-SHA-256'}"
+        )
+    print(
+        f"Database: {database_url.split('@')[-1] if '@' in database_url else database_url}"
+    )  # Hide credentials
     print()
 
     # Create consumer

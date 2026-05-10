@@ -1,10 +1,14 @@
 """Local executor for testing and debugging."""
 
-from typing import Any, Dict, Optional
-from reflowfy.core.execution_context import ExecutionContext
-from reflowfy.execution.base import BaseExecutor, ExecutionStatus, ExecutionState
-from reflowfy.transformations.base import TransformationError
 import uuid
+from typing import Any, Dict, Optional
+
+from reflowfy.core.execution_context import (
+    ExecutionContext,
+    build_flat_runtime_params,
+)
+from reflowfy.execution.base import BaseExecutor, ExecutionState, ExecutionStatus
+from reflowfy.transformations.base import TransformationError
 
 
 class LocalExecutor(BaseExecutor):
@@ -57,29 +61,31 @@ class LocalExecutor(BaseExecutor):
 
         # Resolve pipeline with runtime params (for AbstractPipeline).
         # _resolved_params includes defaults + any keys added by define_source.
-        if hasattr(pipeline, 'resolve'):
+        if hasattr(pipeline, "resolve"):
             pipeline.resolve(runtime_params)
 
         # Create execution context
+        resolved_params = dict(getattr(pipeline, "_resolved_params", runtime_params))
+
         context = ExecutionContext(
             execution_id=execution_id,
             pipeline_name=pipeline.name,
-            runtime_params=runtime_params,
+            runtime_params=resolved_params,
         )
 
-        # Build flat mutable runtime_params for the transformation chain.
-        # Starts from _resolved_params (includes define_source enrichments),
-        # then merges execution-context keys on top.
-        flat_runtime_params = dict(getattr(pipeline, '_resolved_params', runtime_params))
-        flat_runtime_params.update({
-            "execution_id": context.execution_id,
-            "batch_id": context.batch_id,
-            "pipeline_name": context.pipeline_name,
-            "created_at": context.created_at.isoformat(),
-            "batch_number": context.batch_number,
-            "is_retry": context.is_retry,
-            "retry_count": context.retry_count,
-        })
+        # Build one shared mutable runtime_params dict for the full
+        # transformation chain and destination metadata.
+        flat_runtime_params = build_flat_runtime_params(
+            resolved_params,
+            execution_id=context.execution_id,
+            batch_id=context.batch_id or "",
+            pipeline_name=context.pipeline_name,
+            created_at=context.created_at.isoformat(),
+            batch_number=context.batch_number,
+            total_batches=context.total_batches,
+            retry_count=context.retry_count,
+            is_retry=context.is_retry,
+        )
 
         # Initialize status
         status = ExecutionStatus(
@@ -92,7 +98,7 @@ class LocalExecutor(BaseExecutor):
         try:
             # 1. Fetch data from source (limited)
             print(f"🔍 Fetching data from source (limit: {self.max_records})...")
-            records = pipeline.source.fetch(runtime_params, limit=self.max_records)
+            records = pipeline.source.fetch(resolved_params, limit=self.max_records)
 
             if not records:
                 print("⚠️  No records fetched")
@@ -223,14 +229,18 @@ class LocalExecutor(BaseExecutor):
 
                 # 2. Build flat mutable runtime_params for this ID's chain.
                 transformed_records = records
-                flat_id_params = dict(batch_params)
-                flat_id_params.update({
-                    "execution_id": context.execution_id,
-                    "batch_id": context.batch_id,
-                    "pipeline_name": context.pipeline_name,
-                    "created_at": context.created_at.isoformat(),
-                    "current_ids": [current_id],
-                })
+                flat_id_params = build_flat_runtime_params(
+                    batch_params,
+                    execution_id=context.execution_id,
+                    batch_id=context.batch_id or "",
+                    pipeline_name=context.pipeline_name,
+                    created_at=context.created_at.isoformat(),
+                    batch_number=context.batch_number,
+                    total_batches=context.total_batches,
+                    retry_count=context.retry_count,
+                    is_retry=context.is_retry,
+                    current_ids=[current_id],
+                )
 
                 for transformation in transformations:
                     print(f"  🔄 Applying: {transformation.name}")

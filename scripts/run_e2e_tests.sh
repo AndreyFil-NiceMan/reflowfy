@@ -177,8 +177,8 @@ cd "$PROJECT_ROOT"
 # Step 0: Build and Install Package
 log_info "Step 0: Building and Installing Reflowfy..."
 
-if ! command -v python3 &> /dev/null; then
-    log_error "python3 could not be found"
+if ! command -v uv &> /dev/null; then
+    log_error "uv could not be found"
     exit 1
 fi
 
@@ -188,8 +188,8 @@ rm -rf "$WORKSPACE"
 
 # Build package
 log_info "Building package..."
-python3 -m build || {
-    log_error "Failed to build package. Make sure 'build' is installed (pip install build)"
+uv run python -m build || {
+    log_error "Failed to build package. Make sure 'build' is installed (uv pip install build)"
     exit 1
 }
 
@@ -201,12 +201,12 @@ if [ -z "$WHEEL_FILE" ]; then
 fi
 
 log_info "Installing $WHEEL_FILE..."
-pip install --force-reinstall "$WHEEL_FILE" || {
+uv pip install --force-reinstall "$WHEEL_FILE" || {
     log_error "Failed to install package"
     exit 1
 }
 log_info "Installing test dependencies..."
-pip install "pytest-asyncio>=0.21.0" || {
+uv pip install "pytest-asyncio>=0.21.0" || {
     log_error "Failed to install pytest-asyncio"
     exit 1
 }
@@ -220,7 +220,7 @@ cd "$WORKSPACE"
 
 # Run reflowfy init
 log_info "Running reflowfy init..."
-python3 -m reflowfy.cli.main init . --name e2e_pipeline || {
+uv run python -m reflowfy.cli.main init . --name e2e_pipeline || {
     log_error "reflowfy init failed"
     exit 1
 }
@@ -282,7 +282,7 @@ sed -i 's/PIPELINE_MODULE: pipelines/PIPELINE_MODULE: tests.e2e.test_pipelines/g
 
 # Modify Dockerfiles to also COPY tests folder for E2E pipeline module
 log_info "Adding tests folder to Dockerfiles..."
-for dockerfile in Dockerfile.api Dockerfile.reflow-manager; do
+for dockerfile in Dockerfile.api Dockerfile.reflow-manager Dockerfile.worker; do
     # Add COPY tests after COPY pipelines
     sed -i 's|COPY pipelines/ pipelines/|COPY pipelines/ pipelines/\nCOPY tests/ tests/|' "$dockerfile"
 done
@@ -343,8 +343,14 @@ if [ "$SKIP_DOCKER" = false ]; then
     log_success "Kafka topics created"
 
     # Start main services (they join the existing network)
+    log_info "Building reflow-manager image (no-cache) to avoid stale transforms..."
+    docker compose build --no-cache reflow-manager || {
+        log_error "reflow-manager build failed"
+        exit 1
+    }
+
     log_info "Starting main Reflowfy services..."
-    python3 -m reflowfy.cli.main run --build --detach || {
+    uv run python -m reflowfy.cli.main run --build --detach || {
         log_error "reflowfy run failed"
         exit 1
     }
@@ -380,11 +386,11 @@ if [ "$SKIP_DOCKER" = false ]; then
 
     log_info "  - PostgreSQL data..."
     export SQL_CONNECTION_URL="postgresql://reflowfy:reflowfy@localhost:5433/reflowfy"
-    python3 tests/e2e/sources/init_sql_test_data.py || log_warning "Failed to init SQL data"
+    uv run python tests/e2e/sources/init_sql_test_data.py || log_warning "Failed to init SQL data"
 
     log_info "  - Elasticsearch data..."
     export ELASTICSEARCH_URL="http://localhost:9201"
-    python3 tests/e2e/sources/init_elastic_test_data.py || log_warning "Failed to init Elastic data"
+    uv run python tests/e2e/sources/init_elastic_test_data.py || log_warning "Failed to init Elastic data"
 
     # Export Kafka SASL config for tests running on host
     export E2E_KAFKA_SERVERS="localhost:9095"

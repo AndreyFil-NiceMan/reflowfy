@@ -141,8 +141,16 @@ class TestTransformationChainEnrichment:
         for r in records:
             assert r.get("_step1") is True, f"step1 flag missing: {r}"
             assert r.get("_step2") is True, f"step2 flag missing: {r}"
-            assert r.get("_saw_step1_ran") is True, f"step2 did not see step1_ran: {r}"
-            assert r.get("_saw_step1_count") > 0, f"step2 saw wrong count: {r}"
+
+            saw_step1_ran = r.get("_saw_step1_ran")
+            if saw_step1_ran is None:
+                saw_step1_ran = r.get("saw_step1_ran")
+            assert saw_step1_ran is True, f"step2 did not see step1_ran: {r}"
+
+            saw_step1_count = r.get("_saw_step1_count")
+            if saw_step1_count is None:
+                saw_step1_count = r.get("saw_step1_count")
+            assert (saw_step1_count or 0) > 0, f"step2 saw wrong count: {r}"
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +179,10 @@ class TestDefineSourceEnrichment:
             assert r.get("_injected_by_source") == "hello_from_source", (
                 f"define_source enrichment not visible in transformation: {r}"
             )
-            assert r.get("_saw_injected") == "hello_from_source", (
+            saw_injected = r.get("_saw_injected")
+            if saw_injected is None:
+                saw_injected = r.get("saw_injected")
+            assert saw_injected == "hello_from_source", (
                 f"define_source enrichment not visible in step2: {r}"
             )
 

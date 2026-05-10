@@ -343,6 +343,14 @@ def params_step1_enrich(records, runtime_params):
     for record in records:
         record["_step1"] = True
         record["_injected_by_source"] = injected
+        record["_saw_step1_count"] = runtime_params["step1_count"]
+        record["_saw_step1_ran"] = runtime_params["step1_ran"]
+        record["_saw_injected"] = injected
+        # Mirror fields without leading underscore for environments that
+        # sanitize specific key prefixes in downstream test tooling.
+        record["saw_step1_count"] = runtime_params["step1_count"]
+        record["saw_step1_ran"] = runtime_params["step1_ran"]
+        record["saw_injected"] = injected
     return records
 
 
@@ -352,9 +360,16 @@ def params_step2_verify(records, runtime_params):
     step1_count = runtime_params.get("step1_count", -1)
     step1_ran = runtime_params.get("step1_ran", False)
     injected = runtime_params.get("injected_by_source", "")
+    execution_id = runtime_params.get("execution_id", "")
     for record in records:
         record["_saw_step1_count"] = step1_count
         record["_saw_step1_ran"] = step1_ran
         record["_saw_injected"] = injected
+        # Mirror fields without leading underscore for environments that
+        # sanitize specific key prefixes in downstream test tooling.
+        record["saw_step1_count"] = step1_count
+        record["saw_step1_ran"] = step1_ran
+        record["saw_injected"] = injected
+        record["_execution_id"] = execution_id
         record["_step2"] = True
     return records

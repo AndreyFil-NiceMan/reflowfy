@@ -1,17 +1,21 @@
 """Worker job executor with async support."""
 
+import importlib
 import os
 import time
 import traceback
 from datetime import datetime
 from typing import Any, Dict, Optional
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import AsyncAdaptedQueuePool
-from reflowfy.transformations.registry import transformation_registry
-from reflowfy.destinations.kafka import KafkaDestination
+
+from reflowfy.core.execution_context import build_flat_runtime_params_from_metadata
 from reflowfy.destinations.api import ApiDestination
 from reflowfy.destinations.console import ConsoleDestination
+from reflowfy.destinations.kafka import KafkaDestination
 from reflowfy.reflow_manager.models import Job
+from reflowfy.transformations.registry import transformation_registry
 
 
 class JobStats:
@@ -20,13 +24,13 @@ class JobStats:
     def __init__(self):
         """Initialize job statistics."""
         self.start_time = time.time()
-        self.end_time = None
+        self.end_time: Optional[float] = None
         self.records_input = 0
         self.records_output = 0
         self.transformation_times = {}
-        self.destination_write_time = 0
-        self.error = None
-        self.error_traceback = None
+        self.destination_write_time: float = 0.0
+        self.error: Optional[str] = None
+        self.error_traceback: Optional[str] = None
         self.success = False
 
     def to_dict(self) -> Dict[str, Any]:
@@ -39,13 +43,14 @@ class JobStats:
             "duration_seconds": round(duration, 3),
             "records_input": self.records_input,
             "records_output": self.records_output,
-            "throughput_records_per_second": round(self.records_output / duration, 2) if duration > 0 else 0,
+            "throughput_records_per_second": round(self.records_output / duration, 2)
+            if duration > 0
+            else 0,
             "transformation_times": self.transformation_times,
             "destination_write_time": round(self.destination_write_time, 3),
             "error": self.error,
             "success": self.success,
         }
-
 
 
 class WorkerExecutor:
@@ -69,8 +74,7 @@ class WorkerExecutor:
             database_url: PostgreSQL connection URL
         """
         sync_url = database_url or os.getenv(
-            "DATABASE_URL",
-            "postgresql://reflowfy:reflowfy@localhost:5432/reflowfy"
+            "DATABASE_URL", "postgresql://reflowfy:reflowfy@localhost:5432/reflowfy"
         )
 
         # Convert sync URL to async (postgresql:// -> postgresql+asyncpg://)
@@ -114,29 +118,16 @@ class WorkerExecutor:
         try:
             # Extract job data
             transformation_names = job_payload.get("transformations", [])
+            transformation_specs = job_payload.get("transformation_specs", [])
             destination_config = job_payload.get("destination", {})
             records = job_payload.get("records", [])
             metadata = job_payload.get("metadata", {})
 
-            # Build a single flat mutable runtime_params dict.
-            # User params are the base; execution-context keys are merged on top
-            # (they are reserved and cannot be shadowed by user params).
-            # This same dict is passed through every transformation so mutations
-            # made by one transformation are visible to subsequent ones and to
-            # the destination.
-            runtime_params = dict(metadata.get("runtime_params", {}))
-            runtime_params.update({
-                "execution_id": metadata.get("execution_id", ""),
-                "batch_id": metadata.get("batch_id", ""),
-                "pipeline_name": metadata.get("pipeline_name", ""),
-                "created_at": metadata.get("created_at", ""),
-                "batch_number": metadata.get("batch_number", 0),
-                "total_batches": metadata.get("total_batches", 0),
-                "retry_count": metadata.get("retry_count", 0),
-                "is_retry": metadata.get("is_retry", False),
-            })
-            if "current_ids" in metadata:
-                runtime_params["current_ids"] = metadata["current_ids"]
+            # Build one shared flat mutable runtime_params dict for the job.
+            # The same object is passed through all transformations and then
+            # into destination.send_with_retry, so in-place enrichments flow
+            # end-to-end within this job execution.
+            runtime_params = build_flat_runtime_params_from_metadata(metadata)
 
             # Track input records
             stats.records_input = len(records)
@@ -154,14 +145,27 @@ class WorkerExecutor:
             # Load and apply transformations (CPU-bound, stays sync)
             transformed_records = records
 
-            for transformation_name in transformation_names:
+            for idx, transformation_name in enumerate(transformation_names):
                 print(f"  🔄 Applying: {transformation_name}")
 
                 # Track transformation start time
                 transform_start = time.time()
 
-                # Load transformation from registry
-                transformation = transformation_registry.create_instance(transformation_name)
+                # Prefer explicit transformation spec from producer process to
+                # avoid name-collision ambiguity in registry for duplicated names.
+                transformation = None
+                if idx < len(transformation_specs):
+                    spec = transformation_specs[idx] or {}
+                    spec_name = spec.get("name")
+                    module_name = spec.get("module")
+                    class_name = spec.get("class_name")
+                    if spec_name == transformation_name and module_name and class_name:
+                        module = importlib.import_module(module_name)
+                        cls = getattr(module, class_name)
+                        transformation = cls()
+
+                if transformation is None:
+                    transformation = transformation_registry.create_instance(transformation_name)
 
                 # Apply transformation — pass the shared mutable runtime_params
                 transformed_records = transformation.apply(transformed_records, runtime_params)
@@ -170,7 +174,9 @@ class WorkerExecutor:
                 transform_duration = time.time() - transform_start
                 stats.transformation_times[transformation_name] = round(transform_duration, 3)
 
-                print(f"  ✓ {transformation_name}: {len(transformed_records)} records ({transform_duration:.2f}s)")
+                print(
+                    f"  ✓ {transformation_name}: {len(transformed_records)} records ({transform_duration:.2f}s)"
+                )
 
             # Track output records
             stats.records_output = len(transformed_records)
@@ -197,7 +203,9 @@ class WorkerExecutor:
             stats.success = True
             stats.end_time = time.time()
 
-            print(f"✓ Job {job_id} completed successfully (duration: {stats.end_time - stats.start_time:.2f}s)\n")
+            print(
+                f"✓ Job {job_id} completed successfully (duration: {stats.end_time - stats.start_time:.2f}s)\n"
+            )
 
             # Update job status in PostgreSQL (async)
             await self._update_job_in_db(execution_id, job_id, stats)
@@ -220,12 +228,7 @@ class WorkerExecutor:
 
             return False
 
-    async def _update_job_in_db(
-        self,
-        execution_id: str,
-        job_id: str,
-        stats: JobStats
-    ):
+    async def _update_job_in_db(self, execution_id: str, job_id: str, stats: JobStats):
         """
         Update job status directly in PostgreSQL asynchronously.
 
@@ -259,14 +262,11 @@ class WorkerExecutor:
                     update_data["error_traceback"] = stats.error_traceback
 
                 # Update the job using async execute
-                stmt = (
-                    update(Job)
-                    .where(Job.job_id == job_id)
-                    .values(**update_data)
-                )
+                stmt = update(Job).where(Job.job_id == job_id).values(**update_data)
                 result = await db.execute(stmt)
 
-                if result.rowcount == 0:
+                rowcount = getattr(result, "rowcount", None)
+                if rowcount == 0:
                     print(f"  ⚠️  Job {job_id} not found in database")
                     await db.rollback()
                     return
@@ -277,7 +277,6 @@ class WorkerExecutor:
             except Exception as e:
                 print(f"  ⚠️  Failed to update database: {e}")
                 await db.rollback()
-
 
     def _create_destination(self, destination_config: Dict[str, Any]) -> Any:
         """

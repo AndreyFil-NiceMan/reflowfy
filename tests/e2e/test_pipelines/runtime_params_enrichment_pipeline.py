@@ -9,7 +9,7 @@ These pipelines verify the full runtime_params flow:
 """
 
 from reflowfy import AbstractPipeline, IdBasedPipeline
-from tests.e2e.test_pipelines.destinations import e2e_console, e2e_http
+from tests.e2e.test_pipelines.destinations import e2e_http
 from tests.e2e.test_pipelines.sources import e2e_mock
 from tests.e2e.test_pipelines.transformations import (
     params_step1_enrich,
@@ -34,7 +34,7 @@ class E2EParamsEnrichPipeline(AbstractPipeline):
         return e2e_mock(count=10, batch_size=10)
 
     def define_destination(self, runtime_params):
-        return e2e_console(True, 10)
+        return e2e_http()
 
     def define_transformations(self, runtime_params):
         return [params_step1_enrich(), params_step2_verify()]

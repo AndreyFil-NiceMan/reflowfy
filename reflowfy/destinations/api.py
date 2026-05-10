@@ -1,7 +1,9 @@
 """API destination for webhooks and REST endpoints."""
 
 from typing import Any, Dict, List, Literal, Optional
+
 import httpx
+
 from reflowfy.destinations.base import BaseDestination, DestinationError, RetryConfig
 
 
@@ -13,6 +15,7 @@ class ApiDestination(BaseDestination):
     - Configurable authentication (Bearer, API key, Basic)
     - URL query parameters
     - Custom static body fields merged into every request
+    - runtime_params metadata merged into every request body under 'runtime_params'
     - Request batching
     - Timeout configuration
     - Custom headers
@@ -44,6 +47,7 @@ class ApiDestination(BaseDestination):
             batch_requests: Whether to send all records in one request
             params: URL query parameters appended to every request
             body: Static fields merged into every request body alongside records
+            runtime_params (metadata): Added to every request body as runtime_params
             retry_config: Optional retry configuration
         """
         config = {
@@ -80,9 +84,28 @@ class ApiDestination(BaseDestination):
 
         return self._client
 
-    def _build_payload(self, data: Any) -> Dict[str, Any]:
-        """Merge static body fields with record data."""
-        return dict(self.config.get("body") or {})
+    def _serialize_metadata(self, metadata: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not metadata:
+            return None
+        safe: Dict[str, Any] = {}
+        for key, value in metadata.items():
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                safe[key] = value
+            elif isinstance(value, (list, dict)):
+                safe[key] = value
+            else:
+                safe[key] = str(value)
+        return safe
+
+    def _build_payload(
+        self, data: Any, metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Merge static body fields with record data and runtime metadata."""
+        payload = dict(self.config.get("body") or {})
+        runtime_params = self._serialize_metadata(metadata)
+        if runtime_params:
+            payload["runtime_params"] = runtime_params
+        return payload
 
     async def send(self, records: List[Any], metadata: Optional[Dict[str, Any]] = None) -> None:
         """
@@ -102,7 +125,7 @@ class ApiDestination(BaseDestination):
 
         try:
             if self.config["batch_requests"]:
-                payload = self._build_payload(records)
+                payload = self._build_payload(records, metadata)
                 payload["records"] = records
 
                 response = await client.request(method, url, json=payload, params=params)
@@ -110,7 +133,7 @@ class ApiDestination(BaseDestination):
 
             else:
                 for record in records:
-                    payload = self._build_payload(record)
+                    payload = self._build_payload(record, metadata)
                     payload["record"] = record
 
                     response = await client.request(method, url, json=payload, params=params)
