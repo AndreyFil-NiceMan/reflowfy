@@ -18,6 +18,9 @@ from tests.e2e.test_pipelines import api_source_test_pipeline as api_source_test
 from tests.e2e.test_pipelines import crash_recovery_test_pipeline as crash_recovery_test_pipeline
 from tests.e2e.test_pipelines import dedup_test_pipeline as dedup_test_pipeline
 from tests.e2e.test_pipelines import dlq_test_pipeline as dlq_test_pipeline
+from tests.e2e.test_pipelines import (
+    elastic_routed_destinations_pipeline as elastic_routed_destinations_pipeline,
+)
 from tests.e2e.test_pipelines import elastic_source_test_pipeline as elastic_source_test_pipeline
 from tests.e2e.test_pipelines import error_pipeline_test as error_pipeline_test
 from tests.e2e.test_pipelines import (

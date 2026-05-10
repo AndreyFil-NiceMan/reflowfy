@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-05-10T20:13:33.042Z",
+  "projectRoot": "/home/kofli/git-repos/reflowfy",
+  "structure": {
+    "hasPackageJson": false,
+    "hasTsConfig": false,
+    "hasClaudeConfig": false,
+    "hasClaudeFlow": true
+  },
+  "scannedAt": 1778444013042
+}

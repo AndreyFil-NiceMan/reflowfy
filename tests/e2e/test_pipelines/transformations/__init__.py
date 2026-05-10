@@ -134,6 +134,25 @@ def add_source_info(records, runtime_params):
     return records
 
 
+@transformation("elastic_add_metadata_and_route")
+def elastic_add_metadata_and_route(records, runtime_params):
+    """Adds per-document metadata and a per-job route hint for destination selection."""
+    page_num = int(runtime_params.get("page_num", 0))
+    route_target = "primary" if page_num % 2 == 0 else "secondary"
+    execution_id = runtime_params.get("execution_id", "unknown")
+
+    for record in records:
+        record["_source_type"] = "elasticsearch"
+        record["_test_pipeline"] = "elastic_routed_destinations"
+        record["_execution_id"] = execution_id
+        record["_page_num"] = page_num
+        record["_event_type"] = record.get("event_type", "unknown")
+        record["_has_amount"] = record.get("amount") is not None
+        record["_route_target"] = route_target
+
+    return records
+
+
 @transformation("sql_add_source_info")
 def sql_add_source_info(records, runtime_params):
     """Adds SQL source metadata to records."""

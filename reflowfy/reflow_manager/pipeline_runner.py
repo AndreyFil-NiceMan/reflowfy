@@ -455,6 +455,10 @@ class PipelineRunner:
         for source_job in pipeline.source.split_jobs(enriched_params):
             # Use per-job params so in-place enrichment does not bleed across jobs.
             job_params = dict(enriched_params)
+            if source_job.metadata:
+                for key, value in source_job.metadata.items():
+                    if key not in job_params:
+                        job_params[key] = value
 
             # Resolve transformation chain and destination for this source job.
             resolved_transformations = list(
