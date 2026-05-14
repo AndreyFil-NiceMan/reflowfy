@@ -38,6 +38,7 @@ class PaginatedAPISource(BaseSource):
         data_key: str = "data",
         total_key: str | None = "total",
         timeout: float = 30.0,
+        health_check_enabled: bool = True,
         **kwargs,
     ):
         """
@@ -61,6 +62,7 @@ class PaginatedAPISource(BaseSource):
             data_key: Response key containing records
             total_key: Response key containing total count
             timeout: Request timeout
+            health_check_enabled: Enable/disable source health check
         """
         config = {
             "base_url": base_url,
@@ -80,6 +82,7 @@ class PaginatedAPISource(BaseSource):
             "data_key": data_key,
             "total_key": total_key,
             "timeout": timeout,
+            "health_check_enabled": health_check_enabled,
             **kwargs,
         }
         super().__init__(config)
@@ -280,6 +283,9 @@ class PaginatedAPISource(BaseSource):
 
     def health_check(self) -> bool:
         """Check if API is accessible."""
+        if not self.config.get("health_check_enabled", True):
+            return True
+
         try:
             client = self._get_client()
             response = client.request("HEAD", self.config["endpoint"], timeout=5.0)
@@ -327,6 +333,7 @@ class IDBasedAPISource(BaseSource):
         data_key: Optional[str] = None,
         request_body: Optional[Dict[str, Any]] = None,
         query_params: Optional[Dict[str, Any]] = None,
+        health_check_enabled: bool = True,
         **kwargs,
     ):
         """
@@ -359,6 +366,7 @@ class IDBasedAPISource(BaseSource):
                 In batch mode, merged alongside the IDs (unless ``batch_id_key``
                 is already present in this dict).
             query_params: Extra query-string parameters appended to every request.
+            health_check_enabled: Enable/disable source health check.
         """
         config = {
             "base_url": base_url,
@@ -375,6 +383,7 @@ class IDBasedAPISource(BaseSource):
             "data_key": data_key,
             "request_body": request_body or {},
             "query_params": query_params or {},
+            "health_check_enabled": health_check_enabled,
             **kwargs,
         }
         super().__init__(config)
@@ -582,6 +591,9 @@ class IDBasedAPISource(BaseSource):
 
     def health_check(self) -> bool:
         """Check if the API is accessible."""
+        if not self.config.get("health_check_enabled", True):
+            return True
+
         try:
             client = self._get_client()
             response = client.request("HEAD", "/", timeout=5.0)
@@ -599,6 +611,7 @@ def paginated_api_source(
     data_key: str = "data",
     auth_type: Optional[str] = None,
     auth_token: Optional[str] = None,
+    health_check_enabled: bool = True,
     **kwargs,
 ) -> PaginatedAPISource:
     """
@@ -623,6 +636,7 @@ def paginated_api_source(
         data_key=data_key,
         auth_type=auth_type,
         auth_token=auth_token,
+        health_check_enabled=health_check_enabled,
         **kwargs,
     )
 
@@ -639,6 +653,7 @@ def id_based_api_source(
     data_key: Optional[str] = None,
     request_body: Optional[Dict[str, Any]] = None,
     query_params: Optional[Dict[str, Any]] = None,
+    health_check_enabled: bool = True,
     **kwargs,
 ) -> IDBasedAPISource:
     """
@@ -686,5 +701,6 @@ def id_based_api_source(
         data_key=data_key,
         request_body=request_body,
         query_params=query_params,
+        health_check_enabled=health_check_enabled,
         **kwargs,
     )

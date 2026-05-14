@@ -33,6 +33,7 @@ class ApiDestination(BaseDestination):
         params: Optional[Dict[str, str]] = None,
         body: Optional[Dict[str, Any]] = None,
         retry_config: Optional[RetryConfig] = None,
+        health_check_enabled: bool = True,
     ):
         """
         Initialize API destination.
@@ -49,6 +50,7 @@ class ApiDestination(BaseDestination):
             body: Static fields merged into every request body alongside records
             runtime_params (metadata): Added to every request body as runtime_params
             retry_config: Optional retry configuration
+            health_check_enabled: Enable/disable destination health check
         """
         config = {
             "url": url,
@@ -60,6 +62,7 @@ class ApiDestination(BaseDestination):
             "batch_requests": batch_requests,
             "params": params,
             "body": body,
+            "health_check_enabled": health_check_enabled,
         }
         super().__init__(config, retry_config)
         self._client: Optional[httpx.AsyncClient] = None
@@ -152,6 +155,9 @@ class ApiDestination(BaseDestination):
 
     async def health_check(self) -> bool:
         """Check if the API endpoint is accessible."""
+        if not self.config.get("health_check_enabled", True):
+            return True
+
         try:
             client = await self._get_client()
             try:
@@ -181,6 +187,7 @@ def api_destination(
     params: Optional[Dict[str, str]] = None,
     body: Optional[Dict[str, Any]] = None,
     retry_config: Optional[RetryConfig] = None,
+    health_check_enabled: bool = True,
 ) -> ApiDestination:
     """
     Factory function for API destination.
@@ -206,4 +213,5 @@ def api_destination(
         params=params,
         body=body,
         retry_config=retry_config,
+        health_check_enabled=health_check_enabled,
     )

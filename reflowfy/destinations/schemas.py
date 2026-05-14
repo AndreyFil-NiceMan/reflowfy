@@ -5,6 +5,7 @@ ensuring type safety and clear error messages.
 """
 
 from typing import Any, Dict, Literal, Optional
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -45,14 +46,15 @@ class ApiDestinationConfig(BaseModel):
     )
     auth_token: Optional[str] = Field(default=None, description="Auth token/credentials")
     timeout: float = Field(default=30.0, ge=1.0, le=300.0, description="Request timeout")
-    batch_requests: bool = Field(
-        default=False, description="Send all records in one request"
-    )
+    batch_requests: bool = Field(default=False, description="Send all records in one request")
     params: Optional[Dict[str, str]] = Field(
         default=None, description="URL query parameters appended to every request"
     )
     body: Optional[Dict[str, Any]] = Field(
         default=None, description="Static fields merged into every request body alongside records"
+    )
+    health_check_enabled: bool = Field(
+        default=True, description="Enable/disable destination health check"
     )
 
     @field_validator("url")
@@ -61,7 +63,6 @@ class ApiDestinationConfig(BaseModel):
         if not v.startswith(("http://", "https://")):
             raise ValueError("url must start with http:// or https://")
         return v
-
 
 
 class ConsoleDestinationConfig(BaseModel):

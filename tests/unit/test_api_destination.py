@@ -378,12 +378,23 @@ class TestHealthCheck:
         result = await dest.health_check()
         assert result is False
 
+    async def test_health_check_disabled_skips_requests(self):
+        dest = api_destination(
+            url="https://api.example.com",
+            health_check_enabled=False,
+        )
+
+        result = await dest.health_check()
+        assert result is True
+        assert dest._client is None
+
     async def test_close_clears_client(self):
         dest = api_destination(url="https://api.example.com")
-        dest._client = MagicMock()
-        dest._client.aclose = AsyncMock()
+        mock_client = MagicMock()
+        mock_client.aclose = AsyncMock()
+        dest._client = mock_client
 
         await dest.close()
 
-        dest._client.aclose.assert_awaited_once()
+        mock_client.aclose.assert_awaited_once()
         assert dest._client is None

@@ -5,6 +5,7 @@ ensuring type safety and clear error messages.
 """
 
 from typing import Any, Dict, List, Literal, Optional
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -53,8 +54,13 @@ class PaginatedAPISourceConfig(BaseModel):
         default="next_cursor", description="Response key containing next cursor"
     )
     data_key: str = Field(default="data", description="JSON key containing records")
-    total_key: Optional[str] = Field(default="total", description="Response key containing total count")
+    total_key: Optional[str] = Field(
+        default="total", description="Response key containing total count"
+    )
     timeout: float = Field(default=30.0, ge=1.0, description="Request timeout in seconds")
+    health_check_enabled: bool = Field(
+        default=True, description="Enable/disable source health check"
+    )
 
     @field_validator("base_url")
     @classmethod
@@ -70,19 +76,39 @@ class IDBasedAPISourceConfig(BaseModel):
     base_url: str = Field(..., description="Base URL of the API")
     endpoint_template: str = Field(..., description="Endpoint path; include {id} for per-ID mode")
     ids: List[Any] = Field(default_factory=list, description="Static list of IDs to fetch")
-    ids_field: str = Field(default="id", description="Field name to extract IDs from ids_source records")
+    ids_field: str = Field(
+        default="id", description="Field name to extract IDs from ids_source records"
+    )
     method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"] = Field(
         default="GET", description="HTTP method"
     )
     headers: Dict[str, str] = Field(default_factory=dict, description="HTTP headers")
     auth_type: Optional[Literal["bearer", "apikey", "basic"]] = Field(default=None)
     auth_token: Optional[str] = Field(default=None)
-    batch_size: int = Field(default=50, ge=1, le=10000, description="IDs per job (per-ID mode) or records per job (batch mode)")
+    batch_size: int = Field(
+        default=50,
+        ge=1,
+        le=10000,
+        description="IDs per job (per-ID mode) or records per job (batch mode)",
+    )
     timeout: float = Field(default=30.0, ge=1.0)
-    batch_id_key: Optional[str] = Field(default="ids", description="Body key wrapping the IDs list in batch mode; None sends a raw list")
-    data_key: Optional[str] = Field(default=None, description="Dotted response key to extract records list; None means response is the list")
-    request_body: Dict[str, Any] = Field(default_factory=dict, description="Extra body fields merged into every request")
-    query_params: Dict[str, Any] = Field(default_factory=dict, description="Extra query-string parameters appended to every request")
+    batch_id_key: Optional[str] = Field(
+        default="ids",
+        description="Body key wrapping the IDs list in batch mode; None sends a raw list",
+    )
+    data_key: Optional[str] = Field(
+        default=None,
+        description="Dotted response key to extract records list; None means response is the list",
+    )
+    request_body: Dict[str, Any] = Field(
+        default_factory=dict, description="Extra body fields merged into every request"
+    )
+    query_params: Dict[str, Any] = Field(
+        default_factory=dict, description="Extra query-string parameters appended to every request"
+    )
+    health_check_enabled: bool = Field(
+        default=True, description="Enable/disable source health check"
+    )
 
 
 class ElasticsearchSourceConfig(BaseModel):
