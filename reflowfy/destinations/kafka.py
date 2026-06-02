@@ -1,5 +1,6 @@
 """Kafka destination connector using aiokafka."""
 
+import asyncio
 import json
 from typing import Any, Dict, List, Optional, Union
 from aiokafka import AIOKafkaProducer
@@ -16,6 +17,7 @@ class KafkaDestination(BaseDestination):
     - Configurable serialization (JSON by default)
     - Compression
     - Error handling
+    - Consumer lag health check (opt-in)
     """
 
     def __init__(
@@ -29,6 +31,11 @@ class KafkaDestination(BaseDestination):
         sasl_mechanism: Optional[str] = None,
         sasl_username: Optional[str] = None,
         sasl_password: Optional[str] = None,
+        # Lag health check
+        lag_health_check_enabled: bool = False,
+        consumer_group_id: Optional[str] = None,
+        lag_threshold: int = 10000,
+        lag_check_timeout: float = 10.0,
         **producer_config,
     ):
         """
@@ -43,6 +50,10 @@ class KafkaDestination(BaseDestination):
             sasl_mechanism: SASL mechanism (e.g., SCRAM-SHA-256)
             sasl_username: SASL username
             sasl_password: SASL password
+            lag_health_check_enabled: Enable consumer lag health check
+            consumer_group_id: Consumer group to monitor for lag
+            lag_threshold: Max allowed consumer lag (records) before health check fails
+            lag_check_timeout: Timeout in seconds for the lag check
             **producer_config: Additional producer configuration
         """
         config = {
@@ -53,6 +64,10 @@ class KafkaDestination(BaseDestination):
             "sasl_mechanism": sasl_mechanism,
             "sasl_username": sasl_username,
             "sasl_password": sasl_password,
+            "lag_health_check_enabled": lag_health_check_enabled,
+            "consumer_group_id": consumer_group_id,
+            "lag_threshold": lag_threshold,
+            "lag_check_timeout": lag_check_timeout,
             **producer_config,
         }
 
@@ -64,32 +79,99 @@ class KafkaDestination(BaseDestination):
         self._producer: Optional[AIOKafkaProducer] = None
         self._started = False
 
+    def _build_connection_kwargs(self) -> Dict[str, Any]:
+        """Build shared connection kwargs for producer/consumer/admin."""
+        kwargs: Dict[str, Any] = {
+            "bootstrap_servers": self.config["bootstrap_servers"],
+        }
+        username = self.config.get("sasl_username")
+        password = self.config.get("sasl_password")
+        if username and password:
+            kwargs.update({
+                "security_protocol": self.config.get("security_protocol") or "SASL_PLAINTEXT",
+                "sasl_mechanism": self.config.get("sasl_mechanism") or "SCRAM-SHA-256",
+                "sasl_plain_username": username,
+                "sasl_plain_password": password,
+            })
+        return kwargs
+
     async def _get_producer(self) -> AIOKafkaProducer:
         """Get or create async Kafka producer."""
         if self._producer is None or not self._started:
-            # Build producer kwargs
+            conn_kwargs = self._build_connection_kwargs()
             producer_kwargs = {
-                "bootstrap_servers": self.config["bootstrap_servers"],
+                **conn_kwargs,
                 "compression_type": self.config.get("compression_type", "gzip"),
             }
-
-            # Add SASL config if credentials provided
             username = self.config.get("sasl_username")
-            password = self.config.get("sasl_password")
-            if username and password:
-                producer_kwargs.update({
-                    "security_protocol": self.config.get("security_protocol") or "SASL_PLAINTEXT",
-                    "sasl_mechanism": self.config.get("sasl_mechanism") or "SCRAM-SHA-256",
-                    "sasl_plain_username": username,
-                    "sasl_plain_password": password,
-                    "client_id": username,  # client_id = username
-                })
+            if username:
+                producer_kwargs["client_id"] = username
 
             self._producer = AIOKafkaProducer(**producer_kwargs)
             await self._producer.start()
             self._started = True
 
         return self._producer
+
+    async def _get_consumer_lag(self, consumer_group_id: str) -> int:
+        """
+        Return total consumer lag for *consumer_group_id* on the destination topic.
+
+        Uses a temporary consumer (no group) to fetch end offsets, and the
+        admin client to fetch committed offsets for the target group.
+        Fails open: returns 0 on any error so a misconfigured check never
+        blocks dispatch.
+        """
+        from aiokafka import AIOKafkaConsumer
+        from aiokafka.admin import AIOKafkaAdminClient
+        from aiokafka.structs import TopicPartition
+
+        topic = self.config["topic"]
+        conn_kwargs = self._build_connection_kwargs()
+
+        # --- end offsets via a temporary consumer (no group, no commits) ---
+        consumer = AIOKafkaConsumer(
+            enable_auto_commit=False,
+            **conn_kwargs,
+        )
+        await consumer.start()
+        try:
+            partitions_set = consumer.partitions_for_topic(topic)
+            if not partitions_set:
+                # Give metadata a moment to propagate
+                await asyncio.sleep(0.5)
+                partitions_set = consumer.partitions_for_topic(topic)
+
+            if not partitions_set:
+                return 0
+
+            tps = [TopicPartition(topic, p) for p in sorted(partitions_set)]
+            consumer.assign(tps)
+            end_offsets = await consumer.end_offsets(tps)
+        finally:
+            await consumer.stop()
+
+        # --- committed offsets via admin client ---
+        admin = AIOKafkaAdminClient(**conn_kwargs)
+        await admin.start()
+        try:
+            committed = await admin.list_consumer_group_offsets(consumer_group_id)
+        except Exception:
+            # Group doesn't exist or has no committed offsets yet — treat as offset=0
+            # so that lag correctly equals the full end_offset of the topic.
+            committed = {}
+        finally:
+            await admin.close()
+
+        # --- total lag ---
+        total_lag = 0
+        for tp in tps:
+            end = end_offsets.get(tp, 0)
+            committed_meta = committed.get(tp)
+            committed_offset = committed_meta.offset if committed_meta else 0
+            total_lag += max(0, end - committed_offset)
+
+        return total_lag
 
     async def send(self, records: List[Any], metadata: Optional[Dict[str, Any]] = None) -> None:
         """
@@ -130,13 +212,44 @@ class KafkaDestination(BaseDestination):
             raise DestinationError("kafka", f"Unexpected error: {e}", e)
 
     async def health_check(self) -> bool:
-        """Check Kafka cluster connectivity."""
+        """
+        Check Kafka cluster connectivity and optionally consumer lag.
+
+        When lag_health_check_enabled=True the check also measures the lag for
+        consumer_group_id against the destination topic.  Returns False if lag
+        exceeds lag_threshold, causing the calling pipeline to be rescheduled
+        via the DLQ rather than dispatching jobs right now.
+        """
         try:
             await self._get_producer()
-            # If we can get the producer, the connection is healthy
-            return True
         except Exception:
             return False
+
+        if not self.config.get("lag_health_check_enabled"):
+            return True
+
+        consumer_group_id = self.config.get("consumer_group_id")
+        if not consumer_group_id:
+            return True
+
+        timeout = float(self.config.get("lag_check_timeout", 10.0))
+        threshold = int(self.config.get("lag_threshold", 10000))
+
+        try:
+            lag = await asyncio.wait_for(
+                self._get_consumer_lag(consumer_group_id),
+                timeout=timeout,
+            )
+        except Exception as e:
+            # Fail open — a broken lag check must not block the pipeline
+            print(f"⚠️ Kafka lag check failed (fail open): {e}")
+            return True
+
+        if lag > threshold:
+            print(f"⚠️ Kafka lag {lag} exceeds threshold {threshold} for group '{consumer_group_id}'")
+            return False
+
+        return True
 
     async def close(self):
         """Close producer connection."""
@@ -155,6 +268,10 @@ def kafka_destination(
     sasl_mechanism: Optional[str] = None,
     sasl_username: Optional[str] = None,
     sasl_password: Optional[str] = None,
+    lag_health_check_enabled: bool = False,
+    consumer_group_id: Optional[str] = None,
+    lag_threshold: int = 10000,
+    lag_check_timeout: float = 10.0,
     **producer_config,
 ) -> KafkaDestination:
     """
@@ -164,9 +281,9 @@ def kafka_destination(
         >>> destination = kafka_destination(
         ...     bootstrap_servers="kafka:9092",
         ...     topic="processed-logs",
-        ...     compression_type="gzip",
-        ...     sasl_username="reflowfy",
-        ...     sasl_password="reflowfy"
+        ...     lag_health_check_enabled=True,
+        ...     consumer_group_id="downstream-consumers",
+        ...     lag_threshold=5000,
         ... )
     """
     return KafkaDestination(
@@ -178,5 +295,9 @@ def kafka_destination(
         sasl_mechanism=sasl_mechanism,
         sasl_username=sasl_username,
         sasl_password=sasl_password,
+        lag_health_check_enabled=lag_health_check_enabled,
+        consumer_group_id=consumer_group_id,
+        lag_threshold=lag_threshold,
+        lag_check_timeout=lag_check_timeout,
         **producer_config,
     )

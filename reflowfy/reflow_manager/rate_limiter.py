@@ -1,7 +1,7 @@
 """Rate limiter using token bucket algorithm for ReflowManager."""
 
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy.orm import Session
 from reflowfy.reflow_manager.models import RateLimitState
@@ -40,7 +40,7 @@ class RateLimiter:
                 tokens=1.0,  # Start with minimal tokens - no burst allowed
                 max_tokens=max(1.0, rate_limit),
                 refill_rate=rate_limit,
-                last_update=datetime.utcnow(),
+                last_update=datetime.now(timezone.utc).replace(tzinfo=None),
             )
             self.db.add(state)
             self.db.commit()
@@ -56,7 +56,7 @@ class RateLimiter:
 
     def _refill_tokens(self, state: RateLimitState) -> None:
         """Refill tokens based on elapsed time."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         elapsed = (now - state.last_update).total_seconds()
 
         # Add tokens based on refill rate
@@ -145,7 +145,7 @@ class RateLimiter:
         state = self._get_state_with_lock(pipeline_name, effective_rate)
 
         # Calculate how many tokens should have been added
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         elapsed = (now - state.last_update).total_seconds()
         new_tokens = state.tokens + (elapsed * state.refill_rate)
         new_tokens = min(new_tokens, state.max_tokens)

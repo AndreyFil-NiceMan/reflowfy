@@ -6,7 +6,7 @@ ensuring type safety and clear error messages.
 
 from typing import Any, Dict, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class KafkaDestinationConfig(BaseModel):
@@ -19,6 +19,24 @@ class KafkaDestinationConfig(BaseModel):
     )
     batch_size: int = Field(default=16384, ge=1, description="Batch size in bytes")
     linger_ms: int = Field(default=10, ge=0, description="Time to wait before sending batch")
+    lag_health_check_enabled: bool = Field(
+        default=False, description="Enable consumer lag health check before dispatch"
+    )
+    consumer_group_id: Optional[str] = Field(
+        default=None, description="Consumer group to monitor for lag"
+    )
+    lag_threshold: int = Field(
+        default=10000, ge=1, description="Max consumer lag (records) before health check fails"
+    )
+    lag_check_timeout: float = Field(
+        default=10.0, ge=0.5, description="Timeout in seconds for the lag measurement"
+    )
+
+    @model_validator(mode="after")
+    def consumer_group_required_when_enabled(self) -> "KafkaDestinationConfig":
+        if self.lag_health_check_enabled and not self.consumer_group_id:
+            raise ValueError("consumer_group_id is required when lag_health_check_enabled=True")
+        return self
 
     @field_validator("bootstrap_servers")
     @classmethod

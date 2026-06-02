@@ -165,6 +165,7 @@ class PipelineRunner:
 
         # Refresh execution to get final counts
         execution = self.execution_manager.get_execution(execution_id)
+        assert execution is not None
 
         return {
             "execution_id": execution_id,
@@ -566,6 +567,16 @@ class PipelineRunner:
         else:
             print("  Phase 2: Dispatching batches...")
 
+        # Pre-dispatch destination lag health check (Kafka only, opt-in).
+        # Runs in both local and distributed mode — high lag should block
+        # dispatch regardless of how jobs are executed.
+        if job_count > 0:
+            lag_ok = _run_async(
+                self._check_destination_lag_health(execution_id, pipeline_name, runtime_params)
+            )
+            if not lag_ok:
+                return  # execution already marked failed; DLQ entry inserted
+
         total_dispatched = 0
         total_completed = 0
         total_failed = 0
@@ -932,6 +943,87 @@ class PipelineRunner:
         print(
             f"IdBasedPipeline {final_state}: {dispatched} dispatched, {completed} completed, {failed} failed ({len(ids)} IDs)"
         )
+
+    async def _check_destination_lag_health(
+        self,
+        execution_id: str,
+        pipeline_name: str,
+        runtime_params: Dict[str, Any],
+    ) -> bool:
+        """
+        Run a lag health check on the Kafka destination before dispatching.
+
+        Looks at the first job in batch 1 to discover the destination config.
+        If the destination is KafkaDestination with lag_health_check_enabled=True
+        and the measured lag exceeds lag_threshold, the execution is immediately
+        failed and a DLQJob is inserted for later retry.
+
+        Returns True if dispatch should proceed, False if it was blocked.
+        Fails open on any unexpected error (returns True).
+        """
+        try:
+            first_jobs = self.job_manager.get_pending_jobs_by_batch_number(execution_id, 1)
+            if not first_jobs:
+                return True
+
+            job_payload = first_jobs[0].job_payload
+            dest_info = job_payload.get("destination", {})
+            if dest_info.get("type") != "KafkaDestination":
+                return True
+
+            dest_kwargs = dest_info.get("config", {})
+            if not dest_kwargs.get("lag_health_check_enabled"):
+                return True
+
+            from reflowfy.destinations.kafka import KafkaDestination
+            destination = KafkaDestination(**dest_kwargs)
+
+            try:
+                is_healthy = await destination.health_check()
+            finally:
+                await destination.close()
+
+        except Exception as exc:
+            print(f"⚠️ Lag health check error (fail open): {exc}")
+            return True
+
+        if not is_healthy:
+            print(f"🚫 Kafka lag threshold exceeded for '{pipeline_name}' — rescheduling via DLQ")
+
+            from datetime import datetime, timedelta, timezone
+            from reflowfy.reflow_manager.models import DLQJob
+
+            delay_minutes = 5
+            dlq_job = DLQJob(
+                job_payload=runtime_params,
+                pipeline_name=pipeline_name,
+                scheduled_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=delay_minutes),
+                delay_minutes=delay_minutes,
+                status="pending",
+                retry_count=0,
+                max_retries=5,
+            )
+            try:
+                self.execution_manager.db.add(dlq_job)
+                self.execution_manager.db.commit()
+            except Exception as dlq_exc:
+                print(f"⚠️ Failed to insert DLQ entry: {dlq_exc}")
+                try:
+                    self.execution_manager.db.rollback()
+                except Exception:
+                    pass
+
+            self.execution_manager.update_execution_state(
+                execution_id,
+                "failed",
+                error_message=(
+                    "Kafka destination lag threshold exceeded — "
+                    "job rescheduled via DLQ"
+                ),
+            )
+            return False
+
+        return True
 
     def _set_total_jobs(self, execution_id: str, total: int) -> None:
         """Set total_jobs for an execution (uses SET, not +=)."""

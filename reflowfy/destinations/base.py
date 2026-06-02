@@ -57,7 +57,7 @@ class BaseDestination(ABC):
         pass
 
     @abstractmethod
-    def health_check(self) -> bool:
+    async def health_check(self) -> bool:
         """
         Check if destination is healthy and accessible.
 

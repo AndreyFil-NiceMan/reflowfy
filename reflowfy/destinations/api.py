@@ -1,6 +1,6 @@
 """API destination for webhooks and REST endpoints."""
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 

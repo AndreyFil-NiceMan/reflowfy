@@ -7,11 +7,34 @@ Shared utilities live in `utils.py`.
 import typer
 from pathlib import Path
 from dotenv import load_dotenv
+from typing import Optional
 
 from reflowfy.cli.commands import build, deploy, run, check, init_cmd, test, new_cmd
+from reflowfy import __version__
 
 # Create the main typer app
 app = typer.Typer(help="Reflowfy CLI Tool for easy deployment and management.")
+
+
+def version_callback(value: bool) -> None:
+    if value:
+        typer.echo(f"reflowfy {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: Optional[bool] = typer.Option(
+        None, "-v", "--version", callback=version_callback, is_eager=True, help="Show version and exit."
+    ),
+) -> None:
+    pass
+
+
+@app.command("version")
+def version_cmd() -> None:
+    """Show the reflowfy version."""
+    typer.echo(f"reflowfy {__version__}")
 
 # Load .env file if it exists
 env_path = Path(".") / ".env"

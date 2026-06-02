@@ -1,7 +1,7 @@
 """FastAPI application for ReflowManager service."""
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Depends, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -365,7 +365,7 @@ def _reset_pipeline_schedule_if_needed(db: Session, pipeline_name: str) -> None:
     pipeline = pipeline_registry.get(pipeline_name)
     if pipeline is None or not getattr(pipeline, "is_scheduled", False):
         return
-    scheduler.reset_schedule(db, pipeline_name, triggered_at=datetime.utcnow())
+    scheduler.reset_schedule(db, pipeline_name, triggered_at=datetime.now(timezone.utc).replace(tzinfo=None))
 
 
 def _dispatch_pipeline_jobs(

@@ -5,6 +5,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+boto3 = pytest.importorskip("boto3")
+
 from reflowfy.sources.s3 import S3Source, s3_source
 
 

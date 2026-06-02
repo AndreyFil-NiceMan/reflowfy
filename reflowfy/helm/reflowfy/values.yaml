@@ -39,6 +39,11 @@ postgresql:
 # INFRASTRUCTURE - KAFKA
 #####################################
 kafka:
+  # Topic that the ReflowManager produces jobs to and workers consume from.
+  topic: 'reflow.jobs'
+  # Consumer group ID shared by all workers (and watched by the KEDA scaler).
+  groupId: 'reflowfy-workers'
+
   # External Kafka configuration (MANDATORY)
   # You must provide the bootstrap servers for your external Kafka cluster.
   external:
@@ -50,8 +55,13 @@ kafka:
     mechanism: 'SCRAM-SHA-256'
     securityProtocol: 'SASL_PLAINTEXT'
     username: 'reflowfy'
-    # Use existingSecret to avoid storing password in values.yaml
-    existingSecret: 'kafka-sasl-credentials'
+    # Password for the chart-managed secret (required when existingSecret is empty).
+    # Prefer passing this at install time via --set or .env rather than committing it.
+    password: ''
+    # Provide an existingSecret to bring your own Kafka credentials instead of letting
+    # the chart create one. It must contain both username and password keys.
+    existingSecret: ''
+    existingSecretUsernameKey: 'username'
     existingSecretPasswordKey: 'password'
 
   # Common settings

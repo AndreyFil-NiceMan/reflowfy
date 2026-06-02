@@ -11,7 +11,7 @@ pipelines). Any keys written into runtime_params are visible to subsequent
 transformations and to the destination within the same job execution.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from reflowfy import transformation
 
@@ -25,7 +25,7 @@ def transform_add_timestamp(records, runtime_params):
     """Adds a processing timestamp and source marker."""
     execution_id = runtime_params.get("execution_id", "unknown")
     for record in records:
-        record["_processed_at"] = datetime.utcnow().isoformat()
+        record["_processed_at"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         record["_execution_id"] = execution_id
         record["_transform_step_1"] = True
     return records
@@ -57,7 +57,7 @@ def crash_recovery_add_info(records, runtime_params):
 @transformation("rl_passthrough")
 def rl_passthrough(records, runtime_params):
     """Stamps dispatch timestamp and batch_id for rate-limit timing tests."""
-    ts = datetime.utcnow().isoformat()
+    ts = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
     for record in records:
         record["_rl_dispatched_at"] = ts
         record["_rl_batch_id"] = runtime_params.get("batch_id", "")

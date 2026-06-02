@@ -64,13 +64,13 @@ class _NoParmsPipeline(AbstractPipeline):
     def define_parameters(self):
         return []
 
-    def define_source(self, p):
+    def define_source(self, runtime_params):
         return MagicMock()
 
-    def define_destination(self, p):
+    def define_destination(self, records, runtime_params):
         return MagicMock()
 
-    def define_transformations(self, p):
+    def define_transformations(self, records, runtime_params):
         return []
 
 
@@ -87,13 +87,13 @@ class _TypedParamsPipeline(AbstractPipeline):
             PipelineParameter(name="label", param_type=str, required=False, default="default"),
         ]
 
-    def define_source(self, p):
+    def define_source(self, runtime_params):
         return MagicMock()
 
-    def define_destination(self, p):
+    def define_destination(self, records, runtime_params):
         return MagicMock()
 
-    def define_transformations(self, p):
+    def define_transformations(self, records, runtime_params):
         return []
 
 
@@ -105,13 +105,13 @@ class _IdBasedTestPipeline(IdBasedPipeline):
             PipelineParameter(name="env", param_type=str, required=False, default="prod"),
         ]
 
-    def define_source(self, p, ids):
+    def define_source(self, runtime_params):
         return MagicMock()
 
-    def define_destination(self, p):
+    def define_destination(self, records, runtime_params):
         return MagicMock()
 
-    def define_transformations(self, p, ids):
+    def define_transformations(self, records, runtime_params):
         return []
 
 
@@ -121,13 +121,13 @@ class _IdBasedNoExtraParamsPipeline(IdBasedPipeline):
     def define_parameters(self):
         return []
 
-    def define_source(self, p, ids):
+    def define_source(self, runtime_params):
         return MagicMock()
 
-    def define_destination(self, p):
+    def define_destination(self, records, runtime_params):
         return MagicMock()
 
-    def define_transformations(self, p, ids):
+    def define_transformations(self, records, runtime_params):
         return []
 
 
@@ -168,7 +168,7 @@ def id_based_no_extra_client():
 class TestNoParmsPipeline:
     def test_run_returns_200(self, no_params_client):
         client, _, _ = no_params_client
-        r = client.post("/_test_no_params/run", params={"mode": "local"})
+        client.post("/_test_no_params/run", params={"mode": "local"})
         # Route is registered as /pipelines/<name>/run
         r2 = client.post("/pipelines/_test_no_params/run", params={"mode": "local"})
         assert r2.status_code == 200

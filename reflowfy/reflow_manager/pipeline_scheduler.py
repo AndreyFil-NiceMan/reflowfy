@@ -8,7 +8,7 @@ import os
 import threading
 import traceback
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from croniter import croniter
@@ -83,7 +83,7 @@ class PipelineScheduler:
         """Poll for due scheduled pipelines and trigger executions."""
         db = SessionLocal()
         try:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
             due = (
                 db.query(PipelineSchedule)
                 .filter(
@@ -162,7 +162,7 @@ class PipelineScheduler:
         """
         from reflowfy.core.registry import pipeline_registry
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         all_pipelines = pipeline_registry.list_all()
         scheduled_names = set()
 

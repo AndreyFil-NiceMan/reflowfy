@@ -1,6 +1,6 @@
 """DLQ (Dead Letter Queue) API Routes for ReflowManager."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -36,7 +36,7 @@ async def schedule_dlq_job(
     The job will be processed after the specified delay (or default delay).
     """
     delay_minutes = request.delay_minutes if request.delay_minutes is not None else DLQ_DEFAULT_DELAY_MINUTES
-    scheduled_at = datetime.utcnow() + timedelta(minutes=delay_minutes)
+    scheduled_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=delay_minutes)
 
     dlq_job = DLQJob(
         job_payload=request.job_payload,

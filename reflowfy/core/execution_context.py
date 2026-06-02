@@ -2,7 +2,7 @@
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from jinja2 import BaseLoader, Environment, TemplateSyntaxError, UndefinedError
@@ -29,7 +29,7 @@ class ExecutionContext:
     pipeline_name: str = ""
     runtime_params: Dict[str, Any] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     batch_number: int = 0
     total_batches: int = 0
     retry_count: int = 0

@@ -141,3 +141,71 @@ Kafka group ID
 {{- define "reflowfy.kafka.groupId" -}}
 {{- .Values.kafka.groupId | default "reflowfy-workers" }}
 {{- end }}
+
+{{/*
+Kafka SASL secret name - external secret if provided, otherwise chart-generated
+*/}}
+{{- define "reflowfy.kafka.secretName" -}}
+{{- if .Values.kafka.sasl.existingSecret }}
+{{- .Values.kafka.sasl.existingSecret }}
+{{- else }}
+{{- printf "%s-kafka-sasl" .Release.Name }}
+{{- end }}
+{{- end }}
+
+{{/*
+Kafka SASL secret username key
+*/}}
+{{- define "reflowfy.kafka.usernameKey" -}}
+{{- .Values.kafka.sasl.existingSecretUsernameKey | default "username" }}
+{{- end }}
+
+{{/*
+Kafka SASL secret password key
+*/}}
+{{- define "reflowfy.kafka.passwordKey" -}}
+{{- .Values.kafka.sasl.existingSecretPasswordKey | default "password" }}
+{{- end }}
+
+{{/*
+Map the app SASL mechanism to the value KEDA's Kafka scaler expects
+*/}}
+{{- define "reflowfy.kafka.kedaSaslMechanism" -}}
+{{- $m := .Values.kafka.sasl.mechanism | upper -}}
+{{- if eq $m "SCRAM-SHA-256" -}}scram_sha256
+{{- else if eq $m "SCRAM-SHA-512" -}}scram_sha512
+{{- else if eq $m "PLAIN" -}}plaintext
+{{- else -}}plaintext
+{{- end -}}
+{{- end }}
+
+{{/*
+KEDA TLS flag derived from the SASL security protocol
+*/}}
+{{- define "reflowfy.kafka.kedaTls" -}}
+{{- if contains "SSL" (.Values.kafka.sasl.securityProtocol | upper) -}}enable
+{{- else -}}disable
+{{- end -}}
+{{- end }}
+
+{{/*
+SASL environment variables shared by reflow-manager and worker deployments.
+Username and password are read from the Kafka SASL secret; protocol and mechanism
+are plain config values.
+*/}}
+{{- define "reflowfy.kafka.saslEnv" -}}
+- name: KAFKA_SECURITY_PROTOCOL
+  value: {{ .Values.kafka.sasl.securityProtocol | quote }}
+- name: KAFKA_SASL_MECHANISM
+  value: {{ .Values.kafka.sasl.mechanism | quote }}
+- name: KAFKA_SASL_USERNAME
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "reflowfy.kafka.secretName" . }}
+      key: {{ include "reflowfy.kafka.usernameKey" . }}
+- name: KAFKA_SASL_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "reflowfy.kafka.secretName" . }}
+      key: {{ include "reflowfy.kafka.passwordKey" . }}
+{{- end }}

@@ -19,16 +19,21 @@ def register(app: typer.Typer):
         registry: Optional[str] = typer.Option(None, envvar="REGISTRY", help="Registry where images are stored (or set REGISTRY in .env)"),
         project: Optional[str] = typer.Option(None, envvar="PROJECT", help="Project/Namespace for image tags (or set PROJECT in .env)"),
         kafka: Optional[str] = typer.Option(None, envvar="KAFKA_BOOTSTRAP_SERVERS", help="External Kafka Broker (or set KAFKA_BOOTSTRAP_SERVERS in .env)"),
+        kafka_sasl: bool = typer.Option(True, "--kafka-sasl/--no-kafka-sasl", envvar="KAFKA_SASL_ENABLED", help="Enable Kafka SASL authentication"),
+        kafka_username: Optional[str] = typer.Option(None, "--kafka-username", envvar="KAFKA_SASL_USERNAME", help="Kafka SASL username (or set KAFKA_SASL_USERNAME in .env)"),
+        kafka_password: Optional[str] = typer.Option(None, "--kafka-password", envvar="KAFKA_SASL_PASSWORD", help="Kafka SASL password (or set KAFKA_SASL_PASSWORD in .env)"),
+        kafka_existing_secret: Optional[str] = typer.Option(None, "--kafka-existing-secret", envvar="KAFKA_SASL_EXISTING_SECRET", help="Name of an existing K8s secret holding Kafka username/password (skips the chart-generated secret)"),
         busybox_image: str = typer.Option("busybox:1.36", envvar="BUSYBOX_IMAGE", help="Busybox image for init containers"),
         namespace: str = typer.Option(None, envvar="NAMESPACE", help="Kubernetes namespace (or set NAMESPACE in .env)"),
         image_pull_secret: Optional[str] = typer.Option(None, envvar="IMAGE_PULL_SECRET", help="Name of imagePullSecret for private registry"),
         deploy_postgres: bool = typer.Option(True, envvar="DEPLOY_POSTGRES", help="Deploy PostgreSQL (set to False to use external DB)"),
         postgres_image: Optional[str] = typer.Option(None, envvar="POSTGRES_IMAGE", help="Custom PostgreSQL image (e.g. myrepo/postgres:14)"),
-        keda: bool = typer.Option(False, "--keda/--no-keda", help="Enable KEDA autoscaling for workers"),
-        keda_min: int = typer.Option(0, "--keda-min", help="KEDA minimum replicas"),
-        keda_max: int = typer.Option(100, "--keda-max", help="KEDA maximum replicas"),
+        keda: bool = typer.Option(False, "--keda/--no-keda", envvar="KEDA_ENABLED", help="Enable KEDA autoscaling for workers (or set KEDA_ENABLED in .env)"),
+        keda_min: int = typer.Option(0, "--keda-min", envvar="KEDA_MIN_REPLICAS", help="KEDA minimum replicas (or set KEDA_MIN_REPLICAS in .env)"),
+        keda_max: int = typer.Option(100, "--keda-max", envvar="KEDA_MAX_REPLICAS", help="KEDA maximum replicas (or set KEDA_MAX_REPLICAS in .env)"),
         kafka_topic: Optional[str] = typer.Option(None, "--kafka-topic", envvar="KAFKA_TOPIC", help="Kafka topic name (or set KAFKA_TOPIC in .env)"),
-        workers: int = typer.Option(1, "--workers", help="Worker replicas (when KEDA disabled)"),
+        kafka_group_id: Optional[str] = typer.Option(None, "--kafka-group-id", envvar="KAFKA_GROUP_ID", help="Kafka consumer group ID for workers (or set KAFKA_GROUP_ID in .env)"),
+        workers: int = typer.Option(1, "--workers", envvar="WORKERS", help="Worker replicas when KEDA disabled (or set WORKERS in .env)"),
         tag: Optional[str] = typer.Option(None, "--tag", "-t", envvar="IMAGE_TAG", help="Specific tag for the Reflowfy images (overrides default version)"),
     ):
         """
@@ -41,6 +46,7 @@ def register(app: typer.Typer):
         namespace = namespace or "reflowfy"
         project = project or namespace
         kafka_topic = kafka_topic or "reflow.jobs"
+        kafka_group_id = kafka_group_id or "reflowfy-workers"
 
         if not registry:
             console.print("❌ Registry is required. Set --registry or REGISTRY in .env", style="red")
@@ -50,6 +56,16 @@ def register(app: typer.Typer):
 
         if not kafka:
             console.print("❌ Kafka is required. Set --kafka or KAFKA_BOOTSTRAP_SERVERS in .env", style="red")
+            raise typer.Exit(code=1)
+
+        # Kafka SASL: when enabled and not using an existing secret, the chart needs a password
+        if kafka_sasl and not kafka_existing_secret and not kafka_password:
+            console.print(
+                "❌ Kafka SASL is enabled but no password was provided. "
+                "Set --kafka-password / KAFKA_SASL_PASSWORD, supply --kafka-existing-secret, "
+                "or disable SASL with --no-kafka-sasl.",
+                style="red",
+            )
             raise typer.Exit(code=1)
 
         # Determine image tag
@@ -79,6 +95,8 @@ def register(app: typer.Typer):
             "--set", "worker.image.pullPolicy=Always",
             "--set", "kafka.external.bootstrapServers=" + kafka.replace(",", "\\,"),
             "--set", f"kafka.topic={kafka_topic}",
+            "--set", f"kafka.groupId={kafka_group_id}",
+            "--set", f"kafka.sasl.enabled={'true' if kafka_sasl else 'false'}",
             "--set", f"busybox.image={busybox_image}",
             "--set", "api.service.type=ClusterIP",
             "--set", "reflowManager.service.type=ClusterIP",
@@ -87,6 +105,15 @@ def register(app: typer.Typer):
         # Image pull secret
         if image_pull_secret:
             cmd.extend(["--set", f"global.imagePullSecrets[0].name={image_pull_secret}"])
+
+        # Kafka SASL credentials
+        if kafka_sasl:
+            if kafka_username:
+                cmd.extend(["--set", f"kafka.sasl.username={kafka_username}"])
+            if kafka_existing_secret:
+                cmd.extend(["--set", f"kafka.sasl.existingSecret={kafka_existing_secret}"])
+            elif kafka_password:
+                cmd.extend(["--set", f"kafka.sasl.password={kafka_password}"])
 
         # PostgreSQL configuration
         if deploy_postgres:

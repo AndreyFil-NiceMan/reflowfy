@@ -43,7 +43,6 @@ dependencies = [
     "typer[all]>=0.9.0",
     "rich>=13.0.0",
     "python-on-whales>=0.70.0",
-    "twine>=6.2.0",
 ]
 
 [project.optional-dependencies]
@@ -95,3 +94,8 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 asyncio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    "twine>=6.2.0",
+]

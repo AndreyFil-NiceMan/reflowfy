@@ -253,7 +253,6 @@ class TestSendIndividual:
 
 class TestAuthentication:
     async def _capture_headers(self, dest):
-        captured = {}
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
 

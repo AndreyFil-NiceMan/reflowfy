@@ -11,7 +11,7 @@ Usage:
     uvicorn tests.e2e.destinations.mock_api_server:app --host 0.0.0.0 --port 8091
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
@@ -90,7 +90,7 @@ async def receive_batch(
 
     received_records.extend(payload.records)
     received_batches.append(ReceivedBatch(
-        received_at=datetime.utcnow().isoformat(),
+        received_at=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
         record_count=len(payload.records),
         query_params=query_params,
         extra_body_fields=extra,
@@ -117,7 +117,7 @@ async def receive_single(
 
     received_records.append(payload.record)
     received_batches.append(ReceivedBatch(
-        received_at=datetime.utcnow().isoformat(),
+        received_at=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
         record_count=1,
         query_params=query_params,
         extra_body_fields=extra,

@@ -1,8 +1,7 @@
 """Unit tests for PipelineScheduler."""
 
-import pytest
-from datetime import datetime
-from unittest.mock import MagicMock, patch, call
+from datetime import datetime, timezone
+from unittest.mock import MagicMock, patch
 
 from reflowfy.reflow_manager.pipeline_scheduler import PipelineScheduler
 from reflowfy.reflow_manager.models import PipelineSchedule
@@ -25,7 +24,7 @@ def test_compute_next_run_daily_midnight():
 
 
 def test_compute_next_run_returns_datetime():
-    result = PipelineScheduler._compute_next_run("*/1 * * * *", datetime.utcnow())
+    result = PipelineScheduler._compute_next_run("*/1 * * * *", datetime.now(timezone.utc).replace(tzinfo=None))
     assert isinstance(result, datetime)
 
 
@@ -159,7 +158,7 @@ def test_reset_schedule_noop_when_no_row():
     db.query.return_value.filter.return_value.first.return_value = None
 
     # Should not raise
-    scheduler.reset_schedule(db, "nonexistent", datetime.utcnow())
+    scheduler.reset_schedule(db, "nonexistent", datetime.now(timezone.utc).replace(tzinfo=None))
 
 
 def test_reset_schedule_noop_when_disabled():

@@ -1,6 +1,6 @@
 """Execution management for ReflowManager."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from reflowfy.reflow_manager.models import Execution
@@ -86,7 +86,7 @@ class ExecutionManager:
             execution.error_message = error_message
 
         if state in ["completed", "failed"]:
-            execution.completed_at = datetime.utcnow()
+            execution.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
         self.db.commit()
         self.db.refresh(execution)

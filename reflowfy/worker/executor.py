@@ -4,7 +4,7 @@ import importlib
 import os
 import time
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -245,7 +245,7 @@ class WorkerExecutor:
                 from sqlalchemy import update
 
                 state = "completed" if stats.success else "failed"
-                now = datetime.utcnow()
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
 
                 # Update job state
                 update_data = {

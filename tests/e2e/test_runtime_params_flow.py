@@ -17,7 +17,6 @@ import os
 import time
 
 import httpx
-import pytest
 
 BASE_URL = os.getenv("E2E_REFLOW_MANAGER_URL", "http://localhost:8002")
 MOCK_URL = os.getenv("MOCK_HTTP_BASE_URL", "http://localhost:8091")

@@ -16,7 +16,6 @@ import uuid
 import httpx
 import pytest
 
-from tests.e2e.conftest import REFLOW_MANAGER_URL
 
 TIMEOUT = 30.0
 SCHEDULED_PIPELINE = "e2e_scheduled_test"
@@ -161,13 +160,13 @@ class TestManualTriggerResetsSchedule:
         # last_triggered_at must be recent (within the last 30s)
         ts_str = entry["last_triggered_at"].rstrip("Z").split("+")[0]
         triggered_at = dt.datetime.fromisoformat(ts_str)
-        age = (dt.datetime.utcnow() - triggered_at).total_seconds()
+        age = (dt.datetime.now(dt.timezone.utc).replace(tzinfo=None) - triggered_at).total_seconds()
         assert age < 30, f"last_triggered_at is too old ({age:.1f}s ago)"
 
         # next_run_at must still be in the future
         nra_str = entry["next_run_at"].rstrip("Z").split("+")[0]
         next_run = dt.datetime.fromisoformat(nra_str)
-        assert next_run > dt.datetime.utcnow(), (
+        assert next_run > dt.datetime.now(dt.timezone.utc).replace(tzinfo=None), (
             f"next_run_at ({next_run}) should be in the future"
         )
 
@@ -216,7 +215,7 @@ class TestSchedulerAutoTrigger:
         This test is marked slow and may be skipped in short test runs.
         """
         # Snapshot: number of completed executions before
-        resp = reflow_client.get("/schedules")
+        reflow_client.get("/schedules")
         entry_before = _get_schedule(reflow_client, SCHEDULED_PIPELINE)
         assert entry_before is not None
 
@@ -317,7 +316,7 @@ class TestScheduleIntegrationWithExecutionLifecycle:
         # Parse — support both with and without timezone suffix
         next_run_str_clean = next_run_str.rstrip("Z").split("+")[0]
         next_run = dt.datetime.fromisoformat(next_run_str_clean)
-        now = dt.datetime.utcnow()
+        now = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
 
         assert next_run > now, (
             f"next_run_at ({next_run}) should be in the future but it is in the past (now={now})"

@@ -65,7 +65,7 @@ services:
       e2e-kafka:
         condition: service_healthy
     command: >
-      bash -c " echo 'Waiting for Kafka to be ready...'; kafka-topics --bootstrap-server e2e-kafka:29092 --list; echo 'Creating topics...'; kafka-topics --bootstrap-server e2e-kafka:29092 --create --if-not-exists --topic e2e.reflow.jobs --partitions 1 --replication-factor 1; kafka-topics --bootstrap-server e2e-kafka:29092 --create --if-not-exists --topic e2e-test-destination --partitions 1 --replication-factor 1; echo 'Topics created successfully'; "
+      bash -c " echo 'Waiting for Kafka to be ready...'; kafka-topics --bootstrap-server e2e-kafka:29092 --list; echo 'Creating topics...'; kafka-topics --bootstrap-server e2e-kafka:29092 --create --if-not-exists --topic e2e.reflow.jobs --partitions 1 --replication-factor 1; kafka-topics --bootstrap-server e2e-kafka:29092 --create --if-not-exists --topic e2e-test-destination --partitions 1 --replication-factor 1; kafka-topics --bootstrap-server e2e-kafka:29092 --create --if-not-exists --topic e2e-lag-health-check --partitions 1 --replication-factor 1; echo 'Topics created successfully'; "
     networks:
       - reflofy-e2e-network
 

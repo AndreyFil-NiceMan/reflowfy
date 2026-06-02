@@ -7,7 +7,7 @@ import os
 import threading
 import traceback
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 from collections import defaultdict
 
@@ -92,7 +92,7 @@ class DLQScheduler:
         db = SessionLocal()
         try:
             # Find all pending jobs whose scheduled_at has passed
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
             due_jobs = db.query(DLQJob).filter(
                 DLQJob.status == "pending",
                 DLQJob.scheduled_at <= now
@@ -146,7 +146,7 @@ class DLQScheduler:
             execution_id = self._dispatch_jobs(db, pipeline_name, jobs)
 
             # Mark jobs as completed
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
             for job in jobs:
                 job.status = "completed"
                 job.processed_at = now
@@ -215,7 +215,7 @@ class DLQScheduler:
         else:
             # Reschedule with exponential backoff
             backoff_minutes = self._calculate_backoff(job.retry_count)
-            job.scheduled_at = datetime.utcnow() + timedelta(minutes=backoff_minutes)
+            job.scheduled_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=backoff_minutes)
             job.status = "pending"
             print(f"🔄 DLQ job {job.id} rescheduled (retry {job.retry_count}/{job.max_retries})")
 
@@ -238,7 +238,7 @@ class DLQScheduler:
             max_retries=job.max_retries,
             error_message=job.error_message,
             created_at=job.created_at,
-            archived_at=datetime.utcnow(),
+            archived_at=datetime.now(timezone.utc).replace(tzinfo=None),
         )
         db.add(archive)
         db.delete(job)
@@ -268,7 +268,7 @@ class DLQScheduler:
         try:
             execution_id = self._dispatch_jobs(db, job.pipeline_name, [job])
             job.status = "completed"
-            job.processed_at = datetime.utcnow()
+            job.processed_at = datetime.now(timezone.utc).replace(tzinfo=None)
             job.execution_id = execution_id
             db.commit()
             return execution_id
@@ -308,7 +308,7 @@ class DLQScheduler:
 
         try:
             execution_id = self._dispatch_jobs(db, pipeline_name, jobs)
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
             for job in jobs:
                 job.status = "completed"
                 job.processed_at = now

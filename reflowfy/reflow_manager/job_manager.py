@@ -1,6 +1,6 @@
 """Job management for ReflowManager."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -99,7 +99,7 @@ class JobManager:
         Returns:
             Number of jobs updated
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         # First, set dispatched_at for ALL jobs (regardless of state)
         self.db.query(Job).filter(
@@ -137,11 +137,11 @@ class JobManager:
         """
         update_data = {
             "state": state,
-            "updated_at": datetime.utcnow(),
+            "updated_at": datetime.now(timezone.utc).replace(tzinfo=None),
         }
 
         if state in ["completed", "failed"]:
-            update_data["completed_at"] = datetime.utcnow()
+            update_data["completed_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
         if processed_records is not None:
             update_data["processed_records"] = processed_records
         if error_message:

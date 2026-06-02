@@ -9,7 +9,7 @@ import os
 import pytest
 import httpx
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 # Configuration from environment (same as conftest.py)
@@ -78,8 +78,8 @@ class TestScheduleDLQJob:
         
         # Verify scheduled_at is approximately 30 minutes in the future
         scheduled_at = datetime.fromisoformat(data["scheduled_at"].replace("Z", "+00:00"))
-        expected_min = datetime.utcnow() + timedelta(minutes=28)
-        expected_max = datetime.utcnow() + timedelta(minutes=32)
+        expected_min = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=28)
+        expected_max = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=32)
         assert expected_min.replace(tzinfo=None) <= scheduled_at.replace(tzinfo=None) <= expected_max.replace(tzinfo=None)
     
     def test_schedule_dlq_job_default_delay(self, dlq_client, cleanup_dlq_jobs):
@@ -429,7 +429,7 @@ class TestDLQEdgeCases:
         
         # scheduled_at should be approximately now (within a few seconds)
         scheduled_at = datetime.fromisoformat(data["scheduled_at"].replace("Z", "+00:00"))
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         diff_seconds = abs((now - scheduled_at.replace(tzinfo=None)).total_seconds())
         assert diff_seconds < 10, (
             f"scheduled_at should be ~now for delay=0, but diff was {diff_seconds}s"
