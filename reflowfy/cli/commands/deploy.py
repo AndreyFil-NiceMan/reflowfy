@@ -31,6 +31,7 @@ def register(app: typer.Typer):
         keda: bool = typer.Option(False, "--keda/--no-keda", envvar="KEDA_ENABLED", help="Enable KEDA autoscaling for workers (or set KEDA_ENABLED in .env)"),
         keda_min: int = typer.Option(0, "--keda-min", envvar="KEDA_MIN_REPLICAS", help="KEDA minimum replicas (or set KEDA_MIN_REPLICAS in .env)"),
         keda_max: int = typer.Option(100, "--keda-max", envvar="KEDA_MAX_REPLICAS", help="KEDA maximum replicas (or set KEDA_MAX_REPLICAS in .env)"),
+        keda_lag_threshold: int = typer.Option(10, "--keda-lag-threshold", envvar="KEDA_LAG_THRESHOLD", help="Kafka consumer lag per replica that triggers scale-up (or set KEDA_LAG_THRESHOLD in .env)"),
         kafka_topic: Optional[str] = typer.Option(None, "--kafka-topic", envvar="KAFKA_TOPIC", help="Kafka topic name (or set KAFKA_TOPIC in .env)"),
         kafka_group_id: Optional[str] = typer.Option(None, "--kafka-group-id", envvar="KAFKA_GROUP_ID", help="Kafka consumer group ID for workers (or set KAFKA_GROUP_ID in .env)"),
         workers: int = typer.Option(1, "--workers", envvar="WORKERS", help="Worker replicas when KEDA disabled (or set WORKERS in .env)"),
@@ -159,6 +160,7 @@ def register(app: typer.Typer):
                 "--set", "worker.keda.enabled=true",
                 "--set", f"worker.keda.minReplicaCount={keda_min}",
                 "--set", f"worker.keda.maxReplicaCount={keda_max}",
+                "--set", f"worker.keda.lagThreshold={keda_lag_threshold}",
             ])
         else:
             cmd.extend([
