@@ -167,8 +167,17 @@ class WorkerExecutor:
             # Track output records
             stats.records_output = len(transformed_records)
 
-            # Create destination instance
-            destination = self._create_destination(destination_config)
+            # Build the destination from the pipeline using THIS worker's
+            # transformed records and full runtime_params (which carry the
+            # execution context: execution_id, batch_id, ...). This mirrors
+            # LocalExecutor, so a user-authored ``body`` in define_destination
+            # reflects the real records/context rather than the manager's
+            # context-less preview. Fall back to the serialized config only when
+            # the pipeline is not discoverable in this worker process.
+            if pipeline is not None:
+                destination = pipeline.define_destination(transformed_records, runtime_params)
+            else:
+                destination = self._create_destination(destination_config)
 
             # Health check (async)
             if not await destination.health_check():
