@@ -11,6 +11,7 @@ from reflowfy.sources.api import (
 # Optional S3 source (requires boto3)
 try:
     from reflowfy.sources.s3 import S3Source, s3_source
+
     _s3_available = True
 except ImportError:
     S3Source = None

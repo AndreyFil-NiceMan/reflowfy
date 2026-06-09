@@ -66,7 +66,9 @@ class BaseDestination(ABC):
         """
         pass
 
-    async def send_with_retry(self, records: List[Any], metadata: Optional[Dict[str, Any]] = None) -> None:
+    async def send_with_retry(
+        self, records: List[Any], metadata: Optional[Dict[str, Any]] = None
+    ) -> None:
         """
         Send records with automatic retry and exponential backoff.
 

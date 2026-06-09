@@ -79,9 +79,7 @@ class ApiDestination(BaseDestination):
             )
         return self._client
 
-    async def send(
-        self, records: List[Any], metadata: Optional[Dict[str, Any]] = None
-    ) -> None:
+    async def send(self, records: List[Any], metadata: Optional[Dict[str, Any]] = None) -> None:
         """
         Send the configured body to the API endpoint in a single request.
 
