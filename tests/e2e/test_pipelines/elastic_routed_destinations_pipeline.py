@@ -54,7 +54,7 @@ class E2EElasticRoutedDestinationsPipeline(AbstractPipeline):
                 auth_token="test-webhook-token",
                 timeout=30.0,
                 params={"route": "secondary"},
-                body={"records": records, "destination_name": "secondary"},
+                body={"records": records, "destination_name": "secondary", "runtime_params": runtime_params},
             )
 
         return api_destination(
@@ -64,5 +64,5 @@ class E2EElasticRoutedDestinationsPipeline(AbstractPipeline):
             auth_token="test-webhook-token",
             timeout=30.0,
             params={"route": "primary"},
-            body={"records": records, "destination_name": "primary"},
+            body={"records": records, "destination_name": "primary", "runtime_params": runtime_params},
         )

@@ -24,7 +24,8 @@ class E2ERuntimeParamsDestinationPipeline(AbstractPipeline):
         return e2e_mock(count=10, batch_size=10)
 
     def define_destination(self, records, runtime_params):
-        return e2e_http_runtime_params(runtime_params)
+        body = {"records": records, "runtime_params": runtime_params}
+        return e2e_http_runtime_params(body=body)
 
     def define_transformations(self, records, runtime_params):
         return [params_step1_enrich(), params_step2_verify()]
