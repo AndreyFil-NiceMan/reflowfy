@@ -173,7 +173,7 @@ def sql_filter_by_status(records, runtime_params):
 
 @transformation("api_add_source_info")
 def api_add_source_info(records, runtime_params):
-    """Adds paginated API source metadata to records."""
+    """Adds API source metadata to records."""
     for record in records:
         record["_source_type"] = "api"
         record["_test_pipeline"] = "e2e_api_source_test"

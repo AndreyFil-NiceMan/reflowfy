@@ -3,10 +3,10 @@ Advanced IDBasedAPISource E2E Test Pipelines.
 
 Four pipeline classes covering all major IDBasedAPISource modes:
 
-1. E2ERawListSearchPipeline  — batch POST, raw list body [1,2,3]
-2. E2EPatchBulkPipeline      — PATCH with merged request_body fields
+1. E2ERawListSearchPipeline  — batch POST, raw list body (body=<ids>)
+2. E2EPatchBulkPipeline      — PATCH with merged body fields (body={"ids": <ids>, "active_only": <x>})
 3. E2EPerIdPostPipeline      — per-ID POST with {id} body substitution
-4. E2EProductsBatchPipeline  — custom batch_id_key + nested data_key
+4. E2EProductsBatchPipeline  — custom body key + nested response_key (body={"product_ids": <ids>})
 """
 
 from reflowfy import IdBasedPipeline, PipelineParameter
@@ -30,8 +30,8 @@ class E2ERawListSearchPipeline(IdBasedPipeline):
     IDBasedAPISource config:
     - ``endpoint_template="/users/search"``  — no ``{id}`` → batch mode
     - ``method="POST"``
-    - ``batch_id_key=None``                  — body is ``[1,2,3,4,5]``
-    - ``data_key="results"``                 — extract from response["results"]
+    - ``body=<ids>``                         — body is ``[1,2,3,4,5]`` (raw list)
+    - ``response_key="results"``             — extract from response["results"]
     - ``batch_size=5``
 
     Pipeline config:
@@ -59,8 +59,8 @@ class E2ERawListSearchPipeline(IdBasedPipeline):
             endpoint_template="/users/search",
             ids=current_ids,
             method="POST",
-            batch_id_key=None,
-            data_key="results",
+            body=current_ids,
+            response_key="results",
             batch_size=runtime_params.get("batch_size", 5),
         )
 
@@ -82,8 +82,8 @@ class E2EPatchBulkPipeline(IdBasedPipeline):
     IDBasedAPISource config:
     - ``endpoint_template="/users/bulk"``     — no ``{id}`` → batch mode
     - ``method="PATCH"``
-    - ``batch_id_key="ids"``                  — body: ``{"ids": [...], "active_only": <bool>}``
-    - ``data_key="updated"``                  — extract from response["updated"]
+    - ``body={"ids": <ids>, "active_only": <bool>}``  — verbatim body
+    - ``response_key="updated"``             — extract from response["updated"]
     - ``batch_size=4``
 
     Pipeline config:
@@ -118,9 +118,8 @@ class E2EPatchBulkPipeline(IdBasedPipeline):
             endpoint_template="/users/bulk",
             ids=current_ids,
             method="PATCH",
-            batch_id_key="ids",
-            request_body={"active_only": runtime_params.get("active_only", False)},
-            data_key="updated",
+            body={"ids": current_ids, "active_only": runtime_params.get("active_only", False)},
+            response_key="updated",
             batch_size=runtime_params.get("batch_size", 4),
         )
 
@@ -141,7 +140,7 @@ class E2EPerIdPostPipeline(IdBasedPipeline):
     IDBasedAPISource config:
     - ``endpoint_template="/users/{id}/enrich"`` — ``{id}`` present → per-ID mode
     - ``method="POST"``
-    - ``request_body={"context": "e2e_test", "source_id": "{id}"}``
+    - ``body={"context": "e2e_test", "source_id": "{id}"}``
     - ``batch_size=5``
 
     Pipeline config:
@@ -169,7 +168,7 @@ class E2EPerIdPostPipeline(IdBasedPipeline):
             endpoint_template="/users/{id}/enrich",
             ids=current_ids,
             method="POST",
-            request_body={"context": "e2e_test", "source_id": "{id}"},
+            body={"context": "e2e_test", "source_id": "{id}"},
             batch_size=runtime_params.get("batch_size", 5),
         )
 
@@ -188,8 +187,8 @@ class E2EProductsBatchPipeline(IdBasedPipeline):
     IDBasedAPISource config:
     - ``endpoint_template="/products/lookup"``  — no ``{id}`` → batch mode
     - ``method="POST"``
-    - ``batch_id_key="product_ids"``            — body: ``{"product_ids": [...]}``
-    - ``data_key="items"``
+    - ``body={"product_ids": <ids>}``           — verbatim body with product_ids key
+    - ``response_key="items"``
     - ``batch_size=5``
 
     Pipeline config:
@@ -217,8 +216,8 @@ class E2EProductsBatchPipeline(IdBasedPipeline):
             endpoint_template="/products/lookup",
             ids=current_ids,
             method="POST",
-            batch_id_key="product_ids",
-            data_key="items",
+            body={"product_ids": current_ids},
+            response_key="items",
             batch_size=runtime_params.get("batch_size", 5),
         )
 

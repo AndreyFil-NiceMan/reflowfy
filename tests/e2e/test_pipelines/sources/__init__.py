@@ -44,32 +44,6 @@ def e2e_mock(
     )
 
 
-@source("e2e_paginated_api")
-def e2e_paginated_api(
-    base_url: str = os.getenv("MOCK_API_URL", "http://localhost:8092"),
-    endpoint: str = "/users",
-    pagination_type: str = "offset",
-    page_size: int = 10,
-    data_key: str = "data",
-    total_key: str = "total",
-    offset_param: str = "offset",
-    limit_param: str = "limit",
-):
-    """Pre-configured paginated API source for E2E tests."""
-    from reflowfy.sources.api import paginated_api_source
-
-    return paginated_api_source(
-        base_url=base_url,
-        endpoint=endpoint,
-        pagination_type=pagination_type,
-        page_size=page_size,
-        data_key=data_key,
-        total_key=total_key,
-        offset_param=offset_param,
-        limit_param=limit_param,
-    )
-
-
 @source("e2e_id_based_api")
 def e2e_id_based_api(
     base_url: str = os.getenv("MOCK_API_URL", "http://localhost:8092"),
@@ -77,18 +51,11 @@ def e2e_id_based_api(
     ids: Optional[List[Union[str, int]]] = None,
     method: str = "GET",
     batch_size: int = 2,
-    batch_id_key: Optional[str] = "ids",
-    data_key: Optional[str] = None,
-    request_body: Optional[dict] = None,
-    query_params: Optional[dict] = None,
+    response_key: Optional[str] = None,
+    body: Optional[object] = None,
+    params: Optional[dict] = None,
 ):
-    """
-    Pre-configured ID-based API source for E2E tests.
-
-    Mode is auto-detected from endpoint_template:
-    - ``{id}`` present → per-ID (one request per ID)
-    - No ``{id}``      → batch (one request, IDs in body)
-    """
+    """Pre-configured ID-based API source for E2E tests."""
     from reflowfy.sources.api import id_based_api_source
 
     return id_based_api_source(
@@ -97,10 +64,9 @@ def e2e_id_based_api(
         ids=ids or [1, 2, 3, 4, 5],
         method=method,
         batch_size=batch_size,
-        batch_id_key=batch_id_key,
-        data_key=data_key,
-        request_body=request_body,
-        query_params=query_params,
+        response_key=response_key,
+        body=body,
+        params=params,
     )
 
 

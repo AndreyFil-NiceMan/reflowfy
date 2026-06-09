@@ -1,19 +1,22 @@
 """
 Mock API Server for API Source E2E Tests.
 
-A minimal FastAPI server that provides paginated API endpoints
-for testing PaginatedAPISource and IDBasedAPISource.
+A minimal FastAPI server that provides API endpoints
+for testing IDBasedAPISource.
 
 Usage:
     python -m tests.e2e.sources.mock_api_server
-    
+
 Endpoints:
-    GET /users - Paginated user list
     GET /users/{id} - Get user by ID
-    GET /products - Paginated products with cursor pagination
+    POST /users/batch - Batch fetch users by IDs (body: {"ids": [...]})
+    POST /users/search - Batch fetch users by raw list body ([1,2,3])
+    PATCH /users/bulk - Bulk fetch with active_only filter
+    POST /users/{id}/enrich - Per-ID POST enrichment
+    POST /products/lookup - Batch lookup products by product_ids key
 """
 
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 from fastapi import FastAPI, HTTPException, Query, Header, Request
 from pydantic import BaseModel
 import uvicorn
@@ -47,24 +50,6 @@ PRODUCTS = [
     {"id": f"prod_{i}", "name": f"Product {i}", "price": 10.0 + i, "category": ["A", "B", "C"][i % 3]}
     for i in range(1, 51)  # 50 products
 ]
-
-
-# ============================================================================
-# Data Models
-# ============================================================================
-
-class PaginatedResponse(BaseModel):
-    data: List[Dict[str, Any]]
-    total: int
-    offset: int
-    limit: int
-    has_more: bool
-
-
-class CursorPaginatedResponse(BaseModel):
-    data: List[Dict[str, Any]]
-    total: int
-    next_cursor: Optional[str] = None
 
 
 # ============================================================================
@@ -186,8 +171,7 @@ async def search_users_raw(request: Request):
     """
     Fetch users by a **raw JSON array** body: ``[1, 2, 3]``
 
-    Tests ``batch_id_key=None`` in IDBasedAPISource — the body is sent
-    as a plain list, not wrapped in an object.
+    Used by pipelines that pass ``body=<ids>`` (a plain list, not wrapped in an object).
 
     Returns:
         {"results": [...matched users...], "total": N}
@@ -205,7 +189,7 @@ async def bulk_patch_users(body: BulkPatchRequest):
     """
     Bulk-fetch users with optional active filter.
 
-    Tests ``method="PATCH"`` + ``request_body`` merging in IDBasedAPISource.
+    Used by pipelines that pass ``method="PATCH"`` with ``body={"ids": [...], "active_only": bool}``.
 
     Request body: ``{"ids": [...], "active_only": bool}``
     Returns:
@@ -249,9 +233,9 @@ async def enrich_user(user_id: int, request: Request):
 @app.post("/products/lookup")
 async def lookup_products(body: ProductLookupRequest):
     """
-    Batch-lookup products using a custom body key (``product_ids``).
+    Batch-lookup products using the ``product_ids`` body key.
 
-    Tests ``batch_id_key="product_ids"`` in IDBasedAPISource.
+    Used by pipelines that pass ``body={"product_ids": [...]}`` to IDBasedAPISource.
 
     Request body: ``{"product_ids": ["prod_1", "prod_2", ...]}``
     Returns:

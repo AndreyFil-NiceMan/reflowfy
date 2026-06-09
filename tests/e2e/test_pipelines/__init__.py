@@ -14,7 +14,6 @@ from tests.e2e.test_pipelines import (
 )
 from tests.e2e.test_pipelines import api_dest_test_pipeline as api_dest_test_pipeline
 from tests.e2e.test_pipelines import api_id_source_test_pipeline as api_id_source_test_pipeline
-from tests.e2e.test_pipelines import api_source_test_pipeline as api_source_test_pipeline
 from tests.e2e.test_pipelines import crash_recovery_test_pipeline as crash_recovery_test_pipeline
 from tests.e2e.test_pipelines import dedup_test_pipeline as dedup_test_pipeline
 from tests.e2e.test_pipelines import dlq_test_pipeline as dlq_test_pipeline

@@ -302,8 +302,8 @@ class TestRawListSearchPipelineE2E:
     """
     E2E tests for E2ERawListSearchPipeline.
 
-    Verifies that IDBasedAPISource with ``batch_id_key=None`` sends a raw JSON
-    array as the POST body (not wrapped in an object) and correctly processes
+    Verifies that IDBasedAPISource with ``body=<ids>`` (a raw list) sends a raw
+    JSON array as the POST body (not wrapped in an object) and correctly processes
     the response.
 
     Job math:  N IDs / ids_batch_size=5 → N/5 POST calls → 1 job per call
@@ -409,8 +409,8 @@ class TestPatchBulkPipelineE2E:
     """
     E2E tests for E2EPatchBulkPipeline.
 
-    Verifies that IDBasedAPISource with ``method="PATCH"`` and ``request_body``
-    correctly merges the extra field into the request body alongside the IDs.
+    Verifies that IDBasedAPISource with ``method="PATCH"`` and ``body={"ids": <ids>, "active_only": <x>}``
+    correctly sends the merged body to the endpoint.
 
     Job math (active_only=False):
     N IDs / ids_batch_size=8 → N/8 PATCH calls → each returns 8 users / batch_size=4 → 2 jobs per call.
@@ -656,9 +656,8 @@ class TestProductsBatchPipelineE2E:
     """
     E2E tests for E2EProductsBatchPipeline.
 
-    Verifies that IDBasedAPISource with a non-default ``batch_id_key``
-    (``"product_ids"``) correctly sends product IDs to POST /products/lookup
-    and processes the response.
+    Verifies that IDBasedAPISource with ``body={"product_ids": <ids>}``
+    correctly sends product IDs to POST /products/lookup and processes the response.
 
     Job math:
     N product IDs / ids_batch_size=10 → N/10 POST calls.

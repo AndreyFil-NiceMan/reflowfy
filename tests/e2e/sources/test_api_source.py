@@ -1,8 +1,7 @@
 """
 E2E Tests for API Sources.
 
-Tests PaginatedAPISource and IDBasedAPISource by running pipelines
-against a mock API server.
+Tests IDBasedAPISource by running pipelines against a mock API server.
 
 Prerequisites:
     - Mock API server running on localhost:8092 (run mock_api_server.py)
@@ -117,109 +116,6 @@ class TestMockAPIServer:
         )
         data = response.json()
         assert data["data"][0]["id"] == "prod_11"
-
-
-class TestPaginatedAPISourceE2E:
-    """E2E tests for PaginatedAPISource with pipeline execution."""
-    
-    def test_reflow_manager_health(self, client):
-        """Verify ReflowManager is running."""
-        response = client.get("/health")
-        assert response.status_code == 200
-        assert response.json()["status"] == "healthy"
-    
-    def test_api_source_pipeline_starts(self, client, check_mock_api):
-        """Test that API source pipeline can start."""
-        response = client.post("/run", json={
-            "pipeline_name": "e2e_api_source_test",
-            "runtime_params": {
-                "endpoint": "/users",
-            }
-        })
-        
-        # Pipeline may or may not be registered
-        if response.status_code == 404:
-            pytest.skip("e2e_api_source_test pipeline not registered")
-        
-        assert response.status_code == 202
-        data = response.json()
-        assert "execution_id" in data
-        assert data["pipeline_name"] == "e2e_api_source_test"
-        assert data["state"] == "pending"
-    
-    def test_api_source_pipeline_creates_jobs(self, client, check_mock_api):
-        """Test that API source pipeline creates jobs from paginated data."""
-        response = client.post("/run", json={
-            "pipeline_name": "e2e_api_source_test",
-            "runtime_params": {
-                "endpoint": "/users",
-                "page_size": 25,  # 100 users / 25 per page = 4 jobs
-            }
-        })
-        
-        if response.status_code == 404:
-            pytest.skip("e2e_api_source_test pipeline not registered")
-        
-        assert response.status_code == 202
-        execution_id = response.json()["execution_id"]
-        
-        # Wait for jobs to be created
-        max_wait = 30
-        start = time.time()
-        total_jobs = 0
-        
-        while time.time() - start < max_wait:
-            stats = client.get(f"/executions/{execution_id}/stats").json()
-            total_jobs = stats.get("total_jobs", 0)
-            
-            if total_jobs > 0:
-                break
-            
-            time.sleep(POLL_INTERVAL)
-        
-        assert total_jobs > 0, f"Expected jobs to be created, got {total_jobs}"
-        print(f"✅ API source pipeline created {total_jobs} jobs")
-    
-    def test_api_source_pipeline_completes(self, client, check_mock_api):
-        """Test that API source pipeline runs to completion."""
-        response = client.post("/run", json={
-            "pipeline_name": "e2e_api_source_test",
-            "runtime_params": {
-                "endpoint": "/users",
-                "page_size": 50,  # 100 users / 50 per page = 2 jobs
-            }
-        })
-        
-        if response.status_code == 404:
-            pytest.skip("e2e_api_source_test pipeline not registered")
-        
-        assert response.status_code == 202
-        execution_id = response.json()["execution_id"]
-        
-        # Wait for completion
-        max_wait = 120
-        start = time.time()
-        final_state = None
-        stats = {}
-        
-        while time.time() - start < max_wait:
-            stats = client.get(f"/executions/{execution_id}/stats").json()
-            final_state = stats.get("state")
-            
-            if final_state in ["completed", "failed"]:
-                break
-            
-            time.sleep(POLL_INTERVAL)
-        
-        # Verify completion
-        assert final_state == "completed", f"Expected completed, got {final_state}. Stats: {stats}"
-        
-        # Verify job counts
-        assert stats["total_jobs"] > 0
-        assert stats["jobs_completed"] == stats["total_jobs"]
-        assert stats["jobs_failed"] == 0
-        
-        print(f"✅ API source pipeline completed: {stats['jobs_completed']}/{stats['total_jobs']} jobs")
 
 
 class TestIDBasedAPISourceE2E:

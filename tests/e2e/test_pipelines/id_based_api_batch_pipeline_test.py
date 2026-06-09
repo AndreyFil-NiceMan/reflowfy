@@ -46,8 +46,8 @@ class E2EIdBasedAPIBatchPipelineTest(IdBasedPipeline):
             ids=current_ids,
             method="POST",
             batch_size=runtime_params.get("batch_size", 5),
-            batch_id_key="ids",
-            data_key="users",
+            body={"ids": current_ids},
+            response_key="users",
         )
 
     def define_destination(self, records, runtime_params):
