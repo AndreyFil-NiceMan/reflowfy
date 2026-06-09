@@ -11,9 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from reflowfy.core.execution_context import build_flat_runtime_params_from_metadata
+from reflowfy.core.registry import pipeline_registry
 from reflowfy.destinations.api import ApiDestination
 from reflowfy.destinations.console import ConsoleDestination
 from reflowfy.destinations.kafka import KafkaDestination
+from reflowfy.execution.transformation_runner import apply_transformations_iteratively
 from reflowfy.reflow_manager.models import Job
 from reflowfy.transformations.registry import transformation_registry
 
@@ -142,40 +144,24 @@ class WorkerExecutor:
 
             print(f"🔄 Processing job {job_id}: {len(records)} records")
 
-            # Load and apply transformations (CPU-bound, stays sync)
-            transformed_records = records
+            # Load and apply transformations (CPU-bound, stays sync).
+            pipeline_name = job_payload.get("pipeline_name")
+            pipeline = pipeline_registry.get(pipeline_name) if pipeline_name else None
 
-            for idx, transformation_name in enumerate(transformation_names):
-                print(f"  🔄 Applying: {transformation_name}")
-
-                # Track transformation start time
-                transform_start = time.time()
-
-                # Prefer explicit transformation spec from producer process to
-                # avoid name-collision ambiguity in registry for duplicated names.
-                transformation = None
-                if idx < len(transformation_specs):
-                    spec = transformation_specs[idx] or {}
-                    spec_name = spec.get("name")
-                    module_name = spec.get("module")
-                    class_name = spec.get("class_name")
-                    if spec_name == transformation_name and module_name and class_name:
-                        module = importlib.import_module(module_name)
-                        cls = getattr(module, class_name)
-                        transformation = cls()
-
-                if transformation is None:
-                    transformation = transformation_registry.create_instance(transformation_name)
-
-                # Apply transformation — pass the shared mutable runtime_params
-                transformed_records = transformation.apply(transformed_records, runtime_params)
-
-                # Track transformation time
-                transform_duration = time.time() - transform_start
-                stats.transformation_times[transformation_name] = round(transform_duration, 3)
-
-                print(
-                    f"  ✓ {transformation_name}: {len(transformed_records)} records ({transform_duration:.2f}s)"
+            if pipeline is not None:
+                # Dynamic resolution: re-resolve after each step so params mutated
+                # mid-chain can reveal later transformations (matches local/test).
+                transformed_records, applied = apply_transformations_iteratively(
+                    pipeline, records, runtime_params
+                )
+                for name, duration in applied:
+                    stats.transformation_times[name] = round(duration, 3)
+                    print(f"  ✓ {name}")
+            else:
+                # Fallback: pipeline not discoverable in this worker process — replay
+                # the frozen transformation list from the producer (no dynamic tail).
+                transformed_records = self._apply_frozen_transformations(
+                    records, runtime_params, transformation_names, transformation_specs, stats
                 )
 
             # Track output records
@@ -227,6 +213,42 @@ class WorkerExecutor:
             await self._update_job_in_db(execution_id, job_id, stats)
 
             return False
+
+    def _apply_frozen_transformations(
+        self, records, runtime_params, transformation_names, transformation_specs, stats
+    ):
+        """Replay a frozen transformation list (fallback when the pipeline is not
+        discoverable in this worker process). No dynamic re-resolution."""
+        transformed_records = records
+        for idx, transformation_name in enumerate(transformation_names):
+            print(f"  🔄 Applying: {transformation_name}")
+            transform_start = time.time()
+
+            # Prefer explicit transformation spec from producer process to
+            # avoid name-collision ambiguity in registry for duplicated names.
+            transformation = None
+            if idx < len(transformation_specs):
+                spec = transformation_specs[idx] or {}
+                spec_name = spec.get("name")
+                module_name = spec.get("module")
+                class_name = spec.get("class_name")
+                if spec_name == transformation_name and module_name and class_name:
+                    module = importlib.import_module(module_name)
+                    cls = getattr(module, class_name)
+                    transformation = cls()
+
+            if transformation is None:
+                transformation = transformation_registry.create_instance(transformation_name)
+
+            transformed_records = transformation.apply(transformed_records, runtime_params)
+
+            transform_duration = time.time() - transform_start
+            stats.transformation_times[transformation_name] = round(transform_duration, 3)
+            print(
+                f"  ✓ {transformation_name}: {len(transformed_records)} records "
+                f"({transform_duration:.2f}s)"
+            )
+        return transformed_records
 
     async def _update_job_in_db(self, execution_id: str, job_id: str, stats: JobStats):
         """
