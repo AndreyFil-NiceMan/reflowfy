@@ -135,3 +135,21 @@ def test_apply_error_is_wrapped():
     with pytest.raises(TransformationError) as exc:
         apply_transformations_iteratively(pipeline, [], {})
     assert exc.value.transformation_name == "boom"
+
+
+class _DuckTransformation:
+    """A duck-typed transformation: only `name` + `apply`, no validate hooks."""
+
+    name = "duck"
+
+    def apply(self, records, runtime_params):
+        return records + [self.name]
+
+
+def test_duck_typed_transformation_without_validate_hooks():
+    # validate_input / validate_output are optional hooks; a transformation that
+    # only implements `apply` (no BaseTransformation subclass) must still run.
+    pipeline = FakePipeline(lambda records, params: [_DuckTransformation()])
+    result, applied = apply_transformations_iteratively(pipeline, [], {})
+    assert result == ["duck"]
+    assert [name for name, _ in applied] == ["duck"]

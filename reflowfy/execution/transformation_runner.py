@@ -64,9 +64,15 @@ def apply_transformations_iteratively(
         transformation = current[applied_count]
         start = time.time()
         try:
-            transformation.validate_input(transformed)
+            # validate_input/validate_output are optional hooks; duck-typed
+            # transformations may implement only `apply`.
+            validate_input = getattr(transformation, "validate_input", None)
+            if callable(validate_input):
+                validate_input(transformed)
             transformed = transformation.apply(transformed, runtime_params)
-            transformation.validate_output(transformed)
+            validate_output = getattr(transformation, "validate_output", None)
+            if callable(validate_output):
+                validate_output(transformed)
         except TransformationError:
             raise
         except Exception as exc:
