@@ -65,34 +65,54 @@ entirely. All in-repo callers and tests are updated in the same change.
 
 Parameters that stay different because they reflect each side's genuine job:
 
-- Source-only: `endpoint_template` (needs `{id}` templating), `ids` /
-  `ids_source` / `ids_field`, `batch_id_key`, `batch_size`, `data_key`.
-- Destination-only: `url`, `batch_requests`, `record_key` / `records_key`
-  (see §3), `retry_config`.
+- Source-only: `endpoint_template` (needs `{id}` templating), `ids`, `ids_key`,
+  `batch_size`, `response_key` (see §2a).
+- Destination-only: `url`, `batch_requests`, `raw_body` (see §3),
+  `retry_config`.
 
 The source keeps `base_url` + `endpoint_template` while the destination keeps a
 single `url`; this difference is intentional and documented in both docstrings.
 
+### 2a. DX simplification of source-specific params
+
+Beyond the shared-name sync, simplify the source's own params (all hard
+changes, no aliases):
+
+- **Remove `ids_source` and `ids_field`.** Confirmed unused across all
+  pipelines, unit tests, and e2e suites. IDs now come only from the static
+  `ids=[...]` list or `runtime_params["ids"]`. Delete the `_ids_source`
+  instance attribute and the `ids_source` branch in `_get_all_ids`.
+- **`batch_id_key` → `ids_key`** *(Optional[str], default `"ids"`)*. Same
+  behavior: the request-body key wrapping the IDs list in batch mode; `None`
+  sends the IDs as a raw JSON array `[1, 2, 3]`. Renamed for clarity
+  (request-side).
+- **`data_key` → `response_key`** *(Optional[str], default `None`)*. Same
+  behavior: dotted key to extract the records list from the response envelope
+  (e.g. `"data.users"`); `None` means the response itself is the list. Renamed
+  for clarity (response-side).
+
+Update `IDBasedAPISourceConfig` to drop `ids_field`, rename `batch_id_key` →
+`ids_key` and `data_key` → `response_key`. (`ids_source` is a runtime object,
+not part of the serialized config.)
+
 ### 3. Destination body control
 
-`ApiDestination` gains two new constructor params:
+`ApiDestination` gains one new constructor param:
 
-- `record_key: Optional[str] = "record"` — key under which a single record is
-  placed in non-batch mode.
-- `records_key: Optional[str] = "records"` — key under which the record list is
-  placed in batch mode.
+- `raw_body: bool = False` — controls whether outgoing records are wrapped.
 
 Behavior in `_build_payload` / `send`:
 
-- Default (`"record"` / `"records"`): current behavior is preserved exactly —
-  records are placed under that key in an object that also carries the static
-  `body` fields and `runtime_params`.
-- Key set to `None`: the bare record (dict) or bare record list is sent as the
-  JSON body. In raw mode the static `body` and `runtime_params` are **not**
-  merged in (there is no object to merge them into); this is documented.
+- `raw_body=False` (default): current behavior is preserved exactly — a single
+  record is placed under `"record"`, the batch list under `"records"`, in an
+  object that also carries the static `body` fields and `runtime_params`.
+- `raw_body=True`: the bare record (dict) or bare record list is sent as the
+  JSON body. The static `body` and `runtime_params` are **not** merged in
+  (there is no wrapper object to merge them into); this is documented.
 
-This mirrors the source's existing `batch_id_key=None` raw-list pattern, so the
-two connectors express "send it raw" the same way.
+A single boolean was chosen over per-mode key params for the simplest DX; the
+destination never exposed a customizable wrapper key before, so nothing is
+lost.
 
 Examples:
 
@@ -102,11 +122,11 @@ api_destination(url=..., batch_requests=True)
 # -> {"records": [...], ...body, "runtime_params": {...}}
 
 # raw list body
-api_destination(url=..., batch_requests=True, records_key=None)
+api_destination(url=..., batch_requests=True, raw_body=True)
 # -> [r1, r2, ...]
 
 # raw single record
-api_destination(url=..., records_key=None, record_key=None)
+api_destination(url=..., raw_body=True)
 # -> {...record...}
 ```
 
@@ -149,7 +169,8 @@ IDBasedAPISource._get_client    ApiDestination._get_client
    (httpx.Client, sync)            (httpx.AsyncClient, async)
         │                              │
    fetch / split_jobs            send (batch / per-record)
-   params + body + ids           params + body + record_key/records_key
+   params + body + ids_key       params + body + raw_body
+   + response_key
 ```
 
 ## Error handling
@@ -165,14 +186,18 @@ IDBasedAPISource._get_client    ApiDestination._get_client
 
 - **Unit** (`tests/unit/`):
   - `build_auth_headers`: bearer, apikey, basic (correct base64), None, unknown.
-  - `IDBasedAPISource`: rename smoke (constructing with `params`/`body`
-    works; old `query_params`/`request_body` raise `TypeError`), basic-auth
-    header set on the client.
-  - `ApiDestination`: `records_key=None` sends raw list; `record_key=None`
-    sends raw record; defaults still wrap; basic-auth header set.
+  - `IDBasedAPISource`: rename smoke (constructing with `params`/`body`/
+    `ids_key`/`response_key` works; old `query_params`/`request_body`/
+    `batch_id_key`/`data_key`/`ids_source`/`ids_field` raise `TypeError`),
+    `ids_key=None` raw-list request body, basic-auth header set on the client.
+  - `ApiDestination`: `raw_body=True` sends bare list (batch) and bare record
+    (non-batch); default still wraps under `records`/`record`; basic-auth
+    header set.
 - **E2E** (`tests/e2e/`): existing ID-based source + API destination suites
-  pass after the paginated removal; add a raw-list destination case and a
-  basic-auth case against the mock server.
+  pass after the paginated removal. The e2e ID-based pipelines and shared
+  source factory currently pass `batch_id_key=` and `data_key=` — update those
+  call sites to `ids_key=` / `response_key=`. Add a raw-list destination case
+  (`raw_body=True`) and a basic-auth case against the mock server.
 - Lint/type: `uv run ruff check reflowfy/`, `uv run mypy reflowfy/`,
   `uv run black reflowfy/`.
 
