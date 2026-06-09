@@ -7,19 +7,32 @@
 
 Remove `PaginatedAPISource`, leaving `IDBasedAPISource` as the only REST API
 source. Align `IDBasedAPISource` and `ApiDestination` so they share identical
-parameter names for shared concepts, give the destination explicit control over
-the request body shape (dict *or* list, not forced wrapping), and make Basic
-auth actually work in both.
+parameter names for shared concepts, make the request **`body` user-authored
+and sent verbatim** on both (the user builds it from `records` /
+`runtime_params` in the `define_*` methods — dict, list, or nothing), and make
+Basic auth actually work in both.
 
 ## Motivation
 
 `IDBasedAPISource` and `ApiDestination` drifted apart: the source used
 `query_params` / `request_body` while the destination used `params` / `body`;
 the destination always wrapped outgoing records in a `{record}` / `{records}`
-object with no way to send a bare body; and `auth_type="basic"` was documented
-on the destination but silently did nothing (no `Authorization` header was
-ever set). `PaginatedAPISource` adds a second, differently-shaped API source
-that the project no longer wants to maintain.
+object (plus an auto-injected `runtime_params` key) with no way to send the
+body the user actually wanted; the source auto-injected the ID list under a
+configurable `batch_id_key`; and `auth_type="basic"` was documented on the
+destination but silently did nothing (no `Authorization` header was ever set).
+`PaginatedAPISource` adds a second, differently-shaped API source that the
+project no longer wants to maintain.
+
+The unifying idea: the user already receives the data in the pipeline
+`define_*` hooks — `define_destination(self, records, runtime_params)` and
+`define_source(self, runtime_params)` (with `current_ids` injected for
+`IdBasedPipeline`). So the connectors should stop guessing the body shape and
+simply transmit the `body` the user constructs there. This works in
+distributed mode because `define_destination` runs in the manager with the
+job's transformed records (`pipeline_runner.py:472`), and only
+`destination.config` (which now contains the finished `body`) is serialized to
+the worker.
 
 ## Scope
 
@@ -65,10 +78,9 @@ entirely. All in-repo callers and tests are updated in the same change.
 
 Parameters that stay different because they reflect each side's genuine job:
 
-- Source-only: `endpoint_template` (needs `{id}` templating), `ids`, `ids_key`,
+- Source-only: `endpoint_template` (needs `{id}` templating), `ids`,
   `batch_size`, `response_key` (see §2a).
-- Destination-only: `url`, `batch_requests`, `raw_body` (see §3),
-  `retry_config`.
+- Destination-only: `url`, `retry_config`.
 
 The source keeps `base_url` + `endpoint_template` while the destination keeps a
 single `url`; this difference is intentional and documented in both docstrings.
@@ -79,56 +91,74 @@ Beyond the shared-name sync, simplify the source's own params (all hard
 changes, no aliases):
 
 - **Remove `ids_source` and `ids_field`.** Confirmed unused across all
-  pipelines, unit tests, and e2e suites. IDs now come only from the static
-  `ids=[...]` list or `runtime_params["ids"]`. Delete the `_ids_source`
-  instance attribute and the `ids_source` branch in `_get_all_ids`.
-- **`batch_id_key` → `ids_key`** *(Optional[str], default `"ids"`)*. Same
-  behavior: the request-body key wrapping the IDs list in batch mode; `None`
-  sends the IDs as a raw JSON array `[1, 2, 3]`. Renamed for clarity
-  (request-side).
+  pipelines, unit tests, and e2e suites. IDs come only from the static
+  `ids=[...]` list or `runtime_params["ids"]` / `current_ids`. Delete the
+  `_ids_source` instance attribute and the `ids_source` branch in
+  `_get_all_ids`.
+- **Remove `batch_id_key`.** In batch mode the source no longer auto-injects
+  the ID list under a configurable key. Instead the user builds the request
+  `body` in `define_source` from the IDs they already have in `runtime_params`
+  (see §3). The body is sent verbatim.
 - **`data_key` → `response_key`** *(Optional[str], default `None`)*. Same
   behavior: dotted key to extract the records list from the response envelope
   (e.g. `"data.users"`); `None` means the response itself is the list. Renamed
   for clarity (response-side).
 
-Update `IDBasedAPISourceConfig` to drop `ids_field`, rename `batch_id_key` →
-`ids_key` and `data_key` → `response_key`. (`ids_source` is a runtime object,
-not part of the serialized config.)
+Update `IDBasedAPISourceConfig` to drop `ids_field` and `batch_id_key`, rename
+`request_body` → `body`, `query_params` → `params`, and `data_key` →
+`response_key`. (`ids_source` is a runtime object, not part of the serialized
+config.)
 
-### 3. Destination body control
+### 3. User-authored body, sent verbatim (both connectors)
 
-`ApiDestination` gains one new constructor param:
+The core change. Neither connector constructs or wraps the body. Whatever the
+user passes as `body` is sent as the JSON request body, exactly as given.
+`body` may be a dict, a list, or `None`.
 
-- `raw_body: bool = False` — controls whether outgoing records are wrapped.
+**`ApiDestination`:**
 
-Behavior in `_build_payload` / `send`:
+- `send()` sends `config["body"]` verbatim as the JSON request body. Exactly
+  **one HTTP request** per `send()` call.
+- The user builds the body in `define_destination(self, records, runtime_params)`:
+  ```python
+  def define_destination(self, records, runtime_params):
+      body = {"events": records, "tenant": runtime_params["tenant"]}  # or just `records`
+      return api_destination(url=..., body=body, auth_type="basic", auth_token="u:p")
+  ```
+- **Remove** `batch_requests`, `record_key`/`records_key` (never shipped), the
+  `_build_payload` / `_serialize_metadata` helpers, and the automatic
+  `record` / `records` / `runtime_params` wrapping.
+- `body=None` → the request is sent **with no body at all** (no `json=`
+  argument passed to httpx).
 
-- `raw_body=False` (default): current behavior is preserved exactly — a single
-  record is placed under `"record"`, the batch list under `"records"`, in an
-  object that also carries the static `body` fields and `runtime_params`.
-- `raw_body=True`: the bare record (dict) or bare record list is sent as the
-  JSON body. The static `body` and `runtime_params` are **not** merged in
-  (there is no wrapper object to merge them into); this is documented.
+**`IDBasedAPISource` (batch mode):**
 
-A single boolean was chosen over per-mode key params for the simplest DX; the
-destination never exposed a customizable wrapper key before, so nothing is
-lost.
+- `_fetch_batch` sends `config["body"]` verbatim. The user builds it in
+  `define_source` from the IDs in `runtime_params` / `current_ids`:
+  ```python
+  def define_source(self, params):
+      body = {"ids": params["current_ids"]}        # was batch_id_key="ids"
+      # body = {"product_ids": params["current_ids"]}  # custom key
+      # body = params["current_ids"]                   # raw list
+      return id_based_api_source(base_url=..., endpoint_template="/users/batch",
+                                 method="POST", body=body)
+  ```
+- `body=None` in batch mode → request sent with no body.
+- **Per-ID mode** (`{id}` in `endpoint_template`) is unchanged: `ids` still
+  drives URL templating, and `body` is still sent per request with `{id}`
+  substitution applied to its string values (`body=None` → no body, as today
+  for GET).
 
-Examples:
+Migration of the removed knobs:
 
-```python
-# default — unchanged
-api_destination(url=..., batch_requests=True)
-# -> {"records": [...], ...body, "runtime_params": {...}}
-
-# raw list body
-api_destination(url=..., batch_requests=True, raw_body=True)
-# -> [r1, r2, ...]
-
-# raw single record
-api_destination(url=..., raw_body=True)
-# -> {...record...}
-```
+| old | new |
+|---|---|
+| dest `batch_requests=True` + auto-wrap | `body={"records": records}` (user builds) |
+| dest `batch_requests=False` (per-record) | dropped — one request with the user's body |
+| dest auto `runtime_params` key | `body={..., "runtime_params": runtime_params}` if wanted |
+| source `batch_id_key="ids"` | `body={"ids": params["current_ids"]}` |
+| source `batch_id_key="product_ids"` | `body={"product_ids": params["current_ids"]}` |
+| source `batch_id_key=None` (raw) | `body=params["current_ids"]` |
 
 ### 4. Basic auth in both connectors
 
@@ -157,7 +187,10 @@ Both `IDBasedAPISource._get_client` and `ApiDestination._get_client` call this
 helper instead of inlining the `if auth_type == ...` chain.
 
 `auth_type` Literal in `IDBasedAPISourceConfig` already allows `"basic"`; no
-schema change needed there beyond the `params`/`body` rename.
+schema change needed there for auth. `reflowfy/destinations/schemas.py` must
+drop its `batch_requests` field; `IDBasedAPISourceConfig` drops `batch_id_key`
+and `ids_field` and renames `request_body`→`body`, `query_params`→`params`,
+`data_key`→`response_key`.
 
 ## Components and data flow
 
@@ -168,10 +201,15 @@ build_auth_headers(headers, auth_type, auth_token)   # pure, shared
 IDBasedAPISource._get_client    ApiDestination._get_client
    (httpx.Client, sync)            (httpx.AsyncClient, async)
         │                              │
-   fetch / split_jobs            send (batch / per-record)
-   params + body + ids_key       params + body + raw_body
-   + response_key
+   fetch / split_jobs            send (one request)
+   params + response_key         params + body (verbatim)
+   + body (verbatim, per-ID      body=None -> no json= sent
+   or batch)
 ```
+
+Body transmission rule (both connectors): `json=config["body"]` when `body`
+is not `None`; otherwise the `json=` argument is omitted entirely so no request
+body is sent.
 
 ## Error handling
 
@@ -187,22 +225,31 @@ IDBasedAPISource._get_client    ApiDestination._get_client
 - **Unit** (`tests/unit/`):
   - `build_auth_headers`: bearer, apikey, basic (correct base64), None, unknown.
   - `IDBasedAPISource`: rename smoke (constructing with `params`/`body`/
-    `ids_key`/`response_key` works; old `query_params`/`request_body`/
-    `batch_id_key`/`data_key`/`ids_source`/`ids_field` raise `TypeError`),
-    `ids_key=None` raw-list request body, basic-auth header set on the client.
-  - `ApiDestination`: `raw_body=True` sends bare list (batch) and bare record
-    (non-batch); default still wraps under `records`/`record`; basic-auth
-    header set.
+    `response_key` works; old `query_params`/`request_body`/`batch_id_key`/
+    `data_key`/`ids_source`/`ids_field` raise `TypeError`); batch mode sends
+    `body` verbatim (dict, list, and `None` → no body); basic-auth header set
+    on the client.
+  - `ApiDestination`: `send()` issues exactly one request with `body` verbatim
+    (dict body, list body, and `body=None` → no `json=` sent); no
+    `record`/`records`/`runtime_params` wrapping anywhere; basic-auth header
+    set. Remove the old `batch_requests` / payload-wrapping assertions in
+    `tests/unit/test_api_destination.py`.
 - **E2E** (`tests/e2e/`): existing ID-based source + API destination suites
-  pass after the paginated removal. The e2e ID-based pipelines and shared
-  source factory currently pass `batch_id_key=` and `data_key=` — update those
-  call sites to `ids_key=` / `response_key=`. Add a raw-list destination case
-  (`raw_body=True`) and a basic-auth case against the mock server.
+  pass after the paginated removal. Migrate call sites:
+  - source: `batch_id_key=...` / `data_key=...` → user-built `body={...}` /
+    `response_key=...` in the e2e pipelines and shared source factory.
+  - destination: `batch_requests=...` → user-built `body` in `define_destination`.
+  - Update both mock servers (`tests/e2e/sources/mock_api_server.py`,
+    `tests/e2e/destinations/mock_api_server.py`) to assert the user-built body
+    shapes instead of the old wrapped/`batch_id_key` shapes; collapse the
+    batched-vs-individual destination endpoints into the single-request model.
+  - Add a basic-auth case against a mock server.
 - Lint/type: `uv run ruff check reflowfy/`, `uv run mypy reflowfy/`,
   `uv run black reflowfy/`.
 
 ## Out of scope
 
 - Unifying `base_url`+`endpoint_template` (source) with `url` (destination).
-- Callable/templated body builders on the destination.
+- Callable body builders (cannot cross the Kafka worker boundary; the
+  user-authored-`body` model in §3 is the serializable equivalent).
 - Any change to non-API sources/destinations.
