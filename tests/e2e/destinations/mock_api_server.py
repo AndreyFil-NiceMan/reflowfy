@@ -24,6 +24,7 @@ app = FastAPI(title="Mock API Webhook Server for E2E Tests")
 # Data Models
 # ============================================================================
 
+
 class BatchPayload(BaseModel):
     records: List[Dict[str, Any]]
     model_config = {"extra": "allow"}
@@ -49,6 +50,7 @@ VALID_TOKEN = "test-webhook-token"
 # Helpers
 # ============================================================================
 
+
 def _check_auth(authorization: Optional[str]) -> None:
     if authorization:
         if not authorization.startswith("Bearer "):
@@ -60,6 +62,7 @@ def _check_auth(authorization: Optional[str]) -> None:
 # ============================================================================
 # Endpoints
 # ============================================================================
+
 
 @app.get("/health")
 async def health_check():
@@ -84,19 +87,20 @@ async def receive_batch(
     extra = {k: v for k, v in payload.model_extra.items()} if payload.model_extra else {}
 
     received_records.extend(payload.records)
-    received_batches.append(ReceivedBatch(
-        received_at=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
-        record_count=len(payload.records),
-        query_params=query_params,
-        extra_body_fields=extra,
-    ))
+    received_batches.append(
+        ReceivedBatch(
+            received_at=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+            record_count=len(payload.records),
+            query_params=query_params,
+            extra_body_fields=extra,
+        )
+    )
 
     return {
         "status": "received",
         "record_count": len(payload.records),
         "total_records": len(received_records),
     }
-
 
 
 @app.get("/stats")

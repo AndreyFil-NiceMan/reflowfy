@@ -12,7 +12,6 @@ from reflowfy.destinations.api import api_destination
 from reflowfy.destinations.console import console_destination
 
 
-
 @destination("e2e_http")
 def e2e_http(
     url: str = os.getenv("MOCK_HTTP_URL", "http://localhost:8091/webhook"),
