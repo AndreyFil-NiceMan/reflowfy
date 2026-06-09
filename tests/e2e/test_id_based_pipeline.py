@@ -34,16 +34,16 @@ def _wait_for_completion(client, execution_id, max_wait=120):
     start = time.time()
     final_state = None
     stats = {}
-    
+
     while time.time() - start < max_wait:
         stats = client.get(f"/executions/{execution_id}/stats").json()
         final_state = stats.get("state")
-        
+
         if final_state in ["completed", "failed"]:
             return stats
-        
+
         time.sleep(POLL_INTERVAL)
-    
+
     raise TimeoutError(
         f"Pipeline {execution_id} did not complete within {max_wait}s. "
         f"Last state: {final_state}, Stats: {stats}"
@@ -52,174 +52,196 @@ def _wait_for_completion(client, execution_id, max_wait=120):
 
 class TestIdBasedPipelineE2E:
     """E2E tests for the IdBasedPipeline feature."""
-    
+
     def test_id_based_pipeline_starts(self, client):
         """Test that IdBasedPipeline can start with a list of IDs."""
-        response = client.post("/run", json={
-            "pipeline_name": "e2e_id_based_pipeline_test",
-            "runtime_params": {
-                "ids": ["alpha", "beta", "gamma"],
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": "e2e_id_based_pipeline_test",
+                "runtime_params": {
+                    "ids": ["alpha", "beta", "gamma"],
+                },
             },
-        })
-        
+        )
+
         if response.status_code == 404:
             pytest.skip("e2e_id_based_pipeline_test pipeline not registered")
-        
-        assert response.status_code == 202, f"Expected 202, got {response.status_code}: {response.text}"
+
+        assert (
+            response.status_code == 202
+        ), f"Expected 202, got {response.status_code}: {response.text}"
         data = response.json()
         assert "execution_id" in data
         assert data["pipeline_name"] == "e2e_id_based_pipeline_test"
         assert data["state"] == "pending"
-        
+
         print(f"✅ IdBasedPipeline started: {data['execution_id']}")
-    
+
     def test_id_based_pipeline_creates_jobs_per_id(self, client):
         """
         Test that IdBasedPipeline creates jobs for each ID.
-        
+
         With 3 IDs × 10 records per ID / 5 batch size = 6 jobs total
         (2 jobs per ID).
         """
-        response = client.post("/run", json={
-            "pipeline_name": "e2e_id_based_pipeline_test",
-            "runtime_params": {
-                "ids": ["id_1", "id_2", "id_3"],
-                "records_per_id": 10,  # 10 records per ID
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": "e2e_id_based_pipeline_test",
+                "runtime_params": {
+                    "ids": ["id_1", "id_2", "id_3"],
+                    "records_per_id": 10,  # 10 records per ID
+                },
             },
-        })
-        
+        )
+
         if response.status_code == 404:
             pytest.skip("e2e_id_based_pipeline_test pipeline not registered")
-        
+
         assert response.status_code == 202
         execution_id = response.json()["execution_id"]
-        
+
         # Wait for jobs to be created
         max_wait = 30
         start = time.time()
         total_jobs = 0
-        
+
         while time.time() - start < max_wait:
             stats = client.get(f"/executions/{execution_id}/stats").json()
             total_jobs = stats.get("total_jobs", 0)
-            
+
             if total_jobs > 0:
                 break
-            
+
             time.sleep(POLL_INTERVAL)
-        
+
         # 3 IDs × 10 records / 5 batch_size = 6 jobs
         expected_jobs = 6
-        assert total_jobs == expected_jobs, (
-            f"Expected {expected_jobs} jobs (3 IDs × 2 batches), got {total_jobs}"
-        )
-        
+        assert (
+            total_jobs == expected_jobs
+        ), f"Expected {expected_jobs} jobs (3 IDs × 2 batches), got {total_jobs}"
+
         print(f"✅ IdBasedPipeline created {total_jobs} jobs for 3 IDs")
-    
+
     def test_id_based_pipeline_completes_successfully(self, client):
         """Test that IdBasedPipeline runs to completion with all jobs passing."""
-        response = client.post("/run", json={
-            "pipeline_name": "e2e_id_based_pipeline_test",
-            "runtime_params": {
-                "ids": ["user_001", "user_002"],
-                "records_per_id": 5,
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": "e2e_id_based_pipeline_test",
+                "runtime_params": {
+                    "ids": ["user_001", "user_002"],
+                    "records_per_id": 5,
+                },
             },
-        })
-        
+        )
+
         if response.status_code == 404:
             pytest.skip("e2e_id_based_pipeline_test pipeline not registered")
-        
+
         assert response.status_code == 202
         execution_id = response.json()["execution_id"]
-        
+
         # Wait for completion
         stats = _wait_for_completion(client, execution_id, max_wait=120)
-        
+
         # Verify completion
-        assert stats["state"] == "completed", (
-            f"Expected completed, got {stats['state']}. Stats: {stats}"
-        )
-        
+        assert (
+            stats["state"] == "completed"
+        ), f"Expected completed, got {stats['state']}. Stats: {stats}"
+
         # Verify job counts: 2 IDs × 5 records / 5 batch_size = 2 jobs
         assert stats["total_jobs"] == 2
         assert stats["jobs_completed"] == stats["total_jobs"]
         assert stats["jobs_failed"] == 0
-        
+
         print(f"✅ IdBasedPipeline completed: {stats['jobs_completed']}/{stats['total_jobs']} jobs")
-    
+
     def test_id_based_pipeline_single_id(self, client):
         """Test IdBasedPipeline works with a single ID."""
-        response = client.post("/run", json={
-            "pipeline_name": "e2e_id_based_pipeline_test",
-            "runtime_params": {
-                "ids": ["single_entity"],
-                "records_per_id": 5,
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": "e2e_id_based_pipeline_test",
+                "runtime_params": {
+                    "ids": ["single_entity"],
+                    "records_per_id": 5,
+                },
             },
-        })
-        
+        )
+
         if response.status_code == 404:
             pytest.skip("e2e_id_based_pipeline_test pipeline not registered")
-        
+
         assert response.status_code == 202
         execution_id = response.json()["execution_id"]
-        
+
         stats = _wait_for_completion(client, execution_id, max_wait=120)
-        
+
         assert stats["state"] == "completed"
         # 1 ID × 5 records / 5 batch_size = 1 job
         assert stats["total_jobs"] == 1
         assert stats["jobs_completed"] == 1
         assert stats["jobs_failed"] == 0
-        
+
         print(f"✅ Single-ID pipeline completed: {stats['jobs_completed']} job")
-    
+
     def test_id_based_pipeline_many_ids(self, client):
         """Test IdBasedPipeline with many IDs to verify scaling."""
         ids = [f"entity_{i}" for i in range(10)]
-        
-        response = client.post("/run", json={
-            "pipeline_name": "e2e_id_based_pipeline_test",
-            "runtime_params": {
-                "ids": ids,
-                "records_per_id": 5,  # 10 IDs × 5 records / 5 batch = 10 jobs
+
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": "e2e_id_based_pipeline_test",
+                "runtime_params": {
+                    "ids": ids,
+                    "records_per_id": 5,  # 10 IDs × 5 records / 5 batch = 10 jobs
+                },
             },
-        })
-        
+        )
+
         if response.status_code == 404:
             pytest.skip("e2e_id_based_pipeline_test pipeline not registered")
-        
+
         assert response.status_code == 202
         execution_id = response.json()["execution_id"]
-        
+
         stats = _wait_for_completion(client, execution_id, max_wait=120)
-        
+
         assert stats["state"] == "completed"
         # 10 IDs × 5 records / 5 batch_size = 10 jobs
         assert stats["total_jobs"] == 10
         assert stats["jobs_completed"] == 10
         assert stats["jobs_failed"] == 0
-        
-        print(f"✅ Many-IDs pipeline completed: {stats['jobs_completed']}/{stats['total_jobs']} jobs from {len(ids)} IDs")
-    
+
+        print(
+            f"✅ Many-IDs pipeline completed: {stats['jobs_completed']}/{stats['total_jobs']} jobs from {len(ids)} IDs"
+        )
+
     def test_id_based_pipeline_missing_ids_fails(self, client):
         """Test that omitting 'ids' parameter returns validation error."""
-        response = client.post("/run", json={
-            "pipeline_name": "e2e_id_based_pipeline_test",
-            "runtime_params": {},  # No 'ids' provided
-        })
-        
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": "e2e_id_based_pipeline_test",
+                "runtime_params": {},  # No 'ids' provided
+            },
+        )
+
         if response.status_code == 404:
             pytest.skip("e2e_id_based_pipeline_test pipeline not registered")
-        
+
         # The pipeline should either:
         # 1. Return 202 and then fail during execution (ids validation)
         # 2. Return 4xx directly
         if response.status_code == 202:
             execution_id = response.json()["execution_id"]
             stats = _wait_for_completion(client, execution_id, max_wait=60)
-            assert stats["state"] == "failed", (
-                f"Expected failed (missing ids), got {stats['state']}"
-            )
+            assert (
+                stats["state"] == "failed"
+            ), f"Expected failed (missing ids), got {stats['state']}"
             print("✅ Missing IDs correctly results in failed execution")
         else:
             # Direct validation error
@@ -239,13 +261,16 @@ class TestIdBasedBatchPipelineE2E:
         Each source call: 2 IDs × 5 records = 10 records / batch_size=5 → 2 jobs.
         Total: 3 × 2 = 6 jobs.
         """
-        response = client.post("/run", json={
-            "pipeline_name": "e2e_id_based_batch_pipeline_test",
-            "runtime_params": {
-                "ids": ["a", "b", "c", "d", "e", "f"],
-                "records_per_id": 5,
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": "e2e_id_based_batch_pipeline_test",
+                "runtime_params": {
+                    "ids": ["a", "b", "c", "d", "e", "f"],
+                    "records_per_id": 5,
+                },
             },
-        })
+        )
 
         if response.status_code == 404:
             pytest.skip("e2e_id_based_batch_pipeline_test pipeline not registered")
@@ -261,7 +286,9 @@ class TestIdBasedBatchPipelineE2E:
         assert stats["jobs_completed"] == 6
         assert stats["jobs_failed"] == 0
 
-        print(f"✅ Batch pipeline completed: {stats['jobs_completed']}/{stats['total_jobs']} jobs (batch_size=2)")
+        print(
+            f"✅ Batch pipeline completed: {stats['jobs_completed']}/{stats['total_jobs']} jobs (batch_size=2)"
+        )
 
     def test_ids_batch_size_odd_remainder(self, client):
         """
@@ -274,13 +301,16 @@ class TestIdBasedBatchPipelineE2E:
         Batch 3: 1 ID  × 5 =  5 records → 1 job
         Total: 5 jobs.
         """
-        response = client.post("/run", json={
-            "pipeline_name": "e2e_id_based_batch_pipeline_test",
-            "runtime_params": {
-                "ids": ["x1", "x2", "x3", "x4", "x5"],
-                "records_per_id": 5,
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": "e2e_id_based_batch_pipeline_test",
+                "runtime_params": {
+                    "ids": ["x1", "x2", "x3", "x4", "x5"],
+                    "records_per_id": 5,
+                },
             },
-        })
+        )
 
         if response.status_code == 404:
             pytest.skip("e2e_id_based_batch_pipeline_test pipeline not registered")
@@ -314,10 +344,13 @@ class TestRawListSearchPipelineE2E:
 
     def test_raw_list_pipeline_starts(self, client):
         """Pipeline starts with a list of user IDs."""
-        response = client.post("/run", json={
-            "pipeline_name": self.PIPELINE,
-            "runtime_params": {"ids": list(range(1, 6))},
-        })
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": self.PIPELINE,
+                "runtime_params": {"ids": list(range(1, 6))},
+            },
+        )
         if response.status_code == 404:
             pytest.skip(f"{self.PIPELINE} not registered")
         assert response.status_code == 202
@@ -327,10 +360,13 @@ class TestRawListSearchPipelineE2E:
 
     def test_raw_list_pipeline_single_batch(self, client):
         """5 IDs → 1 POST → 1 job."""
-        response = client.post("/run", json={
-            "pipeline_name": self.PIPELINE,
-            "runtime_params": {"ids": list(range(1, 6)), "batch_size": 5},
-        })
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": self.PIPELINE,
+                "runtime_params": {"ids": list(range(1, 6)), "batch_size": 5},
+            },
+        )
         if response.status_code == 404:
             pytest.skip(f"{self.PIPELINE} not registered")
         assert response.status_code == 202
@@ -343,10 +379,13 @@ class TestRawListSearchPipelineE2E:
 
     def test_raw_list_pipeline_multiple_batches(self, client):
         """20 IDs / ids_batch_size=5 → 4 POST calls → 4 jobs."""
-        response = client.post("/run", json={
-            "pipeline_name": self.PIPELINE,
-            "runtime_params": {"ids": list(range(1, 21)), "batch_size": 5},
-        })
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": self.PIPELINE,
+                "runtime_params": {"ids": list(range(1, 21)), "batch_size": 5},
+            },
+        )
         if response.status_code == 404:
             pytest.skip(f"{self.PIPELINE} not registered")
         assert response.status_code == 202
@@ -359,10 +398,13 @@ class TestRawListSearchPipelineE2E:
 
     def test_raw_list_pipeline_partial_last_batch(self, client):
         """13 IDs / ids_batch_size=5 → batches [5,5,3] → 3 jobs."""
-        response = client.post("/run", json={
-            "pipeline_name": self.PIPELINE,
-            "runtime_params": {"ids": list(range(1, 14)), "batch_size": 5},
-        })
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": self.PIPELINE,
+                "runtime_params": {"ids": list(range(1, 14)), "batch_size": 5},
+            },
+        )
         if response.status_code == 404:
             pytest.skip(f"{self.PIPELINE} not registered")
         assert response.status_code == 202
@@ -375,10 +417,13 @@ class TestRawListSearchPipelineE2E:
 
     def test_raw_list_pipeline_small_job_batches(self, client):
         """10 IDs, batch_size=2 → 2 POST calls (5 IDs each) → each returns 5 users / 2 = 3 jobs per call → 6 jobs."""
-        response = client.post("/run", json={
-            "pipeline_name": self.PIPELINE,
-            "runtime_params": {"ids": list(range(1, 11)), "batch_size": 2},
-        })
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": self.PIPELINE,
+                "runtime_params": {"ids": list(range(1, 11)), "batch_size": 2},
+            },
+        )
         if response.status_code == 404:
             pytest.skip(f"{self.PIPELINE} not registered")
         assert response.status_code == 202
@@ -392,17 +437,22 @@ class TestRawListSearchPipelineE2E:
 
     def test_raw_list_missing_ids_returns_empty(self, client):
         """IDs that don't exist (101-105) → empty results → 0 jobs → completed."""
-        response = client.post("/run", json={
-            "pipeline_name": self.PIPELINE,
-            "runtime_params": {"ids": list(range(101, 106))},
-        })
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": self.PIPELINE,
+                "runtime_params": {"ids": list(range(101, 106))},
+            },
+        )
         if response.status_code == 404:
             pytest.skip(f"{self.PIPELINE} not registered")
         assert response.status_code == 202
         stats = _wait_for_completion(client, response.json()["execution_id"])
         assert stats["state"] == "completed", f"Failed: {stats}"
         assert stats["jobs_failed"] == 0
-        print(f"✅ Raw-list missing IDs: completed with {stats['total_jobs']} jobs (expected 0 or few)")
+        print(
+            f"✅ Raw-list missing IDs: completed with {stats['total_jobs']} jobs (expected 0 or few)"
+        )
 
 
 class TestPatchBulkPipelineE2E:
@@ -424,10 +474,13 @@ class TestPatchBulkPipelineE2E:
 
     def test_patch_bulk_starts(self, client):
         """Pipeline starts with user IDs."""
-        response = client.post("/run", json={
-            "pipeline_name": self.PIPELINE,
-            "runtime_params": {"ids": list(range(1, 9))},
-        })
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": self.PIPELINE,
+                "runtime_params": {"ids": list(range(1, 9))},
+            },
+        )
         if response.status_code == 404:
             pytest.skip(f"{self.PIPELINE} not registered")
         assert response.status_code == 202
@@ -439,14 +492,17 @@ class TestPatchBulkPipelineE2E:
 
         16 IDs / 8 = 2 batches × (8/4=2 jobs each) = 4 jobs.
         """
-        response = client.post("/run", json={
-            "pipeline_name": self.PIPELINE,
-            "runtime_params": {
-                "ids": list(range(1, 17)),
-                "active_only": False,
-                "batch_size": 4,
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": self.PIPELINE,
+                "runtime_params": {
+                    "ids": list(range(1, 17)),
+                    "active_only": False,
+                    "batch_size": 4,
+                },
             },
-        })
+        )
         if response.status_code == 404:
             pytest.skip(f"{self.PIPELINE} not registered")
         assert response.status_code == 202
@@ -464,14 +520,17 @@ class TestPatchBulkPipelineE2E:
         IDs [1..8]: inactive IDs are 3, 6 (id % 3 == 0) → 6 active users.
         6 active / batch_size=4 → 2 jobs.
         """
-        response = client.post("/run", json={
-            "pipeline_name": self.PIPELINE,
-            "runtime_params": {
-                "ids": list(range(1, 9)),   # IDs 1-8
-                "active_only": True,
-                "batch_size": 4,
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": self.PIPELINE,
+                "runtime_params": {
+                    "ids": list(range(1, 9)),  # IDs 1-8
+                    "active_only": True,
+                    "batch_size": 4,
+                },
             },
-        })
+        )
         if response.status_code == 404:
             pytest.skip(f"{self.PIPELINE} not registered")
         assert response.status_code == 202
@@ -488,14 +547,17 @@ class TestPatchBulkPipelineE2E:
         32 IDs / ids_batch_size=8 = 4 PATCH calls.
         active_only=False, batch_size=4 → 8/4=2 jobs per call → 8 jobs.
         """
-        response = client.post("/run", json={
-            "pipeline_name": self.PIPELINE,
-            "runtime_params": {
-                "ids": list(range(1, 33)),
-                "active_only": False,
-                "batch_size": 4,
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": self.PIPELINE,
+                "runtime_params": {
+                    "ids": list(range(1, 33)),
+                    "active_only": False,
+                    "batch_size": 4,
+                },
             },
-        })
+        )
         if response.status_code == 404:
             pytest.skip(f"{self.PIPELINE} not registered")
         assert response.status_code == 202
@@ -515,14 +577,17 @@ class TestPatchBulkPipelineE2E:
         - Batch 3 (4 users / 4): 1 job
         Total: 5 jobs.
         """
-        response = client.post("/run", json={
-            "pipeline_name": self.PIPELINE,
-            "runtime_params": {
-                "ids": list(range(1, 21)),
-                "active_only": False,
-                "batch_size": 4,
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": self.PIPELINE,
+                "runtime_params": {
+                    "ids": list(range(1, 21)),
+                    "active_only": False,
+                    "batch_size": 4,
+                },
             },
-        })
+        )
         if response.status_code == 404:
             pytest.skip(f"{self.PIPELINE} not registered")
         assert response.status_code == 202
@@ -551,10 +616,13 @@ class TestPerIdPostPipelineE2E:
 
     def test_per_id_post_starts(self, client):
         """Pipeline starts with user IDs."""
-        response = client.post("/run", json={
-            "pipeline_name": self.PIPELINE,
-            "runtime_params": {"ids": list(range(1, 6))},
-        })
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": self.PIPELINE,
+                "runtime_params": {"ids": list(range(1, 6))},
+            },
+        )
         if response.status_code == 404:
             pytest.skip(f"{self.PIPELINE} not registered")
         assert response.status_code == 202
@@ -562,10 +630,13 @@ class TestPerIdPostPipelineE2E:
 
     def test_per_id_post_single_batch(self, client):
         """5 IDs / ids_batch_size=5 → 1 define_source call → 1 SourceJob."""
-        response = client.post("/run", json={
-            "pipeline_name": self.PIPELINE,
-            "runtime_params": {"ids": list(range(1, 6)), "batch_size": 5},
-        })
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": self.PIPELINE,
+                "runtime_params": {"ids": list(range(1, 6)), "batch_size": 5},
+            },
+        )
         if response.status_code == 404:
             pytest.skip(f"{self.PIPELINE} not registered")
         assert response.status_code == 202
@@ -578,10 +649,13 @@ class TestPerIdPostPipelineE2E:
 
     def test_per_id_post_multiple_batches(self, client):
         """15 IDs / ids_batch_size=5 → 3 define_source calls → 3 jobs."""
-        response = client.post("/run", json={
-            "pipeline_name": self.PIPELINE,
-            "runtime_params": {"ids": list(range(1, 16)), "batch_size": 5},
-        })
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": self.PIPELINE,
+                "runtime_params": {"ids": list(range(1, 16)), "batch_size": 5},
+            },
+        )
         if response.status_code == 404:
             pytest.skip(f"{self.PIPELINE} not registered")
         assert response.status_code == 202
@@ -594,10 +668,13 @@ class TestPerIdPostPipelineE2E:
 
     def test_per_id_post_partial_last_batch(self, client):
         """12 IDs / ids_batch_size=5 → batches [5,5,2] → 3 jobs."""
-        response = client.post("/run", json={
-            "pipeline_name": self.PIPELINE,
-            "runtime_params": {"ids": list(range(1, 13)), "batch_size": 5},
-        })
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": self.PIPELINE,
+                "runtime_params": {"ids": list(range(1, 13)), "batch_size": 5},
+            },
+        )
         if response.status_code == 404:
             pytest.skip(f"{self.PIPELINE} not registered")
         assert response.status_code == 202
@@ -614,10 +691,13 @@ class TestPerIdPostPipelineE2E:
         ``_fetch_by_id`` skips them → 0 records → 0 SourceJobs.
         Pipeline should still complete (not fail).
         """
-        response = client.post("/run", json={
-            "pipeline_name": self.PIPELINE,
-            "runtime_params": {"ids": list(range(101, 106))},
-        })
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": self.PIPELINE,
+                "runtime_params": {"ids": list(range(101, 106))},
+            },
+        )
         if response.status_code == 404:
             pytest.skip(f"{self.PIPELINE} not registered")
         assert response.status_code == 202
@@ -634,13 +714,16 @@ class TestPerIdPostPipelineE2E:
         3 valid POST responses + 2 404s → 3 records.
         batch_size=5 → 3 records fit in 1 SourceJob → 1 job.
         """
-        response = client.post("/run", json={
-            "pipeline_name": self.PIPELINE,
-            "runtime_params": {
-                "ids": [1, 2, 3, 101, 102],
-                "batch_size": 5,
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": self.PIPELINE,
+                "runtime_params": {
+                    "ids": [1, 2, 3, 101, 102],
+                    "batch_size": 5,
+                },
             },
-        })
+        )
         if response.status_code == 404:
             pytest.skip(f"{self.PIPELINE} not registered")
         assert response.status_code == 202
@@ -668,10 +751,13 @@ class TestProductsBatchPipelineE2E:
 
     def test_products_pipeline_starts(self, client):
         """Pipeline starts with product IDs."""
-        response = client.post("/run", json={
-            "pipeline_name": self.PIPELINE,
-            "runtime_params": {"ids": [f"prod_{i}" for i in range(1, 6)]},
-        })
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": self.PIPELINE,
+                "runtime_params": {"ids": [f"prod_{i}" for i in range(1, 6)]},
+            },
+        )
         if response.status_code == 404:
             pytest.skip(f"{self.PIPELINE} not registered")
         assert response.status_code == 202
@@ -679,13 +765,16 @@ class TestProductsBatchPipelineE2E:
 
     def test_products_pipeline_single_batch(self, client):
         """10 product IDs → 1 POST → 10 products / batch_size=5 → 2 jobs."""
-        response = client.post("/run", json={
-            "pipeline_name": self.PIPELINE,
-            "runtime_params": {
-                "ids": [f"prod_{i}" for i in range(1, 11)],
-                "batch_size": 5,
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": self.PIPELINE,
+                "runtime_params": {
+                    "ids": [f"prod_{i}" for i in range(1, 11)],
+                    "batch_size": 5,
+                },
             },
-        })
+        )
         if response.status_code == 404:
             pytest.skip(f"{self.PIPELINE} not registered")
         assert response.status_code == 202
@@ -698,13 +787,16 @@ class TestProductsBatchPipelineE2E:
 
     def test_products_pipeline_multiple_batches(self, client):
         """20 product IDs / ids_batch_size=10 → 2 POST calls → 4 jobs."""
-        response = client.post("/run", json={
-            "pipeline_name": self.PIPELINE,
-            "runtime_params": {
-                "ids": [f"prod_{i}" for i in range(1, 21)],
-                "batch_size": 5,
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": self.PIPELINE,
+                "runtime_params": {
+                    "ids": [f"prod_{i}" for i in range(1, 21)],
+                    "batch_size": 5,
+                },
             },
-        })
+        )
         if response.status_code == 404:
             pytest.skip(f"{self.PIPELINE} not registered")
         assert response.status_code == 202
@@ -724,13 +816,16 @@ class TestProductsBatchPipelineE2E:
         - Batch 3:  5 products → 1 job
         Total: 5 jobs.
         """
-        response = client.post("/run", json={
-            "pipeline_name": self.PIPELINE,
-            "runtime_params": {
-                "ids": [f"prod_{i}" for i in range(1, 26)],
-                "batch_size": 5,
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": self.PIPELINE,
+                "runtime_params": {
+                    "ids": [f"prod_{i}" for i in range(1, 26)],
+                    "batch_size": 5,
+                },
             },
-        })
+        )
         if response.status_code == 404:
             pytest.skip(f"{self.PIPELINE} not registered")
         assert response.status_code == 202
@@ -746,12 +841,15 @@ class TestProductsBatchPipelineE2E:
         Non-existent product IDs (prod_99, prod_100) → /products/lookup returns
         empty items → 0 SourceJobs → pipeline completes cleanly.
         """
-        response = client.post("/run", json={
-            "pipeline_name": self.PIPELINE,
-            "runtime_params": {
-                "ids": ["prod_99", "prod_100", "prod_999"],
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": self.PIPELINE,
+                "runtime_params": {
+                    "ids": ["prod_99", "prod_100", "prod_999"],
+                },
             },
-        })
+        )
         if response.status_code == 404:
             pytest.skip(f"{self.PIPELINE} not registered")
         assert response.status_code == 202
@@ -767,11 +865,20 @@ class TestProductsBatchPipelineE2E:
         10 IDs in one batch: 5 valid + 5 invalid → 5 products returned.
         5 products / batch_size=5 → 1 job.
         """
-        ids = [f"prod_{i}" for i in range(1, 6)] + ["prod_99", "prod_100", "prod_101", "prod_102", "prod_103"]
-        response = client.post("/run", json={
-            "pipeline_name": self.PIPELINE,
-            "runtime_params": {"ids": ids, "batch_size": 5},
-        })
+        ids = [f"prod_{i}" for i in range(1, 6)] + [
+            "prod_99",
+            "prod_100",
+            "prod_101",
+            "prod_102",
+            "prod_103",
+        ]
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": self.PIPELINE,
+                "runtime_params": {"ids": ids, "batch_size": 5},
+            },
+        )
         if response.status_code == 404:
             pytest.skip(f"{self.PIPELINE} not registered")
         assert response.status_code == 202
@@ -787,13 +894,16 @@ class TestProductsBatchPipelineE2E:
         All 50 products cover categories A, B, C.
         50 IDs / ids_batch_size=10 → 5 POST calls → 10/5=2 jobs each → 10 jobs.
         """
-        response = client.post("/run", json={
-            "pipeline_name": self.PIPELINE,
-            "runtime_params": {
-                "ids": [f"prod_{i}" for i in range(1, 51)],
-                "batch_size": 5,
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": self.PIPELINE,
+                "runtime_params": {
+                    "ids": [f"prod_{i}" for i in range(1, 51)],
+                    "batch_size": 5,
+                },
             },
-        })
+        )
         if response.status_code == 404:
             pytest.skip(f"{self.PIPELINE} not registered")
         assert response.status_code == 202
@@ -810,17 +920,22 @@ class TestIdBasedAPIBatchPipelineE2E:
 
     def test_api_batch_pipeline_starts(self, client):
         """Test that the API batch pipeline starts with a list of user IDs."""
-        response = client.post("/run", json={
-            "pipeline_name": "e2e_id_based_api_batch_pipeline_test",
-            "runtime_params": {
-                "ids": list(range(1, 11)),  # 10 user IDs
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": "e2e_id_based_api_batch_pipeline_test",
+                "runtime_params": {
+                    "ids": list(range(1, 11)),  # 10 user IDs
+                },
             },
-        })
+        )
 
         if response.status_code == 404:
             pytest.skip("e2e_id_based_api_batch_pipeline_test pipeline not registered")
 
-        assert response.status_code == 202, f"Expected 202, got {response.status_code}: {response.text}"
+        assert (
+            response.status_code == 202
+        ), f"Expected 202, got {response.status_code}: {response.text}"
         data = response.json()
         assert "execution_id" in data
         assert data["pipeline_name"] == "e2e_id_based_api_batch_pipeline_test"
@@ -836,13 +951,16 @@ class TestIdBasedAPIBatchPipelineE2E:
         Each POST returns 10 users; batch_size=5 → 2 jobs per POST.
         Total: 4 jobs.
         """
-        response = client.post("/run", json={
-            "pipeline_name": "e2e_id_based_api_batch_pipeline_test",
-            "runtime_params": {
-                "ids": list(range(1, 21)),  # 20 user IDs (all active + inactive mix)
-                "batch_size": 5,
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": "e2e_id_based_api_batch_pipeline_test",
+                "runtime_params": {
+                    "ids": list(range(1, 21)),  # 20 user IDs (all active + inactive mix)
+                    "batch_size": 5,
+                },
             },
-        })
+        )
 
         if response.status_code == 404:
             pytest.skip("e2e_id_based_api_batch_pipeline_test pipeline not registered")
@@ -860,7 +978,9 @@ class TestIdBasedAPIBatchPipelineE2E:
         assert stats["jobs_completed"] == 4
         assert stats["jobs_failed"] == 0
 
-        print(f"✅ API batch pipeline completed: {stats['jobs_completed']}/{stats['total_jobs']} jobs")
+        print(
+            f"✅ API batch pipeline completed: {stats['jobs_completed']}/{stats['total_jobs']} jobs"
+        )
 
     def test_api_batch_pipeline_single_batch(self, client):
         """
@@ -869,13 +989,16 @@ class TestIdBasedAPIBatchPipelineE2E:
         10 IDs / ids_batch_size=10 → 1 POST call.
         10 users / batch_size=5 → 2 jobs.
         """
-        response = client.post("/run", json={
-            "pipeline_name": "e2e_id_based_api_batch_pipeline_test",
-            "runtime_params": {
-                "ids": list(range(1, 11)),  # exactly 10 IDs
-                "batch_size": 5,
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": "e2e_id_based_api_batch_pipeline_test",
+                "runtime_params": {
+                    "ids": list(range(1, 11)),  # exactly 10 IDs
+                    "batch_size": 5,
+                },
             },
-        })
+        )
 
         if response.status_code == 404:
             pytest.skip("e2e_id_based_api_batch_pipeline_test pipeline not registered")
@@ -901,13 +1024,16 @@ class TestIdBasedAPIBatchPipelineE2E:
         Last batch: 5 users / batch_size=5 = 1 job.
         Total: 5 jobs.
         """
-        response = client.post("/run", json={
-            "pipeline_name": "e2e_id_based_api_batch_pipeline_test",
-            "runtime_params": {
-                "ids": list(range(1, 26)),  # 25 IDs
-                "batch_size": 5,
+        response = client.post(
+            "/run",
+            json={
+                "pipeline_name": "e2e_id_based_api_batch_pipeline_test",
+                "runtime_params": {
+                    "ids": list(range(1, 26)),  # 25 IDs
+                    "batch_size": 5,
+                },
             },
-        })
+        )
 
         if response.status_code == 404:
             pytest.skip("e2e_id_based_api_batch_pipeline_test pipeline not registered")
@@ -922,7 +1048,9 @@ class TestIdBasedAPIBatchPipelineE2E:
         assert stats["jobs_completed"] == 5
         assert stats["jobs_failed"] == 0
 
-        print(f"✅ API batch pipeline (partial last batch) completed: {stats['jobs_completed']} jobs")
+        print(
+            f"✅ API batch pipeline (partial last batch) completed: {stats['jobs_completed']} jobs"
+        )
 
 
 if __name__ == "__main__":

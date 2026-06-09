@@ -34,6 +34,7 @@ class BulkPatchRequest(BaseModel):
 class ProductLookupRequest(BaseModel):
     product_ids: List[str]
 
+
 app = FastAPI(title="Mock API Server for E2E Tests")
 
 
@@ -47,7 +48,12 @@ USERS = [
 ]
 
 PRODUCTS = [
-    {"id": f"prod_{i}", "name": f"Product {i}", "price": 10.0 + i, "category": ["A", "B", "C"][i % 3]}
+    {
+        "id": f"prod_{i}",
+        "name": f"Product {i}",
+        "price": 10.0 + i,
+        "category": ["A", "B", "C"][i % 3],
+    }
     for i in range(1, 51)  # 50 products
 ]
 
@@ -55,6 +61,7 @@ PRODUCTS = [
 # ============================================================================
 # API Endpoints
 # ============================================================================
+
 
 @app.get("/health")
 async def health_check():
@@ -76,20 +83,20 @@ async def list_users(
 ):
     """
     List users with offset pagination.
-    
+
     Query params:
         offset: Starting offset (default: 0)
         limit: Number of records (default: 10, max: 100)
         active: Filter by active status
     """
     filtered = USERS
-    
+
     if active is not None:
         filtered = [u for u in filtered if u["active"] == active]
-    
+
     total = len(filtered)
-    paginated = filtered[offset:offset + limit]
-    
+    paginated = filtered[offset : offset + limit]
+
     return {
         "data": paginated,
         "total": total,
@@ -106,10 +113,10 @@ async def get_user(
 ):
     """Get a single user by ID."""
     user = next((u for u in USERS if u["id"] == user_id), None)
-    
+
     if not user:
         raise HTTPException(status_code=404, detail=f"User {user_id} not found")
-    
+
     return user
 
 
@@ -121,17 +128,17 @@ async def list_products(
 ):
     """
     List products with cursor pagination.
-    
+
     Query params:
         cursor: Cursor token for pagination
         limit: Number of records (default: 10, max: 50)
         category: Filter by category
     """
     filtered = PRODUCTS
-    
+
     if category:
         filtered = [p for p in filtered if p["category"] == category]
-    
+
     # Decode cursor (format: "idx_{index}")
     start_idx = 0
     if cursor:
@@ -139,15 +146,15 @@ async def list_products(
             start_idx = int(cursor.split("_")[1])
         except (IndexError, ValueError):
             raise HTTPException(status_code=400, detail="Invalid cursor")
-    
+
     end_idx = start_idx + limit
     paginated = filtered[start_idx:end_idx]
-    
+
     # Generate next cursor if more data exists
     next_cursor = None
     if end_idx < len(filtered):
         next_cursor = f"idx_{end_idx}"
-    
+
     return {
         "data": paginated,
         "total": len(filtered),
@@ -159,10 +166,10 @@ async def list_products(
 async def get_product(product_id: str):
     """Get a single product by ID."""
     product = next((p for p in PRODUCTS if p["id"] == product_id), None)
-    
+
     if not product:
         raise HTTPException(status_code=404, detail=f"Product {product_id} not found")
-    
+
     return product
 
 
@@ -294,5 +301,5 @@ if __name__ == "__main__":
     print("     - POST /users/{id}/enrich (per-ID POST with enrichment)")
     print("     - POST /products/lookup (product batch by product_ids key)")
     print("")
-    
+
     uvicorn.run(app, host="0.0.0.0", port=8092)
