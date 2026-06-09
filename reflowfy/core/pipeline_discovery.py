@@ -3,7 +3,8 @@
 This module provides centralized pipeline auto-discovery and loading,
 used by the API, Worker, and ReflowManager services.
 
-It scans the following user directories:
+It recursively scans the following user directories (including any nested
+subdirectories, with or without ``__init__.py``):
 - pipelines/          → Pipeline definitions (auto-registered via metaclass)
 - sources/            → Reusable source configurations (@source decorator)
 - destinations/       → Reusable destination configurations (@destination decorator)
@@ -12,14 +13,19 @@ It scans the following user directories:
 
 import importlib
 import os
-import pkgutil
 import sys
 from pathlib import Path
 
 
 def _scan_directory(module_name: str, label: str) -> int:
     """
-    Scan and import all Python modules in a directory.
+    Recursively scan and import all Python modules under a directory.
+
+    Walks the package tree so modules in nested subdirectories are loaded too.
+    Modules are imported by dotted name (e.g. ``pipelines.group_a.sub.deep``),
+    which works even when intermediate directories lack ``__init__.py`` thanks
+    to Python's implicit namespace packages, while still honouring relative
+    imports in subtrees that are regular packages.
 
     Args:
         module_name: Dotted module path (e.g., 'pipelines', 'transformations')
@@ -32,20 +38,31 @@ def _scan_directory(module_name: str, label: str) -> int:
 
     try:
         package = importlib.import_module(module_name)
-        package_path = Path(package.__file__).parent
+    except ImportError:
+        # Directory doesn't exist or isn't importable — that's fine
+        return 0
 
-        for _, mod_name, is_pkg in pkgutil.iter_modules([str(package_path)]):
-            if not is_pkg:  # Only import .py files, not subdirectories
+    # __path__ exists for both regular and namespace packages (unlike __file__,
+    # which is None for namespace packages).
+    for base in getattr(package, "__path__", []):
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+
+            rel_dir = Path(dirpath).relative_to(base)
+            for filename in sorted(filenames):
+                if not filename.endswith(".py") or filename == "__init__.py":
+                    continue
+
+                rel_parts = [*rel_dir.parts, filename[: -len(".py")]]
+                suffix = ".".join(rel_parts)
+                full_module = f"{module_name}.{suffix}"
+                display = rel_dir / filename
                 try:
-                    full_module = f"{module_name}.{mod_name}"
                     importlib.import_module(full_module)
-                    print(f"  Loaded {label}: {mod_name}.py")
+                    print(f"  Loaded {label}: {display}")
                     loaded_count += 1
                 except Exception as e:
-                    print(f"  Failed to load {label} {mod_name}.py: {e}")
-    except ImportError:
-        # Directory doesn't exist or isn't a package — that's fine
-        pass
+                    print(f"  Failed to load {label} {display}: {e}")
 
     return loaded_count
 
@@ -54,7 +71,8 @@ def discover_and_load_pipelines(module_name: str = "pipelines") -> int:
     """
     Auto-discover and import all pipeline modules and reusable components.
 
-    Scans the following directories relative to the pipeline module:
+    Scans the following directories (recursively, including nested
+    subdirectories) relative to the pipeline module:
     - The pipeline module itself (e.g., 'pipelines/')
     - 'sources/' — reusable source configs
     - 'destinations/' — reusable destination configs
