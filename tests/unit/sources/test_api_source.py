@@ -4,174 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from reflowfy.sources.api import (
-    IDBasedAPISource,
-    PaginatedAPISource,
-    id_based_api_source,
-    paginated_api_source,
-)
-
-
-class TestPaginatedAPISource:
-    """Tests for PaginatedAPISource class."""
-
-    def test_init(self):
-        """Test PaginatedAPISource initialization."""
-        source = PaginatedAPISource(
-            base_url="https://api.example.com",
-            endpoint="/users",
-            pagination_type="offset",
-            page_size=100,
-        )
-
-        assert source.config["base_url"] == "https://api.example.com"
-        assert source.config["endpoint"] == "/users"
-        assert source.config["pagination_type"] == "offset"
-        assert source.config["page_size"] == 100
-
-    def test_factory_function(self):
-        """Test paginated_api_source factory function."""
-        source = paginated_api_source(
-            base_url="https://api.example.com",
-            endpoint="/users",
-            pagination_type="cursor",
-            page_size=50,
-        )
-
-        assert isinstance(source, PaginatedAPISource)
-        assert source.config["pagination_type"] == "cursor"
-        assert source.config["page_size"] == 50
-
-    def test_extract_data_with_key(self):
-        """Test extracting data from response with data key."""
-        source = PaginatedAPISource(
-            base_url="https://api.example.com",
-            endpoint="/users",
-            data_key="data",
-        )
-
-        response_data = {"data": [{"id": 1}, {"id": 2}], "meta": {"total": 100}}
-
-        records = source._extract_data(response_data)
-        assert len(records) == 2
-        assert records[0]["id"] == 1
-
-    def test_extract_data_nested_key(self):
-        """Test extracting data with nested key."""
-        source = PaginatedAPISource(
-            base_url="https://api.example.com",
-            endpoint="/users",
-            data_key="response.results",
-        )
-
-        response_data = {"response": {"results": [{"id": 1}], "total": 10}}
-
-        records = source._extract_data(response_data)
-        assert len(records) == 1
-
-    def test_extract_data_no_key(self):
-        """Test extracting data when response is the array."""
-        source = PaginatedAPISource(
-            base_url="https://api.example.com",
-            endpoint="/users",
-            data_key="",
-        )
-
-        response_data = [{"id": 1}, {"id": 2}]
-        records = source._extract_data(response_data)
-        assert len(records) == 2
-
-    def test_get_next_cursor(self):
-        """Test extracting cursor from response."""
-        source = PaginatedAPISource(
-            base_url="https://api.example.com",
-            endpoint="/users",
-            pagination_type="cursor",
-            cursor_response_key="meta.next_cursor",
-        )
-
-        response_data = {"data": [], "meta": {"next_cursor": "abc123"}}
-
-        cursor = source._get_next_cursor(response_data)
-        assert cursor == "abc123"
-
-    @patch("httpx.Client")
-    def test_fetch_offset_pagination(self, mock_client_class):
-        """Test fetching with offset pagination."""
-        mock_client = MagicMock()
-        mock_client_class.return_value = mock_client
-
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"data": [{"id": 1}, {"id": 2}]}
-        mock_client.request.return_value = mock_response
-
-        source = PaginatedAPISource(
-            base_url="https://api.example.com",
-            endpoint="/users",
-            pagination_type="offset",
-        )
-
-        records = source.fetch({})
-
-        assert len(records) == 2
-        mock_client.request.assert_called_once()
-
-    @patch("httpx.Client")
-    def test_split_jobs_offset(self, mock_client_class):
-        """Test job splitting with offset pagination."""
-        mock_client = MagicMock()
-        mock_client_class.return_value = mock_client
-
-        # Return 2 pages, then empty
-        responses = [
-            {"data": [{"id": i} for i in range(10)]},
-            {"data": [{"id": i} for i in range(10, 15)]},  # Partial page = last
-        ]
-
-        mock_response = MagicMock()
-        mock_response.json.side_effect = responses
-        mock_client.request.return_value = mock_response
-
-        source = PaginatedAPISource(
-            base_url="https://api.example.com",
-            endpoint="/users",
-            pagination_type="offset",
-            page_size=10,
-        )
-
-        jobs = list(source.split_jobs({}))
-
-        assert len(jobs) == 2
-        assert jobs[0].metadata["page_num"] == 0
-        assert jobs[1].metadata["page_num"] == 1
-
-    def test_health_check_success(self):
-        """Test health check success."""
-        with patch("httpx.Client") as mock_client_class:
-            mock_client = MagicMock()
-            mock_client_class.return_value = mock_client
-            mock_response = MagicMock()
-            mock_response.status_code = 200
-            mock_client.request.return_value = mock_response
-
-            source = PaginatedAPISource(
-                base_url="https://api.example.com",
-                endpoint="/users",
-            )
-
-            assert source.health_check() is True
-
-    @patch("httpx.Client")
-    def test_health_check_disabled_skips_requests(self, mock_client_class):
-        """Health check can be disabled via config."""
-        source = PaginatedAPISource(
-            base_url="https://api.example.com",
-            endpoint="/users",
-            health_check_enabled=False,
-        )
-
-        assert source.health_check() is True
-        mock_client_class.assert_not_called()
+from reflowfy.sources.api import IDBasedAPISource, id_based_api_source
 
 
 class TestIDBasedAPISource:
@@ -306,9 +139,9 @@ class TestAuthenticationHeaders:
     @patch("httpx.Client")
     def test_bearer_auth(self, mock_client_class):
         """Test bearer token authentication."""
-        source = PaginatedAPISource(
+        source = IDBasedAPISource(
             base_url="https://api.example.com",
-            endpoint="/users",
+            endpoint_template="/users/{id}",
             auth_type="bearer",
             auth_token="secret-token",
         )
@@ -323,9 +156,9 @@ class TestAuthenticationHeaders:
     @patch("httpx.Client")
     def test_apikey_auth(self, mock_client_class):
         """Test API key authentication."""
-        source = PaginatedAPISource(
+        source = IDBasedAPISource(
             base_url="https://api.example.com",
-            endpoint="/users",
+            endpoint_template="/users/{id}",
             auth_type="apikey",
             auth_token="my-api-key",
         )

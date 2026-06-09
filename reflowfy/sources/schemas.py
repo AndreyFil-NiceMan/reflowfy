@@ -28,48 +28,6 @@ class S3SourceConfig(BaseModel):
         return v.strip()
 
 
-class PaginatedAPISourceConfig(BaseModel):
-    """Configuration for PaginatedAPISource."""
-
-    base_url: str = Field(..., description="Base URL of the API")
-    endpoint: str = Field(..., description="API endpoint path")
-    method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"] = Field(
-        default="GET", description="HTTP method"
-    )
-    headers: Dict[str, str] = Field(default_factory=dict, description="HTTP headers")
-    auth_type: Optional[Literal["bearer", "apikey", "basic"]] = Field(
-        default=None, description="Authentication type"
-    )
-    auth_token: Optional[str] = Field(default=None, description="Auth token/credentials")
-    pagination_type: Literal["offset", "page", "cursor", "link"] = Field(
-        default="offset", description="Pagination strategy"
-    )
-    page_size: int = Field(default=100, ge=1, le=10000, description="Records per page")
-    offset_param: str = Field(default="offset", description="Query param for offset")
-    limit_param: str = Field(default="limit", description="Query param for page limit")
-    page_param: str = Field(default="page", description="Query param for page number")
-    per_page_param: str = Field(default="per_page", description="Query param for page size")
-    cursor_param: str = Field(default="cursor", description="Query param for cursor token")
-    cursor_response_key: str = Field(
-        default="next_cursor", description="Response key containing next cursor"
-    )
-    data_key: str = Field(default="data", description="JSON key containing records")
-    total_key: Optional[str] = Field(
-        default="total", description="Response key containing total count"
-    )
-    timeout: float = Field(default=30.0, ge=1.0, description="Request timeout in seconds")
-    health_check_enabled: bool = Field(
-        default=True, description="Enable/disable source health check"
-    )
-
-    @field_validator("base_url")
-    @classmethod
-    def validate_base_url(cls, v: str) -> str:
-        if not v.startswith(("http://", "https://")):
-            raise ValueError("base_url must start with http:// or https://")
-        return v.rstrip("/")
-
-
 class IDBasedAPISourceConfig(BaseModel):
     """Configuration for IDBasedAPISource."""
 

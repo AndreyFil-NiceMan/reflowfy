@@ -4,9 +4,7 @@ from reflowfy.sources.base import BaseSource, SourceJob, SourceError
 
 # API sources (httpx is a core dependency)
 from reflowfy.sources.api import (
-    PaginatedAPISource,
     IDBasedAPISource,
-    paginated_api_source,
     id_based_api_source,
 )
 
@@ -21,11 +19,9 @@ except ImportError:
 
 __all__ = [
     "BaseSource",
-    "SourceJob", 
+    "SourceJob",
     "SourceError",
-    "PaginatedAPISource",
     "IDBasedAPISource",
-    "paginated_api_source",
     "id_based_api_source",
 ]
 
