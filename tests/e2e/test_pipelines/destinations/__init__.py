@@ -12,17 +12,6 @@ from reflowfy.destinations.api import api_destination
 from reflowfy.destinations.console import console_destination
 
 
-def _serialize_runtime_params(runtime_params: Dict[str, object]) -> Dict[str, object]:
-    safe_params: Dict[str, object] = {}
-    for key, value in runtime_params.items():
-        if isinstance(value, (str, int, float, bool)) or value is None:
-            safe_params[key] = value
-        elif isinstance(value, (list, dict)):
-            safe_params[key] = value
-        else:
-            safe_params[key] = str(value)
-    return safe_params
-
 
 @destination("e2e_http")
 def e2e_http(
@@ -31,8 +20,8 @@ def e2e_http(
     headers: Optional[Dict[str, str]] = None,
     auth_type: str = "bearer",
     auth_token: str = "test-webhook-token",
-    batch_requests: bool = True,
     timeout: float = 30.0,
+    body: Optional[object] = None,
 ):
     """Pre-configured API webhook destination for E2E tests."""
     return api_destination(
@@ -41,23 +30,22 @@ def e2e_http(
         headers=headers or {"Content-Type": "application/json"},
         auth_type=auth_type,
         auth_token=auth_token,
-        batch_requests=batch_requests,
         timeout=timeout,
+        body=body,
     )
 
 
 @destination("e2e_http_runtime_params")
 def e2e_http_runtime_params(
-    runtime_params: Dict[str, object],
     url: str = os.getenv("MOCK_HTTP_URL", "http://localhost:8091/webhook"),
     method: str = "POST",
     headers: Optional[Dict[str, str]] = None,
     auth_type: str = "bearer",
     auth_token: str = "test-webhook-token",
-    batch_requests: bool = True,
     timeout: float = 30.0,
+    body: Optional[object] = None,
 ):
-    """E2E HTTP destination that embeds runtime_params into the payload."""
+    """E2E HTTP destination that forwards a user-built body to the webhook."""
     merged_headers = {"Content-Type": "application/json"}
     if headers:
         merged_headers.update(headers)
@@ -68,9 +56,8 @@ def e2e_http_runtime_params(
         headers=merged_headers,
         auth_type=auth_type,
         auth_token=auth_token,
-        batch_requests=batch_requests,
         timeout=timeout,
-        body={},
+        body=body,
     )
 
 

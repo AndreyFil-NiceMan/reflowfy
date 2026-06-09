@@ -20,7 +20,9 @@ class E2EApiDestTestPipeline(AbstractPipeline):
     E2E test pipeline for API destination.
 
     Accepts runtime params that flow directly into the API destination's
-    URL query string (params) and request body (body).
+    URL query string (params) and request body (body). The pipeline builds
+    the request body explicitly in define_destination, combining records
+    with static and dynamic fields.
     """
 
     name = "e2e_api_dest_test"
@@ -60,15 +62,15 @@ class E2EApiDestTestPipeline(AbstractPipeline):
             method="POST",
             auth_type="bearer",
             auth_token="test-webhook-token",
-            batch_requests=True,
             timeout=30.0,
             # URL query params built from runtime_params
             params={
                 "tenant_id": runtime_params["tenant_id"],
                 "env": runtime_params["env"],
             },
-            # Static + dynamic body fields merged into every request
+            # Body includes records plus static and dynamic fields
             body={
+                "records": records,
                 "source": "reflowfy",
                 "app_name": runtime_params["app_name"],
             },

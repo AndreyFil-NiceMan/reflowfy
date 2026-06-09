@@ -29,11 +29,6 @@ class BatchPayload(BaseModel):
     model_config = {"extra": "allow"}
 
 
-class SinglePayload(BaseModel):
-    record: Dict[str, Any]
-    model_config = {"extra": "allow"}
-
-
 class ReceivedBatch(BaseModel):
     received_at: str
     record_count: int
@@ -82,7 +77,7 @@ async def receive_batch(
     payload: BatchPayload,
     authorization: Optional[str] = Header(None),
 ):
-    """Receive batched records from ApiDestination (batch_requests=True)."""
+    """Receive a single verbatim request from ApiDestination with body={"records": [...], ...}."""
     _check_auth(authorization)
 
     query_params = dict(request.query_params)
@@ -102,31 +97,6 @@ async def receive_batch(
         "total_records": len(received_records),
     }
 
-
-@app.post("/webhook/single")
-async def receive_single(
-    request: Request,
-    payload: SinglePayload,
-    authorization: Optional[str] = Header(None),
-):
-    """Receive individual records from ApiDestination (batch_requests=False)."""
-    _check_auth(authorization)
-
-    query_params = dict(request.query_params)
-    extra = {k: v for k, v in payload.model_extra.items()} if payload.model_extra else {}
-
-    received_records.append(payload.record)
-    received_batches.append(ReceivedBatch(
-        received_at=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
-        record_count=1,
-        query_params=query_params,
-        extra_body_fields=extra,
-    ))
-
-    return {
-        "status": "received",
-        "total_records": len(received_records),
-    }
 
 
 @app.get("/stats")

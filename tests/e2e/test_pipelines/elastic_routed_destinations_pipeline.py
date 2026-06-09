@@ -52,10 +52,9 @@ class E2EElasticRoutedDestinationsPipeline(AbstractPipeline):
                 method="POST",
                 auth_type="bearer",
                 auth_token="test-webhook-token",
-                batch_requests=True,
                 timeout=30.0,
                 params={"route": "secondary"},
-                body={"destination_name": "secondary"},
+                body={"records": records, "destination_name": "secondary"},
             )
 
         return api_destination(
@@ -63,8 +62,7 @@ class E2EElasticRoutedDestinationsPipeline(AbstractPipeline):
             method="POST",
             auth_type="bearer",
             auth_token="test-webhook-token",
-            batch_requests=True,
             timeout=30.0,
             params={"route": "primary"},
-            body={"destination_name": "primary"},
+            body={"records": records, "destination_name": "primary"},
         )
