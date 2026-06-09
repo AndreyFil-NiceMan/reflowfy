@@ -151,6 +151,23 @@ class TestTransformationChainEnrichment:
                 saw_step1_count = r.get("saw_step1_count")
             assert (saw_step1_count or 0) > 0, f"step2 saw wrong count: {r}"
 
+    def test_midchain_param_reveals_second_transformation(self):
+        """A param set by the first transformation must cause define_transformations
+        to be re-evaluated so the second transformation is appended and runs."""
+        clear_received_records()
+        result = trigger_pipeline("e2e_reveal_midchain", {})
+        execution_id = result["execution_id"]
+        status = wait_for_execution(execution_id)
+        assert status["state"] == "completed"
+
+        records = get_received_records()
+        assert len(records) > 0, "expected records at the destination"
+        for r in records:
+            assert r.get("_reveal_step1") is True, f"first transform did not run: {r}"
+            assert r.get("second_applied") is True, (
+                f"second transformation was not applied — mid-chain param not honored: {r}"
+            )
+
 
 # ---------------------------------------------------------------------------
 # Test 4: define_source enrichment visible in transformations

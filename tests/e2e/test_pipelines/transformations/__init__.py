@@ -373,6 +373,25 @@ def params_step1_enrich(records, runtime_params):
     return records
 
 
+@transformation("reveal_set_flag")
+def reveal_set_flag(records, runtime_params):
+    """Mid-chain reveal step 1: sets a flag in runtime_params that the pipeline's
+    define_transformations uses to append a second transformation on the next pass."""
+    runtime_params["should_add_second"] = True
+    for record in records:
+        record["_reveal_step1"] = True
+    return records
+
+
+@transformation("reveal_stamp_second")
+def reveal_stamp_second(records, runtime_params):
+    """Mid-chain reveal step 2: only appended (and thus only runs) when step 1 set
+    the flag. Stamps every record so the test can assert it actually ran."""
+    for record in records:
+        record["second_applied"] = True
+    return records
+
+
 @transformation("params_step2_verify")
 def params_step2_verify(records, runtime_params):
     """Step 2: verifies it can read what step1 wrote into runtime_params."""

@@ -14,6 +14,8 @@ from tests.e2e.test_pipelines.sources import e2e_mock
 from tests.e2e.test_pipelines.transformations import (
     params_step1_enrich,
     params_step2_verify,
+    reveal_set_flag,
+    reveal_stamp_second,
 )
 
 
@@ -38,6 +40,32 @@ class E2EParamsEnrichPipeline(AbstractPipeline):
 
     def define_transformations(self, records, runtime_params):
         return [params_step1_enrich(), params_step2_verify()]
+
+
+class E2ERevealMidChainPipeline(AbstractPipeline):
+    """
+    Verifies dynamic (iterative) transformation resolution.
+
+    reveal_set_flag sets runtime_params['should_add_second'] = True. Because that
+    key is only present *after* the first transformation runs, define_transformations
+    must be re-evaluated mid-chain for reveal_stamp_second to be appended and applied.
+    Every record should end up stamped with second_applied=True.
+    """
+
+    name = "e2e_reveal_midchain"
+    rate_limit = 50
+
+    def define_source(self, runtime_params):
+        return e2e_mock(count=10, batch_size=10)
+
+    def define_destination(self, records, runtime_params):
+        return e2e_http()
+
+    def define_transformations(self, records, runtime_params):
+        trans = [reveal_set_flag()]
+        if runtime_params.get("should_add_second"):
+            trans.append(reveal_stamp_second())
+        return trans
 
 
 class E2EIdBasedParamsEnrichPipeline(IdBasedPipeline):
