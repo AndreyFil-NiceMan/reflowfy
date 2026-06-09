@@ -8,7 +8,7 @@ from reflowfy.core.execution_context import (
     build_flat_runtime_params,
 )
 from reflowfy.execution.base import BaseExecutor, ExecutionState, ExecutionStatus
-from reflowfy.transformations.base import TransformationError
+from reflowfy.execution.transformation_runner import apply_transformations_iteratively
 
 
 class LocalExecutor(BaseExecutor):
@@ -109,31 +109,13 @@ class LocalExecutor(BaseExecutor):
 
             print(f"✓ Fetched {len(records)} records")
 
-            # 2. Resolve transformations from current records/runtime params
-            transformations = list(pipeline.define_transformations(records, flat_runtime_params))
-
-            # 3. Apply transformations
-            transformed_records = records
-
-            for transformation in transformations:
-                print(f"🔄 Applying transformation: {transformation.name}")
-
-                try:
-                    transformation.validate_input(transformed_records)
-                    transformed_records = transformation.apply(
-                        transformed_records,
-                        flat_runtime_params,
-                    )
-                    transformation.validate_output(transformed_records)
-
-                    print(f"✓ Transformation complete: {len(transformed_records)} records")
-
-                except Exception as e:
-                    raise TransformationError(
-                        transformation_name=transformation.name,
-                        message=str(e),
-                        original_error=e,
-                    )
+            # 2 + 3. Resolve and apply transformations iteratively so that params
+            # mutated mid-chain can reveal later transformations.
+            transformed_records, applied = apply_transformations_iteratively(
+                pipeline, records, flat_runtime_params
+            )
+            for name, _duration in applied:
+                print(f"✓ Applied transformation: {name}")
 
             # 4. Resolve destination from post-transformation records and send
             destination = pipeline.define_destination(transformed_records, flat_runtime_params)
@@ -243,17 +225,12 @@ class LocalExecutor(BaseExecutor):
                 )
                 flat_id_params["current_id"] = current_id
 
-                # Resolve transformations from current records/runtime params.
-                transformations = list(pipeline.define_transformations(records, flat_id_params))
-
-                for transformation in transformations:
-                    print(f"  🔄 Applying: {transformation.name}")
-                    transformation.validate_input(transformed_records)
-                    transformed_records = transformation.apply(
-                        transformed_records,
-                        flat_id_params,
-                    )
-                    transformation.validate_output(transformed_records)
+                # Resolve and apply transformations iteratively for this ID's chain.
+                transformed_records, applied = apply_transformations_iteratively(
+                    pipeline, records, flat_id_params
+                )
+                for name, _duration in applied:
+                    print(f"  ✓ Applied: {name}")
 
                 # 3. Resolve destination from post-transformation records and send.
                 destination = pipeline.define_destination(
