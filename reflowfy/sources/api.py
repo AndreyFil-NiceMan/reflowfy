@@ -4,6 +4,7 @@ from typing import Any, Dict, Iterator, List, Optional, Union
 
 import httpx
 
+from reflowfy.http_auth import build_auth_headers
 from reflowfy.sources.base import BaseSource, SourceError, SourceJob
 from reflowfy.sources.schemas import IDBasedAPISourceConfig
 
@@ -14,14 +15,14 @@ class IDBasedAPISource(BaseSource):
 
     Behaviour is auto-detected from the endpoint template:
     - ``{id}`` in ``endpoint_template`` → **per-ID mode**: one request per ID,
-      ID substituted into the URL (and optionally into the body).
-    - No ``{id}`` in template → **batch mode**: one request for the whole ID list,
-      IDs placed in the request body.
+      ID substituted into the URL (and into string values of ``body``).
+    - No ``{id}`` in template → **batch mode**: one request whose body is the
+      ``body`` you built (e.g. ``{"ids": params["current_ids"]}``).
 
-    Body shape in batch mode is controlled by ``batch_id_key``:
-    - ``batch_id_key="ids"`` (default) → ``{"ids": ["id1","id2",...]}``
-    - ``batch_id_key=None``            → ``["id1","id2",...]``  (raw list body)
-    - Any key + ``request_body``       → merged: ``{"ids": [...], "extra": True}``
+    The request ``body`` is sent verbatim. Build it yourself in
+    ``define_source(runtime_params)`` from the IDs you already have, e.g.
+    ``body={"ids": params["current_ids"]}`` or ``body=params["current_ids"]``
+    for a raw list. ``body=None`` sends no request body.
     """
 
     def __init__(
@@ -29,73 +30,62 @@ class IDBasedAPISource(BaseSource):
         base_url: str,
         endpoint_template: str,
         ids: Optional[List[Union[str, int]]] = None,
-        ids_source: Optional[BaseSource] = None,
-        ids_field: str = "id",
         method: str = "GET",
         headers: Optional[Dict[str, str]] = None,
         auth_type: Optional[str] = None,
         auth_token: Optional[str] = None,
         batch_size: int = 50,
         timeout: float = 30.0,
-        batch_id_key: Optional[str] = "ids",
-        data_key: Optional[str] = None,
-        request_body: Optional[Dict[str, Any]] = None,
-        query_params: Optional[Dict[str, Any]] = None,
+        response_key: Optional[str] = None,
+        body: Optional[Any] = None,
+        params: Optional[Dict[str, Any]] = None,
         health_check_enabled: bool = True,
-        **kwargs,
     ):
         """
         Initialize ID-based API source.
 
+        Note: there is intentionally **no** ``**kwargs`` — unknown keyword
+        arguments (including the removed ``batch_id_key`` / ``request_body`` /
+        ``query_params`` / ``data_key`` / ``ids_source`` / ``ids_field``) raise
+        ``TypeError`` so typos and stale call sites fail loudly.
+
         Args:
-            base_url: Base API URL (e.g. ``"https://api.example.com"``)
+            base_url: Base API URL (e.g. ``"https://api.example.com"``).
             endpoint_template: Endpoint path. Include ``{id}`` for per-ID mode
-                (e.g. ``"/users/{id}"``); omit it for batch mode
-                (e.g. ``"/users/batch"``).
-            ids: Static list of IDs to fetch.
-            ids_source: Another source whose records supply the IDs.
-            ids_field: Field name to extract IDs from ``ids_source`` records.
-            method: HTTP method — GET, POST, PATCH, PUT, DELETE, etc.
-                In per-ID mode this applies to every single request.
-                In batch mode this applies to the single batch request.
+                (e.g. ``"/users/{id}"``); omit it for batch mode.
+            ids: Static list of IDs. May also arrive via ``runtime_params["ids"]``.
+            method: HTTP method.
             headers: Custom request headers.
-            auth_type: Authentication scheme (``"bearer"`` or ``"apikey"``).
-            auth_token: Credential for the chosen auth scheme.
-            batch_size: Per-ID mode: IDs grouped per SourceJob.
-                Batch mode: response records grouped per SourceJob.
+            auth_type: ``"bearer"``, ``"apikey"``, or ``"basic"``.
+            auth_token: Credential. For ``"basic"`` pass ``"user:password"``.
+            batch_size: Per-ID mode: IDs grouped per SourceJob. Batch mode:
+                response records grouped per SourceJob.
             timeout: HTTP request timeout in seconds.
-            batch_id_key: Body key under which the IDs list is placed in batch
-                mode. Set to ``None`` to send the IDs as a **raw JSON array**
-                (no wrapping object). Default ``"ids"``.
-            data_key: Dotted response key used to extract the records list from
-                the response JSON. ``None`` means the response is the list.
-            request_body: Extra body fields merged into every request.
-                In per-ID mode, string values support ``{id}`` substitution.
-                In batch mode, merged alongside the IDs (unless ``batch_id_key``
-                is already present in this dict).
-            query_params: Extra query-string parameters appended to every request.
+            response_key: Dotted key to extract the records list from the
+                response JSON (e.g. ``"data.users"``). ``None`` means the
+                response itself is the list.
+            body: Request body sent verbatim (dict or list). In per-ID mode,
+                string values of a dict body support ``{id}`` substitution.
+                ``None`` sends no body.
+            params: Extra query-string parameters appended to every request.
             health_check_enabled: Enable/disable source health check.
         """
         config = {
             "base_url": base_url,
             "endpoint_template": endpoint_template,
             "ids": ids or [],
-            "ids_field": ids_field,
             "method": method.upper(),
             "headers": headers or {},
             "auth_type": auth_type,
             "auth_token": auth_token,
             "batch_size": batch_size,
             "timeout": timeout,
-            "batch_id_key": batch_id_key,
-            "data_key": data_key,
-            "request_body": request_body or {},
-            "query_params": query_params or {},
+            "response_key": response_key,
+            "body": body,
+            "params": params or {},
             "health_check_enabled": health_check_enabled,
-            **kwargs,
         }
         super().__init__(config)
-        self._ids_source = ids_source
         self._client: Optional[httpx.Client] = None
 
     # ------------------------------------------------------------------
@@ -103,19 +93,17 @@ class IDBasedAPISource(BaseSource):
     # ------------------------------------------------------------------
 
     def _is_per_id_mode(self) -> bool:
-        """True when the endpoint template contains ``{id}`` → one request per ID."""
+        """True when the endpoint template contains ``{id}``."""
         return "{id}" in self.config["endpoint_template"]
 
     def _get_client(self) -> httpx.Client:
         """Get or create HTTP client."""
         if self._client is None:
-            headers = dict(self.config["headers"])
-            auth_type = self.config.get("auth_type")
-            auth_token = self.config.get("auth_token")
-            if auth_type == "bearer" and auth_token:
-                headers["Authorization"] = f"Bearer {auth_token}"
-            elif auth_type == "apikey" and auth_token:
-                headers["X-API-Key"] = auth_token
+            headers = build_auth_headers(
+                self.config["headers"],
+                self.config.get("auth_type"),
+                self.config.get("auth_token"),
+            )
             self._client = httpx.Client(
                 base_url=self.config["base_url"],
                 headers=headers,
@@ -124,21 +112,17 @@ class IDBasedAPISource(BaseSource):
         return self._client
 
     def _get_all_ids(self, runtime_params: Dict[str, Any]) -> List[Union[str, int]]:
-        """Get all IDs from config, ids_source, or runtime params."""
+        """Get all IDs from config or runtime params."""
         if self.config["ids"]:
             return self.config["ids"]
-        if self._ids_source:
-            records = self._ids_source.fetch(runtime_params)
-            ids_field = self.config["ids_field"]
-            return [r.get(ids_field) for r in records if r.get(ids_field)]
         return runtime_params.get("ids", [])
 
     def _extract_records(self, data: Any) -> List[Any]:
-        """Extract records list from a response using ``data_key``."""
-        data_key = self.config.get("data_key")
-        if not data_key:
+        """Extract records list from a response using ``response_key``."""
+        response_key = self.config.get("response_key")
+        if not response_key:
             return data if isinstance(data, list) else []
-        keys = data_key.split(".")
+        keys = response_key.split(".")
         result = data
         for key in keys:
             if isinstance(result, dict):
@@ -153,18 +137,19 @@ class IDBasedAPISource(BaseSource):
         endpoint = self.config["endpoint_template"].format(id=id_value)
         method = self.config["method"]
 
-        # Build body for non-GET methods; substitute {id} in string values
-        body: Optional[Dict] = None
-        if method not in ("GET", "HEAD"):
-            body = {
-                k: v.format(id=id_value) if isinstance(v, str) else v
-                for k, v in self.config["request_body"].items()
-            }
+        body = self.config.get("body")
+        if method in ("GET", "HEAD"):
+            body = None
+        elif isinstance(body, dict):
+            body = {k: v.format(id=id_value) if isinstance(v, str) else v for k, v in body.items()}
 
-        query = self.config["query_params"] or None
+        query = self.config["params"] or None
 
         try:
-            response = client.request(method, endpoint, json=body, params=query)
+            if body is None:
+                response = client.request(method, endpoint, params=query)
+            else:
+                response = client.request(method, endpoint, json=body, params=query)
             if response.status_code == 404:
                 return None
             response.raise_for_status()
@@ -173,25 +158,23 @@ class IDBasedAPISource(BaseSource):
             return None
 
     def _fetch_batch(self, ids_batch: List[Union[str, int]]) -> List[Any]:
-        """Send a batch request with the IDs list and return the records."""
+        """Send the batch request and return the extracted records.
+
+        The request body is ``config["body"]`` verbatim — the caller is
+        expected to have placed any IDs into it. ``ids_batch`` is retained for
+        the public signature/metadata only.
+        """
         client = self._get_client()
         method = self.config["method"]
         endpoint = self.config["endpoint_template"]
-        batch_id_key = self.config.get("batch_id_key")
-
-        if batch_id_key:
-            # Object body: {"ids": [...]} merged with any extra request_body fields
-            body: Any = dict(self.config["request_body"])
-            if batch_id_key not in body:
-                body[batch_id_key] = ids_batch
-        else:
-            # Raw list body: ["id1", "id2", "id3"]
-            body = ids_batch
-
-        query = self.config["query_params"] or None
+        body = self.config.get("body")
+        query = self.config["params"] or None
 
         try:
-            response = client.request(method, endpoint, json=body, params=query)
+            if body is None:
+                response = client.request(method, endpoint, params=query)
+            else:
+                response = client.request(method, endpoint, json=body, params=query)
             response.raise_for_status()
             return self._extract_records(response.json())
         except httpx.HTTPStatusError as e:
@@ -206,16 +189,7 @@ class IDBasedAPISource(BaseSource):
     # ------------------------------------------------------------------
 
     def fetch(self, runtime_params: Dict[str, Any], limit: Optional[int] = None) -> List[Any]:
-        """
-        Fetch resources by ID (local/preview mode).
-
-        Args:
-            runtime_params: Runtime parameters.
-            limit: Optional cap on the number of records returned.
-
-        Returns:
-            List of fetched records.
-        """
+        """Fetch resources by ID (local/preview mode)."""
         self.resolve_parameters(runtime_params)
         ids = self._get_all_ids(runtime_params)
         if limit:
@@ -234,20 +208,7 @@ class IDBasedAPISource(BaseSource):
     def split_jobs(
         self, runtime_params: Dict[str, Any], batch_size: int = 50
     ) -> Iterator[SourceJob]:
-        """
-        Split IDs into SourceJobs.
-
-        Per-ID mode: groups IDs by ``batch_size``, fetches each individually.
-        Batch mode: sends one request for all IDs, then splits the response
-        records into jobs of ``batch_size``.
-
-        Args:
-            runtime_params: Runtime parameters.
-            batch_size: IDs per job (per-ID mode) or records per job (batch mode).
-
-        Yields:
-            SourceJob instances.
-        """
+        """Split IDs into SourceJobs (per-ID or batch mode)."""
         _raw = self.resolve_parameters(runtime_params)
         if _raw is None:
             raise SourceError("id_based_api", "No valid configuration resolved", None)
@@ -261,7 +222,6 @@ class IDBasedAPISource(BaseSource):
         batch_num = 0
 
         if not self._is_per_id_mode():
-            # Batch mode: one request → split response records into jobs
             records = self._fetch_batch(ids)
             for i in range(0, len(records), batch_size):
                 chunk = records[i : i + batch_size]
@@ -277,7 +237,6 @@ class IDBasedAPISource(BaseSource):
                 batch_num += 1
             return
 
-        # Per-ID mode: group IDs into batches, fetch each individually
         for i in range(0, len(ids), batch_size):
             id_batch = ids[i : i + batch_size]
             records = []
@@ -301,7 +260,6 @@ class IDBasedAPISource(BaseSource):
         """Check if the API is accessible."""
         if not self.config.get("health_check_enabled", True):
             return True
-
         try:
             client = self._get_client()
             response = client.request("HEAD", "/", timeout=5.0)
@@ -319,45 +277,31 @@ def id_based_api_source(
     method: str = "GET",
     auth_type: Optional[str] = None,
     auth_token: Optional[str] = None,
-    batch_id_key: Optional[str] = "ids",
-    data_key: Optional[str] = None,
-    request_body: Optional[Dict[str, Any]] = None,
-    query_params: Optional[Dict[str, Any]] = None,
+    response_key: Optional[str] = None,
+    body: Optional[Any] = None,
+    params: Optional[Dict[str, Any]] = None,
     health_check_enabled: bool = True,
-    **kwargs,
 ) -> IDBasedAPISource:
     """
-    Factory function for ID-based API source.
+    Factory for the ID-based API source.
 
-    Mode is auto-detected from the endpoint template:
+    Mode is auto-detected from ``endpoint_template``:
     - ``{id}`` present → per-ID mode (one request per ID)
-    - No ``{id}``      → batch mode (one request, IDs in body)
+    - no ``{id}``      → batch mode (one request; you build the body)
 
-    Body shape (batch mode):
-    - ``batch_id_key="ids"`` → ``{"ids": ["id1","id2","id3"]}``
-    - ``batch_id_key=None``  → ``["id1","id2","id3"]``  (raw list)
-    - ``request_body``       → merged into the object body alongside IDs
+    Build the request body yourself from the IDs you have::
 
-    Examples::
-
-        # Per-ID GET (default)
-        id_based_api_source(base_url="...", endpoint_template="/users/{id}", ids=[1,2,3])
-
-        # Batch POST — object body: {"ids": [1,2,3]}
+        # batch object body
         id_based_api_source(base_url="...", endpoint_template="/users/batch",
-            method="POST", ids=[1,2,3], batch_id_key="ids", data_key="users")
+            method="POST", body={"ids": params["current_ids"]}, response_key="users")
 
-        # Batch POST — raw list body: [1,2,3]
+        # batch raw-list body
         id_based_api_source(base_url="...", endpoint_template="/users/batch",
-            method="POST", ids=[1,2,3], batch_id_key=None, data_key="users")
+            method="POST", body=params["current_ids"])
 
-        # Batch PATCH — merged body: {"ids": [...], "status": "active"}
-        id_based_api_source(base_url="...", endpoint_template="/users/bulk",
-            method="PATCH", ids=[1,2,3], request_body={"status": "active"})
-
-        # Per-ID POST with dynamic body: POST /users/1  body: {"ref": "1"}
+        # per-ID GET (no body)
         id_based_api_source(base_url="...", endpoint_template="/users/{id}",
-            method="POST", ids=[1,2,3], request_body={"ref": "{id}"})
+            ids=[1, 2, 3])
     """
     return IDBasedAPISource(
         base_url=base_url,
@@ -367,10 +311,8 @@ def id_based_api_source(
         batch_size=batch_size,
         auth_type=auth_type,
         auth_token=auth_token,
-        batch_id_key=batch_id_key,
-        data_key=data_key,
-        request_body=request_body,
-        query_params=query_params,
+        response_key=response_key,
+        body=body,
+        params=params,
         health_check_enabled=health_check_enabled,
-        **kwargs,
     )

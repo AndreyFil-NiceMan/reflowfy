@@ -34,9 +34,6 @@ class IDBasedAPISourceConfig(BaseModel):
     base_url: str = Field(..., description="Base URL of the API")
     endpoint_template: str = Field(..., description="Endpoint path; include {id} for per-ID mode")
     ids: List[Any] = Field(default_factory=list, description="Static list of IDs to fetch")
-    ids_field: str = Field(
-        default="id", description="Field name to extract IDs from ids_source records"
-    )
     method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"] = Field(
         default="GET", description="HTTP method"
     )
@@ -50,18 +47,14 @@ class IDBasedAPISourceConfig(BaseModel):
         description="IDs per job (per-ID mode) or records per job (batch mode)",
     )
     timeout: float = Field(default=30.0, ge=1.0)
-    batch_id_key: Optional[str] = Field(
-        default="ids",
-        description="Body key wrapping the IDs list in batch mode; None sends a raw list",
-    )
-    data_key: Optional[str] = Field(
+    response_key: Optional[str] = Field(
         default=None,
         description="Dotted response key to extract records list; None means response is the list",
     )
-    request_body: Dict[str, Any] = Field(
-        default_factory=dict, description="Extra body fields merged into every request"
+    body: Optional[Any] = Field(
+        default=None, description="Request body sent verbatim (dict or list); None sends no body"
     )
-    query_params: Dict[str, Any] = Field(
+    params: Dict[str, Any] = Field(
         default_factory=dict, description="Extra query-string parameters appended to every request"
     )
     health_check_enabled: bool = Field(

@@ -132,6 +132,90 @@ class TestIDBasedAPISource:
         assert source.health_check() is True
         mock_client_class.assert_not_called()
 
+    def test_renamed_params_stored(self):
+        source = IDBasedAPISource(
+            base_url="https://api.example.com",
+            endpoint_template="/users/batch",
+            params={"q": "1"},
+            body={"ids": [1, 2]},
+            response_key="data.users",
+        )
+        assert source.config["params"] == {"q": "1"}
+        assert source.config["body"] == {"ids": [1, 2]}
+        assert source.config["response_key"] == "data.users"
+
+    def test_old_param_names_rejected(self):
+        for kwargs in (
+            {"query_params": {"a": 1}},
+            {"request_body": {"a": 1}},
+            {"batch_id_key": "ids"},
+            {"data_key": "x"},
+            {"ids_source": object()},
+            {"ids_field": "id"},
+        ):
+            with pytest.raises(TypeError):
+                IDBasedAPISource(
+                    base_url="https://api.example.com",
+                    endpoint_template="/users/{id}",
+                    **kwargs,
+                )
+
+    @patch("httpx.Client")
+    def test_fetch_batch_sends_body_verbatim(self, mock_client_class):
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"users": [{"id": 1}, {"id": 2}]}
+        mock_client.request.return_value = mock_response
+
+        source = IDBasedAPISource(
+            base_url="https://api.example.com",
+            endpoint_template="/users/batch",
+            method="POST",
+            body={"ids": [1, 2]},
+            response_key="users",
+        )
+        records = source._fetch_batch([1, 2])
+
+        assert records == [{"id": 1}, {"id": 2}]
+        _, kwargs = mock_client.request.call_args
+        assert kwargs["json"] == {"ids": [1, 2]}
+
+    @patch("httpx.Client")
+    def test_fetch_batch_no_body_omits_json(self, mock_client_class):
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = [{"id": 9}]
+        mock_client.request.return_value = mock_response
+
+        source = IDBasedAPISource(
+            base_url="https://api.example.com",
+            endpoint_template="/users/batch",
+            method="POST",
+        )
+        source._fetch_batch([9])
+
+        _, kwargs = mock_client.request.call_args
+        assert kwargs.get("json") is None
+
+    @patch("httpx.Client")
+    def test_basic_auth_header_on_client(self, mock_client_class):
+        import base64
+
+        source = IDBasedAPISource(
+            base_url="https://api.example.com",
+            endpoint_template="/users/{id}",
+            auth_type="basic",
+            auth_token="alice:s3cret",
+        )
+        source._get_client()
+        call_kwargs = mock_client_class.call_args[1]
+        expected = base64.b64encode(b"alice:s3cret").decode("ascii")
+        assert call_kwargs["headers"]["Authorization"] == f"Basic {expected}"
+
 
 class TestAuthenticationHeaders:
     """Test authentication handling."""
