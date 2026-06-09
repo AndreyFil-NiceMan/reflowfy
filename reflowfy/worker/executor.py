@@ -5,7 +5,7 @@ import os
 import time
 import traceback
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import AsyncAdaptedQueuePool
@@ -215,8 +215,13 @@ class WorkerExecutor:
             return False
 
     def _apply_frozen_transformations(
-        self, records, runtime_params, transformation_names, transformation_specs, stats
-    ):
+        self,
+        records: List[Any],
+        runtime_params: Dict[str, Any],
+        transformation_names: List[str],
+        transformation_specs: List[Dict[str, Any]],
+        stats: JobStats,
+    ) -> List[Any]:
         """Replay a frozen transformation list (fallback when the pipeline is not
         discoverable in this worker process). No dynamic re-resolution."""
         transformed_records = records
