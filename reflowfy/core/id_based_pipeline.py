@@ -11,10 +11,10 @@ Example (single-ID mode, default):
     ...
     ...     def define_source(self, params):
     ...         # current_ids is available in runtime params
-    ...         current_ids = params["current_ids"]
-    ...         return paginated_api_source(
+    ...         return id_based_api_source(
     ...             base_url="https://api.example.com",
-    ...             endpoint=f"/users/{current_ids[0]}/records",
+    ...             endpoint_template="/users/{id}/records",
+    ...             ids=params["current_ids"],
     ...         )
     ...
     ...     def define_destination(self, records, params):
@@ -171,10 +171,10 @@ class IdBasedPipeline(metaclass=IdBasedPipelineMeta):
 
         Example (real source):
             >>> def define_source(self, params):
-            ...     current_ids = params["current_ids"]
-            ...     return paginated_api_source(
+            ...     return id_based_api_source(
             ...         base_url="https://api.example.com",
-            ...         endpoint=f"/entities/{current_ids[0]}/data",
+            ...         endpoint_template="/entities/{id}/data",
+            ...         ids=params["current_ids"],
             ...     )
 
         Example (skip the source — IDs are the records):
