@@ -79,7 +79,7 @@ class ApiDestination(BaseDestination):
             )
         return self._client
 
-    async def send(  # type: ignore[override]
+    async def send(
         self, records: List[Any], metadata: Optional[Dict[str, Any]] = None
     ) -> None:
         """

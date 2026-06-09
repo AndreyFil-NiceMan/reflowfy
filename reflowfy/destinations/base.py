@@ -43,7 +43,7 @@ class BaseDestination(ABC):
         self.retry_config = retry_config or RetryConfig()
 
     @abstractmethod
-    def send(self, records: List[Any], metadata: Optional[Dict[str, Any]] = None) -> None:
+    async def send(self, records: List[Any], metadata: Optional[Dict[str, Any]] = None) -> None:
         """
         Send records to destination.
 
