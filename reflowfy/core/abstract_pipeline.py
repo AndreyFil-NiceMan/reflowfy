@@ -377,6 +377,17 @@ class AbstractPipeline(metaclass=PipelineMeta):
             ...     if params.get("uppercase"):
             ...         transforms.append(UppercaseNames())
             ...     return transforms
+
+        Note:
+            This method is re-evaluated after each transformation is applied, so a
+            transformation that adds a key to ``runtime_params`` can cause a later
+            transformation to be appended to the returned list on the next pass.
+            The list must be **append-only** with respect to growing
+            ``runtime_params``: re-resolution may only grow the list. The ``records``
+            argument is always the original pre-transformation records (it does not
+            change between passes); only ``runtime_params`` changes. Already-applied
+            transformations are never re-applied, and changes to earlier
+            (already-applied) positions on a later pass are ignored.
         """
         pass
 
