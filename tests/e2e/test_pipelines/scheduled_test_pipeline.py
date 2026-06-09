@@ -17,8 +17,7 @@ from tests.e2e.test_pipelines.destinations import e2e_http
 _SERVICE_RUN_ID = str(uuid.uuid4())
 
 _NO_DUP_FIXED_DATA = [
-    {"id": i, "name": f"record-{i}", "value": i * 10, "_run": _SERVICE_RUN_ID}
-    for i in range(1, 6)
+    {"id": i, "name": f"record-{i}", "value": i * 10, "_run": _SERVICE_RUN_ID} for i in range(1, 6)
 ]
 
 
@@ -32,7 +31,7 @@ class E2EScheduledTestPipeline(AbstractPipeline):
         return e2e_mock(count=5, batch_size=5)
 
     def define_destination(self, records, runtime_params):
-        return e2e_http()
+        return e2e_http(body={"records": records})
 
     def define_transformations(self, records, runtime_params):
         return []
@@ -48,7 +47,7 @@ class E2EScheduledSlowPipeline(AbstractPipeline):
         return e2e_mock(count=5, batch_size=5)
 
     def define_destination(self, records, runtime_params):
-        return e2e_http()
+        return e2e_http(body={"records": records})
 
     def define_transformations(self, records, runtime_params):
         return []
@@ -65,7 +64,7 @@ class E2EScheduledNoDuplicatesPipeline(AbstractPipeline):
         return e2e_mock(data=_NO_DUP_FIXED_DATA, batch_size=5)
 
     def define_destination(self, records, runtime_params):
-        return e2e_http()
+        return e2e_http(body={"records": records})
 
     def define_transformations(self, records, runtime_params):
         return []

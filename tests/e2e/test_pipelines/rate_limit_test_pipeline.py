@@ -26,7 +26,7 @@ class E2ESlowRatePipeline(AbstractPipeline):
         return e2e_mock(count=5, batch_size=1)
 
     def define_destination(self, records, runtime_params):
-        return e2e_http()
+        return e2e_http(body={"records": records})
 
     def define_transformations(self, records, runtime_params):
         return [rl_passthrough()]
@@ -42,7 +42,7 @@ class E2EFastRatePipeline(AbstractPipeline):
         return e2e_mock(count=50, batch_size=10)
 
     def define_destination(self, records, runtime_params):
-        return e2e_http()
+        return e2e_http(body={"records": records})
 
     def define_transformations(self, records, runtime_params):
         return [rl_passthrough()]
@@ -58,7 +58,7 @@ class E2ERateLimitOverridePipeline(AbstractPipeline):
         return e2e_mock(count=5, batch_size=1)
 
     def define_destination(self, records, runtime_params):
-        return e2e_http()
+        return e2e_http(body={"records": records})
 
     def define_transformations(self, records, runtime_params):
         return [rl_passthrough()]

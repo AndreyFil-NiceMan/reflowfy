@@ -30,7 +30,7 @@ class E2EContextProbePipeline(AbstractPipeline):
         return e2e_mock(count=20, batch_size=10)
 
     def define_destination(self, records, runtime_params):
-        return e2e_http()
+        return e2e_http(body={"records": records})
 
     def define_transformations(self, records, runtime_params):
         return [ctx_probe()]
@@ -46,7 +46,7 @@ class E2ERuntimeParamsPipeline(AbstractPipeline):
         return e2e_mock(count=10, batch_size=10)
 
     def define_destination(self, records, runtime_params):
-        return e2e_http()
+        return e2e_http(body={"records": records})
 
     def define_transformations(self, records, runtime_params):
         return [ctx_runtime_params()]
@@ -62,7 +62,7 @@ class E2EErrorTolerantPipeline(AbstractPipeline):
         return e2e_mock(count=10, batch_size=10)
 
     def define_destination(self, records, runtime_params):
-        return e2e_http()
+        return e2e_http(body={"records": records})
 
     def define_transformations(self, records, runtime_params):
         return [ctx_enrich(), ctx_maybe_fail()]
@@ -78,7 +78,7 @@ class E2EBatchIdentityPipeline(AbstractPipeline):
         return e2e_mock(count=30, batch_size=10)
 
     def define_destination(self, records, runtime_params):
-        return e2e_http()
+        return e2e_http(body={"records": records})
 
     def define_transformations(self, records, runtime_params):
         return [ctx_batch_id()]

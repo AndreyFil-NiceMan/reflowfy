@@ -36,7 +36,7 @@ class E2EParamsEnrichPipeline(AbstractPipeline):
         return e2e_mock(count=10, batch_size=10)
 
     def define_destination(self, records, runtime_params):
-        return e2e_http()
+        return e2e_http(body={"records": records})
 
     def define_transformations(self, records, runtime_params):
         return [params_step1_enrich(), params_step2_verify()]
@@ -59,7 +59,7 @@ class E2ERevealMidChainPipeline(AbstractPipeline):
         return e2e_mock(count=10, batch_size=10)
 
     def define_destination(self, records, runtime_params):
-        return e2e_http()
+        return e2e_http(body={"records": records})
 
     def define_transformations(self, records, runtime_params):
         trans = [reveal_set_flag()]
@@ -86,7 +86,7 @@ class E2EIdBasedParamsEnrichPipeline(IdBasedPipeline):
         return e2e_mock(count=5, batch_size=5)
 
     def define_destination(self, records, runtime_params):
-        return e2e_http()
+        return e2e_http(body={"records": records})
 
     def define_transformations(self, records, runtime_params):
         return [params_step1_enrich(), params_step2_verify()]

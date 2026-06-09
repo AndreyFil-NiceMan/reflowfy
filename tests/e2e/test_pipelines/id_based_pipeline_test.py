@@ -53,7 +53,7 @@ class E2EIdBasedPipelineTest(IdBasedPipeline):
         return e2e_mock(data=data, batch_size=5)
 
     def define_destination(self, records, runtime_params):
-        return e2e_http()
+        return e2e_http(body={"records": records})
 
     def define_transformations(self, records, runtime_params):
         return [
