@@ -156,19 +156,30 @@ class IdBasedPipeline(metaclass=IdBasedPipelineMeta):
         - runtime_params["current_ids"]: list of IDs for this batch
         - runtime_params["current_id"]: first ID in batch (convenience)
 
+        May return either:
+        - A configured ``BaseSource`` instance (fetched normally), or
+        - A plain list of records. The list is used verbatim as the records for
+          this batch (one job per batch) — no fetch happens. Use this to skip
+          the source entirely when the IDs themselves are the data, e.g.
+          ``return params["current_ids"]``.
+
         Args:
             runtime_params: Parameters provided by the user at runtime
 
         Returns:
-            A configured BaseSource instance
+            A configured BaseSource instance, or a list of records.
 
-        Example:
+        Example (real source):
             >>> def define_source(self, params):
             ...     current_ids = params["current_ids"]
             ...     return paginated_api_source(
             ...         base_url="https://api.example.com",
             ...         endpoint=f"/entities/{current_ids[0]}/data",
             ...     )
+
+        Example (skip the source — IDs are the records):
+            >>> def define_source(self, params):
+            ...     return params["current_ids"]
         """
         pass
 
@@ -370,6 +381,39 @@ class IdBasedPipeline(metaclass=IdBasedPipelineMeta):
     # Resolution — Per-ID source/transformation resolution
     # =========================================================================
 
+    def resolve_source(self, batch_params: Dict[str, Any]) -> Any:
+        """
+        Call ``define_source`` and coerce its return value into a source.
+
+        ``define_source`` may return either:
+        - a ``BaseSource`` instance (fetched normally), or
+        - a plain list of records, which is wrapped in a ``StaticSource`` so the
+          records are used verbatim and no fetch happens. This lets ID-based
+          pipelines feed runtime-provided IDs straight into the
+          transformation/destination chain.
+
+        Args:
+            batch_params: Per-batch runtime params (with ``current_ids`` injected)
+
+        Returns:
+            A ``BaseSource`` instance.
+
+        Raises:
+            TypeError: If ``define_source`` returns neither a ``BaseSource`` nor a list.
+        """
+        from reflowfy.sources.base import BaseSource
+        from reflowfy.sources.static import StaticSource
+
+        returned = self.define_source(batch_params)
+        if isinstance(returned, BaseSource):
+            return returned
+        if isinstance(returned, list):
+            return StaticSource(returned)
+        raise TypeError(
+            f"Pipeline '{self.name}': define_source must return a BaseSource or a "
+            f"list of records, got {type(returned).__name__}"
+        )
+
     def resolve_for_ids(self, runtime_params: Dict[str, Any], ids_batch: List[Any]) -> dict:
         """
         Resolve source for a batch of IDs and prepare per-batch params.
@@ -396,7 +440,7 @@ class IdBasedPipeline(metaclass=IdBasedPipelineMeta):
         batch_params = dict(runtime_params)
         batch_params["current_ids"] = list(ids_batch)
         batch_params["current_id"] = ids_batch[0] if ids_batch else None
-        source = self.define_source(batch_params)
+        source = self.resolve_source(batch_params)
         source_enrichments = {k: batch_params[k] for k in batch_params if k not in runtime_params}
         return {
             "source": source,

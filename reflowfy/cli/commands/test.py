@@ -201,7 +201,7 @@ def register(app: typer.Typer):
                 batch_params["current_id"] = ids_batch[0] if ids_batch else None
 
                 try:
-                    source = pipeline.define_source(batch_params)
+                    source = pipeline.resolve_source(batch_params)
                 except Exception as e:
                     console.print(f"[red]❌ Setup failed for batch {ids_batch}: {e}[/red]")
                     traceback.print_exc()
