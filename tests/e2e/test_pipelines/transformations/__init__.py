@@ -171,22 +171,6 @@ def sql_filter_by_status(records, runtime_params):
     return filtered
 
 
-@transformation("api_add_source_info")
-def api_add_source_info(records, runtime_params):
-    """Adds API source metadata to records."""
-    for record in records:
-        record["_source_type"] = "api"
-        record["_test_pipeline"] = "e2e_api_source_test"
-    return records
-
-
-@transformation("api_log_record_count")
-def api_log_record_count(records, runtime_params):
-    """Logs the number of records processed from the API source."""
-    print(f"  📊 API Source: Processing {len(records)} records")
-    return records
-
-
 @transformation("api_id_add_source_info")
 def api_id_add_source_info(records, runtime_params):
     """Adds ID-based API source metadata to records."""

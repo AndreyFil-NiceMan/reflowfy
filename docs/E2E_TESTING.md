@@ -44,7 +44,6 @@ tests/e2e/
     ├── __init__.py
     ├── elastic_source_test_pipeline.py
     ├── sql_source_test_pipeline.py
-    ├── api_source_test_pipeline.py
     ├── http_dest_test_pipeline.py
     └── kafka_dest_test_pipeline.py
 ```
