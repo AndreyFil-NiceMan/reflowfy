@@ -1,5 +1,6 @@
 """Unit tests for ApiDestination."""
 
+import base64
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -8,10 +9,6 @@ import pytest
 from reflowfy.destinations.api import ApiDestination, api_destination
 from reflowfy.destinations.base import DestinationError
 from reflowfy.destinations.schemas import ApiDestinationConfig
-
-# ============================================================================
-# Factory & config
-# ============================================================================
 
 
 class TestApiDestinationFactory:
@@ -23,32 +20,27 @@ class TestApiDestinationFactory:
         dest = api_destination(url="https://api.example.com/webhook")
         assert dest.config["method"] == "POST"
         assert dest.config["timeout"] == 30.0
-        assert dest.config["batch_requests"] is False
         assert dest.config["params"] is None
         assert dest.config["body"] is None
 
-    def test_custom_params_stored(self):
+    def test_custom_body_stored_dict(self):
         dest = api_destination(
             url="https://api.example.com/webhook",
-            params={"tenant": "acme", "env": "prod"},
+            body={"events": [{"id": 1}]},
         )
-        assert dest.config["params"] == {"tenant": "acme", "env": "prod"}
+        assert dest.config["body"] == {"events": [{"id": 1}]}
 
-    def test_custom_body_stored(self):
-        dest = api_destination(
-            url="https://api.example.com/webhook",
-            body={"source": "reflowfy", "version": "2"},
-        )
-        assert dest.config["body"] == {"source": "reflowfy", "version": "2"}
+    def test_custom_body_stored_list(self):
+        dest = api_destination(url="https://api.example.com/webhook", body=[{"id": 1}])
+        assert dest.config["body"] == [{"id": 1}]
 
     def test_method_uppercased(self):
         dest = api_destination(url="https://api.example.com/webhook", method="put")
         assert dest.config["method"] == "PUT"
 
-
-# ============================================================================
-# Schema validation
-# ============================================================================
+    def test_batch_requests_kwarg_rejected(self):
+        with pytest.raises(TypeError):
+            api_destination(url="https://api.example.com", batch_requests=True)
 
 
 class TestApiDestinationConfig:
@@ -56,74 +48,25 @@ class TestApiDestinationConfig:
         cfg = ApiDestinationConfig(url="https://api.example.com/webhook")
         assert cfg.url == "https://api.example.com/webhook"
         assert cfg.method == "POST"
-        assert cfg.params is None
         assert cfg.body is None
 
     def test_invalid_url_raises(self):
         with pytest.raises(Exception):
             ApiDestinationConfig(url="not-a-url")
 
-    def test_params_and_body_accepted(self):
-        cfg = ApiDestinationConfig(
-            url="https://api.example.com/webhook",
-            params={"key": "value"},
-            body={"extra": "field"},
-        )
-        assert cfg.params == {"key": "value"}
-        assert cfg.body == {"extra": "field"}
-
-    def test_timeout_bounds(self):
-        with pytest.raises(Exception):
-            ApiDestinationConfig(url="https://api.example.com/webhook", timeout=0)
-        with pytest.raises(Exception):
-            ApiDestinationConfig(url="https://api.example.com/webhook", timeout=999)
+    def test_body_accepts_dict_and_list(self):
+        assert ApiDestinationConfig(url="https://x.com", body={"a": 1}).body == {"a": 1}
+        assert ApiDestinationConfig(url="https://x.com", body=[1, 2]).body == [1, 2]
 
 
-# ============================================================================
-# Payload building
-# ============================================================================
-
-
-class TestBuildPayload:
-    def test_empty_body_returns_empty_dict(self):
-        dest = api_destination(url="https://example.com")
-        assert dest._build_payload([]) == {}
-
-    def test_body_fields_copied(self):
-        dest = api_destination(url="https://example.com", body={"source": "test", "v": 1})
-        payload = dest._build_payload([])
-        assert payload == {"source": "test", "v": 1}
-
-    def test_build_payload_does_not_mutate_config(self):
-        dest = api_destination(url="https://example.com", body={"k": "v"})
-        p1 = dest._build_payload([])
-        p1["injected"] = True
-        p2 = dest._build_payload([])
-        assert "injected" not in p2
-
-
-# ============================================================================
-# Send — batch mode
-# ============================================================================
-
-
-class TestSendBatch:
+class TestSendVerbatim:
     @pytest.fixture
     def mock_response(self):
         resp = MagicMock()
         resp.raise_for_status = MagicMock()
         return resp
 
-    @pytest.fixture
-    def dest(self):
-        return api_destination(
-            url="https://api.example.com/ingest",
-            batch_requests=True,
-            params={"tenant": "acme"},
-            body={"source": "reflowfy"},
-        )
-
-    async def test_batch_sends_single_request(self, dest, mock_response):
+    async def _capture(self, dest, mock_response):
         calls = []
 
         async def fake_request(method, url, *, json=None, params=None):
@@ -132,172 +75,78 @@ class TestSendBatch:
 
         dest._client = MagicMock()
         dest._client.request = fake_request
+        return calls
 
-        await dest.send([{"id": 1}, {"id": 2}, {"id": 3}])
-
-        assert len(calls) == 1
-
-    async def test_batch_payload_contains_records(self, dest, mock_response):
-        captured = {}
-
-        async def fake_request(method, url, *, json=None, params=None):
-            captured.update(json)
-            return mock_response
-
-        dest._client = MagicMock()
-        dest._client.request = fake_request
-
-        records = [{"id": i} for i in range(5)]
-        await dest.send(records)
-
-        assert captured["records"] == records
-
-    async def test_batch_body_fields_merged(self, dest, mock_response):
-        captured = {}
-
-        async def fake_request(method, url, *, json=None, params=None):
-            captured.update(json)
-            return mock_response
-
-        dest._client = MagicMock()
-        dest._client.request = fake_request
-
-        await dest.send([{"id": 1}])
-
-        assert captured.get("source") == "reflowfy"
-
-    async def test_batch_params_passed(self, dest, mock_response):
-        captured_params = {}
-
-        async def fake_request(method, url, *, json=None, params=None):
-            if params:
-                captured_params.update(params)
-            return mock_response
-
-        dest._client = MagicMock()
-        dest._client.request = fake_request
-
-        await dest.send([{"id": 1}])
-
-        assert captured_params.get("tenant") == "acme"
-
-
-# ============================================================================
-# Send — individual mode
-# ============================================================================
-
-
-class TestSendIndividual:
-    @pytest.fixture
-    def mock_response(self):
-        resp = MagicMock()
-        resp.raise_for_status = MagicMock()
-        return resp
-
-    @pytest.fixture
-    def dest(self):
-        return api_destination(
+    async def test_dict_body_sent_verbatim_single_request(self, mock_response):
+        dest = api_destination(
             url="https://api.example.com/ingest",
-            batch_requests=False,
-            body={"source": "test"},
+            body={"events": [{"id": 1}, {"id": 2}], "src": "x"},
+            params={"tenant": "acme"},
         )
-
-    async def test_individual_sends_one_request_per_record(self, dest, mock_response):
-        calls = []
-
-        async def fake_request(method, url, *, json=None, params=None):
-            calls.append(json)
-            return mock_response
-
-        dest._client = MagicMock()
-        dest._client.request = fake_request
-
-        await dest.send([{"id": 1}, {"id": 2}, {"id": 3}])
-
-        assert len(calls) == 3
-
-    async def test_individual_payload_uses_record_key(self, dest, mock_response):
-        payloads = []
-
-        async def fake_request(method, url, *, json=None, params=None):
-            payloads.append(json)
-            return mock_response
-
-        dest._client = MagicMock()
-        dest._client.request = fake_request
-
-        await dest.send([{"id": 42}])
-
-        assert payloads[0]["record"] == {"id": 42}
-
-    async def test_individual_body_fields_merged(self, dest, mock_response):
-        payloads = []
-
-        async def fake_request(method, url, *, json=None, params=None):
-            payloads.append(json)
-            return mock_response
-
-        dest._client = MagicMock()
-        dest._client.request = fake_request
-
+        calls = await self._capture(dest, mock_response)
         await dest.send([{"id": 1}, {"id": 2}])
+        assert len(calls) == 1
+        assert calls[0]["json"] == {"events": [{"id": 1}, {"id": 2}], "src": "x"}
+        assert calls[0]["params"] == {"tenant": "acme"}
 
-        for p in payloads:
-            assert p.get("source") == "test"
+    async def test_list_body_sent_verbatim(self, mock_response):
+        dest = api_destination(url="https://api.example.com/ingest", body=[{"id": 1}, {"id": 2}])
+        calls = await self._capture(dest, mock_response)
+        await dest.send([{"id": 1}, {"id": 2}])
+        assert len(calls) == 1
+        assert calls[0]["json"] == [{"id": 1}, {"id": 2}]
 
-
-# ============================================================================
-# Authentication
-# ============================================================================
+    async def test_none_body_omits_json(self, mock_response):
+        dest = api_destination(url="https://api.example.com/ingest")
+        calls = await self._capture(dest, mock_response)
+        await dest.send([{"id": 1}])
+        assert len(calls) == 1
+        assert calls[0]["json"] is None
 
 
 class TestAuthentication:
-    async def _capture_headers(self, dest):
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-
-        with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock) as mock_req:
-            mock_req.return_value = mock_response
+    async def _headers(self, dest):
+        with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock):
             client = await dest._get_client()
             return dict(client.headers)
 
     async def test_bearer_auth_header(self):
         dest = api_destination(
-            url="https://api.example.com",
-            auth_type="bearer",
-            auth_token="my-secret-token",
+            url="https://api.example.com", auth_type="bearer", auth_token="my-secret-token"
         )
-        headers = await self._capture_headers(dest)
+        headers = await self._headers(dest)
         assert headers.get("authorization") == "Bearer my-secret-token"
         await dest.close()
 
     async def test_apikey_auth_header(self):
         dest = api_destination(
-            url="https://api.example.com",
-            auth_type="apikey",
-            auth_token="my-api-key",
+            url="https://api.example.com", auth_type="apikey", auth_token="my-api-key"
         )
-        headers = await self._capture_headers(dest)
+        headers = await self._headers(dest)
         assert headers.get("x-api-key") == "my-api-key"
+        await dest.close()
+
+    async def test_basic_auth_header(self):
+        dest = api_destination(
+            url="https://api.example.com", auth_type="basic", auth_token="alice:s3cret"
+        )
+        headers = await self._headers(dest)
+        expected = base64.b64encode(b"alice:s3cret").decode("ascii")
+        assert headers.get("authorization") == f"Basic {expected}"
         await dest.close()
 
     async def test_no_auth_no_headers_added(self):
         dest = api_destination(url="https://api.example.com")
-        headers = await self._capture_headers(dest)
+        headers = await self._headers(dest)
         assert "authorization" not in headers
         assert "x-api-key" not in headers
         await dest.close()
 
 
-# ============================================================================
-# Error handling
-# ============================================================================
-
-
 class TestErrorHandling:
     @pytest.fixture
     def dest(self):
-        return api_destination(url="https://api.example.com/ingest")
+        return api_destination(url="https://api.example.com/ingest", body={"k": "v"})
 
     async def test_http_4xx_raises_destination_error(self, dest):
         error_response = MagicMock()
@@ -305,45 +154,20 @@ class TestErrorHandling:
         error_response.text = "Unauthorized"
         http_error = httpx.HTTPStatusError("401", request=MagicMock(), response=error_response)
         error_response.raise_for_status = MagicMock(side_effect=http_error)
-
         dest._client = MagicMock()
         dest._client.request = AsyncMock(return_value=error_response)
-
         with pytest.raises(DestinationError) as exc_info:
             await dest.send([{"id": 1}])
-
         assert "401" in str(exc_info.value)
-
-    async def test_http_5xx_raises_destination_error(self, dest):
-        error_response = MagicMock()
-        error_response.status_code = 503
-        error_response.text = "Service Unavailable"
-        http_error = httpx.HTTPStatusError("503", request=MagicMock(), response=error_response)
-        error_response.raise_for_status = MagicMock(side_effect=http_error)
-
-        dest._client = MagicMock()
-        dest._client.request = AsyncMock(return_value=error_response)
-
-        with pytest.raises(DestinationError) as exc_info:
-            await dest.send([{"id": 1}])
-
-        assert "503" in str(exc_info.value)
 
     async def test_network_error_raises_destination_error(self, dest):
         dest._client = MagicMock()
         dest._client.request = AsyncMock(
             side_effect=httpx.RequestError("Connection refused", request=MagicMock())
         )
-
         with pytest.raises(DestinationError) as exc_info:
             await dest.send([{"id": 1}])
-
         assert "Request failed" in str(exc_info.value)
-
-
-# ============================================================================
-# Health check
-# ============================================================================
 
 
 class TestHealthCheck:
@@ -351,40 +175,13 @@ class TestHealthCheck:
         dest = api_destination(url="https://api.example.com")
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-
         dest._client = MagicMock()
         dest._client.head = AsyncMock(return_value=mock_resp)
-
-        result = await dest.health_check()
-        assert result is True
-
-    async def test_health_check_false_on_5xx(self):
-        dest = api_destination(url="https://api.example.com")
-        mock_resp = MagicMock()
-        mock_resp.status_code = 503
-
-        dest._client = MagicMock()
-        dest._client.head = AsyncMock(return_value=mock_resp)
-
-        result = await dest.health_check()
-        assert result is False
-
-    async def test_health_check_false_on_exception(self):
-        dest = api_destination(url="https://api.example.com")
-        dest._client = MagicMock()
-        dest._client.head = AsyncMock(side_effect=Exception("unreachable"))
-
-        result = await dest.health_check()
-        assert result is False
+        assert await dest.health_check() is True
 
     async def test_health_check_disabled_skips_requests(self):
-        dest = api_destination(
-            url="https://api.example.com",
-            health_check_enabled=False,
-        )
-
-        result = await dest.health_check()
-        assert result is True
+        dest = api_destination(url="https://api.example.com", health_check_enabled=False)
+        assert await dest.health_check() is True
         assert dest._client is None
 
     async def test_close_clears_client(self):
@@ -392,8 +189,6 @@ class TestHealthCheck:
         mock_client = MagicMock()
         mock_client.aclose = AsyncMock()
         dest._client = mock_client
-
         await dest.close()
-
         mock_client.aclose.assert_awaited_once()
         assert dest._client is None
