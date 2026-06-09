@@ -13,6 +13,8 @@ import typer
 
 from reflowfy.cli.utils import console
 from reflowfy.core.execution_context import ExecutionContext
+from reflowfy.execution.transformation_runner import apply_transformations_iteratively
+from reflowfy.transformations.base import TransformationError
 
 
 def register(app: typer.Typer):
@@ -236,22 +238,15 @@ def register(app: typer.Typer):
                     }
                 )
 
-                transformations = list(pipeline.define_transformations(records, meta))
-                console.print(
-                    f"  [bold]🔄 Transformations:[/bold] {[t.__class__.__name__ for t in transformations]}"
-                )
-
-                for t in transformations:
-                    console.print(f"    [cyan]Applying {t.__class__.__name__}...[/cyan]")
-                    try:
-                        transformed = t.apply(transformed, meta)
-                        console.print(
-                            f"    [green]✓ {t.__class__.__name__}: {len(transformed)} records[/green]"
-                        )
-                    except Exception as e:
-                        console.print(f"    [red]❌ {t.__class__.__name__} failed: {e}[/red]")
-                        traceback.print_exc()
-                        break
+                try:
+                    transformed, applied = apply_transformations_iteratively(
+                        pipeline, records, meta
+                    )
+                    for name, _duration in applied:
+                        console.print(f"    [green]✓ {name}: {len(transformed)} records[/green]")
+                except TransformationError as e:
+                    console.print(f"    [red]❌ {e.transformation_name} failed: {e}[/red]")
+                    traceback.print_exc()
 
                 # Show sample output
                 console.print(
@@ -336,24 +331,18 @@ def register(app: typer.Typer):
             }
         )
 
-        # Resolve and apply transformations
-        transformations = list(pipeline.define_transformations(records, flat_test_params))
-        console.print(
-            f"[bold]🔄 Transformations:[/bold] {[t.__class__.__name__ for t in transformations]}"
-        )
-
+        # Resolve and apply transformations iteratively (matches production semantics).
         transformed = records
-        for t in transformations:
-            console.print(f"  [cyan]Applying {t.__class__.__name__}...[/cyan]")
-            try:
-                transformed = t.apply(transformed, flat_test_params)
-                console.print(
-                    f"  [green]✓ {t.__class__.__name__}: {len(transformed)} records[/green]"
-                )
-            except Exception as e:
-                console.print(f"  [red]❌ {t.__class__.__name__} failed: {e}[/red]")
-                traceback.print_exc()
-                raise typer.Exit(1)
+        try:
+            transformed, applied = apply_transformations_iteratively(
+                pipeline, records, flat_test_params
+            )
+            for name, _duration in applied:
+                console.print(f"  [green]✓ {name}: {len(transformed)} records[/green]")
+        except TransformationError as e:
+            console.print(f"  [red]❌ {e.transformation_name} failed: {e}[/red]")
+            traceback.print_exc()
+            raise typer.Exit(1)
 
         # Show sample output
         console.print(
