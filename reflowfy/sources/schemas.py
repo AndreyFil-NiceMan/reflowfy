@@ -52,7 +52,11 @@ class IDBasedAPISourceConfig(BaseModel):
         description="Dotted response key to extract records list; None means response is the list",
     )
     body: Optional[Any] = Field(
-        default=None, description="Request body sent verbatim (dict or list); None sends no body"
+        default=None,
+        description=(
+            "Request body sent verbatim. dict/list -> JSON; str -> raw body "
+            "(set Content-Type via headers); None sends no body"
+        ),
     )
     params: Dict[str, Any] = Field(
         default_factory=dict, description="Extra query-string parameters appended to every request"

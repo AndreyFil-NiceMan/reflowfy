@@ -22,7 +22,9 @@ class IDBasedAPISource(BaseSource):
     The request ``body`` is sent verbatim. Build it yourself in
     ``define_source(runtime_params)`` from the IDs you already have, e.g.
     ``body={"ids": params["current_ids"]}`` or ``body=params["current_ids"]``
-    for a raw list. ``body=None`` sends no request body.
+    for a raw list. A ``dict``/``list`` is sent as JSON; a ``str`` is sent as a
+    raw body (set your own ``Content-Type`` via ``headers``). ``body=None`` sends
+    no request body.
     """
 
     def __init__(
@@ -64,9 +66,10 @@ class IDBasedAPISource(BaseSource):
             response_key: Dotted key to extract the records list from the
                 response JSON (e.g. ``"data.users"``). ``None`` means the
                 response itself is the list.
-            body: Request body sent verbatim (dict or list). In per-ID mode,
-                string values of a dict body support ``{id}`` substitution.
-                ``None`` sends no body.
+            body: Request body sent verbatim. ``dict``/``list`` → JSON; ``str`` →
+                raw body (set ``Content-Type`` via ``headers``, sent as-is with no
+                ``{id}`` substitution). In per-ID mode, string values of a *dict*
+                body support ``{id}`` substitution. ``None`` sends no body.
             params: Extra query-string parameters appended to every request.
             health_check_enabled: Enable/disable source health check.
         """
@@ -148,6 +151,8 @@ class IDBasedAPISource(BaseSource):
         try:
             if body is None:
                 response = client.request(method, endpoint, params=query)
+            elif isinstance(body, str):
+                response = client.request(method, endpoint, content=body, params=query)
             else:
                 response = client.request(method, endpoint, json=body, params=query)
             if response.status_code == 404:
@@ -173,6 +178,8 @@ class IDBasedAPISource(BaseSource):
         try:
             if body is None:
                 response = client.request(method, endpoint, params=query)
+            elif isinstance(body, str):
+                response = client.request(method, endpoint, content=body, params=query)
             else:
                 response = client.request(method, endpoint, json=body, params=query)
             response.raise_for_status()

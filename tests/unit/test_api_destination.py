@@ -69,8 +69,10 @@ class TestSendVerbatim:
     async def _capture(self, dest, mock_response):
         calls = []
 
-        async def fake_request(method, url, *, json=None, params=None):
-            calls.append({"method": method, "url": url, "json": json, "params": params})
+        async def fake_request(method, url, *, json=None, content=None, params=None):
+            calls.append(
+                {"method": method, "url": url, "json": json, "content": content, "params": params}
+            )
             return mock_response
 
         dest._client = MagicMock()
@@ -101,6 +103,19 @@ class TestSendVerbatim:
         calls = await self._capture(dest, mock_response)
         await dest.send([{"id": 1}])
         assert len(calls) == 1
+        assert calls[0]["json"] is None
+        assert calls[0]["content"] is None
+
+    async def test_str_body_sent_as_raw_content(self, mock_response):
+        dest = api_destination(
+            url="https://api.example.com/ingest",
+            body="<events><id>1</id></events>",
+            headers={"Content-Type": "application/xml"},
+        )
+        calls = await self._capture(dest, mock_response)
+        await dest.send([{"id": 1}])
+        assert len(calls) == 1
+        assert calls[0]["content"] == "<events><id>1</id></events>"
         assert calls[0]["json"] is None
 
 

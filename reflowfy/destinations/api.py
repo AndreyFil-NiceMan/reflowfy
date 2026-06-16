@@ -13,8 +13,10 @@ class ApiDestination(BaseDestination):
     API destination for sending data to webhooks and REST endpoints.
 
     The request ``body`` is sent verbatim — build it yourself in
-    ``define_destination(records, runtime_params)`` (dict or list). ``body=None``
-    sends a request with no body. Each ``send()`` issues exactly one request.
+    ``define_destination(records, runtime_params)``. A ``dict``/``list`` is sent
+    as JSON (``Content-Type: application/json``); a ``str`` is sent as a raw body
+    (set your own ``Content-Type`` via ``headers``). ``body=None`` sends a request
+    with no body. Each ``send()`` issues exactly one request.
 
     Supports:
     - Configurable authentication (Bearer, API key, Basic)
@@ -47,7 +49,9 @@ class ApiDestination(BaseDestination):
             auth_token: Credential. For ``"basic"`` pass ``"user:password"``.
             timeout: Request timeout in seconds.
             params: URL query parameters appended to every request.
-            body: Request body sent verbatim (dict or list). ``None`` sends no body.
+            body: Request body sent verbatim. ``dict``/``list`` → JSON;
+                ``str`` → raw body (set ``Content-Type`` via ``headers``).
+                ``None`` sends no body.
             retry_config: Optional retry configuration.
             health_check_enabled: Enable/disable destination health check.
         """
@@ -99,6 +103,8 @@ class ApiDestination(BaseDestination):
         try:
             if body is None:
                 response = await client.request(method, url, params=params)
+            elif isinstance(body, str):
+                response = await client.request(method, url, content=body, params=params)
             else:
                 response = await client.request(method, url, json=body, params=params)
             response.raise_for_status()

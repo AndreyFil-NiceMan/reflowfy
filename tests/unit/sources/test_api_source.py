@@ -183,6 +183,30 @@ class TestIDBasedAPISource:
         assert kwargs["json"] == {"ids": [1, 2]}
 
     @patch("httpx.Client")
+    def test_fetch_batch_str_body_sent_as_raw_content(self, mock_client_class):
+        mock_client = MagicMock()
+        mock_client_class.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"users": [{"id": 1}]}
+        mock_client.request.return_value = mock_response
+
+        source = IDBasedAPISource(
+            base_url="https://api.example.com",
+            endpoint_template="/users/batch",
+            method="POST",
+            headers={"Content-Type": "application/xml"},
+            body="<query><id>1</id></query>",
+            response_key="users",
+        )
+        records = source._fetch_batch([1])
+
+        assert records == [{"id": 1}]
+        _, kwargs = mock_client.request.call_args
+        assert kwargs["content"] == "<query><id>1</id></query>"
+        assert kwargs.get("json") is None
+
+    @patch("httpx.Client")
     def test_fetch_batch_no_body_omits_json(self, mock_client_class):
         mock_client = MagicMock()
         mock_client_class.return_value = mock_client

@@ -68,7 +68,11 @@ class ApiDestinationConfig(BaseModel):
         default=None, description="URL query parameters appended to every request"
     )
     body: Optional[Any] = Field(
-        default=None, description="Request body sent verbatim (dict or list); None sends no body"
+        default=None,
+        description=(
+            "Request body sent verbatim. dict/list -> JSON; str -> raw body "
+            "(set Content-Type via headers); None sends no body"
+        ),
     )
     health_check_enabled: bool = Field(
         default=True, description="Enable/disable destination health check"
