@@ -234,7 +234,7 @@ for dir in "${REQUIRED_DIRS[@]}"; do
     fi
 done
 
-REQUIRED_FILES=("pipelines/e2e_pipeline.py" ".env" "Dockerfile.api" "Dockerfile.reflow-manager" "Dockerfile.worker" "docker-compose.yml")
+REQUIRED_FILES=("pipelines/e2e_pipeline.py" ".env" "Dockerfile.api" "Dockerfile.reflow-manager" "Dockerfile.worker" "docker-compose.yml" "requirements.txt")
 for file in "${REQUIRED_FILES[@]}"; do
     if [ ! -f "$file" ]; then
         log_error "Missing expected file after init: $file"
@@ -250,14 +250,16 @@ log_info "Step 2: Configuring Workspace for E2E..."
 WHEEL_FILENAME=$(basename "$WHEEL_FILE")
 cp "$WHEEL_FILE" .
 
-# Modify Dockerfiles to install from local wheel instead of PyPI
-log_info "Modifying Dockerfiles to install from local wheel..."
-
-for dockerfile in Dockerfile.api Dockerfile.reflow-manager Dockerfile.worker; do
-    # Replace "RUN pip install --no-cache-dir reflowfy" with COPY wheel + install
-    sed -i "s|RUN pip install --no-cache-dir reflowfy|COPY $WHEEL_FILENAME /tmp/$WHEEL_FILENAME\nRUN pip install --no-cache-dir /tmp/$WHEEL_FILENAME|" "$dockerfile"
-    log_success "  Modified $dockerfile"
-done
+# Build a LOCAL reflowfy base image from the repo's Dockerfile.base, installing
+# the freshly built wheel. The published base carries released reflowfy, not the
+# code under test, so E2E must bake the wheel into a local base instead. The
+# service images (api/reflow-manager/worker) build FROM this local base.
+export REFLOWFY_BASE_IMAGE=reflowfy-base:local
+log_info "Preparing local reflowfy base image (Dockerfile.base + local wheel)..."
+cp "$PROJECT_ROOT/Dockerfile.base" .
+# Swap the PyPI install for the local wheel (matches the templated RUN line).
+sed -i "s|RUN pip install --no-cache-dir \"reflowfy.*|COPY $WHEEL_FILENAME /tmp/$WHEEL_FILENAME\nRUN pip install --no-cache-dir /tmp/$WHEEL_FILENAME|" Dockerfile.base
+log_success "  Dockerfile.base prepared for local wheel"
 
 # Modify docker-compose.yml for E2E testing (different ports, container names, env vars)
 log_info "Modifying docker-compose.yml for E2E..."
@@ -317,6 +319,15 @@ if [ "$SKIP_DOCKER" = false ]; then
     docker compose down --remove-orphans 2>/dev/null || true
     docker compose -f docker-compose.e2e-infra.yml down --remove-orphans 2>/dev/null || true
     docker network rm e2e_workspace_reflowfy-network 2>/dev/null || true
+
+    # Build the local base image FIRST — every service AND the mock servers
+    # (which build from Dockerfile.worker) build FROM it.
+    log_info "Building local reflowfy base image (${REFLOWFY_BASE_IMAGE})..."
+    docker build -f Dockerfile.base -t "${REFLOWFY_BASE_IMAGE}" . || {
+        log_error "Base image build failed"
+        exit 1
+    }
+    log_success "Base image built"
 
     # Start E2E infrastructure FIRST (creates the shared network, starts Kafka, ES, mocks)
     log_info "Starting E2E test infrastructure..."

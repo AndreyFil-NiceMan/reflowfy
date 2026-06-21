@@ -19,6 +19,13 @@ def project_on_path(tmp_path, monkeypatch):
     """Put a throwaway project dir on sys.path and clean up imported modules."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.syspath_prepend(str(tmp_path))
+    # Drop any pre-cached copies of the component package roots (e.g. the test
+    # suite's own ``tests/unit/sources`` package, which pytest imports as
+    # ``sources``) so _scan_directory resolves fresh against tmp_path.
+    _component_roots = ("pipelines", "sources", "transformations", "destinations")
+    for name in list(sys.modules):
+        if name in _component_roots or name.startswith(tuple(r + "." for r in _component_roots)):
+            sys.modules.pop(name, None)
     before = set(sys.modules)
     yield tmp_path
     # Drop anything imported during the test so repeated runs stay isolated.

@@ -115,6 +115,8 @@ class ElasticSource(BaseSource):
             SourceJob instances
         """
         resolved_config = self.resolve_parameters(runtime_params)
+        if resolved_config is None:
+            raise SourceError("elasticsearch", "No valid configuration resolved", None)
         client = self._get_client()
 
         size = resolved_config.get("size", batch_size)

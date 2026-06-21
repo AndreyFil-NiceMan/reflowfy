@@ -1,6 +1,9 @@
 """FastAPI application factory."""
 
 import os
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -19,10 +22,30 @@ def create_app() -> FastAPI:
     Returns:
         Configured FastAPI instance
     """
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+        """Initialize pipelines on startup."""
+        print("=" * 60)
+        print("🚀 Starting Reflowfy API (Startup)")
+        print(f"📦 Version: {__version__}")
+        print("=" * 60)
+
+        # Load pipelines using global discovery
+        pipeline_module = os.getenv("PIPELINE_MODULE", "pipelines")
+        print(f"\n📂 Loading pipelines from '{pipeline_module}'...")
+        discover_and_load_pipelines(pipeline_module)
+
+        # Setup routes after pipelines are registered
+        setup_pipeline_routes(app)
+
+        yield
+
     app = FastAPI(
         title="Reflowfy API",
         description="Data movement and transformation framework",
         version=__version__,
+        lifespan=lifespan,
     )
 
     # CORS middleware
@@ -67,23 +90,6 @@ def create_app() -> FastAPI:
             )
 
         return status.to_dict()
-
-    # Startup event to load pipelines
-    @app.on_event("startup")
-    async def startup_event():
-        """Initialize pipelines on startup."""
-        print("=" * 60)
-        print("🚀 Starting Reflowfy API (Startup)")
-        print(f"📦 Version: {__version__}")
-        print("=" * 60)
-
-        # Load pipelines using global discovery
-        pipeline_module = os.getenv("PIPELINE_MODULE", "pipelines")
-        print(f"\n📂 Loading pipelines from '{pipeline_module}'...")
-        discover_and_load_pipelines(pipeline_module)
-
-        # Setup routes after pipelines are registered
-        setup_pipeline_routes(app)
 
     return app
 

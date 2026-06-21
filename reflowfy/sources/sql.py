@@ -70,6 +70,8 @@ class SqlSource(BaseSource):
             List of records as dictionaries
         """
         resolved_config = self.resolve_parameters(runtime_params)
+        if resolved_config is None:
+            raise SourceError("sql", "No valid configuration resolved", None)
         engine = self._get_engine()
 
         try:
@@ -105,6 +107,8 @@ class SqlSource(BaseSource):
             SourceJob instances
         """
         resolved_config = self.resolve_parameters(runtime_params)
+        if resolved_config is None:
+            raise SourceError("sql", "No valid configuration resolved", None)
         engine = self._get_engine()
         batch_size = resolved_config.get("batch_size", batch_size)
 

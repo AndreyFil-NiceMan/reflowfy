@@ -41,7 +41,7 @@ services:
       context: .
       dockerfile: Dockerfile.reflow-manager
       args:
-        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
+        REFLOWFY_BASE_IMAGE: ${REFLOWFY_BASE_IMAGE:-reflowfy-base:latest}
     container_name: reflowfy-reflow-manager
     depends_on:
       postgres:
@@ -79,7 +79,7 @@ services:
       context: .
       dockerfile: Dockerfile.api
       args:
-        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
+        REFLOWFY_BASE_IMAGE: ${REFLOWFY_BASE_IMAGE:-reflowfy-base:latest}
     container_name: reflowfy-api
     depends_on:
       reflow-manager:

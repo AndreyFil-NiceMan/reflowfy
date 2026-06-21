@@ -1,0 +1,21 @@
+# =============================================================================
+# Reflowfy base image (MAINTAINER ONLY)
+#
+# Bakes reflowfy + all of its dependencies on top of a Python base image.
+# End users never build this — they consume the published image via the
+# REFLOWFY_BASE_IMAGE build arg in their api/reflow-manager/worker Dockerfiles.
+#
+# Build & push with: ./scripts/build_base_image.sh
+# =============================================================================
+ARG PYTHON_IMAGE=python:3.11-slim
+FROM ${PYTHON_IMAGE}
+
+WORKDIR /app
+
+# Install reflowfy together with all its dependencies. Blank REFLOWFY_VERSION
+# installs the latest published release.
+ARG REFLOWFY_VERSION=
+RUN pip install --no-cache-dir "reflowfy${REFLOWFY_VERSION:+==$REFLOWFY_VERSION}"
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app

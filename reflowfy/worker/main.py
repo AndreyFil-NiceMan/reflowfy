@@ -3,12 +3,13 @@
 import os
 import signal
 import sys
+from types import FrameType
 
 from reflowfy.core.pipeline_discovery import discover_and_load_pipelines
 from reflowfy.worker.consumer import KafkaJobConsumer
 
 
-def handle_shutdown(signum, frame):
+def handle_shutdown(signum: int, frame: FrameType):
     """Handle graceful shutdown."""
     print("\nShutdown signal received, stopping worker...")
     sys.exit(0)

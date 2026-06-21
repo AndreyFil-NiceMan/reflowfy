@@ -89,6 +89,7 @@ class S3Source(BaseSource):
             return True
 
         import fnmatch
+
         return fnmatch.fnmatch(key.split("/")[-1], pattern)
 
     def _read_object_content(self, key: str) -> Any:
@@ -103,10 +104,12 @@ class S3Source(BaseSource):
 
             if content_type == "json":
                 import json
+
                 return json.loads(body.decode("utf-8"))
             elif content_type == "csv":
                 import csv
                 import io
+
                 reader = csv.DictReader(io.StringIO(body.decode("utf-8")))
                 return list(reader)
             elif content_type == "text":
@@ -129,6 +132,8 @@ class S3Source(BaseSource):
             List of records (object contents or metadata)
         """
         resolved_config = self.resolve_parameters(runtime_params)
+        if resolved_config is None:
+            raise SourceError("s3", "No valid configuration resolved", None)
         client = self._get_client()
 
         bucket = resolved_config["bucket"]
@@ -142,7 +147,7 @@ class S3Source(BaseSource):
             page_iterator = paginator.paginate(
                 Bucket=bucket,
                 Prefix=prefix,
-                PaginationConfig={"PageSize": min(limit or 1000, 1000)}
+                PaginationConfig={"PageSize": min(limit or 1000, 1000)},
             )
 
             for page in page_iterator:
@@ -157,12 +162,14 @@ class S3Source(BaseSource):
                         else:
                             records.append(content)
                     else:
-                        records.append({
-                            "key": obj["Key"],
-                            "size": obj["Size"],
-                            "last_modified": obj["LastModified"].isoformat(),
-                            "etag": obj["ETag"],
-                        })
+                        records.append(
+                            {
+                                "key": obj["Key"],
+                                "size": obj["Size"],
+                                "last_modified": obj["LastModified"].isoformat(),
+                                "etag": obj["ETag"],
+                            }
+                        )
 
                     if limit and len(records) >= limit:
                         return records[:limit]
@@ -188,6 +195,8 @@ class S3Source(BaseSource):
             SourceJob instances
         """
         resolved_config = self.resolve_parameters(runtime_params)
+        if resolved_config is None:
+            raise SourceError("s3", "No valid configuration resolved", None)
         client = self._get_client()
 
         bucket = resolved_config["bucket"]
@@ -198,9 +207,7 @@ class S3Source(BaseSource):
         try:
             paginator = client.get_paginator("list_objects_v2")
             page_iterator = paginator.paginate(
-                Bucket=bucket,
-                Prefix=prefix,
-                PaginationConfig={"PageSize": page_size}
+                Bucket=bucket, Prefix=prefix, PaginationConfig={"PageSize": page_size}
             )
 
             page_num = 0
@@ -211,10 +218,7 @@ class S3Source(BaseSource):
                     continue
 
                 # Filter by pattern
-                filtered_objects = [
-                    obj for obj in contents
-                    if self._matches_pattern(obj["Key"])
-                ]
+                filtered_objects = [obj for obj in contents if self._matches_pattern(obj["Key"])]
 
                 if not filtered_objects:
                     continue
@@ -229,12 +233,14 @@ class S3Source(BaseSource):
                         else:
                             records.append(content)
                     else:
-                        records.append({
-                            "key": obj["Key"],
-                            "size": obj["Size"],
-                            "last_modified": obj["LastModified"].isoformat(),
-                            "etag": obj["ETag"],
-                        })
+                        records.append(
+                            {
+                                "key": obj["Key"],
+                                "size": obj["Size"],
+                                "last_modified": obj["LastModified"].isoformat(),
+                                "etag": obj["ETag"],
+                            }
+                        )
 
                 yield SourceJob(
                     records=records,

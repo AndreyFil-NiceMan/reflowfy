@@ -132,6 +132,7 @@ class {class_name}(AbstractPipeline):
                 "Dockerfile.reflow-manager",
                 "Dockerfile.worker",
                 "docker-compose.yml",
+                "requirements.txt",
             ]:
                 src_file = src_path / dockerfile
                 dest_file = target_dir / dockerfile

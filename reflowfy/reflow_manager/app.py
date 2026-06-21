@@ -1,8 +1,9 @@
 """FastAPI application for ReflowManager service."""
 
 import os
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Optional
+from typing import AsyncGenerator, Optional
 from fastapi import FastAPI, HTTPException, Depends, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -15,6 +16,7 @@ from reflowfy import __version__  # noqa: E402
 
 from reflowfy.reflow_manager.database import get_db, init_db  # noqa: E402
 from reflowfy.reflow_manager.manager import ReflowManager  # noqa: E402
+from reflowfy.reflow_manager.execution import ExecutionManager  # noqa: E402
 from reflowfy.reflow_manager.schemas import (  # noqa: E402
     UpdateExecutionStateRequest,
     CheckpointRequest,
@@ -34,11 +36,20 @@ from reflowfy.reflow_manager.pipeline_scheduler import (  # noqa: E402
 )
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Run startup initialization and graceful shutdown around the app's lifetime."""
+    await _startup()
+    yield
+    await _shutdown()
+
+
 # Create FastAPI app
 app = FastAPI(
     title="ReflowManager",
     description="Pipeline state management and rate limiting service",
     version=__version__,
+    lifespan=lifespan,
 )
 
 # CORS middleware
@@ -98,6 +109,7 @@ async def health_check():
     """Health check endpoint. Returns 503 until the DB is initialized."""
     if not _db_ready:
         from fastapi.responses import JSONResponse
+
         return JSONResponse(
             status_code=503,
             content={"status": "starting", "service": "reflow-manager", "version": __version__},
@@ -195,6 +207,7 @@ async def resume_execution(
 
 # ===== Checkpointing =====
 
+
 @app.post("/checkpoints", status_code=status.HTTP_201_CREATED)
 async def create_checkpoint(
     request: CheckpointRequest,
@@ -262,16 +275,19 @@ async def get_checkpoints(
 ):
     """Deprecated: use GET /executions/{id}/jobs instead."""
     from fastapi.responses import JSONResponse
+
     jobs = manager.job_manager.get_jobs(execution_id, state)
     return JSONResponse(
         content=[job.to_dict() for job in jobs],
-        headers={"Deprecation": "true", "Link": f'/executions/{execution_id}/jobs; rel="successor-version"'},
+        headers={
+            "Deprecation": "true",
+            "Link": f'/executions/{execution_id}/jobs; rel="successor-version"',
+        },
     )
 
 
-
-
 # ===== Pipeline Execution (New Simplified API) =====
+
 
 @app.post("/run", status_code=status.HTTP_202_ACCEPTED)
 async def run_pipeline(
@@ -349,6 +365,7 @@ async def run_pipeline(
 
     except Exception as e:
         import traceback
+
         traceback.print_exc()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -359,13 +376,16 @@ async def run_pipeline(
 def _reset_pipeline_schedule_if_needed(db: Session, pipeline_name: str) -> None:
     """Recalculate next_run_at after a manual trigger for a scheduled pipeline."""
     from reflowfy.core.registry import pipeline_registry
+
     scheduler = get_pipeline_scheduler()
     if scheduler is None:
         return
     pipeline = pipeline_registry.get(pipeline_name)
     if pipeline is None or not getattr(pipeline, "is_scheduled", False):
         return
-    scheduler.reset_schedule(db, pipeline_name, triggered_at=datetime.now(timezone.utc).replace(tzinfo=None))
+    scheduler.reset_schedule(
+        db, pipeline_name, triggered_at=datetime.now(timezone.utc).replace(tzinfo=None)
+    )
 
 
 def _dispatch_pipeline_jobs(
@@ -405,12 +425,16 @@ def _dispatch_pipeline_jobs(
 
     except Exception as e:
         import traceback
+
         print(f"❌ Background job dispatch failed: {e}")
         traceback.print_exc()
 
-        # Update execution state to failed
+        # Update execution state to failed. Use a fresh ExecutionManager so this
+        # works even when ReflowManager construction above failed (manager unbound).
         try:
-            manager.update_execution_state(execution_id, "failed", error_message=str(e))
+            ExecutionManager(db).update_execution_state(
+                execution_id, "failed", error_message=str(e)
+            )
         except Exception:
             pass
 
@@ -419,6 +443,7 @@ def _dispatch_pipeline_jobs(
 
 
 # ===== Statistics =====
+
 
 @app.get("/executions/{execution_id}/stats")
 async def get_execution_stats(
@@ -440,6 +465,7 @@ async def get_execution_stats(
         raise
     except Exception as e:
         import traceback
+
         traceback.print_exc()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -447,10 +473,7 @@ async def get_execution_stats(
         )
 
 
-
-# Startup event
-@app.on_event("startup")
-async def startup_event():
+async def _startup() -> None:
     """Initialize database and load pipelines on startup."""
 
     print("=" * 60)
@@ -467,6 +490,7 @@ async def startup_event():
 
     # Load pipelines using global discovery
     from reflowfy.core.pipeline_discovery import discover_and_load_pipelines
+
     pipeline_module = os.getenv("PIPELINE_MODULE", "pipelines")
     print(f"\n📂 Loading pipelines from '{pipeline_module}'...")
     discover_and_load_pipelines(pipeline_module)
@@ -482,8 +506,10 @@ async def startup_event():
     # Initialize DLQ scheduler
     print("\n📬 Initializing DLQ scheduler...")
     try:
+
         def pipeline_runner_factory():
             from reflowfy.reflow_manager.database import SessionLocal
+
             db = SessionLocal()
             config = _get_kafka_config()
             manager = ReflowManager(
@@ -500,8 +526,10 @@ async def startup_event():
     # Initialize Pipeline Scheduler (cron-based)
     print("\n⏰ Initializing Pipeline Scheduler...")
     try:
+
         def pipeline_scheduler_factory():
             from reflowfy.reflow_manager.database import SessionLocal
+
             db = SessionLocal()
             config = _get_kafka_config()
             manager = ReflowManager(
@@ -513,6 +541,7 @@ async def startup_event():
         scheduler = init_pipeline_scheduler(pipeline_scheduler_factory)
 
         from reflowfy.reflow_manager.database import SessionLocal as _SL
+
         sync_db = _SL()
         try:
             scheduler.sync_schedules_from_registry(sync_db)
@@ -581,12 +610,12 @@ def _resume_execution_sync(execution_id: str):
 
     except Exception as e:
         import traceback
+
         print(f"❌ Failed to resume execution {execution_id}: {e}")
         traceback.print_exc()
 
 
-@app.on_event("shutdown")
-async def shutdown_event():
+async def _shutdown() -> None:
     """Gracefully stop background schedulers on service shutdown."""
     print("\n🛑 Shutting down ReflowManager service...")
     stop_pipeline_scheduler()

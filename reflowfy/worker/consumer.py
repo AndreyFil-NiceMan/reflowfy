@@ -1,10 +1,12 @@
 """Async Kafka consumer for job processing."""
 
-import json
 import asyncio
-from typing import Optional, Union, List
+import json
+from typing import Any, List, Optional, Union
+
 from aiokafka import AIOKafkaConsumer
 from aiokafka.errors import KafkaError
+
 from reflowfy.worker.executor import WorkerExecutor
 
 
@@ -76,13 +78,15 @@ class KafkaJobConsumer:
 
         # Add SASL config if credentials provided
         if self.sasl_username and self.sasl_password:
-            consumer_kwargs.update({
-                "security_protocol": self.security_protocol or "SASL_PLAINTEXT",
-                "sasl_mechanism": self.sasl_mechanism or "SCRAM-SHA-256",
-                "sasl_plain_username": self.sasl_username,
-                "sasl_plain_password": self.sasl_password,
-                "client_id": self.sasl_username,  # client_id = username
-            })
+            consumer_kwargs.update(
+                {
+                    "security_protocol": self.security_protocol or "SASL_PLAINTEXT",
+                    "sasl_mechanism": self.sasl_mechanism or "SCRAM-SHA-256",
+                    "sasl_plain_username": self.sasl_username,
+                    "sasl_plain_password": self.sasl_password,
+                    "client_id": self.sasl_username,  # client_id = username
+                }
+            )
 
         self.consumer = AIOKafkaConsumer(self.topic, **consumer_kwargs)
 
@@ -95,7 +99,7 @@ class KafkaJobConsumer:
                 break
             except KafkaError as e:
                 if attempt < max_retries - 1:
-                    wait_time = 2 ** attempt  # Exponential backoff
+                    wait_time = 2**attempt  # Exponential backoff
                     print(f"⚠️  Failed to start consumer (attempt {attempt + 1}/{max_retries}): {e}")
                     print(f"   Retrying in {wait_time}s...")
                     await asyncio.sleep(wait_time)
@@ -109,35 +113,44 @@ class KafkaJobConsumer:
             async for msg in self.consumer:
                 if not self._running:
                     break
-
-                # Process message
-                try:
-                    job_payload = json.loads(msg.value.decode("utf-8"))
-
-                    print(f"📦 Received job: {job_payload.get('job_id', 'unknown')}")
-
-                    # Execute job asynchronously
-                    success = await self.executor.execute_job(job_payload)
-
-                    if success:
-                        # Commit offset on success
-                        await self.consumer.commit()
-                    else:
-                        # On failure, don't commit - job will be retried
-                        print("⚠️  Job failed, will retry")
-
-                except json.JSONDecodeError as e:
-                    print(f"❌ Invalid job payload: {e}")
-                    # Commit anyway to skip bad message
-                    await self.consumer.commit()
-
-                except Exception as e:
-                    print(f"❌ Job processing error: {e}")
-                    # Don't commit - will retry
+                await self._process_message(msg)
 
         finally:
             await self.consumer.stop()
             await self.executor.close()
+
+    async def _process_message(self, msg: Any) -> None:
+        """Decode, execute, and commit a single Kafka message."""
+        assert self.consumer is not None  # only called from start() after connect
+        try:
+            if msg.value is None:
+                # Null-value record (e.g. tombstone) carries no job; skip it.
+                print("⚠️  Received message with empty value, skipping")
+                await self.consumer.commit()
+                return
+
+            job_payload = json.loads(msg.value.decode("utf-8"))
+
+            print(f"📦 Received job: {job_payload.get('job_id', 'unknown')}")
+
+            # Execute job asynchronously
+            success = await self.executor.execute_job(job_payload)
+
+            if success:
+                # Commit offset on success
+                await self.consumer.commit()
+            else:
+                # On failure, don't commit - job will be retried
+                print("⚠️  Job failed, will retry")
+
+        except json.JSONDecodeError as e:
+            print(f"❌ Invalid job payload: {e}")
+            # Commit anyway to skip bad message
+            await self.consumer.commit()
+
+        except Exception as e:
+            print(f"❌ Job processing error: {e}")
+            # Don't commit - will retry
 
     async def stop(self):
         """Stop consuming."""

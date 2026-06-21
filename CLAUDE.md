@@ -22,10 +22,11 @@ uv run pytest tests/unit/test_api_destination.py::TestClassName::test_name -v   
 ./scripts/run_e2e_tests.sh --keep-docker   # leave Docker up after tests
 ./scripts/run_e2e_tests.sh --test-file tests/e2e/test_dlq.py
 
-# Lint / format / type-check (line-length 100; mypy strict)
+# Lint / format / type-check (line-length 100; mypy strict; pyright strict)
 uv run ruff check reflowfy/
 uv run black reflowfy/
 uv run mypy reflowfy/
+uv run pyright              # config in [tool.pyright]; scoped to reflowfy/
 
 # Run the full local stack via the CLI (Docker Compose under the hood)
 uv run python -m reflowfy.cli.main run --build        # add -d/--detach to background

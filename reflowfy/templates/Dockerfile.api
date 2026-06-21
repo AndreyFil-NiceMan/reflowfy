@@ -1,10 +1,16 @@
-ARG PYTHON_IMAGE=python:3.11-slim
-FROM ${PYTHON_IMAGE}
+# Builds the Reflowfy API image on top of the published reflowfy base image.
+# The base image already provides reflowfy + all of its dependencies.
+ARG REFLOWFY_BASE_IMAGE=reflowfy-base:latest
+FROM ${REFLOWFY_BASE_IMAGE}
 
 WORKDIR /app
 
-# Install Reflowfy
-RUN pip install --no-cache-dir reflowfy
+# Install the user's project dependencies on top of the base image.
+# Supports both pip (requirements.txt) and uv (pyproject.toml / uv.lock).
+# requirements.txt is always scaffolded; pyproject.toml / uv.lock are optional.
+COPY requirements.txt pyproject.tom[l] uv.loc[k] ./
+RUN if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi \
+ && if [ -f pyproject.toml ]; then pip install --no-cache-dir uv && uv pip install --system --no-cache .; fi
 
 # Copy user pipelines and components
 COPY pipelines/ pipelines/

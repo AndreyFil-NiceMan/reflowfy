@@ -72,7 +72,9 @@ class ReflowManager:
             print("🔧 ReflowManager initialized in LOCAL mode (in-process dispatch)")
             self.dispatcher = LocalDispatcher(self.rate_limiter, db_session)
         else:
-            print(f"🔧 ReflowManager initialized in DISTRIBUTED mode (Kafka: {kafka_bootstrap_servers})")
+            print(
+                f"🔧 ReflowManager initialized in DISTRIBUTED mode (Kafka: {kafka_bootstrap_servers})"
+            )
             self.dispatcher = KafkaDispatcher(
                 kafka_bootstrap_servers,
                 kafka_topic,
@@ -94,20 +96,29 @@ class ReflowManager:
 
     # ===== Execution Management (delegated) =====
 
-    def create_execution(self, execution_id: str, pipeline_name: str, 
-                        runtime_params: Optional[Dict[str, Any]] = None) -> Execution:
+    def create_execution(
+        self, execution_id: str, pipeline_name: str, runtime_params: Optional[Dict[str, Any]] = None
+    ) -> Execution:
         return self.execution_manager.create_execution(execution_id, pipeline_name, runtime_params)
 
     def get_execution(self, execution_id: str) -> Optional[Execution]:
         return self.execution_manager.get_execution(execution_id)
 
-    def update_execution_state(self, execution_id: str, state: str, 
-                              error_message: Optional[str] = None) -> Optional[Execution]:
+    def update_execution_state(
+        self, execution_id: str, state: str, error_message: Optional[str] = None
+    ) -> Optional[Execution]:
         return self.execution_manager.update_execution_state(execution_id, state, error_message)
 
-    def update_job_counts(self, execution_id: str, jobs_dispatched: Optional[int] = None,
-                         jobs_completed: Optional[int] = None, jobs_failed: Optional[int] = None):
-        return self.execution_manager.update_job_counts(execution_id, jobs_dispatched, jobs_completed, jobs_failed)
+    def update_job_counts(
+        self,
+        execution_id: str,
+        jobs_dispatched: Optional[int] = None,
+        jobs_completed: Optional[int] = None,
+        jobs_failed: Optional[int] = None,
+    ):
+        return self.execution_manager.update_job_counts(
+            execution_id, jobs_dispatched, jobs_completed, jobs_failed
+        )
 
     def pause_execution(self, execution_id: str) -> Optional[Execution]:
         return self.execution_manager.pause_execution(execution_id)
@@ -123,17 +134,31 @@ class ReflowManager:
 
     # ===== Pipeline Execution (delegated) =====
 
-    def run_pipeline(self, pipeline_name: str, runtime_params: Dict[str, Any],
-                    execution_id: str, rate_limit_override: Optional[float] = None) -> Dict[str, Any]:
-        return self.pipeline_runner.run_pipeline(pipeline_name, runtime_params, execution_id, rate_limit_override)
+    def run_pipeline(
+        self,
+        pipeline_name: str,
+        runtime_params: Dict[str, Any],
+        execution_id: str,
+        rate_limit_override: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        return self.pipeline_runner.run_pipeline(
+            pipeline_name, runtime_params, execution_id, rate_limit_override
+        )
 
-    def _run_pipeline_jobs(self, execution_id: str, pipeline_name: str,
-                          runtime_params: Dict[str, Any],
-                          rate_limit_override: Optional[float] = None,
-                          enable_duplicate_jobs: Optional[bool] = None) -> None:
+    def _run_pipeline_jobs(
+        self,
+        execution_id: str,
+        pipeline_name: str,
+        runtime_params: Dict[str, Any],
+        rate_limit_override: Optional[float] = None,
+        enable_duplicate_jobs: Optional[bool] = None,
+    ) -> None:
         return self.pipeline_runner._run_pipeline_jobs(
-            execution_id, pipeline_name, runtime_params,
-            rate_limit_override, enable_duplicate_jobs,
+            execution_id,
+            pipeline_name,
+            runtime_params,
+            rate_limit_override,
+            enable_duplicate_jobs,
         )
 
     # ===== Statistics =====
@@ -166,7 +191,9 @@ class ReflowManager:
             "pipeline_name": execution.pipeline_name,
             "state": execution.state,
             "total_jobs": execution.total_jobs,
-            "jobs_dispatched": job_counts.get("dispatched", 0) + job_counts.get("completed", 0) + job_counts.get("failed", 0),
+            "jobs_dispatched": job_counts.get("dispatched", 0)
+            + job_counts.get("completed", 0)
+            + job_counts.get("failed", 0),
             "jobs_pending": job_counts.get("pending", 0),
             "jobs_completed": job_counts.get("completed", 0),
             "jobs_failed": job_counts.get("failed", 0),
@@ -186,16 +213,19 @@ class ReflowManager:
         from sqlalchemy import func, case
 
         # Query unified Job table directly
-        results = self.db.query(
-            Job.batch_number,
-            func.count(Job.job_id).label("total_jobs"),
-            func.sum(case((Job.state == "pending", 1), else_=0)).label("pending"),
-            func.sum(case((Job.state == "completed", 1), else_=0)).label("completed"),
-            func.sum(case((Job.state == "failed", 1), else_=0)).label("failed"),
-        ).filter(
-            Job.execution_id == execution_id,
-            Job.batch_number.isnot(None)
-        ).group_by(Job.batch_number).order_by(Job.batch_number).all()
+        results = (
+            self.db.query(
+                Job.batch_number,
+                func.count(Job.job_id).label("total_jobs"),
+                func.sum(case((Job.state == "pending", 1), else_=0)).label("pending"),
+                func.sum(case((Job.state == "completed", 1), else_=0)).label("completed"),
+                func.sum(case((Job.state == "failed", 1), else_=0)).label("failed"),
+            )
+            .filter(Job.execution_id == execution_id, Job.batch_number.isnot(None))
+            .group_by(Job.batch_number)
+            .order_by(Job.batch_number)
+            .all()
+        )
 
         batches = []
         for row in results:
@@ -209,19 +239,21 @@ class ReflowManager:
             else:
                 state = "pending"
 
-            batches.append({
-                "batch_number": row.batch_number,
-                "total_jobs": row.total_jobs,
-                "pending": row.pending or 0,
-                "completed": row.completed or 0,
-                "failed": row.failed or 0,
-                "state": state,
-            })
+            batches.append(
+                {
+                    "batch_number": row.batch_number,
+                    "total_jobs": row.total_jobs,
+                    "pending": row.pending or 0,
+                    "completed": row.completed or 0,
+                    "failed": row.failed or 0,
+                    "state": state,
+                }
+            )
 
         return batches
 
     # ===== Cleanup =====
 
-    def close(self):
+    async def close(self) -> None:
         """Close connections."""
-        self.dispatcher.close()
+        await self.dispatcher.close()
