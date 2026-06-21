@@ -10,7 +10,6 @@ Just run this and test via Swagger UI!
 """
 
 # Import the simple test pipeline (triggers registration)
-import simple_test_pipeline
 
 # Start the API
 from reflowfy.api.app import main

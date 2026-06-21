@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zookeeper
+  namespace: kofli-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zookeeper
+  template:
+    metadata:
+      labels:
+        app: zookeeper
+    spec:
+      containers:
+        - name: zookeeper
+          image: quay.io/strimzi/kafka:0.39.0-kafka-3.6.1
+          command:
+            - /opt/kafka/bin/zookeeper-server-start.sh
+          args:
+            - /opt/kafka/config/zookeeper.properties
+          ports:
+            - containerPort: 2181
+          env:
+            - name: LOG_DIR
+              value: /tmp/logs
+          resources:
+            requests:
+              memory: '256Mi'
+              cpu: '100m'
+            limits:
+              memory: '512Mi'
+              cpu: '250m'
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper
+  namespace: kofli-dev
+spec:
+  ports:
+    - port: 2181
+      targetPort: 2181
+  selector:
+    app: zookeeper
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka
+  namespace: kofli-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      containers:
+        - name: kafka
+          image: quay.io/strimzi/kafka:0.39.0-kafka-3.6.1
+          command:
+            - /opt/kafka/bin/kafka-server-start.sh
+          args:
+            - /opt/kafka/config/server.properties
+            - --override
+            - zookeeper.connect=zookeeper:2181
+            - --override
+            - listeners=PLAINTEXT://:9092
+            - --override
+            - advertised.listeners=PLAINTEXT://kafka:9092
+            - --override
+            - auto.create.topics.enable=true
+            - --override
+            - offsets.topic.replication.factor=1
+            - --override
+            - transaction.state.log.replication.factor=1
+            - --override
+            - transaction.state.log.min.isr=1
+          ports:
+            - containerPort: 9092
+          env:
+            - name: LOG_DIR
+              value: /tmp/logs
+          resources:
+            requests:
+              memory: '512Mi'
+              cpu: '250m'
+            limits:
+              memory: '1Gi'
+              cpu: '500m'
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: kofli-dev
+spec:
+  ports:
+    - port: 9092
+      targetPort: 9092
+  selector:
+    app: kafka

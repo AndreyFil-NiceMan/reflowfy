@@ -12,31 +12,24 @@ Just run the API and call the /test endpoint!
 """
 
 from reflowfy import (
-    build_pipeline,
-    pipeline_registry,
+    AbstractPipeline,
     BaseTransformation,
 )
 from reflowfy.sources.mock import mock_source, generate_sample_data
 from reflowfy.destinations.console import console_destination
 
 
-# 1. Define a simple transformation
+# ============================================================================
+# Transformations
+# ============================================================================
+
 class UppercaseNames(BaseTransformation):
     """Transform names to uppercase."""
     
     name = "uppercase_names"
     
-    def apply(self, records, context):
-        """
-        Convert first_name and last_name to uppercase.
-        
-        Args:
-            records: List of records
-            context: Execution context
-        
-        Returns:
-            Transformed records
-        """
+    def apply(self, records, runtime_params):
+        """Convert first_name and last_name to uppercase."""
         transformed = []
         
         for record in records:
@@ -58,17 +51,8 @@ class FilterActiveUsers(BaseTransformation):
     
     name = "filter_active_users"
     
-    def apply(self, records, context):
-        """
-        Keep only records where active=True.
-        
-        Args:
-            records: List of records
-            context: Execution context
-        
-        Returns:
-            Filtered records
-        """
+    def apply(self, records, runtime_params):
+        """Keep only records where active=True."""
         return [r for r in records if r.get("active", False)]
 
 
@@ -77,18 +61,9 @@ class AddProcessingInfo(BaseTransformation):
     
     name = "add_processing_info"
     
-    def apply(self, records, context):
-        """
-        Add processing information from context.
-        
-        Args:
-            records: List of records
-            context: Execution context
-        
-        Returns:
-            Enhanced records
-        """
-        execution_id = context.get("execution_id", "unknown")
+    def apply(self, records, runtime_params):
+        """Add processing information from context."""
+        execution_id = runtime_params.get("execution_id", "unknown")
         
         for record in records:
             record["_processed_by"] = "reflowfy"
@@ -97,35 +72,50 @@ class AddProcessingInfo(BaseTransformation):
         return records
 
 
-# 2. Generate sample data
-sample_data = generate_sample_data(count=5000)
+# ============================================================================
+# Pipeline Definition
+# ============================================================================
 
-# 3. Configure source (mock data - no external dependencies!)
-source = mock_source(
-    data=sample_data,
-    batch_size=10,
-)
+# Pre-generate sample data
+SAMPLE_DATA = generate_sample_data(count=500)
 
-# 4. Configure destination (console - just prints to stdout!)
-destination = console_destination(
-    pretty_print=True,
-    max_records_display=10,
-)
 
-# 5. Build and register pipeline
-pipeline = build_pipeline(
-    name="simple_test_pipeline",
-    source=source,
-    transformations=[
-        FilterActiveUsers(),
-        UppercaseNames(),
-        AddProcessingInfo(),
-    ],
-    destination=destination,
-    rate_limit={"jobs_per_second": 10},
-)
+class SimpleTestPipeline(AbstractPipeline):
+    """
+    Simple test pipeline with mock source and console destination.
+    
+    No parameters required - uses pre-generated mock data.
+    """
+    
+    name = "simple_test_pipeline"
+    rate_limit = 10
+    
+    def define_parameters(self):
+        """No parameters needed for this simple test pipeline."""
+        return []
+    
+    def define_source(self, params):
+        """Return mock data source."""
+        return mock_source(
+            data=SAMPLE_DATA,
+            batch_size=10,
+        )
+    
+    def define_destination(self, params):
+        """Return console destination."""
+        return console_destination(
+            pretty_print=True,
+            max_records_display=10,
+        )
+    
+    def define_transformations(self, params):
+        """Return transformation pipeline."""
+        return [
+            FilterActiveUsers(),
+            UppercaseNames(),
+            AddProcessingInfo(),
+        ]
 
-pipeline_registry.register(pipeline)
 
 # That's it! Test it with:
 # POST http://localhost:8000/pipelines/simple_test_pipeline/test

@@ -6,12 +6,12 @@ Reflowfy enables you to build pipelines that fetch data from sources, apply cust
 
 ## 🎯 Key Features
 
-- **Horizontally Scalable**: Process millions of records in parallel
-- **Kafka-Based**: Reliable message queue for job distribution
-- **Kubernetes-Native**: KEDA autoscaling from 0 to N workers
-- **Order-Independent**: Maximum parallelism without coordination overhead
-- **User-Extensible**: Plugin architecture for sources, destinations, and transformations
-- **Two Execution Modes**: Local testing and distributed production execution
+- **Modern DX**: Define reusable components with `@source`, `@destination`, and `@transformation` decorators.
+- **Auto-Discovery**: Pipelines and components are automatically discovered and registered — no manual `__init__.py` tracking required.
+- **Horizontally Scalable**: Process millions of records in parallel using Apache Kafka.
+- **Kubernetes-Native**: KEDA autoscaling from 0 to N workers based on queue lag.
+- **Order-Independent**: Maximum parallelism without coordination overhead.
+- **Two Execution Modes**: Local testing and distributed production execution.
 
 ## 🏗 Architecture
 
@@ -21,141 +21,216 @@ User Request
 API (FastAPI) ────→ ReflowManager Service (port 8001)
     │                    ↓
     │                PostgreSQL (state + checkpoints)
-    │                    ↓
-    │                Kafka Producer (rate limited) → Kafka Topic (reflow.jobs)
-    │                    ↓
-    │                Worker Pool (KEDA scaled)
-    │                    ↓
-    └─→ Execution Tracking  Destinations
+    │                    ↑                   ↓
+    │                    │               Kafka Producer (rate limited) → Kafka Topic (reflow.jobs)
+    │                    │                   ↓
+    └─→ Execution Tracking               Worker Pool (KEDA scaled)
+                                             ↓
+                                        Destinations
 ```
 
 **Components:**
-- **API**: Orchestration, job splitting, route generation
-- **ReflowManager**: Rate limiting, state management, checkpointing
-- **PostgreSQL**: Persistent state storage for executions and checkpoints
-- **Kafka**: Job queue and load balancing
-- **Workers**: Generic executors that process jobs
-- **KEDA**: Kafka lag-based autoscaling
+
+- **ReflowManager**: Orchestrates jobs, enforces rate limits, and tracks state.
+- **PostgreSQL**: Central source of truth for execution state and checkpoints.
+- **Kafka**: Reliable job queue for load balancing.
+- **Workers**: Consumers that process jobs and report status directly to PostgreSQL.
+- **KEDA**: Autoscales workers based on Kafka lag.
 
 ## 🚀 Quick Start
 
-### 1. Define a Custom Transformation
+Get up and running in minutes using the CLI scaffolding tools.
 
-```python
-from reflowfy import BaseTransformation
+### 1. Install
 
-class XmlToJson(BaseTransformation):
-    name = "xml_to_json"
-    
-    def apply(self, records, context):
-        # Your transformation logic
-        return [parse_xml(r) for r in records]
-```
-
-### 2. Build a Pipeline
-
-```python
-from reflowfy import build_pipeline, pipeline_registry
-from reflowfy import elastic_source, kafka_destination
-
-# Configure source with runtime parameters
-source = elastic_source(
-    url="http://elasticsearch:9200",
-    index="logs-*",
-    base_query={
-        "query": {
-            "range": {
-                "@timestamp": {
-                    "gte": "{{ start_time }}",  # Runtime parameter
-                    "lte": "{{ end_time }}"
-                }
-            }
-        }
-    }
-)
-
-# Configure destination
-destination = kafka_destination(
-    bootstrap_servers="kafka:9092",
-    topic="processed-logs"
-)
-
-# Build and register
-pipeline = build_pipeline(
-    name="elastic_xml_pipeline",
-    source=source,
-    transformations=[XmlToJson()],
-    destination=destination,
-    rate_limit={"jobs_per_second": 50}
-)
-
-pipeline_registry.register(pipeline)
-```
-
-### 3. Start the API
-
-```python
-# In your main.py
-from reflowfy.api.app import main
-import examples.xml_to_json_pipeline  # Import to trigger registration
-
-if __name__ == "__main__":
-    main()
-```
-
-### 4. Execute Pipeline
-
-**Test locally** (synchronous, limited data):
 ```bash
-curl -X POST http://localhost:8000/pipelines/elastic_xml_pipeline/test \
+pip install reflowfy
+```
+
+### 2. Initialize Project
+
+Create a new project directory with sample pipelines, components, and Docker configurations:
+
+```bash
+reflowfy init my_project
+cd my_project
+```
+
+This generates a standard project structure:
+
+```text
+my_project/
+├── pipelines/          # Define pipelines here
+├── sources/            # Reusable @source configs
+├── destinations/       # Reusable @destination configs
+├── transformations/    # Reusable @transformation logic
+├── .env
+└── docker-compose.yml
+```
+
+### 3. Generate Components
+
+Quickly scaffold new components:
+
+```bash
+reflowfy new pipeline user_sync
+reflowfy new source production_elastic
+reflowfy new destination data_lake_s3
+reflowfy new transformation flatten_json
+```
+
+### 4. Run Locally
+
+Start the full stack (API, Manager, Worker, Kafka, Postgres) locally using Docker Compose:
+
+```bash
+# Verify everything builds
+reflowfy run --build
+
+# Run in background
+reflowfy run -d
+```
+
+### 5. Deploy
+
+Deploy to OpenShift/Kubernetes with a single command:
+
+```bash
+reflowfy deploy
+```
+
+---
+
+## 🧠 Core Concepts: The Modern DX
+
+Reflowfy uses a modular, decorator-driven architecture for defining reusable components.
+
+### 1. Define Reusable Sources and Destinations
+
+Use the `@source` and `@destination` decorators to pre-configure connectors. These can be placed in your `sources/` and `destinations/` directories and reused across multiple pipelines.
+
+```python
+# sources/prod_elastic.py
+import os
+from reflowfy import source, elastic_source
+
+@source("prod_elastic")
+def prod_elastic(**overrides):
+    return elastic_source(
+        url=os.getenv("ELASTIC_URL"),
+        index="production-logs",
+        **overrides
+    )
+
+# destinations/prod_kafka.py
+from reflowfy import destination, kafka_destination
+
+@destination("prod_kafka")
+def prod_kafka(**overrides):
+    return kafka_destination(
+        bootstrap_servers="kafka:9092",
+        topic="processed-events",
+        **overrides
+    )
+```
+
+### 2. Create Reusable Transformations
+
+Transformations process batches of records. Use the `@transformation` decorator in your `transformations/` directory:
+
+```python
+# transformations/clean_names.py
+from reflowfy import transformation
+
+@transformation("clean_names")
+def clean_names(records, context):
+    """Normalize user names."""
+    for record in records:
+        if "name" in record:
+            record["name"] = record["name"].strip().title()
+    return records
+```
+
+_(You can also subclass `BaseTransformation` for more complex stateful transformations)._
+
+### 3. Build a Pipeline
+
+Pipelines connect your sources, transformations, and destinations. Subclass `AbstractPipeline` and map your components.
+
+**Pipelines are auto-registered** upon interpretation — no manual registry calls needed!
+
+```python
+# pipelines/user_sync_pipeline.py
+from reflowfy import AbstractPipeline
+from sources.prod_elastic import prod_elastic
+from destinations.prod_kafka import prod_kafka
+from transformations.clean_names import clean_names
+
+class UserSyncPipeline(AbstractPipeline):
+    # The auto-registration system uses this exact name:
+    name = "user_sync_pipeline"
+    rate_limit = {"jobs_per_second": 50}
+
+    def define_parameters(self):
+        # Define allowed runtime overrides
+        return []
+
+    def define_source(self, params):
+        # Override the base query for this specific pipeline
+        return prod_elastic(
+            base_query={"query": {"match": {"type": "user_signup"}}}
+        )
+
+    def define_transformations(self, params):
+        # Instantiate and return transformations
+        return [clean_names()]
+
+    def define_destination(self, params):
+        return prod_kafka()
+
+# ✅ That's it! The pipeline is automatically discovered.
+```
+
+### 4. Execute Pipelines
+
+Trigger pipelines locally or in production via HTTP:
+
+```bash
+# Production Execution (Distributed via Kafka)
+curl -X POST http://localhost:8001/run \
   -H "Content-Type: application/json" \
   -d '{
-    "runtime_params": {
-      "start_time": "2024-01-01",
-      "end_time": "2024-01-02"
-    }
+    "pipeline_name": "user_sync_pipeline",
+    "runtime_params": {}
   }'
+
+# Dry Run (Preview without side effects)
+curl -X POST http://localhost:8001/run ... -d '{..., "dry_run": true}'
 ```
 
-**Run distributed** (async via Kafka):
-```bash
-curl -X POST http://localhost:8000/pipelines/elastic_xml_pipeline/run \
-  -H "Content-Type: application/json" \
-  -d '{
-    "runtime_params": {
-      "start_time": "2024-01-01",
-      "end_time": "2024-01-02"
-    }
-  }'
-```
-
-## 📦 Installation
-
-```bash
-# Using pip
-pip install -e .
-
-# Using Docker
-docker build -f Dockerfile.api -t reflowfy-api .
-docker build -f Dockerfile.worker -t reflowfy-worker .
-```
+---
 
 ## 🔌 Built-in Connectors
 
 ### Sources
-- **Elasticsearch**: Scroll-based pagination with runtime parameters
-- **SQL**: ID range and offset-based splitting (Postgres, MySQL, etc.)
-- **HTTP API**: Offset/cursor pagination with authentication
+
+- **Elasticsearch**: Scroll-based pagination with parameter injection
+- **SQL**: ID range and offset-based pagination (PostgreSQL, MySQL, etc.)
+- **HTTP API**: Offset/cursor pagination with various auth strategies
+- **S3**: Efficient distributed bucket processing (prefix splitting)
 
 ### Destinations
-- **Kafka**: Batching, compression, health checks
-- **HTTP**: Webhooks with retry logic
+
+- **Kafka**: High-throughput batching and compression
+- **HTTP**: Flexible webhooks with retry capabilities
+- **Console**: Structured output for local debugging
 
 ## ⚙️ Configuration
 
-### Environment Variables
+Control behavior via Environment Variables:
 
-**API:**
+**API Service:**
+
 ```bash
 API_HOST=0.0.0.0
 API_PORT=8000
@@ -163,43 +238,30 @@ KAFKA_BOOTSTRAP_SERVERS=kafka:9092
 KAFKA_TOPIC=reflow.jobs
 ```
 
-**Worker:**
+**Worker Service:**
+
 ```bash
 KAFKA_BOOTSTRAP_SERVERS=kafka:9092
 KAFKA_TOPIC=reflow.jobs
 KAFKA_GROUP_ID=reflowfy-workers
 ```
 
-## 🎛 Execution Modes
-
-| Mode | Endpoint | Use Case | Kafka | Workers |
-|------|----------|----------|-------|---------|
-| **Local** | `/pipelines/{name}/test` | Testing, debugging | ❌ | ❌ |
-| **Distributed** | `/pipelines/{name}/run` | Production | ✅ | ✅ |
-
-## 📊 Monitoring
-
-Reflowfy exposes Prometheus metrics:
-
-- `reflowfy_jobs_processed_total` - Total jobs processed
-- `reflowfy_job_processing_duration_seconds` - Job processing time
-- `reflowfy_records_processed_total` - Total records processed
-- `reflowfy_active_workers` - Active worker count
-
 ## 🐳 Kubernetes Deployment
 
-```bash
-# Deploy with Helm
-helm install reflowfy-api ./helm/reflowfy-api
-helm install reflowfy-worker ./helm/reflowfy-worker
-```
+Reflowfy natively supports OpenShift/Kubernetes via `reflowfy deploy`.
 
-KEDA will automatically scale workers based on Kafka lag.
+1. **Configure environment**: Define connection strings in your `.env`:
+   ```bash
+   REGISTRY=ghcr.io/myname
+   dataset=my-project
+   KAFKA_BOOTSTRAP_SERVERS=prod-kafka:9092
+   ```
+2. **Deploy**:
+   ```bash
+   reflowfy deploy
+   ```
+   Creates the API, Manager, auto-scaled KEDA Workers, and (optionally) PostgreSQL, dynamically injecting your pipeline code into the containers.
 
 ## 📝 License
 
 MIT
-
-## 🤝 Contributing
-
-Contributions welcome! This is a production-grade framework designed for real-world data processing at scale.

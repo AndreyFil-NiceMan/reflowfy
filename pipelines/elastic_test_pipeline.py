@@ -9,7 +9,7 @@ This pipeline:
 
 Usage:
     # Start Elasticsearch:
-    docker-compose -f docker-compose.elastic.yml up -d
+    docker compose -f docker-compose.elastic.yml up -d
     
     # Initialize test data:
     python examples/init_elastic_test_data.py
@@ -26,9 +26,11 @@ Usage:
     Same query params as above
 """
 
+import os
+from datetime import datetime
 from reflowfy import (
-    build_pipeline,
-    pipeline_registry,
+    AbstractPipeline,
+    PipelineParameter,
     BaseTransformation,
     elastic_source,
 )
@@ -45,30 +47,11 @@ class FilterByStatus(BaseTransformation):
     name = "filter_by_status"
     
     def __init__(self, allowed_status="active"):
-        """
-        Initialize filter.
-        
-        Args:
-            allowed_status: Status value to keep (default: 'active')
-        """
         self.allowed_status = allowed_status
     
-    def apply(self, records, context):
-        """
-        Filter records by status.
-        
-        Args:
-            records: List of records
-            context: Execution context
-        
-        Returns:
-            Filtered records
-        """
-        # Get filter status from runtime params if available
-        filter_status = context.get("runtime_params", {}).get(
-            "filter_status", 
-            self.allowed_status
-        )
+    def apply(self, records, runtime_params):
+        """Filter records by status."""
+        filter_status = runtime_params.get("filter_status", self.allowed_status)
         
         filtered = [
             r for r in records 
@@ -85,24 +68,12 @@ class EnrichWithProcessingInfo(BaseTransformation):
     
     name = "enrich_processing_info"
     
-    def apply(self, records, context):
-        """
-        Add processing metadata.
-        
-        Args:
-            records: List of records
-            context: Execution context
-        
-        Returns:
-            Enriched records
-        """
-        from datetime import datetime
-        
-        execution_id = context.get("execution_id", "unknown")
-        pipeline_name = context.get("pipeline_name", "unknown")
+    def apply(self, records, runtime_params):
+        """Add processing metadata."""
+        execution_id = runtime_params.get("execution_id", "unknown")
+        pipeline_name = runtime_params.get("pipeline_name", "unknown")
         
         for record in records:
-            # Add processing info
             record["_reflofy_processed"] = {
                 "execution_id": execution_id,
                 "pipeline_name": pipeline_name,
@@ -118,26 +89,15 @@ class FormatEventData(BaseTransformation):
     
     name = "format_event_data"
     
-    def apply(self, records, context):
-        """
-        Format event data fields.
-        
-        Args:
-            records: List of records
-            context: Execution context
-        
-        Returns:
-            Formatted records
-        """
+    def apply(self, records, runtime_params):
+        """Format event data fields."""
         for record in records:
-            # Add a formatted summary field
             event_type = record.get("event_type", "unknown")
             user_name = record.get("user_name", "unknown")
             timestamp = record.get("@timestamp", "unknown")
             
             record["_summary"] = f"{event_type} by {user_name} at {timestamp}"
             
-            # Format event data based on type
             event_data = record.get("event_data", {})
             if event_type == "purchase" and "amount" in event_data:
                 event_data["formatted_amount"] = f"${event_data['amount']:.2f}"
@@ -146,78 +106,91 @@ class FormatEventData(BaseTransformation):
 
 
 # ============================================================================
-# Pipeline Configuration
+# Pipeline Definition
 # ============================================================================
 
-import os
-
-# Configure Elasticsearch source
-# Use environment variable for URL (supports both local and Docker)
-elasticsearch_url = os.getenv("ELASTICSEARCH_URL", "http://localhost:9200")
-
-source = elastic_source(
-    url=elasticsearch_url,
-    index="reflofy-test-data",
-    base_query={
-        "query": {
-            "bool": {
-                "must": [
-                    {
-                        "range": {
-                            "@timestamp": {
-                                "gte": "{{ start_time }}",
-                                "lte": "{{ end_time }}",
+class ElasticTestPipeline(AbstractPipeline):
+    """
+    Elasticsearch-based test pipeline.
+    
+    Demonstrates:
+    - Dynamic source configuration with runtime parameters
+    - Conditional filtering based on parameters
+    - Exposed parameters for API documentation
+    """
+    
+    name = "elastic_test_pipeline"
+    rate_limit = 20
+    
+    def define_parameters(self):
+        """Define runtime parameters for this pipeline."""
+        return [
+            PipelineParameter(
+                name="start_time",
+                description="Start of time range (ISO format)",
+                required=True,
+                param_type=str,
+            ),
+            PipelineParameter(
+                name="end_time",
+                description="End of time range (ISO format)",
+                required=True,
+                param_type=str,
+            ),
+            PipelineParameter(
+                name="filter_status",
+                description="Status to filter by",
+                required=False,
+                param_type=str,
+                default="active",
+                choices=["active", "inactive", "pending"],
+            ),
+        ]
+    
+    def define_source(self, params):
+        """Configure Elasticsearch source with runtime parameters."""
+        elasticsearch_url = os.getenv("ELASTICSEARCH_URL", "http://localhost:9200")
+        
+        return elastic_source(
+            url=elasticsearch_url,
+            index="reflofy-test-data",
+            base_query={
+                "query": {
+                    "bool": {
+                        "must": [
+                            {
+                                "range": {
+                                    "@timestamp": {
+                                        "gte": "{{ start_time }}",
+                                        "lte": "{{ end_time }}",
+                                    }
+                                }
                             }
-                        }
+                        ],
                     }
+                },
+                "sort": [
+                    {"@timestamp": {"order": "desc"}}
                 ],
-            }
-        },
-        "sort": [
-            {"@timestamp": {"order": "desc"}}
-        ],
-    },
-    scroll="2m",
-    size=100,  # 100 docs per scroll page
-)
+            },
+            scroll="2m",
+            size=1,
+        )
+    
+    def define_destination(self, params):
+        """Configure console destination."""
+        return console_destination(
+            pretty_print=True,
+            max_records_display=10,
+        )
+    
+    def define_transformations(self, params):
+        """Build transformation pipeline."""
+        filter_status = params.get("filter_status", "active")
+        
+        return [
+            FilterByStatus(allowed_status=filter_status),
+            EnrichWithProcessingInfo(),
+            FormatEventData(),
+        ]
 
-# Configure console destination (prints to stdout)
-destination = console_destination(
-    pretty_print=True,
-    max_records_display=10,  # Show first 10 records
-)
-
-# Build and register pipeline
-pipeline = build_pipeline(
-    name="elastic_test_pipeline",
-    source=source,
-    transformations=[
-        FilterByStatus(allowed_status="active"),
-        EnrichWithProcessingInfo(),
-        FormatEventData(),
-    ],
-    destination=destination,
-    rate_limit={"jobs_per_second": 20},
-)
-
-pipeline_registry.register(pipeline)
-
-# ============================================================================
-# Pipeline Ready!
-# ============================================================================
-# 
-# The API will automatically create these routes:
-# - POST /pipelines/elastic_test_pipeline/run   (distributed mode)
-# - POST /pipelines/elastic_test_pipeline/test  (local mode)
-# - GET  /pipelines/elastic_test_pipeline/status
-#
-# Example requests:
-#
-# Local test (synchronous):
-#   curl -X POST "http://localhost:8000/pipelines/elastic_test_pipeline/test?start_time=2024-01-01T00:00:00&end_time=2024-12-31T23:59:59&filter_status=active"
-#
-# Distributed run (async):
-#   curl -X POST "http://localhost:8000/pipelines/elastic_test_pipeline/run?start_time=2024-01-01T00:00:00&end_time=2024-12-31T23:59:59"
-#
-# Or use Swagger UI at http://localhost:8000/docs
-# ============================================================================

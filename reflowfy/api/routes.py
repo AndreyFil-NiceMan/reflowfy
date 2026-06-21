@@ -1,19 +1,232 @@
 """Dynamic route generation for pipelines."""
 
-from typing import Dict, Any
+from typing import Any, Dict, List, Literal
+from inspect import Parameter, Signature
+
+import pydantic
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
+
 from reflowfy.api.execution import execution_tracker
-from inspect import Parameter, Signature
+from reflowfy.execution.base import ExecutionState
 
 
 class PipelineRunResponse(BaseModel):
     """Response model for pipeline execution."""
-    
+
     execution_id: str
     pipeline_name: str
     mode: str
+    rate_limit: float | None = None
     status: Dict[str, Any]
+
+
+def _check_status(status: Any) -> None:
+    """Raise HTTP 422 if the execution failed."""
+    if status.state == ExecutionState.FAILED:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": status.error_message, "execution_id": status.execution_id},
+        )
+
+
+def _run_body(
+    pipeline: Any,
+    local_executor: Any,
+    distributed_executor: Any,
+    pipeline_name: str,
+    runtime_params_dict: Dict[str, Any],
+    mode: str,
+    rate_limit: float | None,
+) -> PipelineRunResponse:
+    """Shared execution logic used by all route variants."""
+    if mode == "local":
+        executor = local_executor
+        mode_label = "local"
+    else:
+        executor = distributed_executor
+        mode_label = "distributed"
+
+    rate_limit_override = rate_limit
+
+    print(f"\n{'=' * 60}")
+    print(f"Running pipeline: {pipeline_name} (mode: {mode_label})")
+    print(f"{'=' * 60}")
+    print(f"Runtime params: {runtime_params_dict}")
+    if rate_limit:
+        print(f"Rate limit override: {rate_limit} jobs/sec")
+
+    try:
+        status = executor.execute(
+            pipeline=pipeline,
+            runtime_params=runtime_params_dict,
+            rate_limit_override=rate_limit_override,
+        )
+    except Exception as e:
+        print(f"Execution raised: {e}\n")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    execution_tracker.track(status)
+    _check_status(status)
+
+    print(f"Execution completed: {status.execution_id} state={status.state}\n")
+
+    return PipelineRunResponse(
+        execution_id=status.execution_id,
+        pipeline_name=pipeline_name,
+        mode=mode_label,
+        rate_limit=rate_limit,
+        status=status.to_dict(),
+    )
+
+
+def _param_annotation(p: Any):
+    """Return the type annotation for a PipelineParameter.
+
+    Parameters with `choices` become a Literal type so that
+    Swagger UI renders them as a dropdown.
+    """
+    if p.choices:
+        return Literal[tuple(p.choices)]
+    return p.param_type
+
+
+def _create_id_based_route(
+    app: FastAPI,
+    pipeline: Any,
+    local_executor: Any,
+    distributed_executor: Any,
+) -> None:
+    """
+    Register a run route for an IdBasedPipeline.
+
+    `ids` and any extra user-defined parameters are accepted in the request body.
+    """
+    pipeline_name = pipeline.name
+    extra_params = pipeline.define_parameters()  # user-defined params beyond ids
+
+    # Build dynamic Pydantic body model: ids + extra typed fields
+    fields: Dict[str, Any] = {"ids": (List[Any], ...)}
+    for p in extra_params:
+        default = ... if p.required else p.default
+        fields[p.name] = (_param_annotation(p), default)
+
+    BodyModel = pydantic.create_model(f"{pipeline_name}_Body", **fields)
+
+    async def run_pipeline(
+        body: BodyModel,
+        mode: Literal["local", "distributed"] = Query("distributed", description="Execution mode: 'local' or 'distributed'"),
+        rate_limit: float = Query(None, description="Override rate limit (jobs per second)"),
+    ):
+        """
+        Execute IdBasedPipeline.
+
+        Send `ids` (and any extra parameters) in the JSON request body.
+        """
+        return _run_body(
+            pipeline=pipeline,
+            local_executor=local_executor,
+            distributed_executor=distributed_executor,
+            pipeline_name=pipeline_name,
+            runtime_params_dict=body.model_dump(),
+            mode=mode,
+            rate_limit=rate_limit,
+        )
+
+    app.post(
+        f"/pipelines/{pipeline_name}/run",
+        response_model=PipelineRunResponse,
+        tags=["pipelines"],
+        summary=f"Run {pipeline_name}",
+        description=f"Execute {pipeline_name} (IdBasedPipeline). Send ids list in JSON body.",
+    )(run_pipeline)
+
+    print(f"  ✓ POST /pipelines/{pipeline_name}/run  [body: ids + params]")
+
+
+def _create_standard_route(
+    app: FastAPI,
+    pipeline: Any,
+    local_executor: Any,
+    distributed_executor: Any,
+) -> None:
+    """
+    Register a run route for a standard AbstractPipeline.
+
+    Runtime parameters are exposed as typed query parameters.
+    """
+    pipeline_name = pipeline.name
+    param_objects = pipeline.define_parameters()
+
+    mode_param = Parameter(
+        "mode",
+        Parameter.KEYWORD_ONLY,
+        default=Query("distributed", description="Execution mode: 'local' or 'distributed'"),
+        annotation=Literal["local", "distributed"],
+    )
+    rate_limit_param = Parameter(
+        "rate_limit",
+        Parameter.KEYWORD_ONLY,
+        default=Query(None, description="Override rate limit (jobs per second)"),
+        annotation=float,
+    )
+
+    if param_objects:
+        typed_params = [
+            Parameter(
+                p.name,
+                Parameter.KEYWORD_ONLY,
+                default=Query(
+                    p.default if not p.required else ...,
+                    description=p.description or f"Runtime parameter: {p.name}",
+                ),
+                annotation=_param_annotation(p),
+            )
+            for p in param_objects
+        ]
+
+        async def run_pipeline(mode: str = "distributed", rate_limit: float = None, **kwargs):
+            """Execute pipeline with typed query parameters."""
+            return _run_body(
+                pipeline=pipeline,
+                local_executor=local_executor,
+                distributed_executor=distributed_executor,
+                pipeline_name=pipeline_name,
+                runtime_params_dict=kwargs,
+                mode=mode,
+                rate_limit=rate_limit,
+            )
+
+        run_pipeline.__signature__ = Signature(
+            parameters=[mode_param, rate_limit_param] + typed_params
+        )
+    else:
+        async def run_pipeline(
+            mode: Literal["local", "distributed"] = Query("distributed", description="Execution mode: 'local' or 'distributed'"),
+            rate_limit: float = Query(None, description="Override rate limit (jobs per second)"),
+        ):
+            """Execute pipeline (no runtime parameters)."""
+            return _run_body(
+                pipeline=pipeline,
+                local_executor=local_executor,
+                distributed_executor=distributed_executor,
+                pipeline_name=pipeline_name,
+                runtime_params_dict={},
+                mode=mode,
+                rate_limit=rate_limit,
+            )
+
+    app.post(
+        f"/pipelines/{pipeline_name}/run",
+        response_model=PipelineRunResponse,
+        tags=["pipelines"],
+        summary=f"Run {pipeline_name}",
+        description=f"Execute {pipeline_name}. Use mode='local' for testing, 'distributed' for production.",
+    )(run_pipeline)
+
+    params_str = "&".join(p.name + "=..." for p in param_objects) if param_objects else ""
+    full_params = "?mode=distributed&rate_limit=..." + (f"&{params_str}" if params_str else "")
+    print(f"  ✓ POST /pipelines/{pipeline_name}/run{full_params}")
 
 
 def create_pipeline_routes(
@@ -24,210 +237,20 @@ def create_pipeline_routes(
 ) -> None:
     """
     Create dynamic routes for a pipeline.
-    
+
     Creates:
-    - POST /pipelines/{name}/run - Distributed execution
-    - POST /pipelines/{name}/test - Local execution
-    - GET /pipelines/{name}/status - Pipeline info
-    
-    Runtime parameters are exposed as query parameters for easy form-based input
-    in Swagger UI.
-    
-    Args:
-        app: FastAPI application
-        pipeline: Pipeline instance
-        local_executor: LocalExecutor instance
-        distributed_executor: DistributedExecutor instance
+    - POST /pipelines/{name}/run
+    - GET  /pipelines/{name}/status
     """
+    from reflowfy.core.id_based_pipeline import IdBasedPipeline
+
+    if isinstance(pipeline, IdBasedPipeline):
+        _create_id_based_route(app, pipeline, local_executor, distributed_executor)
+    else:
+        _create_standard_route(app, pipeline, local_executor, distributed_executor)
+
     pipeline_name = pipeline.name
-    runtime_params_list = pipeline.get_runtime_parameters()
-    
-    # Create query parameter definitions dynamically
-    # We'll use **kwargs to capture dynamic query params
-    
-    # Build the function signature dynamically
-    # Determine required runtime parameters from source
-    runtime_params_list = pipeline.source.get_runtime_parameters()
-    
-    if runtime_params_list:
-        params = [
-            Parameter(name, Parameter.KEYWORD_ONLY, default=Query(..., description=f"Runtime parameter: {name}"))
-            for name in runtime_params_list
-        ]
-    else:
-        params = []
-    
-    # Always add rate_limit parameter
-    rate_limit_param = Parameter(
-        'rate_limit',
-        Parameter.KEYWORD_ONLY,
-        default=Query(None, description="Override rate limit (jobs per second)"),
-        annotation=float,
-    )
-    
-    # Distributed execution endpoint
-    if runtime_params_list:
-        # Create function with dynamic parameters
-        async def run_pipeline(rate_limit: float = None, **kwargs):
-            """
-            Execute pipeline in distributed mode via Kafka.
-            
-            Jobs are dispatched to Kafka and processed asynchronously by workers.
-            """
-            runtime_params = kwargs
-            rate_limit_override = {"jobs_per_second": rate_limit} if rate_limit else None
-            
-            print(f"\n{'=' * 60}")
-            print(f"🚀 Running pipeline: {pipeline_name} (distributed)")
-            print(f"{'=' * 60}")
-            print(f"Runtime params: {runtime_params}")
-            
-            try:
-                # Execute pipeline
-                status = distributed_executor.execute(
-                    pipeline=pipeline,
-                    runtime_params=runtime_params,
-                    rate_limit_override=rate_limit_override,
-                )
-                
-                # Track execution
-                execution_tracker.track(status)
-                
-                print(f"✓ Execution started: {status.execution_id}\n")
-                
-                return PipelineRunResponse(
-                    execution_id=status.execution_id,
-                    pipeline_name=pipeline_name,
-                    mode="distributed",
-                    status=status.to_dict(),
-                )
-            
-            except Exception as e:
-                print(f"❌ Execution failed: {e}\n")
-                raise HTTPException(status_code=500, detail=str(e))
-        
-        # Set the signature to include rate_limit param and all dynamic parameters
-        sig_params = [rate_limit_param] + params
-        run_pipeline.__signature__ = Signature(parameters=sig_params)
-    else:
-        # No runtime parameters
-        async def run_pipeline(rate_limit: float = Query(None, description="Override rate limit (jobs per second)")):
-            """Execute pipeline in distributed mode via Kafka."""
-            runtime_params = {}
-            rate_limit_override = {"jobs_per_second": rate_limit} if rate_limit else None
-            
-            print(f"\n{'=' * 60}")
-            print(f"🚀 Running pipeline: {pipeline_name} (distributed)")
-            print(f"{'=' * 60}")
-            
-            try:
-                status = distributed_executor.execute(
-                    pipeline=pipeline,
-                    runtime_params=runtime_params,
-                    rate_limit_override=rate_limit_override,
-                )
-                
-                execution_tracker.track(status)
-                print(f"✓ Execution started: {status.execution_id}\n")
-                
-                return PipelineRunResponse(
-                    execution_id=status.execution_id,
-                    pipeline_name=pipeline_name,
-                    mode="distributed",
-                    status=status.to_dict(),
-                )
-            
-            except Exception as e:
-                print(f"❌ Execution failed: {e}\n")
-                raise HTTPException(status_code=500, detail=str(e))
-    
-    # Register the route
-    app.post(
-        f"/pipelines/{pipeline_name}/run",
-        response_model=PipelineRunResponse,
-        tags=["pipelines"],
-        summary=f"Run {pipeline_name} (distributed)",
-    )(run_pipeline)
-    
-    # Local execution endpoint (for testing)
-    if runtime_params_list:
-        async def test_pipeline(**kwargs):
-            """
-            Execute pipeline in local mode for testing.
-            
-            Runs synchronously with limited data. No Kafka or workers.
-            """
-            runtime_params = kwargs
-            
-            print(f"\n{'=' * 60}")
-            print(f"🧪 Testing pipeline: {pipeline_name} (local)")
-            print(f"{'=' * 60}")
-            print(f"Runtime params: {runtime_params}")
-            
-            try:
-                # Execute pipeline
-                status = local_executor.execute(
-                    pipeline=pipeline,
-                    runtime_params=runtime_params,
-                )
-                
-                # Track execution
-                execution_tracker.track(status)
-                
-                print(f"✓ Test complete: {status.execution_id}\n")
-                
-                return PipelineRunResponse(
-                    execution_id=status.execution_id,
-                    pipeline_name=pipeline_name,
-                    mode="local",
-                    status=status.to_dict(),
-                )
-            
-            except Exception as e:
-                print(f"❌ Test failed: {e}\n")
-                raise HTTPException(status_code=500, detail=str(e))
-        
-        # Set signature
-        sig_params = [Parameter('kwargs', Parameter.VAR_KEYWORD)] if not params else params
-        test_pipeline.__signature__ = Signature(parameters=sig_params)
-    else:
-        async def test_pipeline():
-            """Execute pipeline in local mode for testing."""
-            runtime_params = {}
-            
-            print(f"\n{'=' * 60}")
-            print(f"🧪 Testing pipeline: {pipeline_name} (local)")
-            print(f"{'=' * 60}")
-            
-            try:
-                status = local_executor.execute(
-                    pipeline=pipeline,
-                    runtime_params=runtime_params,
-                )
-                
-                execution_tracker.track(status)
-                print(f"✓ Test complete: {status.execution_id}\n")
-                
-                return PipelineRunResponse(
-                    execution_id=status.execution_id,
-                    pipeline_name=pipeline_name,
-                    mode="local",
-                    status=status.to_dict(),
-                )
-            
-            except Exception as e:
-                print(f"❌ Test failed: {e}\n")
-                raise HTTPException(status_code=500, detail=str(e))
-    
-    # Register the route
-    app.post(
-        f"/pipelines/{pipeline_name}/test",
-        response_model=PipelineRunResponse,
-        tags=["pipelines"],
-        summary=f"Test {pipeline_name} (local)",
-    )(test_pipeline)
-    
-    # Pipeline info endpoint
+
     @app.get(
         f"/pipelines/{pipeline_name}/status",
         tags=["pipelines"],
@@ -242,7 +265,5 @@ def create_pipeline_routes(
             "rate_limit": pipeline.rate_limit,
             "config": pipeline.config,
         }
-    
-    print(f"  ✓ POST /pipelines/{pipeline_name}/run?{('&'.join([p + '=...' for p in runtime_params_list]) if runtime_params_list else '')}")
-    print(f"  ✓ POST /pipelines/{pipeline_name}/test?{('&'.join([p + '=...' for p in runtime_params_list]) if runtime_params_list else '')}")
+
     print(f"  ✓ GET  /pipelines/{pipeline_name}/status")

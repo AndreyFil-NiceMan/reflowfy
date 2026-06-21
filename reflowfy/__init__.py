@@ -9,27 +9,39 @@ This framework enables users to define pipelines that:
 It is Kafka-based, Kubernetes-native, and order-independent for maximum parallelism.
 """
 
-from reflowfy.core.pipeline import Pipeline, build_pipeline
+from reflowfy.core.abstract_pipeline import AbstractPipeline, PipelineParameter
+from reflowfy.core.id_based_pipeline import IdBasedPipeline
 from reflowfy.core.registry import pipeline_registry
 from reflowfy.transformations.base import BaseTransformation
 from reflowfy.sources.elastic import elastic_source
 from reflowfy.sources.sql import sql_source
-from reflowfy.sources.api import api_source
 from reflowfy.destinations.kafka import kafka_destination
-from reflowfy.destinations.http import http_destination
+from reflowfy.destinations.api import api_destination
 from reflowfy.destinations.console import console_destination
 
-__version__ = "0.1.0"
+# Decorators for reusable components
+from reflowfy.sources.decorators import source, source_registry
+from reflowfy.destinations.decorators import destination, destination_registry
+from reflowfy.transformations.decorators import transformation
+
+__version__ = "1.0.12"
 
 __all__ = [
-    "Pipeline",
-    "build_pipeline",
+    "AbstractPipeline",
+    "IdBasedPipeline",
+    "PipelineParameter",
     "pipeline_registry",
     "BaseTransformation",
     "elastic_source",
     "sql_source",
-    "api_source",
     "kafka_destination",
-    "http_destination",
+    "api_destination",
     "console_destination",
+    # Decorators
+    "source",
+    "destination",
+    "transformation",
+    "source_registry",
+    "destination_registry",
 ]
+

@@ -1,0 +1,147 @@
+{{- if .Values.worker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-worker
+  labels:
+    {{- include "reflowfy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  {{- if not .Values.worker.keda.enabled }}
+  replicas: {{ .Values.worker.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app: reflowfy-worker
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: reflowfy-worker
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: worker
+    spec:
+      {{- with .Values.hostAliases }}
+      hostAliases:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 30
+      initContainers:
+        - name: wait-for-dependencies
+          image: {{ .Values.busybox.image }}
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for PostgreSQL at $DATABASE_HOST:$DATABASE_PORT..."
+              until nc -w 1 $DATABASE_HOST $DATABASE_PORT </dev/null; do
+                echo "PostgreSQL not ready, sleeping 2s..."
+                sleep 2
+              done
+              echo "PostgreSQL is ready!"
+
+              echo "Waiting for Kafka at $KAFKA_BOOTSTRAP_SERVERS..."
+              # Extract host and port from the first broker in the list
+              first_broker=$(echo $KAFKA_BOOTSTRAP_SERVERS | cut -d, -f1)
+              host=$(echo $first_broker | cut -d: -f1)
+              port=$(echo $first_broker | cut -d: -f2)
+              until nc -w 1 $host $port </dev/null; do
+                echo "Kafka not ready ($host:$port), sleeping 2s..."
+                sleep 2
+              done
+              echo "Kafka is ready!"
+          env:
+            - name: DATABASE_HOST
+              value: {{ include "reflowfy.postgresql.host" . | quote }}
+            - name: DATABASE_PORT
+              value: {{ include "reflowfy.postgresql.port" . | quote }}
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: {{ include "reflowfy.kafka.bootstrapServers" . | quote }}
+      containers:
+        - name: worker
+          image: "{{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag }}"
+          imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: {{ include "reflowfy.kafka.bootstrapServers" . | quote }}
+            - name: KAFKA_TOPIC
+              value: {{ include "reflowfy.kafka.topic" . | quote }}
+            - name: KAFKA_GROUP_ID
+              value: {{ include "reflowfy.kafka.groupId" . | quote }}
+            {{- if .Values.kafka.sasl.enabled }}
+            {{- include "reflowfy.kafka.saslEnv" . | nindent 12 }}
+            {{- end }}
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "reflowfy.postgresql.secretName" . }}
+                  key: {{ include "reflowfy.postgresql.secretKey" . }}
+            - name: DATABASE_URL
+              value: {{ include "reflowfy.databaseUrl" . | quote }}
+            - name: PIPELINE_MODULE
+              value: {{ .Values.reflowManager.pipelineModule | quote }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- if .Values.worker.keda.enabled }}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ .Release.Name }}-worker
+  labels:
+    {{- include "reflowfy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  scaleTargetRef:
+    name: {{ .Release.Name }}-worker
+  minReplicaCount: {{ .Values.worker.keda.minReplicaCount }}
+  maxReplicaCount: {{ .Values.worker.keda.maxReplicaCount }}
+  pollingInterval: {{ .Values.worker.keda.pollingInterval }}
+  cooldownPeriod: {{ .Values.worker.keda.cooldownPeriod }}
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: {{ include "reflowfy.kafka.bootstrapServers" . | quote }}
+        consumerGroup: {{ include "reflowfy.kafka.groupId" . | quote }}
+        topic: {{ include "reflowfy.kafka.topic" . | quote }}
+        lagThreshold: {{ .Values.worker.keda.lagThreshold | quote }}
+        {{- if .Values.kafka.sasl.enabled }}
+        sasl: {{ include "reflowfy.kafka.kedaSaslMechanism" . | quote }}
+        tls: {{ include "reflowfy.kafka.kedaTls" . | quote }}
+        {{- end }}
+      {{- if .Values.kafka.sasl.enabled }}
+      authenticationRef:
+        name: {{ .Release.Name }}-kafka-trigger-auth
+      {{- end }}
+{{- if .Values.kafka.sasl.enabled }}
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ .Release.Name }}-kafka-trigger-auth
+  labels:
+    {{- include "reflowfy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  secretTargetRef:
+    - parameter: username
+      name: {{ include "reflowfy.kafka.secretName" . }}
+      key: {{ include "reflowfy.kafka.usernameKey" . }}
+    - parameter: password
+      name: {{ include "reflowfy.kafka.secretName" . }}
+      key: {{ include "reflowfy.kafka.passwordKey" . }}
+{{- end }}
+{{- end }}
+{{- end }}

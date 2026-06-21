@@ -1,0 +1,6 @@
+apiVersion: v2
+name: reflowfy-reflow-manager
+description: Reflowfy ReflowManager - Rate limiting and state management service
+type: application
+version: 0.1.0
+appVersion: '0.1.0'

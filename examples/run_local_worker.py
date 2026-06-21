@@ -16,11 +16,9 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
 # Make sure transformations are registered
-from pipelines import simple_test_pipeline
-from pipelines import elastic_test_pipeline  # Add elastic transformations
 
 # Now start the worker
-from reflowfy.worker.main import main
+from reflowfy.worker.main import main  # noqa: E402
 
 if __name__ == "__main__":
     # Set environment variables for local Kafka

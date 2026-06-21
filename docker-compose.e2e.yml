@@ -1,0 +1,279 @@
+# E2E Testing Infrastructure
+# This compose file provides all dependencies needed for E2E tests
+# Usage: docker-compose -f docker-compose.e2e.yml up -d
+
+services:
+  # ============================================================================
+  # Core Services (Required for all tests)
+  # ============================================================================
+
+  # Zookeeper - required by Kafka
+  e2e-zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: reflofy-e2e-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - '2182:2181'
+    networks:
+      - reflofy-e2e-network
+    healthcheck:
+      test: ['CMD', 'nc', '-z', 'localhost', '2181']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Kafka broker for job queue and destination tests
+  e2e-kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: reflofy-e2e-kafka
+    depends_on:
+      e2e-zookeeper:
+        condition: service_healthy
+    ports:
+      - '9094:9094'
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: e2e-zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://e2e-kafka:29092,PLAINTEXT_HOST://localhost:9094
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9094
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    networks:
+      - reflofy-e2e-network
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'kafka-broker-api-versions',
+          '--bootstrap-server',
+          'localhost:9094',
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  # Kafka Topic Initialization
+  e2e-kafka-init:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: reflofy-e2e-kafka-init
+    depends_on:
+      e2e-kafka:
+        condition: service_healthy
+    command: >
+      bash -c " echo 'Waiting for Kafka to be ready...'; kafka-topics --bootstrap-server e2e-kafka:29092 --list; echo 'Creating topics...'; kafka-topics --bootstrap-server e2e-kafka:29092 --create --if-not-exists --topic e2e.reflow.jobs --partitions 1 --replication-factor 1; kafka-topics --bootstrap-server e2e-kafka:29092 --create --if-not-exists --topic e2e-test-destination --partitions 1 --replication-factor 1; kafka-topics --bootstrap-server e2e-kafka:29092 --create --if-not-exists --topic e2e-lag-health-check --partitions 1 --replication-factor 1; echo 'Topics created successfully'; "
+    networks:
+      - reflofy-e2e-network
+
+  # PostgreSQL - for ReflowManager state and SQL source tests
+  e2e-postgres:
+    image: postgres:15-alpine
+    container_name: reflofy-e2e-postgres
+    environment:
+      POSTGRES_DB: reflowfy_e2e
+      POSTGRES_USER: reflowfy
+      POSTGRES_PASSWORD: reflowfy
+    ports:
+      - '5433:5432'
+    networks:
+      - reflofy-e2e-network
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U reflowfy -d reflowfy_e2e']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - e2e-postgres-data:/var/lib/postgresql/data
+
+  # ============================================================================
+  # Elasticsearch (for Elastic Source Tests)
+  # ============================================================================
+
+  e2e-elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: reflofy-e2e-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - cluster.name=reflofy-e2e-cluster
+      - node.name=reflofy-e2e-node
+      - 'ES_JAVA_OPTS=-Xms512m -Xmx512m'
+      - xpack.security.enabled=false
+      - xpack.security.enrollment.enabled=false
+      - network.host=0.0.0.0
+    ports:
+      - '9201:9200'
+      - '9301:9300'
+    networks:
+      - reflofy-e2e-network
+    healthcheck:
+      test:
+        ['CMD-SHELL', 'curl -f http://localhost:9200/_cluster/health || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    volumes:
+      - e2e-elasticsearch-data:/usr/share/elasticsearch/data
+
+  # ============================================================================
+  # ReflowManager (for running pipelines)
+  # ============================================================================
+
+  e2e-reflow-manager:
+    build:
+      context: .
+      dockerfile: Dockerfile.reflow-manager
+    container_name: reflofy-e2e-reflow-manager
+    depends_on:
+      e2e-postgres:
+        condition: service_healthy
+      e2e-kafka:
+        condition: service_healthy
+      e2e-kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - '8002:8001'
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    environment:
+      DATABASE_URL: postgresql://reflowfy:reflowfy@e2e-postgres:5432/reflowfy_e2e
+      KAFKA_BOOTSTRAP_SERVERS: e2e-kafka:29092
+      KAFKA_TOPIC: e2e.reflow.jobs
+      MAX_JOBS_PER_SECOND: 100
+      PIPELINE_MODULE: tests.e2e.test_pipelines
+      HOST: 0.0.0.0
+      PORT: 8001
+      ELASTICSEARCH_URL: http://e2e-elasticsearch:9200
+      SQL_CONNECTION_URL: postgresql://reflowfy:reflowfy@e2e-postgres:5432/reflowfy_e2e
+      # For destination tests
+      MOCK_HTTP_URL: http://e2e-mock-http:8091/webhook
+      E2E_KAFKA_SERVERS: e2e-kafka:29092
+      # For API source tests
+      MOCK_API_URL: http://e2e-mock-api:8092
+    volumes:
+      - ./tests:/app/tests:ro
+    networks:
+      - reflofy-e2e-network
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8001/health']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
+  # Mock HTTP Server for E2E testing
+  e2e-mock-http:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: reflofy-e2e-mock-http
+    command: python -m tests.e2e.destinations.mock_api_server
+    ports:
+      - '8091:8091'
+    volumes:
+      - ./tests:/app/tests:ro
+    networks:
+      - reflofy-e2e-network
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import urllib.request; urllib.request.urlopen(''http://localhost:8091/health'')" || exit 1',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
+  # Mock API Server for API Source E2E testing
+  e2e-mock-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: reflofy-e2e-mock-api
+    command: python -m uvicorn tests.e2e.sources.mock_api_server:app --host 0.0.0.0 --port 8092
+    ports:
+      - '8092:8092'
+    volumes:
+      - ./tests:/app/tests:ro
+    networks:
+      - reflofy-e2e-network
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import urllib.request; urllib.request.urlopen(''http://localhost:8092/health'')" || exit 1',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Worker (for processing jobs)
+  # ============================================================================
+
+  e2e-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: reflofy-e2e-worker
+    depends_on:
+      e2e-kafka:
+        condition: service_healthy
+      e2e-reflow-manager:
+        condition: service_healthy
+      e2e-postgres:
+        condition: service_healthy
+      e2e-kafka-init:
+        condition: service_completed_successfully
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: e2e-kafka:29092
+      KAFKA_TOPIC: e2e.reflow.jobs
+      KAFKA_GROUP_ID: e2e-reflowfy-workers
+      DATABASE_URL: postgresql://reflowfy:reflowfy@e2e-postgres:5432/reflowfy_e2e
+      PIPELINE_MODULE: tests.e2e.test_pipelines
+      # For source tests
+      ELASTICSEARCH_URL: http://e2e-elasticsearch:9200
+      SQL_CONNECTION_URL: postgresql://reflowfy:reflowfy@e2e-postgres:5432/reflowfy_e2e
+      # For destination tests
+      MOCK_HTTP_URL: http://e2e-mock-http:8091/webhook
+      E2E_KAFKA_SERVERS: e2e-kafka:29092
+      # For API source tests
+      MOCK_API_URL: http://e2e-mock-api:8092
+    volumes:
+      - ./tests:/app/tests:ro
+    networks:
+      - reflofy-e2e-network
+    restart: unless-stopped
+
+  # ============================================================================
+  # Optional: Kafka UI (for debugging)
+  # ============================================================================
+
+  e2e-kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: reflofy-e2e-kafka-ui
+    depends_on:
+      - e2e-kafka
+    ports:
+      - '8081:8080'
+    environment:
+      KAFKA_CLUSTERS_0_NAME: e2e-local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: e2e-kafka:29092
+    networks:
+      - reflofy-e2e-network
+    profiles:
+      - debug # Only starts with --profile debug
+
+networks:
+  reflofy-e2e-network:
+    driver: bridge
+
+volumes:
+  e2e-postgres-data:
+  e2e-elasticsearch-data:

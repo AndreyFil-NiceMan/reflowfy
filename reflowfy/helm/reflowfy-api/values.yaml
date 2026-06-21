@@ -1,0 +1,68 @@
+replicaCount: 1
+
+image:
+  repository: reflowfy-api
+  pullPolicy: IfNotPresent
+  tag: 'local'
+
+service:
+  type: ClusterIP
+  port: 8000
+
+ingress:
+  enabled: false
+  className: ''
+  annotations: {}
+  hosts:
+    - host: reflowfy-api.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+
+# Kafka configuration
+kafka:
+  bootstrapServers: 'kafka:9092'
+  topic: 'reflow.jobs'
+
+# ReflowManager configuration
+reflowManager:
+  url: 'http://reflow-manager:8001'
+
+# Pipeline module to import
+pipelineModule: 'pipelines'
+
+# Pod security context (OpenShift compatible)
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
+
+env: []
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

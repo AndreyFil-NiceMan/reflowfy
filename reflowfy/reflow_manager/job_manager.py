@@ -1,0 +1,255 @@
+"""Job management for ReflowManager."""
+
+from datetime import datetime, timezone
+from typing import Dict, Any, List, Optional
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+from reflowfy.reflow_manager.models import Job
+
+
+class JobManager:
+    """Manages job records for pipeline executions."""
+
+    def __init__(self, db_session: Session):
+        self.db = db_session
+
+    def create_job(
+        self,
+        execution_id: str,
+        job_id: str,
+        job_payload: Dict[str, Any],
+        batch_number: Optional[int] = None,
+    ) -> Job:
+        """
+        Create a new job record.
+
+        Args:
+            execution_id: Execution identifier
+            job_id: Unique job identifier
+            job_payload: Full job data
+            batch_number: Batch number for grouping
+
+        Returns:
+            Created Job object
+        """
+        job = Job(
+            execution_id=execution_id,
+            job_id=job_id,
+            job_payload=job_payload,
+            state="pending",
+            batch_number=batch_number,
+        )
+
+        self.db.add(job)
+        self.db.commit()
+        self.db.refresh(job)
+
+        return job
+
+    def get_job(self, job_id: str) -> Optional[Job]:
+        """Get job by job_id."""
+        return self.db.query(Job).filter(Job.job_id == job_id).first()
+
+    def get_pending_jobs_by_batch_number(
+        self,
+        execution_id: str,
+        batch_number: int,
+    ) -> List[Job]:
+        """Get all pending jobs for a specific batch number."""
+        return self.db.query(Job).filter(
+            Job.execution_id == execution_id,
+            Job.batch_number == batch_number,
+            Job.state == "pending",
+        ).all()
+
+    def get_jobs(
+        self,
+        execution_id: str,
+        state: Optional[str] = None,
+    ) -> List[Job]:
+        """
+        Get jobs for an execution.
+
+        Args:
+            execution_id: Execution identifier
+            state: Optional state filter
+
+        Returns:
+            List of Job objects
+        """
+        query = self.db.query(Job).filter(
+            Job.execution_id == execution_id
+        )
+
+        if state:
+            query = query.filter(Job.state == state)
+
+        return query.order_by(Job.created_at).all()
+
+    def mark_jobs_dispatched(self, job_ids: List[str]) -> int:
+        """
+        Mark multiple jobs as dispatched.
+
+        Sets dispatched_at for all jobs (even if already completed by fast workers).
+        Only updates state to 'dispatched' for jobs still in 'pending' state.
+
+        Args:
+            job_ids: List of job IDs to mark
+
+        Returns:
+            Number of jobs updated
+        """
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        # First, set dispatched_at for ALL jobs (regardless of state)
+        self.db.query(Job).filter(
+            Job.job_id.in_(job_ids),
+            Job.dispatched_at.is_(None),  # Only if not already set
+        ).update(
+            {"dispatched_at": now},
+            synchronize_session=False,
+        )
+
+        # Then, update state to 'dispatched' only for pending jobs
+        updated = self.db.query(Job).filter(
+            Job.job_id.in_(job_ids),
+            Job.state == "pending",
+        ).update(
+            {"state": "dispatched"},
+            synchronize_session=False,
+        )
+
+        self.db.commit()
+        return updated
+
+    def update_job_state(
+        self,
+        job_id: str,
+        state: str,
+        processed_records: Optional[int] = None,
+        error_message: Optional[str] = None,
+        stats: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Job]:
+        """
+        Update job state.
+
+        Commits immediately to ensure the update is persisted.
+        """
+        update_data = {
+            "state": state,
+            "updated_at": datetime.now(timezone.utc).replace(tzinfo=None),
+        }
+
+        if state in ["completed", "failed"]:
+            update_data["completed_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
+        if processed_records is not None:
+            update_data["processed_records"] = processed_records
+        if error_message:
+            update_data["error_message"] = error_message
+        if stats:
+            update_data["stats"] = stats
+
+        updated = self.db.query(Job).filter(
+            Job.job_id == job_id
+        ).update(update_data, synchronize_session=False)
+
+        self.db.commit()
+
+        if updated == 0:
+            return None
+
+        return self.get_job(job_id)
+
+    def get_job_states(self, job_ids: List[str]) -> Dict[str, str]:
+        """
+        Get states for multiple jobs efficiently.
+
+        Note: Expires session cache first to see external updates from workers
+        who update jobs from their own database sessions.
+
+        Args:
+            job_ids: List of job identifiers
+
+        Returns:
+            Dictionary mapping job_id to state
+        """
+        # Expire cached objects to see external updates from workers
+        self.db.expire_all()
+
+        results = self.db.query(Job.job_id, Job.state).filter(
+            Job.job_id.in_(job_ids)
+        ).all()
+
+        return {job_id: state for job_id, state in results}
+
+    def get_job_counts(self, execution_id: str) -> Dict[str, int]:
+        """
+        Get job counts by state for an execution.
+
+        Note: Expires session cache first to see external updates from workers.
+
+        Returns:
+            Dictionary with total, pending, dispatched, completed, failed counts
+        """
+        # Expire cached objects to see external updates from workers
+        self.db.expire_all()
+
+        rows = self.db.query(Job.state, func.count(Job.job_id)).filter(
+            Job.execution_id == execution_id
+        ).group_by(Job.state).all()
+
+        counts = {
+            "total": 0,
+            "pending": 0,
+            "dispatched": 0,
+            "completed": 0,
+            "failed": 0,
+        }
+
+        total = 0
+        for state, count in rows:
+            if state in counts:
+                counts[state] = count
+            total += count
+
+        counts["total"] = total
+        return counts
+
+    def bulk_set_total_batches(self, execution_id: str, total_batches: int) -> None:
+        """Update total_batches in every job's metadata payload for an execution.
+
+        Casts job_payload to jsonb before calling jsonb_set because SQLAlchemy maps
+        Column(JSON) to PostgreSQL's json type, and jsonb_set only accepts jsonb.
+        """
+        from sqlalchemy import text
+        self.db.execute(
+            text(
+                "UPDATE jobs "
+                "SET job_payload = jsonb_set(job_payload::jsonb, '{metadata,total_batches}', :val::jsonb) "
+                "WHERE execution_id = :eid"
+            ),
+            {"val": str(total_batches), "eid": execution_id},
+        )
+        self.db.commit()
+
+    def get_first_incomplete_batch(self, execution_id: str) -> Optional[int]:
+        """
+        Find the first batch with pending or dispatched jobs.
+
+        Used for crash recovery to resume from where we left off.
+
+        Args:
+            execution_id: Execution identifier
+
+        Returns:
+            Batch number of first incomplete batch, or None if all complete
+        """
+        result = self.db.query(Job.batch_number).filter(
+            Job.execution_id == execution_id,
+            Job.state.in_(["pending", "dispatched"]),
+            Job.batch_number.isnot(None),
+        ).order_by(Job.batch_number).first()
+
+        return result[0] if result else None
+
+

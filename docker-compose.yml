@@ -9,7 +9,7 @@ services:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
     ports:
-      - "2181:2181"
+      - '2181:2181'
     volumes:
       - zookeeper_data:/var/lib/zookeeper/data
       - zookeeper_log:/var/lib/zookeeper/log
@@ -23,13 +23,13 @@ services:
     depends_on:
       - zookeeper
     ports:
-      - "9093:9093"
+      - '9093:9093'
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9093
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9093,EXTERNAL://${KAFKA_EXTERNAL_HOST:-host.docker.internal}:${KAFKA_EXTERNAL_PORT:-9094}
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9093,EXTERNAL://0.0.0.0:9094
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
@@ -39,7 +39,13 @@ services:
     networks:
       - reflowfy-network
     healthcheck:
-      test: [ "CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9093" ]
+      test:
+        [
+          'CMD',
+          'kafka-broker-api-versions',
+          '--bootstrap-server',
+          'localhost:9093',
+        ]
       interval: 10s
       timeout: 10s
       retries: 5
@@ -51,7 +57,7 @@ services:
     depends_on:
       - kafka
     ports:
-      - "8080:8080"
+      - '8080:8080'
     environment:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
@@ -68,16 +74,31 @@ services:
       POSTGRES_USER: reflowfy
       POSTGRES_PASSWORD: reflowfy
     ports:
-      - "5432:5432"
+      - '5432:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - reflowfy-network
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U reflowfy" ]
+      test: ['CMD-SHELL', 'pg_isready -U reflowfy']
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # pgAdmin - PostgreSQL Web UI
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: reflowfy-pgadmin
+    depends_on:
+      - postgres
+    ports:
+      - '5050:80'
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    networks:
+      - reflowfy-network
 
   # ReflowManager - Rate limiting and state management service
   reflow-manager:
@@ -88,22 +109,21 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
     ports:
-      - "8001:8001"
+      - '8001:8001'
     environment:
       DATABASE_URL: postgresql://reflowfy:reflowfy@postgres:5432/reflowfy
-      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-      KAFKA_TOPIC: reflow.jobs
+      EXECUTION_MODE: local
       MAX_JOBS_PER_SECOND: 100
       PIPELINE_MODULE: pipelines
       HOST: 0.0.0.0
       PORT: 8001
+      ELASTICSEARCH_URL: http://reflofy-elasticsearch:9200
     networks:
       - reflowfy-network
+      - reflofy-elastic-network
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8001/health" ]
+      test: ['CMD', 'curl', '-f', 'http://localhost:8001/health']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -117,10 +137,8 @@ services:
     depends_on:
       reflow-manager:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
     ports:
-      - "8000:8000"
+      - '8000:8000'
     environment:
       API_HOST: 0.0.0.0
       API_PORT: 8000
@@ -131,11 +149,41 @@ services:
       - reflowfy-network
       - reflofy-elastic-network # Connect to Elasticsearch network
     healthcheck:
-      test: [ "CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health')" ]
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          "import httpx; httpx.get('http://localhost:8000/health')",
+        ]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  # Reflowfy Worker - Scalable job processor
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    depends_on:
+      kafka:
+        condition: service_healthy
+      reflow-manager:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC: reflow.jobs
+      KAFKA_GROUP_ID: reflowfy-workers
+      DATABASE_URL: postgresql://reflowfy:reflowfy@postgres:5432/reflowfy
+    networks:
+      - reflowfy-network
+    restart: unless-stopped
+    deploy:
+      replicas: 1
+
 networks:
   reflowfy-network:
     driver: bridge

@@ -1,0 +1,17 @@
+{
+	"query": {
+		"bool": {
+			"must": [
+				{
+					"range": {
+						"@timestamp": {
+							"gte": "{{ start_time }}",
+							"lte": "{{ end_time }}"
+						}
+					}
+				}
+			]
+		}
+	},
+	"sort": [{"@timestamp": {"order": "desc"}}]
+}

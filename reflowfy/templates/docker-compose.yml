@@ -1,0 +1,114 @@
+services:
+  # PostgreSQL - Database for ReflowManager
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:15-alpine}
+    container_name: reflowfy-postgres
+    environment:
+      POSTGRES_DB: reflowfy
+      POSTGRES_USER: reflowfy
+      POSTGRES_PASSWORD: reflowfy
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - reflowfy-network
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U reflowfy']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # pgAdmin - PostgreSQL Web UI
+  pgadmin:
+    image: ${PGADMIN_IMAGE:-dpage/pgadmin4:latest}
+    container_name: reflowfy-pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - '5050:80'
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    networks:
+      - reflowfy-network
+
+  # ReflowManager - Rate limiting and state management service
+  reflow-manager:
+    build:
+      context: .
+      dockerfile: Dockerfile.reflow-manager
+      args:
+        REFLOWFY_BASE_IMAGE: ${REFLOWFY_BASE_IMAGE:-reflowfy-base:latest}
+    container_name: reflowfy-reflow-manager
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - '8001:8001'
+    environment:
+      DATABASE_URL: postgresql://reflowfy:reflowfy@postgres:5432/reflowfy
+      # Kafka settings are ignored in local mode
+      KAFKA_BOOTSTRAP_SERVERS: 'ignored:9092'
+      KAFKA_TOPIC: reflow.jobs
+      MAX_JOBS_PER_SECOND: 100
+      PIPELINE_MODULE: pipelines
+      HOST: 0.0.0.0
+      PORT: 8001
+      EXECUTION_MODE: local
+    networks:
+      - reflowfy-network
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # Reflowfy API - Main API service
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+      args:
+        REFLOWFY_BASE_IMAGE: ${REFLOWFY_BASE_IMAGE:-reflowfy-base:latest}
+    container_name: reflowfy-api
+    depends_on:
+      reflow-manager:
+        condition: service_healthy
+    ports:
+      - '8000:8000'
+    environment:
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      REFLOW_MANAGER_URL: http://reflow-manager:8001
+      PIPELINE_MODULE: pipelines
+    networks:
+      - reflowfy-network
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          "import httpx; httpx.get('http://localhost:8000/health')",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  reflowfy-network:
+    driver: bridge
+
+volumes:
+  postgres_data:

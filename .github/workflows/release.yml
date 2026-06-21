@@ -1,0 +1,75 @@
+name: Release
+
+# Publishes a release when a GitHub Release is published:
+#   1. builds the wheel + sdist and uploads them to PyPI (Trusted Publishing)
+#   2. builds the reflowfy base image (reflowfy + all deps) from the just-published
+#      package, saves it to a gzipped tar, and attaches it to the Release.
+#
+# The release tag must match reflowfy.__version__ (e.g. tag v1.0.12 -> 1.0.12).
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write   # upload assets to the Release
+  id-token: write   # PyPI Trusted Publishing (OIDC)
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify release tag matches package version
+        run: |
+          PKG_VERSION=$(python -c "import re, pathlib; print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', pathlib.Path('reflowfy/__init__.py').read_text()).group(1))")
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "package=$PKG_VERSION tag=$TAG"
+          if [ "$PKG_VERSION" != "$TAG" ]; then
+            echo "::error::Release tag ($TAG) does not match reflowfy.__version__ ($PKG_VERSION)"
+            exit 1
+          fi
+          echo "VERSION=$PKG_VERSION" >> "$GITHUB_ENV"
+
+      - name: Build package
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+
+      - name: Publish to PyPI (Trusted Publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Wait for PyPI to index the release
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsSL "https://pypi.org/pypi/reflowfy/${VERSION}/json" >/dev/null 2>&1; then
+              echo "reflowfy ${VERSION} is available on PyPI"
+              exit 0
+            fi
+            echo "waiting for PyPI to index reflowfy ${VERSION}... ($i/30)"
+            sleep 10
+          done
+          echo "::error::reflowfy ${VERSION} not visible on PyPI after timeout"
+          exit 1
+
+      - name: Build base image (reflowfy + deps)
+        env:
+          REFLOWFY_BASE_IMAGE: reflowfy-base
+          REFLOWFY_VERSION: ${{ env.VERSION }}
+        run: ./scripts/build_base_image.sh --no-push
+
+      - name: Save base image to a gzipped tar
+        run: |
+          docker save "reflowfy-base:${VERSION}" "reflowfy-base:latest" \
+            | gzip > "reflowfy-base-${VERSION}.tar.gz"
+          ls -lh "reflowfy-base-${VERSION}.tar.gz"
+
+      - name: Attach base image tar to the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${GITHUB_REF_NAME}" "reflowfy-base-${VERSION}.tar.gz" --clobber

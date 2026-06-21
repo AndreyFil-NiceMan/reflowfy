@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-sasl-config
+  namespace: kofli-dev
+data:
+  # JAAS configuration for SCRAM-SHA-256
+  kafka_server_jaas.conf: |
+    KafkaServer {
+      org.apache.kafka.common.security.scram.ScramLoginModule required
+      username="admin"
+      password="admin-secret";
+    };
+
+  # Initialize SCRAM user script
+  init-scram-users.sh: |
+    #!/bin/bash
+    set -e
+    echo "Waiting for Kafka to be ready..."
+    sleep 30
+
+    # Create SCRAM user for reflowfy
+    echo "Creating SCRAM user: reflowfy"
+    /opt/kafka/bin/kafka-configs.sh --bootstrap-server localhost:9092 \
+      --alter --add-config 'SCRAM-SHA-256=[password=reflowfy-secret]' \
+      --entity-type users --entity-name reflowfy
+
+    echo "SCRAM user created successfully"

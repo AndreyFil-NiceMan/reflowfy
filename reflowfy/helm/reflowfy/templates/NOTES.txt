@@ -1,0 +1,26 @@
+
+Reflowfy installed.
+
+{{- if .Values.postgresql.enabled }}
+PostgreSQL: internal ({{ .Release.Name }}-postgresql:5432)
+{{- else }}
+PostgreSQL: external ({{ .Values.postgresql.external.host }}:{{ .Values.postgresql.external.port }})
+{{- end }}
+{{- if .Values.kafka.enabled }}
+Kafka:      internal ({{ .Release.Name }}-kafka:9092)
+{{- else }}
+Kafka:      external ({{ .Values.kafka.external.bootstrapServers }})
+{{- end }}
+Topic:      {{ include "reflowfy.kafka.topic" . }}
+
+Pods:   kubectl get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+{{- if .Values.api.enabled }}
+API:    kubectl port-forward svc/{{ .Release.Name }}-api {{ .Values.api.service.port }}:{{ .Values.api.service.port }}
+{{- end }}
+{{- if .Values.reflowManager.enabled }}
+Manager: kubectl port-forward svc/{{ .Release.Name }}-reflow-manager {{ .Values.reflowManager.service.port }}:{{ .Values.reflowManager.service.port }}  (docs at /docs)
+{{- end }}
+
+See GETTING_STARTED.md for more.
+</content>
+</invoke>

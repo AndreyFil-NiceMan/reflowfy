@@ -1,0 +1,172 @@
+#####################################
+# INFRASTRUCTURE - POSTGRESQL
+#####################################
+postgresql:
+  # Set to true to deploy PostgreSQL via Bitnami chart
+  # Set to false to use external PostgreSQL
+  enabled: true
+
+  # External PostgreSQL configuration (used when enabled=false)
+  external:
+    host: '' # Required if enabled=false
+    port: 5432
+    database: 'reflowfy'
+    username: 'reflowfy'
+    password: '' # Plain password (use existingSecret in production)
+    existingSecret: '' # Name of K8s secret containing password
+    existingSecretPasswordKey: 'password'
+
+  # Bitnami PostgreSQL chart values (used when enabled=true)
+  auth:
+    postgresPassword: 'reflowfy'
+    username: 'reflowfy'
+    password: 'reflowfy'
+    database: 'reflowfy'
+  primary:
+    persistence:
+      enabled: true
+      size: 1Gi
+    # OpenShift compatible
+    podSecurityContext:
+      enabled: false
+    containerSecurityContext:
+      enabled: false
+
+#####################################
+# INFRASTRUCTURE - KAFKA
+#####################################
+#####################################
+# INFRASTRUCTURE - KAFKA
+#####################################
+kafka:
+  # Topic that the ReflowManager produces jobs to and workers consume from.
+  topic: 'reflow.jobs'
+  # Consumer group ID shared by all workers (and watched by the KEDA scaler).
+  groupId: 'reflowfy-workers'
+
+  # External Kafka configuration (MANDATORY)
+  # You must provide the bootstrap servers for your external Kafka cluster.
+  external:
+    bootstrapServers: 'kafka:9092'
+
+  # SASL Authentication
+  sasl:
+    enabled: true
+    mechanism: 'SCRAM-SHA-256'
+    securityProtocol: 'SASL_PLAINTEXT'
+    username: 'reflowfy'
+    # Password for the chart-managed secret (required when existingSecret is empty).
+    # Prefer passing this at install time via --set or .env rather than committing it.
+    password: ''
+    # Provide an existingSecret to bring your own Kafka credentials instead of letting
+    # the chart create one. It must contain both username and password keys.
+    existingSecret: ''
+    existingSecretUsernameKey: 'username'
+    existingSecretPasswordKey: 'password'
+
+  # Common settings
+  topic: 'reflow.jobs'
+  groupId: 'reflowfy-workers'
+
+#####################################
+# REFLOWFY COMPONENTS
+#####################################
+
+# API Service
+api:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: image-registry.openshift-image-registry.svc:5000/kofli-dev/reflowfy-api
+    tag: 'latest'
+    pullPolicy: Always
+  service:
+    type: NodePort
+    port: 8000
+    # nodePort: 30000  # Optional: fix the port
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+# ReflowManager Service
+reflowManager:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: image-registry.openshift-image-registry.svc:5000/kofli-dev/reflowfy-reflow-manager
+    tag: 'latest'
+    pullPolicy: Always
+  service:
+    type: NodePort
+    port: 8001
+    # nodePort: 30001  # Optional: fix the port
+  maxJobsPerSecond: 100
+  pipelineModule: 'pipelines'
+  logLevel: 'INFO'
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+# Worker
+worker:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: image-registry.openshift-image-registry.svc:5000/kofli-dev/reflowfy-worker
+    tag: 'latest'
+    pullPolicy: Always
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+  # KEDA autoscaling (disabled by default for local testing)
+  keda:
+    enabled: false
+    minReplicaCount: 0
+    maxReplicaCount: 100
+    pollingInterval: 10
+    cooldownPeriod: 60
+    lagThreshold: 10
+
+#####################################
+# GLOBAL SETTINGS
+#####################################
+global:
+  # Image pull secrets (if using private registry)
+  imagePullSecrets: []
+
+  # Global security settings
+  security:
+    allowInsecureImages: false
+
+# Pod security context (set runAsNonRoot: true for OpenShift if images support it)
+podSecurityContext:
+  {}
+  # runAsNonRoot: true
+  # seccompProfile:
+  #   type: RuntimeDefault
+
+securityContext:
+  {}
+  # allowPrivilegeEscalation: false
+  # capabilities:
+  #   drop:
+  #     - ALL
+  # readOnlyRootFilesystem: false
+
+#####################################
+# UTILITY IMAGES
+#####################################
+busybox:
+  image: 'busybox:1.36'

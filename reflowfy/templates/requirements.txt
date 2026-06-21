@@ -1,0 +1,9 @@
+# Project dependencies for your pipelines, sources, destinations and
+# transformations. These are installed on top of the reflowfy base image
+# when the api / reflow-manager / worker images are built.
+#
+# reflowfy itself is already provided by the base image — do NOT list it here.
+#
+# Example:
+#   pandas>=2.0
+#   requests>=2.31

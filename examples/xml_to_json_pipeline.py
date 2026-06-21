@@ -22,7 +22,7 @@ class XmlToJson(BaseTransformation):
     
     name = "xml_to_json"
     
-    def apply(self, records, context):
+    def apply(self, records, runtime_params):
         """
         Parse XML and convert to JSON.
         
@@ -102,7 +102,7 @@ pipeline = build_pipeline(
     source=source,
     transformations=[XmlToJson()],
     destination=destination,
-    rate_limit={"jobs_per_second": 50},
+    rate_limit=50,
 )
 
 pipeline_registry.register(pipeline)

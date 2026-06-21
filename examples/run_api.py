@@ -7,7 +7,6 @@ This script:
 """
 
 # Import pipeline definitions - this triggers auto-registration
-import xml_to_json_pipeline
 
 # Start the API
 from reflowfy.api.app import main
