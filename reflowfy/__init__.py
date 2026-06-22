@@ -24,7 +24,7 @@ from reflowfy.sources.decorators import source, source_registry
 from reflowfy.destinations.decorators import destination, destination_registry
 from reflowfy.transformations.decorators import transformation
 
-__version__ = "1.0.12"
+__version__ = "1.0.13"
 
 __all__ = [
     "AbstractPipeline",
