@@ -14,9 +14,9 @@ class ApiDestination(BaseDestination):
 
     The request ``body`` is sent verbatim — build it yourself in
     ``define_destination(records, runtime_params)``. A ``dict``/``list`` is sent
-    as JSON (``Content-Type: application/json``); a ``str`` is sent as a raw body
-    (set your own ``Content-Type`` via ``headers``). ``body=None`` sends a request
-    with no body. Each ``send()`` issues exactly one request.
+    as JSON (``Content-Type: application/json``); a ``str`` or ``bytes`` is sent
+    as a raw body (set your own ``Content-Type`` via ``headers``). ``body=None``
+    sends a request with no body. Each ``send()`` issues exactly one request.
 
     Supports:
     - Configurable authentication (Bearer, API key, Basic)
@@ -50,8 +50,8 @@ class ApiDestination(BaseDestination):
             timeout: Request timeout in seconds.
             params: URL query parameters appended to every request.
             body: Request body sent verbatim. ``dict``/``list`` → JSON;
-                ``str`` → raw body (set ``Content-Type`` via ``headers``).
-                ``None`` sends no body.
+                ``str``/``bytes`` → raw body (set ``Content-Type`` via
+                ``headers``). ``None`` sends no body.
             retry_config: Optional retry configuration.
             health_check_enabled: Enable/disable destination health check.
         """
@@ -103,7 +103,7 @@ class ApiDestination(BaseDestination):
         try:
             if body is None:
                 response = await client.request(method, url, params=params)
-            elif isinstance(body, str):
+            elif isinstance(body, (str, bytes)):
                 response = await client.request(method, url, content=body, params=params)
             else:
                 response = await client.request(method, url, json=body, params=params)
