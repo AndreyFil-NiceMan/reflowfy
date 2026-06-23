@@ -42,6 +42,11 @@ class BaseSource(ABC):
         self.config = config
         self._resolved_config: Optional[Dict[str, Any]] = None
 
+    @property
+    def registry_type(self) -> str:
+        """Stable type name used to serialize/reconstruct this source."""
+        return self.__class__.__name__
+
     def resolve_parameters(self, runtime_params: Dict[str, Any]) -> Dict[str, Any] | None:
         """
         Resolve Jinja2 templates in configuration with runtime parameters.

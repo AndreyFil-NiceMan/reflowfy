@@ -32,25 +32,22 @@ class SourceFactory:
 
     @classmethod
     def create(cls, type_name: str, config: Dict[str, Any]) -> BaseSource:
-        """
-        Create a source instance by type name.
+        """Reconstruct a source from its registry type name and config dict.
 
-        Args:
-            type_name: Registered source type name
-            config: Configuration to pass to the source
-
-        Returns:
-            Configured BaseSource instance
-
-        Raises:
-            ValueError: If type_name is not registered
+        Every built-in source stores ``config`` as exactly its constructor
+        kwargs, so reconstruction is a uniform ``cls(**config)``.
         """
         if type_name not in cls._registry:
-            available = ", ".join(cls._registry.keys()) if cls._registry else "none"
+            available = ", ".join(sorted(cls._registry)) if cls._registry else "none"
             raise ValueError(
                 f"Unknown source type: '{type_name}'. Available types: {available}"
             )
-        return cls._registry[type_name](config)
+        return cls._registry[type_name](**config)
+
+    @classmethod
+    def serialize(cls, source: BaseSource) -> Dict[str, Any]:
+        """Serialize a source instance to a ``{type, config}`` descriptor."""
+        return {"type": source.registry_type, "config": source.config}
 
     @classmethod
     def list_types(cls) -> List[str]:
@@ -64,24 +61,24 @@ class SourceFactory:
 
 
 def _register_builtin_sources() -> None:
-    """Register built-in source types."""
-    try:
-        from reflowfy.sources.elastic import ElasticSource
-        SourceFactory.register("elastic", ElasticSource)
-    except ImportError:
-        pass
+    """Register built-in source types by class name."""
+    from reflowfy.sources.static import StaticSource
+    from reflowfy.sources.mock import MockSource
 
-    try:
-        from reflowfy.sources.sql import SQLSource
-        SourceFactory.register("sql", SQLSource)
-    except ImportError:
-        pass
+    SourceFactory.register("StaticSource", StaticSource)
+    SourceFactory.register("MockSource", MockSource)
 
-    try:
-        from reflowfy.sources.mock import MockSource
-        SourceFactory.register("mock", MockSource)
-    except ImportError:
-        pass
+    for module, classname in (
+        ("reflowfy.sources.elastic", "ElasticSource"),
+        ("reflowfy.sources.sql", "SqlSource"),
+        ("reflowfy.sources.s3", "S3Source"),
+        ("reflowfy.sources.api", "IDBasedAPISource"),
+    ):
+        try:
+            mod = __import__(module, fromlist=[classname])
+            SourceFactory.register(classname, getattr(mod, classname))
+        except ImportError:
+            pass  # optional dependency (boto3, elasticsearch) not installed
 
 
 # Auto-register on import
