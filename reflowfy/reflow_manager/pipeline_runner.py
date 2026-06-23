@@ -35,20 +35,23 @@ def _filter_volatile_keys(d: dict) -> dict:
 
 def generate_job_id(
     pipeline_name: str,
-    transformations: list,
-    records: list,
-    source_metadata: dict,
+    source: Dict[str, Any],
+    current_ids: Optional[list] = None,
 ) -> str:
-    """Return a deterministic SHA256 job ID derived from stable job content.
+    """Return a deterministic SHA256 job ID derived from the source slice.
 
-    Used when enable_duplicate_jobs=False to ensure the same data always
-    produces the same job ID across pipeline runs.
+    Used when enable_duplicate_jobs=False. The narrowed source ``config``
+    encodes the slice (id-range, scroll/PIT id, key list, or — for
+    StaticSource — the records themselves), so identical slices produce the
+    same ID across runs. Volatile date/time keys are stripped from config.
     """
     stable = {
         "pipeline_name": pipeline_name,
-        "transformations": sorted(transformations),
-        "records": records,
-        "source_metadata": _filter_volatile_keys(source_metadata or {}),
+        "source": {
+            "type": source.get("type"),
+            "config": _filter_volatile_keys(source.get("config", {}) or {}),
+        },
+        "current_ids": current_ids,
     }
     content = json.dumps(stable, sort_keys=True, default=str)
     return hashlib.sha256(content.encode()).hexdigest()
