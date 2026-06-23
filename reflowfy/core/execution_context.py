@@ -47,7 +47,6 @@ class ExecutionContext:
             "batch_id": self.batch_id,
             "pipeline_name": self.pipeline_name,
             "runtime_params": self.runtime_params,
-            "metadata": self.metadata,
             "created_at": self.created_at.isoformat(),
             "batch_number": self.batch_number,
             "total_batches": self.total_batches,
