@@ -69,6 +69,16 @@ class BaseSource(ABC):
         """
         return list(parameter_resolver.extract_parameters(self.config))
 
+    def split(self, runtime_params: Dict[str, Any]) -> "Iterator[BaseSource]":
+        """Manager-side planning. Yield one narrowed source per job.
+
+        Metadata-only and cheap — MUST NOT fetch bulk data. The default
+        yields ``self`` (a single job; the worker fetches the whole source).
+        Sources that can shard cheaply override this to yield N sub-sources,
+        each with its slice baked into ``config``.
+        """
+        yield self
+
     @abstractmethod
     def fetch(self, runtime_params: Dict[str, Any], limit: Optional[int] = None) -> List[Any]:
         """
