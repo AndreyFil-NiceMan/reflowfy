@@ -11,7 +11,7 @@ class SourceFactory:
     Allows dynamic source creation based on configuration:
 
     Example:
-        >>> source = SourceFactory.create("elastic", {
+        >>> source = SourceFactory.create("ElasticSource", {
         ...     "url": "http://localhost:9200",
         ...     "index": "my-index"
         ... })
@@ -25,7 +25,7 @@ class SourceFactory:
         Register a source type.
 
         Args:
-            type_name: Short name for the source type (e.g., "elastic")
+            type_name: Class name used as the registry key (e.g., "ElasticSource")
             source_class: The source class to register
         """
         cls._registry[type_name] = source_class
