@@ -134,6 +134,20 @@ class S3Source(BaseSource):
         resolved_config = self.resolve_parameters(runtime_params)
         if resolved_config is None:
             raise SourceError("s3", "No valid configuration resolved", None)
+
+        explicit_keys = resolved_config.get("keys")
+        if explicit_keys:
+            records: List[Any] = []
+            for key in explicit_keys:
+                if resolved_config["read_content"]:
+                    content = self._read_object_content(key)
+                    records.extend(content if isinstance(content, list) else [content])
+                else:
+                    records.append({"key": key})
+                if limit and len(records) >= limit:
+                    return records[:limit]
+            return records
+
         client = self._get_client()
 
         bucket = resolved_config["bucket"]
@@ -257,6 +271,32 @@ class S3Source(BaseSource):
 
         except ClientError as e:
             raise SourceError("s3", f"Failed to split jobs: {e}", e)
+
+    def split(self, runtime_params: Dict[str, Any]) -> Iterator["S3Source"]:
+        """List object keys (metadata-only) and yield page_size key batches."""
+        resolved = self.resolve_parameters(runtime_params) or self.config
+        client = self._get_client()
+        page_size = resolved.get("page_size", 1000)
+        paginator = client.get_paginator("list_objects_v2")
+        pages = paginator.paginate(
+            Bucket=resolved["bucket"], Prefix=resolved["prefix"],
+            PaginationConfig={"PageSize": page_size},
+        )
+        c = self.config
+        for page in pages:
+            keys = [o["Key"] for o in page.get("Contents", []) if self._matches_pattern(o["Key"])]
+            if not keys:
+                continue
+            sub = S3Source(
+                bucket=c["bucket"], prefix=c["prefix"], file_pattern=c["file_pattern"],
+                page_size=page_size, read_content=c["read_content"],
+                content_type=c["content_type"], region_name=c["region_name"],
+                endpoint_url=c["endpoint_url"],
+                aws_access_key_id=c["aws_access_key_id"],
+                aws_secret_access_key=c["aws_secret_access_key"],
+            )
+            sub.config["keys"] = keys
+            yield sub
 
     def health_check(self) -> bool:
         """Check S3 bucket accessibility."""

@@ -71,3 +71,28 @@ def test_api_split_batch_mode_yields_self():
                            ids=[1, 2, 3], method="POST", body={"ids": [1, 2, 3]})
     subs = list(src.split({}))
     assert len(subs) == 1  # one batch request -> one job
+
+
+def test_s3_split_lists_keys_only(monkeypatch):
+    from reflowfy.sources.s3 import S3Source
+    src = S3Source(bucket="b", prefix="p/", page_size=2, read_content=False)
+
+    pages = [{"Contents": [{"Key": "p/a", "Size": 1, "ETag": "x",
+                            "LastModified": _Dt()},
+                           {"Key": "p/b", "Size": 1, "ETag": "y",
+                            "LastModified": _Dt()}]},
+             {"Contents": [{"Key": "p/c", "Size": 1, "ETag": "z",
+                            "LastModified": _Dt()}]}]
+
+    class _Paginator:
+        def paginate(self, **k): return iter(pages)
+    class _Client:
+        def get_paginator(self, n): return _Paginator()
+    monkeypatch.setattr(src, "_get_client", lambda: _Client())
+
+    subs = list(src.split({}))
+    assert [s.config["keys"] for s in subs] == [["p/a", "p/b"], ["p/c"]]
+
+
+class _Dt:
+    def isoformat(self): return "t"
