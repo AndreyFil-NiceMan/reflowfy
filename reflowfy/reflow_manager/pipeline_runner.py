@@ -7,6 +7,7 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
+from reflowfy.core.serialization import to_json_safe
 from reflowfy.factories.source_factory import SourceFactory
 from reflowfy.reflow_manager.dispatcher import JobDispatcher
 from reflowfy.reflow_manager.execution import ExecutionManager
@@ -954,15 +955,4 @@ class PipelineRunner:
 
     def _serialize_for_json(self, obj: Any) -> Any:
         """Recursively convert objects to JSON-serializable form."""
-        if isinstance(obj, (str, int, float, bool, type(None))):
-            return obj
-        elif isinstance(obj, dict):
-            return {k: self._serialize_for_json(v) for k, v in obj.items()}
-        elif isinstance(obj, (list, tuple)):
-            return [self._serialize_for_json(item) for item in obj]
-        elif hasattr(obj, "to_dict"):
-            return self._serialize_for_json(obj.to_dict())
-        elif hasattr(obj, "__dict__"):
-            return self._serialize_for_json(obj.__dict__)
-        else:
-            return str(obj)
+        return to_json_safe(obj)

@@ -11,6 +11,7 @@ from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from reflowfy.core.execution_context import build_flat_runtime_params_from_metadata
 from reflowfy.core.registry import pipeline_registry
+from reflowfy.core.serialization import to_json_safe
 from reflowfy.execution.transformation_runner import apply_transformations_iteratively
 from reflowfy.reflow_manager.models import Job
 
@@ -123,6 +124,7 @@ class WorkerExecutor:
 
             source = SourceFactory.create(source_descriptor["type"], source_descriptor["config"])
             records = source.fetch(runtime_params)
+            records = to_json_safe(records)
             stats.records_input = len(records)
 
             if not records:

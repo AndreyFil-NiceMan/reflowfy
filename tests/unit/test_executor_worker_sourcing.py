@@ -174,3 +174,51 @@ async def test_worker_missing_pipeline_fails(monkeypatch):
     }
     ok = await ex.execute_job(payload)
     assert ok is False  # execute_job catches the RuntimeError and reports failure
+
+
+async def test_worker_normalizes_non_json_records(monkeypatch):
+    import datetime as _dt
+
+    captured = []
+
+    class _Pipe:
+        name = "p"
+
+        def define_transformations(self, records, params):
+            return []
+
+        def define_destination(self, records, params):
+            return _FakeDest(captured)
+
+    from reflowfy.core.registry import pipeline_registry
+
+    monkeypatch.setattr(pipeline_registry, "get", lambda name: _Pipe())
+
+    ex = WorkerExecutor(database_url="postgresql://x/y")
+    monkeypatch.setattr(ex, "_update_job_in_db", _async_noop)
+
+    dt = _dt.datetime(2026, 6, 24, 10, 0, 0)
+    payload = {
+        "schema_version": 2,
+        "execution_id": "e",
+        "job_id": "j",
+        "pipeline_name": "p",
+        "source": {"type": "StaticSource", "config": {"records": [{"ts": dt, "n": 1}]}},
+        "metadata": {
+            "batch_id": "b",
+            "created_at": "t",
+            "batch_number": 1,
+            "total_batches": 1,
+            "retry_count": 0,
+            "is_retry": False,
+            "runtime_params": {},
+            "source_metadata": None,
+        },
+    }
+    ok = await ex.execute_job(payload)
+    assert ok is True
+    # datetime must be stringified so downstream json.dumps in destinations won't crash
+    assert captured == [{"ts": str(dt), "n": 1}]
+    import json
+
+    json.dumps(captured)  # must not raise
