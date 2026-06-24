@@ -30,9 +30,23 @@ class TestProcessMessage:
     async def test_valid_message_executes_job_and_commits(self):
         c = _consumer()
         c.executor.execute_job = AsyncMock(return_value=True)
-        msg = SimpleNamespace(value=json.dumps({"job_id": "j1"}).encode("utf-8"))
+        msg = SimpleNamespace(
+            value=json.dumps({"schema_version": 2, "job_id": "j1"}).encode("utf-8")
+        )
 
         await c._process_message(msg)
 
         c.executor.execute_job.assert_awaited_once()
+        c.consumer.commit.assert_awaited_once()
+
+    async def test_unsupported_schema_version_is_skipped_and_committed(self):
+        """A job without schema_version==2 must be skipped (not executed) and
+        committed so the bad/legacy message is not redelivered forever."""
+        c = _consumer()
+        c.executor.execute_job = AsyncMock(return_value=True)
+        msg = SimpleNamespace(value=json.dumps({"job_id": "j1"}).encode("utf-8"))
+
+        await c._process_message(msg)
+
+        c.executor.execute_job.assert_not_awaited()
         c.consumer.commit.assert_awaited_once()

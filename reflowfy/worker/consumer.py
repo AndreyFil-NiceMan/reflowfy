@@ -131,6 +131,12 @@ class KafkaJobConsumer:
 
             job_payload = json.loads(msg.value.decode("utf-8"))
 
+            version = job_payload.get("schema_version")
+            if version != 2:
+                print(f"❌ Unsupported job schema_version={version!r}; skipping")
+                await self.consumer.commit()
+                return
+
             print(f"📦 Received job: {job_payload.get('job_id', 'unknown')}")
 
             # Execute job asynchronously
