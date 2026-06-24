@@ -74,6 +74,18 @@ class MockSource(BaseSource):
                 },
             )
 
+    def split(self, runtime_params: Dict[str, Any]) -> Iterator["MockSource"]:
+        """Slice the in-memory data into batch_size-sized MockSources."""
+        data = self.config["data"]
+        size = self.config["batch_size"]
+
+        if len(data) <= size:
+            yield self
+            return
+
+        for i in range(0, len(data), size):
+            yield MockSource(data=data[i : i + size], batch_size=size)
+
     def health_check(self) -> bool:
         """Mock source is always healthy."""
         return True

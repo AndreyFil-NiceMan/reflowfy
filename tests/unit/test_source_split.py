@@ -13,3 +13,12 @@ def test_static_split_yields_self():
     subs = list(src.split({}))
     assert len(subs) == 1
     assert subs[0].config == {"records": [1, 2, 3]}
+
+
+def test_mock_split_by_batch_size():
+    from reflowfy.sources.mock import MockSource
+    src = MockSource(data=[{"i": i} for i in range(25)], batch_size=10)
+    subs = list(src.split({}))
+    assert len(subs) == 3
+    assert [len(s.config["data"]) for s in subs] == [10, 10, 5]
+    assert subs[0].fetch({}) == [{"i": i} for i in range(10)]
