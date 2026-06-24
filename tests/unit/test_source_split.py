@@ -54,3 +54,20 @@ def test_sql_split_id_range(monkeypatch):
     bounds = [(s.config["slice"]["lo"], s.config["slice"]["hi"]) for s in subs]
     assert bounds == [(0, 100), (100, 200), (200, 300)]
     assert "BETWEEN" in subs[0].config["query"] or ">=" in subs[0].config["query"]
+
+
+def test_api_split_per_id_mode_groups_ids():
+    from reflowfy.sources.api import IDBasedAPISource
+    src = IDBasedAPISource(base_url="http://h", endpoint_template="/u/{id}",
+                           ids=[1, 2, 3, 4, 5], batch_size=2)
+    subs = list(src.split({}))
+    assert [s.config["ids"] for s in subs] == [[1, 2], [3, 4], [5]]
+    assert all(s.config["base_url"] == "http://h" for s in subs)
+
+
+def test_api_split_batch_mode_yields_self():
+    from reflowfy.sources.api import IDBasedAPISource
+    src = IDBasedAPISource(base_url="http://h", endpoint_template="/batch",
+                           ids=[1, 2, 3], method="POST", body={"ids": [1, 2, 3]})
+    subs = list(src.split({}))
+    assert len(subs) == 1  # one batch request -> one job
