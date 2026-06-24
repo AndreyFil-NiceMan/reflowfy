@@ -10,6 +10,16 @@ name: Release
 on:
   release:
     types: [published]
+  # Allow re-running a release manually from the Actions UI. Provide the tag of
+  # an existing GitHub Release (e.g. v1.0.14); the job checks out that tag and
+  # (re)publishes it. PyPI publishing is idempotent (skip-existing) so a re-run
+  # of an already-published version only refreshes the attached base image.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to (re)publish, e.g. v1.0.14"
+        required: true
+        type: string
 
 permissions:
   contents: write   # upload assets to the Release
@@ -18,8 +28,13 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      # The tag from the release event, or the manually supplied input.
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - uses: actions/setup-python@v5
         with:
@@ -28,7 +43,7 @@ jobs:
       - name: Verify release tag matches package version
         run: |
           PKG_VERSION=$(python -c "import re, pathlib; print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', pathlib.Path('reflowfy/__init__.py').read_text()).group(1))")
-          TAG="${GITHUB_REF_NAME#v}"
+          TAG="${RELEASE_TAG#v}"
           echo "package=$PKG_VERSION tag=$TAG"
           if [ "$PKG_VERSION" != "$TAG" ]; then
             echo "::error::Release tag ($TAG) does not match reflowfy.__version__ ($PKG_VERSION)"
@@ -43,6 +58,10 @@ jobs:
 
       - name: Publish to PyPI (Trusted Publishing)
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Idempotent: a manual re-run of an already-published version is a no-op
+          # here instead of a hard failure, so the rest of the job can still run.
+          skip-existing: true
 
       - name: Wait for PyPI to index the release
         run: |
@@ -72,4 +91,4 @@ jobs:
       - name: Attach base image tar to the Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${GITHUB_REF_NAME}" "reflowfy-base-${VERSION}.tar.gz" --clobber
+        run: gh release upload "${RELEASE_TAG}" "reflowfy-base-${VERSION}.tar.gz" --clobber
