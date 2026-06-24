@@ -46,21 +46,3 @@ class DestinationConfig(BaseModel):
     """Destination configuration in job payload."""
     type: str
     config: Dict[str, Any] = {}
-
-
-class JobPayload(BaseModel):
-    """Validated job payload sent to workers via Kafka.
-
-    This schema ensures job messages have the required structure
-    before being dispatched to workers.
-    """
-    execution_id: str
-    job_id: str
-    pipeline_name: str
-    records: List[Dict[str, Any]]
-    transformations: List[str] = []
-    destination: DestinationConfig
-    metadata: Dict[str, Any] = {}
-
-    class Config:
-        extra = "allow"  # Allow additional fields for extensibility
