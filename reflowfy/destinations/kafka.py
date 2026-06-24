@@ -73,9 +73,7 @@ class KafkaDestination(BaseDestination):
 
         # Parse bootstrap_servers if it's a comma-separated string
         if isinstance(bootstrap_servers, str) and "," in bootstrap_servers:
-            config["bootstrap_servers"] = [
-                s.strip() for s in bootstrap_servers.split(",") if s.strip()
-            ]
+             config["bootstrap_servers"] = [s.strip() for s in bootstrap_servers.split(",") if s.strip()]
 
         super().__init__(config, retry_config)
         self._producer: Optional[AIOKafkaProducer] = None
@@ -89,14 +87,12 @@ class KafkaDestination(BaseDestination):
         username = self.config.get("sasl_username")
         password = self.config.get("sasl_password")
         if username and password:
-            kwargs.update(
-                {
-                    "security_protocol": self.config.get("security_protocol") or "SASL_PLAINTEXT",
-                    "sasl_mechanism": self.config.get("sasl_mechanism") or "SCRAM-SHA-256",
-                    "sasl_plain_username": username,
-                    "sasl_plain_password": password,
-                }
-            )
+            kwargs.update({
+                "security_protocol": self.config.get("security_protocol") or "SASL_PLAINTEXT",
+                "sasl_mechanism": self.config.get("sasl_mechanism") or "SCRAM-SHA-256",
+                "sasl_plain_username": username,
+                "sasl_plain_password": password,
+            })
         return kwargs
 
     async def _get_producer(self) -> AIOKafkaProducer:
@@ -250,9 +246,7 @@ class KafkaDestination(BaseDestination):
             return True
 
         if lag > threshold:
-            print(
-                f"⚠️ Kafka lag {lag} exceeds threshold {threshold} for group '{consumer_group_id}'"
-            )
+            print(f"⚠️ Kafka lag {lag} exceeds threshold {threshold} for group '{consumer_group_id}'")
             return False
 
         return True

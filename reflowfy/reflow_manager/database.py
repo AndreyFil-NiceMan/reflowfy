@@ -8,8 +8,12 @@ from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import QueuePool
 from reflowfy.reflow_manager.models import Base
 
+
 # Database URL from environment
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://reflowfy:reflowfy@localhost:5432/reflowfy")
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql://reflowfy:reflowfy@localhost:5432/reflowfy"
+)
 
 # Create engine with connection pooling
 engine = create_engine(
@@ -41,13 +45,9 @@ def init_db(max_retries: int = 10, retry_delay: float = 2.0) -> None:
         except Exception as exc:
             last_err = exc
             if attempt < max_retries:
-                print(
-                    f"  DB init attempt {attempt}/{max_retries} failed ({exc}), retrying in {retry_delay}s..."
-                )
+                print(f"  DB init attempt {attempt}/{max_retries} failed ({exc}), retrying in {retry_delay}s...")
                 time.sleep(retry_delay)
-    raise RuntimeError(
-        f"Database init failed after {max_retries} attempts: {last_err}"
-    ) from last_err
+    raise RuntimeError(f"Database init failed after {max_retries} attempts: {last_err}") from last_err
 
 
 def _apply_column_migrations() -> None:

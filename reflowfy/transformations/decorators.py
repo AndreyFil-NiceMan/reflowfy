@@ -43,7 +43,6 @@ def transformation(name: str):
         def define_transformations(self, records, runtime_params):
             return [filter_active()]  # Instantiate to use
     """
-
     def decorator(func: Callable) -> type:
         from reflowfy.transformations.base import BaseTransformation
 
@@ -52,13 +51,12 @@ def transformation(name: str):
             func.__name__,
             (BaseTransformation,),
             {
-                "name": name,
-                "apply": lambda self, records, runtime_params: func(records, runtime_params),
-                "__doc__": func.__doc__ or f"Transformation: {name}",
-                "__module__": func.__module__,
-            },
+                'name': name,
+                'apply': lambda self, records, runtime_params: func(records, runtime_params),
+                '__doc__': func.__doc__ or f"Transformation: {name}",
+                '__module__': func.__module__,
+            }
         )
 
         return cls
-
     return decorator

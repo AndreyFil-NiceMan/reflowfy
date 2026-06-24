@@ -20,6 +20,7 @@ from reflowfy.reflow_manager.dlq_scheduler import (
     DLQ_MAX_RETRIES,
 )
 
+
 # Create router with /dlq prefix
 router = APIRouter(prefix="/dlq", tags=["DLQ"])
 
@@ -34,12 +35,8 @@ async def schedule_dlq_job(
 
     The job will be processed after the specified delay (or default delay).
     """
-    delay_minutes = (
-        request.delay_minutes if request.delay_minutes is not None else DLQ_DEFAULT_DELAY_MINUTES
-    )
-    scheduled_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
-        minutes=delay_minutes
-    )
+    delay_minutes = request.delay_minutes if request.delay_minutes is not None else DLQ_DEFAULT_DELAY_MINUTES
+    scheduled_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=delay_minutes)
 
     dlq_job = DLQJob(
         job_payload=request.job_payload,

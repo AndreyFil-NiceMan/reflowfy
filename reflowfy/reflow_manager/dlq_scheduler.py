@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from reflowfy.reflow_manager.models import DLQJob, DLQJobArchive
 from reflowfy.reflow_manager.database import SessionLocal
 
+
 # Configuration from environment variables
 DLQ_POLL_INTERVAL_SECONDS = int(os.getenv("DLQ_POLL_INTERVAL_SECONDS", "900"))  # 15 minutes
 DLQ_DEFAULT_DELAY_MINUTES = int(os.getenv("DLQ_DEFAULT_DELAY_MINUTES", "60"))  # 1 hour
@@ -92,21 +93,17 @@ class DLQScheduler:
         try:
             # Find all pending jobs whose scheduled_at has passed
             now = datetime.now(timezone.utc).replace(tzinfo=None)
-            due_jobs = (
-                db.query(DLQJob)
-                .filter(DLQJob.status == "pending", DLQJob.scheduled_at <= now)
-                .with_for_update(skip_locked=True)
-                .all()
-            )
+            due_jobs = db.query(DLQJob).filter(
+                DLQJob.status == "pending",
+                DLQJob.scheduled_at <= now
+            ).with_for_update(skip_locked=True).all()
 
             if not due_jobs:
                 return
 
             print(f"📋 DLQ Scheduler found {len(due_jobs)} due jobs")
             for j in due_jobs:
-                print(
-                    f"   Job {j.id}: pipeline={j.pipeline_name}, scheduled_at={j.scheduled_at}, retry={j.retry_count}"
-                )
+                print(f"   Job {j.id}: pipeline={j.pipeline_name}, scheduled_at={j.scheduled_at}, retry={j.retry_count}")
 
             # Group jobs by pipeline
             jobs_by_pipeline: Dict[str, List[DLQJob]] = defaultdict(list)
@@ -126,7 +123,12 @@ class DLQScheduler:
         finally:
             db.close()
 
-    def _process_pipeline_jobs(self, db: Session, pipeline_name: str, jobs: List[DLQJob]):
+    def _process_pipeline_jobs(
+        self,
+        db: Session,
+        pipeline_name: str,
+        jobs: List[DLQJob]
+    ):
         """
         Process a batch of DLQ jobs for a single pipeline.
 
@@ -161,7 +163,12 @@ class DLQScheduler:
             for job in jobs:
                 self._handle_job_failure(db, job, error_msg)
 
-    def _dispatch_jobs(self, db: Session, pipeline_name: str, jobs: List[DLQJob]) -> str:
+    def _dispatch_jobs(
+        self,
+        db: Session,
+        pipeline_name: str,
+        jobs: List[DLQJob]
+    ) -> str:
         """
         Dispatch DLQ jobs by creating an execution.
 
@@ -208,9 +215,7 @@ class DLQScheduler:
         else:
             # Reschedule with exponential backoff
             backoff_minutes = self._calculate_backoff(job.retry_count)
-            job.scheduled_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
-                minutes=backoff_minutes
-            )
+            job.scheduled_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=backoff_minutes)
             job.status = "pending"
             print(f"🔄 DLQ job {job.id} rescheduled (retry {job.retry_count}/{job.max_retries})")
 
@@ -274,7 +279,9 @@ class DLQScheduler:
             raise
 
     def process_pipeline_immediately(
-        self, db: Session, pipeline_name: str
+        self,
+        db: Session,
+        pipeline_name: str
     ) -> tuple[int, Optional[str]]:
         """
         Process all pending DLQ jobs for a pipeline immediately.
@@ -287,12 +294,10 @@ class DLQScheduler:
             Tuple of (count of jobs dispatched, execution_id)
         """
         # Lock rows to prevent concurrent processing by another RM pod
-        jobs = (
-            db.query(DLQJob)
-            .filter(DLQJob.pipeline_name == pipeline_name, DLQJob.status == "pending")
-            .with_for_update(skip_locked=True)
-            .all()
-        )
+        jobs = db.query(DLQJob).filter(
+            DLQJob.pipeline_name == pipeline_name,
+            DLQJob.status == "pending"
+        ).with_for_update(skip_locked=True).all()
 
         if not jobs:
             return 0, None

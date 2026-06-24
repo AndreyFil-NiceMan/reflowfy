@@ -2,6 +2,7 @@
 
 from prometheus_client import Counter, Histogram, Gauge
 
+
 # Job metrics
 jobs_processed_total = Counter(
     "reflowfy_jobs_processed_total",

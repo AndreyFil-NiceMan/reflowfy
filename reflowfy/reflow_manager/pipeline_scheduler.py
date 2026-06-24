@@ -17,7 +17,10 @@ from sqlalchemy.orm import Session
 from reflowfy.reflow_manager.models import PipelineSchedule
 from reflowfy.reflow_manager.database import SessionLocal
 
-PIPELINE_SCHEDULER_POLL_INTERVAL = int(os.getenv("PIPELINE_SCHEDULER_POLL_INTERVAL_SECONDS", "30"))
+
+PIPELINE_SCHEDULER_POLL_INTERVAL = int(
+    os.getenv("PIPELINE_SCHEDULER_POLL_INTERVAL_SECONDS", "30")
+)
 
 
 class PipelineScheduler:
@@ -170,11 +173,9 @@ class PipelineScheduler:
             scheduled_names.add(pipeline.name)
             expr = pipeline.schedule
 
-            existing = (
-                db.query(PipelineSchedule)
-                .filter(PipelineSchedule.pipeline_name == pipeline.name)
-                .first()
-            )
+            existing = db.query(PipelineSchedule).filter(
+                PipelineSchedule.pipeline_name == pipeline.name
+            ).first()
 
             if existing is None:
                 row = PipelineSchedule(
@@ -198,9 +199,9 @@ class PipelineScheduler:
                 # Else: leave next_run_at unchanged (mid-interval restart case)
 
         # Soft-disable schedules for pipelines that no longer have schedule set
-        all_schedule_rows = (
-            db.query(PipelineSchedule).filter(PipelineSchedule.enabled == "true").all()
-        )
+        all_schedule_rows = db.query(PipelineSchedule).filter(
+            PipelineSchedule.enabled == "true"
+        ).all()
 
         for row in all_schedule_rows:
             if row.pipeline_name not in scheduled_names:
@@ -215,11 +216,9 @@ class PipelineScheduler:
         was just triggered manually via the API.
         The caller is responsible for committing the session.
         """
-        schedule = (
-            db.query(PipelineSchedule)
-            .filter(PipelineSchedule.pipeline_name == pipeline_name)
-            .first()
-        )
+        schedule = db.query(PipelineSchedule).filter(
+            PipelineSchedule.pipeline_name == pipeline_name
+        ).first()
 
         if schedule and schedule.enabled == "true":
             schedule.last_triggered_at = triggered_at

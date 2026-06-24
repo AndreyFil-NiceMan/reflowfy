@@ -66,9 +66,7 @@ def destination(name: str) -> Callable[[F], F]:
         def production_kafka(**overrides):
             return kafka_destination(bootstrap_servers="kafka:9092", **overrides)
     """
-
     def decorator(func: F) -> F:
         destination_registry.register(name, func)
         return func
-
     return decorator

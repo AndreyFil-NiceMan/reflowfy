@@ -41,9 +41,7 @@ class Execution(Base):
     runtime_params: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
     # Relationship to jobs
-    jobs: Mapped[List["Job"]] = relationship(
-        "Job", back_populates="execution", cascade="all, delete-orphan"
-    )
+    jobs: Mapped[List["Job"]] = relationship("Job", back_populates="execution", cascade="all, delete-orphan")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation."""
@@ -285,9 +283,7 @@ class PipelineSchedule(Base):
             "pipeline_name": self.pipeline_name,
             "cron_expression": self.cron_expression,
             "next_run_at": self.next_run_at.isoformat() if self.next_run_at else None,
-            "last_triggered_at": (
-                self.last_triggered_at.isoformat() if self.last_triggered_at else None
-            ),
+            "last_triggered_at": self.last_triggered_at.isoformat() if self.last_triggered_at else None,
             "last_execution_id": self.last_execution_id,
             "enabled": self.enabled == "true",
             "created_at": self.created_at.isoformat() if self.created_at else None,

@@ -6,10 +6,10 @@ from unittest.mock import MagicMock, patch
 from reflowfy.reflow_manager.pipeline_scheduler import PipelineScheduler
 from reflowfy.reflow_manager.models import PipelineSchedule
 
+
 # ---------------------------------------------------------------------------
 # _compute_next_run
 # ---------------------------------------------------------------------------
-
 
 def test_compute_next_run_every_5_minutes():
     after = datetime(2026, 4, 19, 12, 0, 0)
@@ -24,16 +24,13 @@ def test_compute_next_run_daily_midnight():
 
 
 def test_compute_next_run_returns_datetime():
-    result = PipelineScheduler._compute_next_run(
-        "*/1 * * * *", datetime.now(timezone.utc).replace(tzinfo=None)
-    )
+    result = PipelineScheduler._compute_next_run("*/1 * * * *", datetime.now(timezone.utc).replace(tzinfo=None))
     assert isinstance(result, datetime)
 
 
 # ---------------------------------------------------------------------------
 # sync_schedules_from_registry
 # ---------------------------------------------------------------------------
-
 
 def _make_pipeline_mock(name: str, schedule: str | None):
     p = MagicMock()
@@ -47,7 +44,7 @@ def test_sync_inserts_new_schedule():
     scheduler = PipelineScheduler()
     db = MagicMock()
     db.query.return_value.filter.return_value.first.return_value = None  # no existing row
-    db.query.return_value.filter.return_value.all.return_value = []  # no enabled rows to disable
+    db.query.return_value.filter.return_value.all.return_value = []      # no enabled rows to disable
 
     pipeline = _make_pipeline_mock("my_pipeline", "*/5 * * * *")
 
@@ -135,7 +132,6 @@ def test_sync_disables_unscheduled_pipeline():
 # ---------------------------------------------------------------------------
 # reset_schedule
 # ---------------------------------------------------------------------------
-
 
 def test_reset_schedule_recalculates_next_run():
     scheduler = PipelineScheduler()

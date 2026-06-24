@@ -41,7 +41,7 @@ class PipelineRegistry:
             pipeline: AbstractPipeline instance to register
 
         Note:
-            If a pipeline with the same name is already registered,
+            If a pipeline with the same name is already registered, 
             registration is silently skipped (idempotent).
         """
         with self._registry_lock:
