@@ -116,3 +116,45 @@ def test_s3_split_resolves_templated_config(monkeypatch):
     assert subs[0].config["bucket"] == "prod-data"
     assert subs[0].config["prefix"] == "logs/prod/"
     assert subs[0].config["keys"] == ["logs/prod/a"]
+
+
+def test_elastic_split_opens_pit_and_yields_slices(monkeypatch):
+    from reflowfy.sources.elastic import ElasticSource
+    src = ElasticSource(url="http://es:9200", index="logs-*",
+                        base_query={"query": {"match_all": {}}}, size=1000)
+    src.config["num_slices"] = 4
+
+    class _Client:
+        def open_point_in_time(self, **k): return {"id": "PIT123"}
+    monkeypatch.setattr(src, "_get_client", lambda: _Client())
+
+    subs = list(src.split({}))
+    assert len(subs) == 4
+    assert all(s.config["pit_id"] == "PIT123" for s in subs)
+    assert [s.config["slice"] for s in subs] == [
+        {"id": 0, "max": 4}, {"id": 1, "max": 4},
+        {"id": 2, "max": 4}, {"id": 3, "max": 4},
+    ]
+
+
+def test_elastic_fetch_slice_paginates(monkeypatch):
+    from reflowfy.sources.elastic import ElasticSource
+    src = ElasticSource(url="http://es", index="i", base_query={"query": {"match_all": {}}}, size=2)
+    src.config["pit_id"] = "PIT"
+    src.config["slice"] = {"id": 0, "max": 2}
+
+    calls = {"n": 0}
+    class _Client:
+        def search(self, body=None, size=None):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return {"hits": {"hits": [
+                    {"_source": {"a": 1}, "sort": [1]},
+                    {"_source": {"a": 2}, "sort": [2]},
+                ]}}
+            return {"hits": {"hits": []}}
+    monkeypatch.setattr(src, "_get_client", lambda: _Client())
+
+    out = src.fetch({})
+    assert out == [{"a": 1}, {"a": 2}]
+    assert calls["n"] == 2
