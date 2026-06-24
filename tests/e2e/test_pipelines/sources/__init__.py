@@ -18,8 +18,15 @@ def e2e_elastic(
     scroll: str = "2m",
     size: int = 50,
     base_query: Optional[dict] = None,
+    num_slices: int = 1,
 ):
-    """Pre-configured Elasticsearch source for E2E tests."""
+    """Pre-configured Elasticsearch source for E2E tests.
+
+    ``num_slices`` (default 1, i.e. no slicing -> a single job) is forwarded
+    to ``elastic_source``/``ElasticSource.split()``. Pass > 1 only where a
+    test specifically needs multiple parallel sliced-scroll jobs (v2
+    worker-side sourcing produces one job per slice, not per scroll page).
+    """
     from reflowfy import elastic_source
 
     return elastic_source(
@@ -28,6 +35,7 @@ def e2e_elastic(
         base_query=base_query or {"query": {"match_all": {}}},
         scroll=scroll,
         size=size,
+        num_slices=num_slices,
     )
 
 

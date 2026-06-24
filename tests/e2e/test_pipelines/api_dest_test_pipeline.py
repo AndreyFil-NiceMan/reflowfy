@@ -68,11 +68,15 @@ class E2EApiDestTestPipeline(AbstractPipeline):
                 "tenant_id": runtime_params["tenant_id"],
                 "env": runtime_params["env"],
             },
-            # Body includes records plus static and dynamic fields
+            # Body includes records plus static and dynamic fields.
+            # execution_id is included so E2E tests can scope mock-server
+            # assertions to exactly this run (the mock server's /stats batch
+            # window and counters are shared/global across the test module).
             body={
                 "records": records,
                 "source": "reflowfy",
                 "app_name": runtime_params["app_name"],
+                "execution_id": runtime_params.get("execution_id"),
             },
         )
 

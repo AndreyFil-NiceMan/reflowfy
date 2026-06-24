@@ -336,8 +336,10 @@ class TestRawListSearchPipelineE2E:
     JSON array as the POST body (not wrapped in an object) and correctly processes
     the response.
 
-    Job math:  N IDs / ids_batch_size=5 → N/5 POST calls → 1 job per call
-    (each call returns ≤5 users, batch_size=5 → 1 SourceJob).
+    Job math (v2: one job per id-batch, worker fetches the whole batch
+    response itself — ``batch_size`` no longer chunks fetched records into
+    multiple jobs):  N IDs / ids_batch_size=5 → ceil(N/5) POST calls → ceil(N/5)
+    jobs total.
     """
 
     PIPELINE = "e2e_raw_list_search_pipeline"
@@ -416,7 +418,14 @@ class TestRawListSearchPipelineE2E:
         print("✅ Raw-list partial last batch: 3 jobs")
 
     def test_raw_list_pipeline_small_job_batches(self, client):
-        """10 IDs, batch_size=2 → 2 POST calls (5 IDs each) → each returns 5 users / 2 = 3 jobs per call → 6 jobs."""
+        """
+        10 IDs, ids_batch_size=5 → 2 POST calls (5 IDs each).
+
+        v2: one job per id-batch (worker fetches the whole batch response
+        itself), so ``batch_size`` no longer chunks the fetched records into
+        multiple jobs — it only affects how the worker may further group
+        records once it has fetched them. total_jobs = number of id-batches.
+        """
         response = client.post(
             "/run",
             json={
@@ -429,11 +438,11 @@ class TestRawListSearchPipelineE2E:
         assert response.status_code == 202
         stats = _wait_for_completion(client, response.json()["execution_id"])
         assert stats["state"] == "completed", f"Failed: {stats}"
-        # 2 POST calls × ceil(5/2)=3 jobs each = 6 jobs
-        assert stats["total_jobs"] == 6
-        assert stats["jobs_completed"] == 6
+        # 10 IDs / ids_batch_size=5 = 2 id-batches → 2 jobs (one job per id-batch)
+        assert stats["total_jobs"] == 2
+        assert stats["jobs_completed"] == 2
         assert stats["jobs_failed"] == 0
-        print(f"✅ Raw-list small job batches: {stats['jobs_completed']}/6 jobs")
+        print(f"✅ Raw-list small job batches: {stats['jobs_completed']}/2 jobs")
 
     def test_raw_list_missing_ids_returns_empty(self, client):
         """IDs that don't exist (101-105) → empty results → 0 jobs → completed."""
@@ -462,12 +471,11 @@ class TestPatchBulkPipelineE2E:
     Verifies that IDBasedAPISource with ``method="PATCH"`` and ``body={"ids": <ids>, "active_only": <x>}``
     correctly sends the merged body to the endpoint.
 
-    Job math (active_only=False):
-    N IDs / ids_batch_size=8 → N/8 PATCH calls → each returns 8 users / batch_size=4 → 2 jobs per call.
-
-    Job math (active_only=True):
-    Users where ``id % 3 == 0`` are inactive. Roughly 2/3 of users are active.
-    In a batch of 8: ~5-6 active → ceil(~6/4)=2 jobs per call.
+    Job math (v2: one job per id-batch, worker fetches the whole batch
+    response itself — ``batch_size`` no longer chunks fetched records into
+    multiple jobs):
+    N IDs / ids_batch_size=8 → ceil(N/8) PATCH calls → ceil(N/8) jobs total,
+    regardless of ``active_only`` (record count per job varies, job count does not).
     """
 
     PIPELINE = "e2e_patch_bulk_pipeline"
@@ -490,7 +498,7 @@ class TestPatchBulkPipelineE2E:
         """
         active_only=False — all users returned.
 
-        16 IDs / 8 = 2 batches × (8/4=2 jobs each) = 4 jobs.
+        v2: one job per id-batch. 16 IDs / ids_batch_size=8 = 2 id-batches → 2 jobs.
         """
         response = client.post(
             "/run",
@@ -508,17 +516,19 @@ class TestPatchBulkPipelineE2E:
         assert response.status_code == 202
         stats = _wait_for_completion(client, response.json()["execution_id"])
         assert stats["state"] == "completed", f"Failed: {stats}"
-        assert stats["total_jobs"] == 4
-        assert stats["jobs_completed"] == 4
+        assert stats["total_jobs"] == 2
+        assert stats["jobs_completed"] == 2
         assert stats["jobs_failed"] == 0
-        print(f"✅ PATCH all-users: {stats['jobs_completed']}/4 jobs")
+        print(f"✅ PATCH all-users: {stats['jobs_completed']}/2 jobs")
 
     def test_patch_bulk_active_only(self, client):
         """
         active_only=True — only active users returned (fewer records).
 
-        IDs [1..8]: inactive IDs are 3, 6 (id % 3 == 0) → 6 active users.
-        6 active / batch_size=4 → 2 jobs.
+        v2: one job per id-batch (job count does not depend on how many
+        records the call returns). IDs [1..8] is a single id-batch
+        (ids_batch_size=8) → 1 job, regardless of how many of the 8 users
+        come back active.
         """
         response = client.post(
             "/run",
@@ -536,16 +546,15 @@ class TestPatchBulkPipelineE2E:
         assert response.status_code == 202
         stats = _wait_for_completion(client, response.json()["execution_id"])
         assert stats["state"] == "completed", f"Failed: {stats}"
-        # 1 batch (8 IDs) → 6 active users → ceil(6/4) = 2 jobs
-        assert stats["total_jobs"] == 2
-        assert stats["jobs_completed"] == 2
+        # 1 id-batch (8 IDs, ids_batch_size=8) → 1 job
+        assert stats["total_jobs"] == 1
+        assert stats["jobs_completed"] == 1
         assert stats["jobs_failed"] == 0
-        print(f"✅ PATCH active-only: {stats['jobs_completed']}/2 jobs")
+        print(f"✅ PATCH active-only: {stats['jobs_completed']}/1 jobs")
 
     def test_patch_bulk_large_batch(self, client):
         """
-        32 IDs / ids_batch_size=8 = 4 PATCH calls.
-        active_only=False, batch_size=4 → 8/4=2 jobs per call → 8 jobs.
+        v2: one job per id-batch. 32 IDs / ids_batch_size=8 = 4 id-batches → 4 jobs.
         """
         response = client.post(
             "/run",
@@ -563,19 +572,15 @@ class TestPatchBulkPipelineE2E:
         assert response.status_code == 202
         stats = _wait_for_completion(client, response.json()["execution_id"])
         assert stats["state"] == "completed", f"Failed: {stats}"
-        assert stats["total_jobs"] == 8
-        assert stats["jobs_completed"] == 8
+        assert stats["total_jobs"] == 4
+        assert stats["jobs_completed"] == 4
         assert stats["jobs_failed"] == 0
-        print(f"✅ PATCH large batch: {stats['jobs_completed']}/8 jobs")
+        print(f"✅ PATCH large batch: {stats['jobs_completed']}/4 jobs")
 
     def test_patch_bulk_partial_batch(self, client):
         """
-        20 IDs / ids_batch_size=8 → batches [8, 8, 4] → 3 PATCH calls.
-        active_only=False, batch_size=4:
-        - Batch 1 (8 users / 4): 2 jobs
-        - Batch 2 (8 users / 4): 2 jobs
-        - Batch 3 (4 users / 4): 1 job
-        Total: 5 jobs.
+        v2: one job per id-batch. 20 IDs / ids_batch_size=8 → id-batches
+        [8, 8, 4] → 3 jobs (one per id-batch, regardless of batch_size).
         """
         response = client.post(
             "/run",
@@ -593,10 +598,10 @@ class TestPatchBulkPipelineE2E:
         assert response.status_code == 202
         stats = _wait_for_completion(client, response.json()["execution_id"])
         assert stats["state"] == "completed", f"Failed: {stats}"
-        assert stats["total_jobs"] == 5
-        assert stats["jobs_completed"] == 5
+        assert stats["total_jobs"] == 3
+        assert stats["jobs_completed"] == 3
         assert stats["jobs_failed"] == 0
-        print(f"✅ PATCH partial batch: {stats['jobs_completed']}/5 jobs")
+        print(f"✅ PATCH partial batch: {stats['jobs_completed']}/3 jobs")
 
 
 class TestPerIdPostPipelineE2E:
@@ -742,9 +747,10 @@ class TestProductsBatchPipelineE2E:
     Verifies that IDBasedAPISource with ``body={"product_ids": <ids>}``
     correctly sends product IDs to POST /products/lookup and processes the response.
 
-    Job math:
-    N product IDs / ids_batch_size=10 → N/10 POST calls.
-    Each call returns up to 10 products / batch_size=5 → 2 jobs per call.
+    Job math (v2: one job per id-batch, worker fetches the whole batch
+    response itself — ``batch_size`` no longer chunks fetched records into
+    multiple jobs):
+    N product IDs / ids_batch_size=10 → ceil(N/10) POST calls → ceil(N/10) jobs total.
     """
 
     PIPELINE = "e2e_products_batch_pipeline"
@@ -764,7 +770,7 @@ class TestProductsBatchPipelineE2E:
         print(f"✅ Products pipeline started: {response.json()['execution_id']}")
 
     def test_products_pipeline_single_batch(self, client):
-        """10 product IDs → 1 POST → 10 products / batch_size=5 → 2 jobs."""
+        """v2: 10 product IDs / ids_batch_size=10 → 1 id-batch → 1 POST → 1 job."""
         response = client.post(
             "/run",
             json={
@@ -780,13 +786,13 @@ class TestProductsBatchPipelineE2E:
         assert response.status_code == 202
         stats = _wait_for_completion(client, response.json()["execution_id"])
         assert stats["state"] == "completed", f"Failed: {stats}"
-        assert stats["total_jobs"] == 2
-        assert stats["jobs_completed"] == 2
+        assert stats["total_jobs"] == 1
+        assert stats["jobs_completed"] == 1
         assert stats["jobs_failed"] == 0
-        print(f"✅ Products single batch: {stats['jobs_completed']}/2 jobs")
+        print(f"✅ Products single batch: {stats['jobs_completed']}/1 jobs")
 
     def test_products_pipeline_multiple_batches(self, client):
-        """20 product IDs / ids_batch_size=10 → 2 POST calls → 4 jobs."""
+        """v2: 20 product IDs / ids_batch_size=10 → 2 id-batches → 2 POST calls → 2 jobs."""
         response = client.post(
             "/run",
             json={
@@ -802,19 +808,16 @@ class TestProductsBatchPipelineE2E:
         assert response.status_code == 202
         stats = _wait_for_completion(client, response.json()["execution_id"])
         assert stats["state"] == "completed", f"Failed: {stats}"
-        assert stats["total_jobs"] == 4
-        assert stats["jobs_completed"] == 4
+        assert stats["total_jobs"] == 2
+        assert stats["jobs_completed"] == 2
         assert stats["jobs_failed"] == 0
-        print(f"✅ Products multiple batches: {stats['jobs_completed']}/4 jobs")
+        print(f"✅ Products multiple batches: {stats['jobs_completed']}/2 jobs")
 
     def test_products_pipeline_partial_batch(self, client):
         """
-        25 product IDs / ids_batch_size=10 → batches [10,10,5] → 3 POST calls.
-        batch_size=5:
-        - Batch 1: 10 products → 2 jobs
-        - Batch 2: 10 products → 2 jobs
-        - Batch 3:  5 products → 1 job
-        Total: 5 jobs.
+        v2: one job per id-batch. 25 product IDs / ids_batch_size=10 →
+        id-batches [10,10,5] → 3 jobs (one per id-batch, regardless of
+        batch_size / how many products each POST call returns).
         """
         response = client.post(
             "/run",
@@ -831,10 +834,10 @@ class TestProductsBatchPipelineE2E:
         assert response.status_code == 202
         stats = _wait_for_completion(client, response.json()["execution_id"])
         assert stats["state"] == "completed", f"Failed: {stats}"
-        assert stats["total_jobs"] == 5
-        assert stats["jobs_completed"] == 5
+        assert stats["total_jobs"] == 3
+        assert stats["jobs_completed"] == 3
         assert stats["jobs_failed"] == 0
-        print(f"✅ Products partial batch: {stats['jobs_completed']}/5 jobs")
+        print(f"✅ Products partial batch: {stats['jobs_completed']}/3 jobs")
 
     def test_products_pipeline_nonexistent_ids(self, client):
         """
@@ -892,7 +895,9 @@ class TestProductsBatchPipelineE2E:
     def test_products_pipeline_all_categories(self, client):
         """
         All 50 products cover categories A, B, C.
-        50 IDs / ids_batch_size=10 → 5 POST calls → 10/5=2 jobs each → 10 jobs.
+
+        v2: one job per id-batch. 50 IDs / ids_batch_size=10 → 5 id-batches →
+        5 POST calls → 5 jobs.
         """
         response = client.post(
             "/run",
@@ -909,10 +914,10 @@ class TestProductsBatchPipelineE2E:
         assert response.status_code == 202
         stats = _wait_for_completion(client, response.json()["execution_id"], max_wait=180)
         assert stats["state"] == "completed", f"Failed: {stats}"
-        assert stats["total_jobs"] == 10
-        assert stats["jobs_completed"] == 10
+        assert stats["total_jobs"] == 5
+        assert stats["jobs_completed"] == 5
         assert stats["jobs_failed"] == 0
-        print(f"✅ Products all categories: {stats['jobs_completed']}/10 jobs")
+        print(f"✅ Products all categories: {stats['jobs_completed']}/5 jobs")
 
 
 class TestIdBasedAPIBatchPipelineE2E:
@@ -947,9 +952,9 @@ class TestIdBasedAPIBatchPipelineE2E:
         """
         Test that the pipeline completes with the expected job count.
 
-        20 IDs / ids_batch_size=10 → 2 POST calls.
-        Each POST returns 10 users; batch_size=5 → 2 jobs per POST.
-        Total: 4 jobs.
+        v2: one job per id-batch (worker fetches the whole POST /users/batch
+        response itself; ``batch_size`` no longer chunks fetched records into
+        multiple jobs). 20 IDs / ids_batch_size=10 → 2 id-batches → 2 jobs.
         """
         response = client.post(
             "/run",
@@ -971,11 +976,9 @@ class TestIdBasedAPIBatchPipelineE2E:
         stats = _wait_for_completion(client, execution_id, max_wait=120)
 
         assert stats["state"] == "completed", f"Pipeline failed: {stats}"
-        # 20 IDs / 10 ids_batch_size = 2 batches
-        # Each batch: 10 users / batch_size=5 = 2 jobs
-        # Total: 4 jobs
-        assert stats["total_jobs"] == 4
-        assert stats["jobs_completed"] == 4
+        # 20 IDs / ids_batch_size=10 = 2 id-batches → 2 jobs (one job per id-batch)
+        assert stats["total_jobs"] == 2
+        assert stats["jobs_completed"] == 2
         assert stats["jobs_failed"] == 0
 
         print(
@@ -986,8 +989,7 @@ class TestIdBasedAPIBatchPipelineE2E:
         """
         Test with exactly ids_batch_size IDs (single POST call).
 
-        10 IDs / ids_batch_size=10 → 1 POST call.
-        10 users / batch_size=5 → 2 jobs.
+        v2: 10 IDs / ids_batch_size=10 → 1 id-batch → 1 POST call → 1 job.
         """
         response = client.post(
             "/run",
@@ -1009,8 +1011,8 @@ class TestIdBasedAPIBatchPipelineE2E:
         stats = _wait_for_completion(client, execution_id, max_wait=120)
 
         assert stats["state"] == "completed", f"Pipeline failed: {stats}"
-        assert stats["total_jobs"] == 2
-        assert stats["jobs_completed"] == 2
+        assert stats["total_jobs"] == 1
+        assert stats["jobs_completed"] == 1
         assert stats["jobs_failed"] == 0
 
         print(f"✅ API batch pipeline (single batch) completed: {stats['jobs_completed']} jobs")
@@ -1019,10 +1021,9 @@ class TestIdBasedAPIBatchPipelineE2E:
         """
         Test with an uneven number of IDs so the last batch is smaller.
 
-        25 IDs / ids_batch_size=10 → 3 batches (10, 10, 5).
-        Each full batch: 10 users / batch_size=5 = 2 jobs.
-        Last batch: 5 users / batch_size=5 = 1 job.
-        Total: 5 jobs.
+        v2: one job per id-batch. 25 IDs / ids_batch_size=10 → id-batches
+        (10, 10, 5) → 3 jobs (one per id-batch, regardless of batch_size /
+        how many users each POST call returns).
         """
         response = client.post(
             "/run",
@@ -1044,8 +1045,8 @@ class TestIdBasedAPIBatchPipelineE2E:
         stats = _wait_for_completion(client, execution_id, max_wait=120)
 
         assert stats["state"] == "completed", f"Pipeline failed: {stats}"
-        assert stats["total_jobs"] == 5
-        assert stats["jobs_completed"] == 5
+        assert stats["total_jobs"] == 3
+        assert stats["jobs_completed"] == 3
         assert stats["jobs_failed"] == 0
 
         print(

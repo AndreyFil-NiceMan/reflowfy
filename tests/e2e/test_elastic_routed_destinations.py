@@ -1,10 +1,14 @@
 """
 E2E test for elastic source routing into two destinations.
 
-Verifies:
-- Elastic scroll batches become jobs.
-- Transformation adds per-record metadata.
-- Destination is selected per job based on transformation metadata.
+Verifies (v2 worker-side sourcing: jobs are per ``ElasticSource.split()``
+slice — see ``elastic_routed_destinations_pipeline.NUM_SLICES`` — rather than
+one job per scroll page as in v1):
+- Each elastic slice becomes one job.
+- Transformation adds per-record metadata and a content-based route hint
+  (``_route_target``, derived from each record's ``user_id`` parity).
+- Destination is selected per job based on the majority route hint among
+  that job's own records (one destination call per job; no data loss).
 - Both destination routes are used for a single execution.
 """
 
