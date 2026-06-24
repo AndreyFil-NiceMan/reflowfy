@@ -105,8 +105,10 @@ class SqlSource(BaseSource):
         engine = self._get_engine()
         with engine.connect() as conn:
             row = conn.execute(
-                text(f"SELECT MIN({id_column}) AS lo, MAX({id_column}) AS hi "
-                     f"FROM ({base_query}) AS sub")
+                text(
+                    f"SELECT MIN({id_column}) AS lo, MAX({id_column}) AS hi "
+                    f"FROM ({base_query}) AS sub"
+                )
             ).fetchone()
         if not row or row[0] is None:
             return

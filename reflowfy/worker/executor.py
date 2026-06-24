@@ -40,9 +40,9 @@ class JobStats:
             "duration_seconds": round(duration, 3),
             "records_input": self.records_input,
             "records_output": self.records_output,
-            "throughput_records_per_second": round(self.records_output / duration, 2)
-            if duration > 0
-            else 0,
+            "throughput_records_per_second": (
+                round(self.records_output / duration, 2) if duration > 0 else 0
+            ),
             "transformation_times": self.transformation_times,
             "destination_write_time": round(self.destination_write_time, 3),
             "error": self.error,
@@ -121,9 +121,7 @@ class WorkerExecutor:
             # 1. Rebuild the planned source and fetch THIS slice (worker-side).
             from reflowfy.factories.source_factory import SourceFactory
 
-            source = SourceFactory.create(
-                source_descriptor["type"], source_descriptor["config"]
-            )
+            source = SourceFactory.create(source_descriptor["type"], source_descriptor["config"])
             records = source.fetch(runtime_params)
             stats.records_input = len(records)
 

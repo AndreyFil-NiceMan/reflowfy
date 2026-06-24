@@ -711,7 +711,9 @@ class PipelineRunner:
                 if enable_duplicate_jobs:
                     job_id = str(uuid.uuid4())
                 else:
-                    job_id = generate_job_id(pipeline_name, source_descriptor, current_ids=ids_batch)
+                    job_id = generate_job_id(
+                        pipeline_name, source_descriptor, current_ids=ids_batch
+                    )
                     if self.job_manager.get_job(job_id):
                         dedup_count += 1
                         continue

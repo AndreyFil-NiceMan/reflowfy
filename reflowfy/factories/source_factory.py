@@ -39,9 +39,7 @@ class SourceFactory:
         """
         if type_name not in cls._registry:
             available = ", ".join(sorted(cls._registry)) if cls._registry else "none"
-            raise ValueError(
-                f"Unknown source type: '{type_name}'. Available types: {available}"
-            )
+            raise ValueError(f"Unknown source type: '{type_name}'. Available types: {available}")
         return cls._registry[type_name](**config)
 
     @classmethod

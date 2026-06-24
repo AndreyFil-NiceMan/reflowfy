@@ -9,11 +9,11 @@ from sqlalchemy import func, case, desc
 from reflowfy.reflow_manager.database import get_db
 from reflowfy.reflow_manager.models import Execution, Job, DLQJob, DLQJobArchive
 
-
 router = APIRouter(prefix="/stats", tags=["Stats"])
 
 
 # ===== 1. Global Overview =====
+
 
 @router.get("/overview")
 async def get_overview_stats(db: Session = Depends(get_db)):
@@ -23,10 +23,14 @@ async def get_overview_stats(db: Session = Depends(get_db)):
     Returns total executions, jobs by state, success rate, and DLQ summary.
     """
     # Execution counts by state
-    exec_rows = db.query(
-        Execution.state,
-        func.count(Execution.execution_id),
-    ).group_by(Execution.state).all()
+    exec_rows = (
+        db.query(
+            Execution.state,
+            func.count(Execution.execution_id),
+        )
+        .group_by(Execution.state)
+        .all()
+    )
 
     executions_by_state = {}
     total_executions = 0
@@ -35,10 +39,14 @@ async def get_overview_stats(db: Session = Depends(get_db)):
         total_executions += count
 
     # Job counts by state
-    job_rows = db.query(
-        Job.state,
-        func.count(Job.job_id),
-    ).group_by(Job.state).all()
+    job_rows = (
+        db.query(
+            Job.state,
+            func.count(Job.job_id),
+        )
+        .group_by(Job.state)
+        .all()
+    )
 
     jobs_by_state = {}
     total_jobs = 0
@@ -53,10 +61,14 @@ async def get_overview_stats(db: Session = Depends(get_db)):
     success_rate = round((completed_jobs / finished) * 100, 2) if finished > 0 else 100.0
 
     # DLQ summary
-    dlq_rows = db.query(
-        DLQJob.status,
-        func.count(DLQJob.id),
-    ).group_by(DLQJob.status).all()
+    dlq_rows = (
+        db.query(
+            DLQJob.status,
+            func.count(DLQJob.id),
+        )
+        .group_by(DLQJob.status)
+        .all()
+    )
 
     dlq_by_status = {}
     for dlq_status, count in dlq_rows:
@@ -74,6 +86,7 @@ async def get_overview_stats(db: Session = Depends(get_db)):
 
 # ===== 2. Per-Pipeline Breakdown =====
 
+
 @router.get("/pipelines")
 async def get_pipeline_stats(db: Session = Depends(get_db)):
     """
@@ -82,15 +95,19 @@ async def get_pipeline_stats(db: Session = Depends(get_db)):
     Returns execution counts, job totals, and success rate per pipeline.
     """
     # Execution counts per pipeline
-    exec_rows = db.query(
-        Execution.pipeline_name,
-        Execution.state,
-        func.count(Execution.execution_id),
-        func.max(Execution.created_at).label("last_execution_at"),
-    ).group_by(
-        Execution.pipeline_name,
-        Execution.state,
-    ).all()
+    exec_rows = (
+        db.query(
+            Execution.pipeline_name,
+            Execution.state,
+            func.count(Execution.execution_id),
+            func.max(Execution.created_at).label("last_execution_at"),
+        )
+        .group_by(
+            Execution.pipeline_name,
+            Execution.state,
+        )
+        .all()
+    )
 
     # Build per-pipeline map
     pipelines = {}
@@ -109,14 +126,20 @@ async def get_pipeline_stats(db: Session = Depends(get_db)):
             p["last_execution_at"] = last_at
 
     # Job counts per pipeline (via join)
-    job_rows = db.query(
-        Execution.pipeline_name,
-        func.count(Job.job_id).label("total_jobs"),
-        func.sum(case((Job.state == "completed", 1), else_=0)).label("jobs_completed"),
-        func.sum(case((Job.state == "failed", 1), else_=0)).label("jobs_failed"),
-    ).join(
-        Job, Job.execution_id == Execution.execution_id,
-    ).group_by(Execution.pipeline_name).all()
+    job_rows = (
+        db.query(
+            Execution.pipeline_name,
+            func.count(Job.job_id).label("total_jobs"),
+            func.sum(case((Job.state == "completed", 1), else_=0)).label("jobs_completed"),
+            func.sum(case((Job.state == "failed", 1), else_=0)).label("jobs_failed"),
+        )
+        .join(
+            Job,
+            Job.execution_id == Execution.execution_id,
+        )
+        .group_by(Execution.pipeline_name)
+        .all()
+    )
 
     for pipeline_name, total_jobs, completed, failed in job_rows:
         p = pipelines.get(pipeline_name)
@@ -127,7 +150,9 @@ async def get_pipeline_stats(db: Session = Depends(get_db)):
             p["total_jobs"] = total_jobs
             p["jobs_completed"] = completed_int
             p["jobs_failed"] = failed_int
-            p["success_rate"] = round((completed_int / finished) * 100, 2) if finished > 0 else 100.0
+            p["success_rate"] = (
+                round((completed_int / finished) * 100, 2) if finished > 0 else 100.0
+            )
 
     # Ensure all pipelines have job fields
     for p in pipelines.values():
@@ -143,6 +168,7 @@ async def get_pipeline_stats(db: Session = Depends(get_db)):
 
 # ===== 3. Single Pipeline Detail =====
 
+
 @router.get("/pipelines/{pipeline_name}")
 async def get_pipeline_detail(
     pipeline_name: str,
@@ -157,13 +183,18 @@ async def get_pipeline_detail(
         limit: Number of recent executions to return (default 10)
     """
     # Check pipeline exists in execution history
-    exec_count = db.query(func.count(Execution.execution_id)).filter(
-        Execution.pipeline_name == pipeline_name,
-    ).scalar()
+    exec_count = (
+        db.query(func.count(Execution.execution_id))
+        .filter(
+            Execution.pipeline_name == pipeline_name,
+        )
+        .scalar()
+    )
 
     if exec_count == 0:
         # No executions yet — try the pipeline registry for static metadata
         from reflowfy.core.registry import pipeline_registry
+
         pipeline_obj = pipeline_registry.get(pipeline_name)
         if not pipeline_obj:
             raise HTTPException(
@@ -184,12 +215,17 @@ async def get_pipeline_detail(
         }
 
     # Execution counts by state
-    exec_rows = db.query(
-        Execution.state,
-        func.count(Execution.execution_id),
-    ).filter(
-        Execution.pipeline_name == pipeline_name,
-    ).group_by(Execution.state).all()
+    exec_rows = (
+        db.query(
+            Execution.state,
+            func.count(Execution.execution_id),
+        )
+        .filter(
+            Execution.pipeline_name == pipeline_name,
+        )
+        .group_by(Execution.state)
+        .all()
+    )
 
     executions_by_state = {}
     total_executions = 0
@@ -198,15 +234,21 @@ async def get_pipeline_detail(
         total_executions += count
 
     # Job counts
-    job_row = db.query(
-        func.count(Job.job_id).label("total_jobs"),
-        func.sum(case((Job.state == "completed", 1), else_=0)).label("jobs_completed"),
-        func.sum(case((Job.state == "failed", 1), else_=0)).label("jobs_failed"),
-    ).join(
-        Execution, Execution.execution_id == Job.execution_id,
-    ).filter(
-        Execution.pipeline_name == pipeline_name,
-    ).first()
+    job_row = (
+        db.query(
+            func.count(Job.job_id).label("total_jobs"),
+            func.sum(case((Job.state == "completed", 1), else_=0)).label("jobs_completed"),
+            func.sum(case((Job.state == "failed", 1), else_=0)).label("jobs_failed"),
+        )
+        .join(
+            Execution,
+            Execution.execution_id == Job.execution_id,
+        )
+        .filter(
+            Execution.pipeline_name == pipeline_name,
+        )
+        .first()
+    )
 
     total_jobs = job_row.total_jobs if job_row else 0
     jobs_completed = int(job_row.jobs_completed or 0) if job_row else 0
@@ -215,22 +257,30 @@ async def get_pipeline_detail(
     success_rate = round((jobs_completed / finished) * 100, 2) if finished > 0 else 100.0
 
     # Recent executions
-    recent = db.query(Execution).filter(
-        Execution.pipeline_name == pipeline_name,
-    ).order_by(desc(Execution.created_at)).limit(limit).all()
+    recent = (
+        db.query(Execution)
+        .filter(
+            Execution.pipeline_name == pipeline_name,
+        )
+        .order_by(desc(Execution.created_at))
+        .limit(limit)
+        .all()
+    )
 
     recent_executions = []
     for ex in recent:
-        recent_executions.append({
-            "execution_id": ex.execution_id,
-            "state": ex.state,
-            "total_jobs": ex.total_jobs,
-            "jobs_completed": ex.jobs_completed,
-            "jobs_failed": ex.jobs_failed,
-            "created_at": ex.created_at.isoformat() if ex.created_at else None,
-            "completed_at": ex.completed_at.isoformat() if ex.completed_at else None,
-            "error_message": ex.error_message,
-        })
+        recent_executions.append(
+            {
+                "execution_id": ex.execution_id,
+                "state": ex.state,
+                "total_jobs": ex.total_jobs,
+                "jobs_completed": ex.jobs_completed,
+                "jobs_failed": ex.jobs_failed,
+                "created_at": ex.created_at.isoformat() if ex.created_at else None,
+                "completed_at": ex.completed_at.isoformat() if ex.completed_at else None,
+                "error_message": ex.error_message,
+            }
+        )
 
     return {
         "pipeline_name": pipeline_name,
@@ -245,6 +295,7 @@ async def get_pipeline_detail(
 
 
 # ===== 4. Failure Summary =====
+
 
 @router.get("/failures")
 async def get_failure_stats(
@@ -270,21 +321,24 @@ async def get_failure_stats(
 
     failed_executions = []
     for ex in failed_execs:
-        failed_executions.append({
-            "execution_id": ex.execution_id,
-            "pipeline_name": ex.pipeline_name,
-            "error_message": ex.error_message,
-            "total_jobs": ex.total_jobs,
-            "jobs_failed": ex.jobs_failed,
-            "created_at": ex.created_at.isoformat() if ex.created_at else None,
-            "completed_at": ex.completed_at.isoformat() if ex.completed_at else None,
-        })
+        failed_executions.append(
+            {
+                "execution_id": ex.execution_id,
+                "pipeline_name": ex.pipeline_name,
+                "error_message": ex.error_message,
+                "total_jobs": ex.total_jobs,
+                "jobs_failed": ex.jobs_failed,
+                "created_at": ex.created_at.isoformat() if ex.created_at else None,
+                "completed_at": ex.completed_at.isoformat() if ex.completed_at else None,
+            }
+        )
 
     # Total failed jobs across all (or filtered) executions
     jobs_query = db.query(func.count(Job.job_id)).filter(Job.state == "failed")
     if pipeline_name:
         jobs_query = jobs_query.join(
-            Execution, Execution.execution_id == Job.execution_id,
+            Execution,
+            Execution.execution_id == Job.execution_id,
         ).filter(Execution.pipeline_name == pipeline_name)
 
     total_failed_jobs = jobs_query.scalar() or 0
@@ -297,6 +351,7 @@ async def get_failure_stats(
 
 
 # ===== 5. DLQ Statistics =====
+
 
 @router.get("/dlq")
 async def get_dlq_stats(
@@ -337,9 +392,9 @@ async def get_dlq_stats(
         DLQJob.status,
         func.count(DLQJob.id).label("count"),
         func.avg(DLQJob.retry_count).label("avg_retry_count"),
-        func.min(
-            case((DLQJob.status == "pending", DLQJob.created_at), else_=None)
-        ).label("oldest_pending_at"),
+        func.min(case((DLQJob.status == "pending", DLQJob.created_at), else_=None)).label(
+            "oldest_pending_at"
+        ),
     )
     if pipeline_name:
         pipeline_query = pipeline_query.filter(DLQJob.pipeline_name == pipeline_name)

@@ -67,18 +67,21 @@ def _register_builtin_destinations() -> None:
     """Register built-in destination types."""
     try:
         from reflowfy.destinations.kafka import KafkaDestination
+
         DestinationFactory.register("kafka", KafkaDestination)
     except ImportError:
         pass
 
     try:
         from reflowfy.destinations.api import ApiDestination
+
         DestinationFactory.register("api", ApiDestination)
     except ImportError:
         pass
 
     try:
         from reflowfy.destinations.console import ConsoleDestination
+
         DestinationFactory.register("console", ConsoleDestination)
     except ImportError:
         pass

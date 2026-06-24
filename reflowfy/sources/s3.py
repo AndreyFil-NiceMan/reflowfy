@@ -279,7 +279,8 @@ class S3Source(BaseSource):
         page_size = resolved.get("page_size", 1000)
         paginator = client.get_paginator("list_objects_v2")
         pages = paginator.paginate(
-            Bucket=resolved["bucket"], Prefix=resolved["prefix"],
+            Bucket=resolved["bucket"],
+            Prefix=resolved["prefix"],
             PaginationConfig={"PageSize": page_size},
         )
         c = resolved
@@ -288,9 +289,13 @@ class S3Source(BaseSource):
             if not keys:
                 continue
             sub = S3Source(
-                bucket=c["bucket"], prefix=c["prefix"], file_pattern=c["file_pattern"],
-                page_size=page_size, read_content=c["read_content"],
-                content_type=c["content_type"], region_name=c["region_name"],
+                bucket=c["bucket"],
+                prefix=c["prefix"],
+                file_pattern=c["file_pattern"],
+                page_size=page_size,
+                read_content=c["read_content"],
+                content_type=c["content_type"],
+                region_name=c["region_name"],
                 endpoint_url=c["endpoint_url"],
                 aws_access_key_id=c["aws_access_key_id"],
                 aws_secret_access_key=c["aws_secret_access_key"],

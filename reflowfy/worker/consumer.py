@@ -100,7 +100,9 @@ class KafkaJobConsumer:
             except KafkaError as e:
                 if attempt < max_retries - 1:
                     wait_time = 2**attempt  # Exponential backoff
-                    print(f"⚠️  Failed to start consumer (attempt {attempt + 1}/{max_retries}): {e}")
+                    print(
+                        f"⚠️  Failed to start consumer (attempt {attempt + 1}/{max_retries}): {e}"
+                    )
                     print(f"   Retrying in {wait_time}s...")
                     await asyncio.sleep(wait_time)
                 else:

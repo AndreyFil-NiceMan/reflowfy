@@ -43,5 +43,6 @@ def test_roundtrip_sql_source():
 
 def test_unknown_type_raises():
     import pytest
+
     with pytest.raises(ValueError, match="Unknown source type"):
         SourceFactory.create("NopeSource", {})

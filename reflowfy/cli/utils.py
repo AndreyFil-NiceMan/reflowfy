@@ -9,6 +9,7 @@ console = Console()
 def get_package_path() -> Path:
     """Get the path to the installed reflowfy package."""
     import reflowfy
+
     return Path(reflowfy.__file__).parent
 
 

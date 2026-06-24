@@ -28,9 +28,11 @@ class RateLimiter:
 
     def _get_or_create_state(self, pipeline_name: str, rate_limit: float) -> RateLimitState:
         """Get or create rate limit state for a pipeline, updating rate if different."""
-        state = self.db.query(RateLimitState).filter(
-            RateLimitState.pipeline_name == pipeline_name
-        ).first()
+        state = (
+            self.db.query(RateLimitState)
+            .filter(RateLimitState.pipeline_name == pipeline_name)
+            .first()
+        )
 
         if not state:
             # Start with 1 token for strict rate limiting from the beginning
@@ -113,9 +115,12 @@ class RateLimiter:
         self._get_or_create_state(pipeline_name, rate_limit)
 
         # Now get it with a lock for atomic update
-        locked_state = self.db.query(RateLimitState).filter(
-            RateLimitState.pipeline_name == pipeline_name
-        ).with_for_update().first()
+        locked_state = (
+            self.db.query(RateLimitState)
+            .filter(RateLimitState.pipeline_name == pipeline_name)
+            .with_for_update()
+            .first()
+        )
 
         return locked_state
 
@@ -202,4 +207,3 @@ class RateLimiter:
             remaining_wait = max_wait - elapsed
             sleep_time = min(wait_per_token, remaining_wait)
             time.sleep(sleep_time)
-

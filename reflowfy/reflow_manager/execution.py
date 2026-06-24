@@ -53,9 +53,7 @@ class ExecutionManager:
         Returns:
             Execution object or None if not found
         """
-        query = self.db.query(Execution).filter(
-            Execution.execution_id == execution_id
-        )
+        query = self.db.query(Execution).filter(Execution.execution_id == execution_id)
         if for_update:
             query = query.with_for_update()
         return query.first()
@@ -156,7 +154,4 @@ class ExecutionManager:
         Returns:
             List of Execution objects in 'running' state
         """
-        return self.db.query(Execution).filter(
-            Execution.state == "running"
-        ).all()
-
+        return self.db.query(Execution).filter(Execution.state == "running").all()

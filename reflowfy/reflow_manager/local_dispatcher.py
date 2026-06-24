@@ -6,8 +6,6 @@ from reflowfy.reflow_manager.dispatcher import BaseDispatcher
 from reflowfy.reflow_manager.rate_limiter import RateLimiter
 
 
-
-
 class LocalDispatcher(BaseDispatcher):
     """
     Dispatches jobs locally by running them in-process.
@@ -26,6 +24,7 @@ class LocalDispatcher(BaseDispatcher):
     def _create_executor(self):
         """Create a fresh WorkerExecutor instance."""
         from reflowfy.worker.executor import WorkerExecutor
+
         return WorkerExecutor()
 
     async def dispatch_job(
@@ -37,9 +36,7 @@ class LocalDispatcher(BaseDispatcher):
         """Dispatch single job locally with rate limiting."""
         # Rate limit: acquire a token before executing
         if rate_limit is not None:
-            acquired = self.rate_limiter.acquire_token(
-                pipeline_name, rate_limit, max_wait=60.0
-            )
+            acquired = self.rate_limiter.acquire_token(pipeline_name, rate_limit, max_wait=60.0)
             if not acquired:
                 print("⚠️ Rate limit timeout, skipping job")
                 return False
@@ -72,7 +69,9 @@ class LocalDispatcher(BaseDispatcher):
                         pipeline_name, rate_limit, max_wait=60.0
                     )
                     if not acquired:
-                        print(f"⚠️ Rate limit timeout after 60s, stopping dispatch after {dispatched} jobs")
+                        print(
+                            f"⚠️ Rate limit timeout after 60s, stopping dispatch after {dispatched} jobs"
+                        )
                         break
 
                 try:
@@ -88,5 +87,3 @@ class LocalDispatcher(BaseDispatcher):
     async def close(self):
         """No persistent resources to close."""
         pass
-
-

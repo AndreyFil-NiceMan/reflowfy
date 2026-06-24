@@ -56,11 +56,15 @@ class JobManager:
         batch_number: int,
     ) -> List[Job]:
         """Get all pending jobs for a specific batch number."""
-        return self.db.query(Job).filter(
-            Job.execution_id == execution_id,
-            Job.batch_number == batch_number,
-            Job.state == "pending",
-        ).all()
+        return (
+            self.db.query(Job)
+            .filter(
+                Job.execution_id == execution_id,
+                Job.batch_number == batch_number,
+                Job.state == "pending",
+            )
+            .all()
+        )
 
     def get_jobs(
         self,
@@ -77,9 +81,7 @@ class JobManager:
         Returns:
             List of Job objects
         """
-        query = self.db.query(Job).filter(
-            Job.execution_id == execution_id
-        )
+        query = self.db.query(Job).filter(Job.execution_id == execution_id)
 
         if state:
             query = query.filter(Job.state == state)
@@ -111,12 +113,16 @@ class JobManager:
         )
 
         # Then, update state to 'dispatched' only for pending jobs
-        updated = self.db.query(Job).filter(
-            Job.job_id.in_(job_ids),
-            Job.state == "pending",
-        ).update(
-            {"state": "dispatched"},
-            synchronize_session=False,
+        updated = (
+            self.db.query(Job)
+            .filter(
+                Job.job_id.in_(job_ids),
+                Job.state == "pending",
+            )
+            .update(
+                {"state": "dispatched"},
+                synchronize_session=False,
+            )
         )
 
         self.db.commit()
@@ -149,9 +155,11 @@ class JobManager:
         if stats:
             update_data["stats"] = stats
 
-        updated = self.db.query(Job).filter(
-            Job.job_id == job_id
-        ).update(update_data, synchronize_session=False)
+        updated = (
+            self.db.query(Job)
+            .filter(Job.job_id == job_id)
+            .update(update_data, synchronize_session=False)
+        )
 
         self.db.commit()
 
@@ -176,9 +184,7 @@ class JobManager:
         # Expire cached objects to see external updates from workers
         self.db.expire_all()
 
-        results = self.db.query(Job.job_id, Job.state).filter(
-            Job.job_id.in_(job_ids)
-        ).all()
+        results = self.db.query(Job.job_id, Job.state).filter(Job.job_id.in_(job_ids)).all()
 
         return {job_id: state for job_id, state in results}
 
@@ -194,9 +200,12 @@ class JobManager:
         # Expire cached objects to see external updates from workers
         self.db.expire_all()
 
-        rows = self.db.query(Job.state, func.count(Job.job_id)).filter(
-            Job.execution_id == execution_id
-        ).group_by(Job.state).all()
+        rows = (
+            self.db.query(Job.state, func.count(Job.job_id))
+            .filter(Job.execution_id == execution_id)
+            .group_by(Job.state)
+            .all()
+        )
 
         counts = {
             "total": 0,
@@ -222,6 +231,7 @@ class JobManager:
         Column(JSON) to PostgreSQL's json type, and jsonb_set only accepts jsonb.
         """
         from sqlalchemy import text
+
         self.db.execute(
             text(
                 "UPDATE jobs "
@@ -244,12 +254,15 @@ class JobManager:
         Returns:
             Batch number of first incomplete batch, or None if all complete
         """
-        result = self.db.query(Job.batch_number).filter(
-            Job.execution_id == execution_id,
-            Job.state.in_(["pending", "dispatched"]),
-            Job.batch_number.isnot(None),
-        ).order_by(Job.batch_number).first()
+        result = (
+            self.db.query(Job.batch_number)
+            .filter(
+                Job.execution_id == execution_id,
+                Job.state.in_(["pending", "dispatched"]),
+                Job.batch_number.isnot(None),
+            )
+            .order_by(Job.batch_number)
+            .first()
+        )
 
         return result[0] if result else None
-
-

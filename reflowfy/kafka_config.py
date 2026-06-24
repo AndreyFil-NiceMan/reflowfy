@@ -39,13 +39,15 @@ def get_kafka_config(
 
     # Add SASL config if credentials provided
     if username and password:
-        config.update({
-            "security_protocol": protocol,
-            "sasl_mechanism": mechanism,
-            "sasl_plain_username": username,
-            "sasl_plain_password": password,
-            "client_id": username,  # client_id = username as requested
-        })
+        config.update(
+            {
+                "security_protocol": protocol,
+                "sasl_mechanism": mechanism,
+                "sasl_plain_username": username,
+                "sasl_plain_password": password,
+                "client_id": username,  # client_id = username as requested
+            }
+        )
 
     return config
 

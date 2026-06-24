@@ -44,7 +44,6 @@ class DistributedExecutor(BaseExecutor):
             self._client = httpx.Client(timeout=self.timeout)
         return self._client
 
-
     def execute(
         self,
         pipeline: Any,
@@ -58,7 +57,7 @@ class DistributedExecutor(BaseExecutor):
         This simplified version just forwards the request to ReflowManager's /run endpoint.
         The ReflowManager handles:
         - Loading the pipeline
-        - Splitting source data into jobs  
+        - Splitting source data into jobs
         - Creating execution and checkpoints
         - Dispatching jobs to Kafka with rate limiting
 
@@ -133,6 +132,7 @@ class DistributedExecutor(BaseExecutor):
 
         except Exception as e:
             import traceback
+
             error_msg = f"Failed to run pipeline: {e}"
             print(f"❌ {error_msg}")
             traceback.print_exc()
@@ -141,7 +141,6 @@ class DistributedExecutor(BaseExecutor):
             status.error_message = error_msg
 
             return status
-
 
     def close(self):
         """Close HTTP client."""
@@ -163,14 +162,12 @@ def get_executor(mode: str, **kwargs) -> BaseExecutor:
     """
     if mode == "local":
         from reflowfy.execution.local_executor import LocalExecutor
+
         return LocalExecutor(max_records=kwargs.get("max_records", 100))
 
     elif mode == "distributed":
         return DistributedExecutor(
-            reflow_manager_url=kwargs.get(
-                "reflow_manager_url",
-                "http://localhost:8001"
-            ),
+            reflow_manager_url=kwargs.get("reflow_manager_url", "http://localhost:8001"),
             timeout=kwargs.get("timeout", 30.0),
             mode=kwargs.get("execution_mode", "distributed"),
         )

@@ -67,7 +67,9 @@ def source(name: str) -> Callable[[F], F]:
         def production_elastic(**overrides):
             return elastic_source(url="http://prod:9200", **overrides)
     """
+
     def decorator(func: F) -> F:
         source_registry.register(name, func)
         return func
+
     return decorator

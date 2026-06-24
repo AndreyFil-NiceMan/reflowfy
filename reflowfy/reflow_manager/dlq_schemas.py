@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 class ScheduleDLQJobRequest(BaseModel):
     """Request to schedule a job in the DLQ."""
+
     job_payload: Dict[str, Any]
     pipeline_name: str
     delay_minutes: Optional[int] = None  # Uses DLQ_DEFAULT_DELAY_MINUTES if not provided
@@ -14,6 +15,7 @@ class ScheduleDLQJobRequest(BaseModel):
 
 class DLQJobResponse(BaseModel):
     """Response containing DLQ job details."""
+
     id: int
     job_payload: Dict[str, Any]
     pipeline_name: str
@@ -34,12 +36,14 @@ class DLQJobResponse(BaseModel):
 
 class DLQJobListResponse(BaseModel):
     """Response containing a list of DLQ jobs."""
+
     jobs: List[DLQJobResponse]
     total: int
 
 
 class DispatchDLQResponse(BaseModel):
     """Response after dispatching DLQ jobs."""
+
     dispatched_count: int
     execution_id: Optional[str] = None
     message: str

@@ -23,9 +23,14 @@ def test_build_job_payload_v2_shape():
         pipeline_name="user_sync",
         sub_source=sub,
         metadata={
-            "batch_id": "b1", "created_at": "t", "batch_number": 1,
-            "total_batches": 1, "retry_count": 0, "is_retry": False,
-            "runtime_params": {"env": "prod"}, "current_ids": [101, 102],
+            "batch_id": "b1",
+            "created_at": "t",
+            "batch_number": 1,
+            "total_batches": 1,
+            "retry_count": 0,
+            "is_retry": False,
+            "runtime_params": {"env": "prod"},
+            "current_ids": [101, 102],
             "source_metadata": None,
         },
     )

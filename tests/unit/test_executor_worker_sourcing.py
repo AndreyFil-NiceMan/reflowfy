@@ -2,15 +2,22 @@ from reflowfy.worker.executor import WorkerExecutor
 
 
 class _FakeDest:
-    def __init__(self, sink): self.sink = sink
-    async def health_check(self): return True
-    async def send_with_retry(self, records, params): self.sink.extend(records)
+    def __init__(self, sink):
+        self.sink = sink
+
+    async def health_check(self):
+        return True
+
+    async def send_with_retry(self, records, params):
+        self.sink.extend(records)
 
 
 class _FakePipeline:
     name = "p"
+
     def define_transformations(self, records, params):
         return []
+
     def define_destination(self, records, params):
         return _FakeDest([])
 
@@ -25,18 +32,28 @@ async def test_worker_fetches_static_source_and_runs(monkeypatch):
     pipe.define_destination = lambda records, params: _FakeDest(captured)  # noqa: E731
 
     from reflowfy.core.registry import pipeline_registry
+
     monkeypatch.setattr(pipeline_registry, "get", lambda name: pipe)
 
     ex = WorkerExecutor(database_url="postgresql://x/y")
     monkeypatch.setattr(ex, "_update_job_in_db", _async_noop)
 
     payload = {
-        "schema_version": 2, "execution_id": "e", "job_id": "j",
+        "schema_version": 2,
+        "execution_id": "e",
+        "job_id": "j",
         "pipeline_name": "p",
         "source": {"type": "StaticSource", "config": {"records": [{"id": 1}, {"id": 2}]}},
-        "metadata": {"batch_id": "b", "created_at": "t", "batch_number": 1,
-                     "total_batches": 1, "retry_count": 0, "is_retry": False,
-                     "runtime_params": {}, "source_metadata": None},
+        "metadata": {
+            "batch_id": "b",
+            "created_at": "t",
+            "batch_number": 1,
+            "total_batches": 1,
+            "retry_count": 0,
+            "is_retry": False,
+            "runtime_params": {},
+            "source_metadata": None,
+        },
     }
     ok = await ex.execute_job(payload)
     assert ok is True
@@ -48,8 +65,10 @@ async def test_worker_applies_transformations(monkeypatch):
 
     class _Pipe:
         name = "p"
+
         def define_transformations(self, records, params):
             return []  # not used by the iterative runner path below
+
         def define_destination(self, records, params):
             return _FakeDest(captured)
 
@@ -63,20 +82,32 @@ async def test_worker_applies_transformations(monkeypatch):
     monkeypatch.setattr(transformation_runner, "apply_transformations_iteratively", _fake_iter)
     # executor.py imported the symbol directly, so patch it there too:
     from reflowfy.worker import executor as executor_mod
+
     monkeypatch.setattr(executor_mod, "apply_transformations_iteratively", _fake_iter)
 
     from reflowfy.core.registry import pipeline_registry
+
     monkeypatch.setattr(pipeline_registry, "get", lambda name: _Pipe())
 
     ex = WorkerExecutor(database_url="postgresql://x/y")
     monkeypatch.setattr(ex, "_update_job_in_db", _async_noop)
 
     payload = {
-        "schema_version": 2, "execution_id": "e", "job_id": "j", "pipeline_name": "p",
+        "schema_version": 2,
+        "execution_id": "e",
+        "job_id": "j",
+        "pipeline_name": "p",
         "source": {"type": "StaticSource", "config": {"records": [{"v": "a"}, {"v": "b"}]}},
-        "metadata": {"batch_id": "b", "created_at": "t", "batch_number": 1,
-                     "total_batches": 1, "retry_count": 0, "is_retry": False,
-                     "runtime_params": {}, "source_metadata": None},
+        "metadata": {
+            "batch_id": "b",
+            "created_at": "t",
+            "batch_number": 1,
+            "total_batches": 1,
+            "retry_count": 0,
+            "is_retry": False,
+            "runtime_params": {},
+            "source_metadata": None,
+        },
     }
     ok = await ex.execute_job(payload)
     assert ok is True
@@ -85,19 +116,32 @@ async def test_worker_applies_transformations(monkeypatch):
 
 async def test_worker_empty_records_short_circuits(monkeypatch):
     from reflowfy.core.registry import pipeline_registry
+
     monkeypatch.setattr(pipeline_registry, "get", lambda name: _FakePipeline())
     ex = WorkerExecutor(database_url="postgresql://x/y")
     updated = {}
+
     async def _capture(execution_id, job_id, stats):
         updated["called"] = True
+
     monkeypatch.setattr(ex, "_update_job_in_db", _capture)
 
     payload = {
-        "schema_version": 2, "execution_id": "e", "job_id": "j", "pipeline_name": "p",
+        "schema_version": 2,
+        "execution_id": "e",
+        "job_id": "j",
+        "pipeline_name": "p",
         "source": {"type": "StaticSource", "config": {"records": []}},
-        "metadata": {"batch_id": "b", "created_at": "t", "batch_number": 1,
-                     "total_batches": 1, "retry_count": 0, "is_retry": False,
-                     "runtime_params": {}, "source_metadata": None},
+        "metadata": {
+            "batch_id": "b",
+            "created_at": "t",
+            "batch_number": 1,
+            "total_batches": 1,
+            "retry_count": 0,
+            "is_retry": False,
+            "runtime_params": {},
+            "source_metadata": None,
+        },
     }
     ok = await ex.execute_job(payload)
     assert ok is True
@@ -106,16 +150,27 @@ async def test_worker_empty_records_short_circuits(monkeypatch):
 
 async def test_worker_missing_pipeline_fails(monkeypatch):
     from reflowfy.core.registry import pipeline_registry
+
     monkeypatch.setattr(pipeline_registry, "get", lambda name: None)
     ex = WorkerExecutor(database_url="postgresql://x/y")
     monkeypatch.setattr(ex, "_update_job_in_db", _async_noop)
 
     payload = {
-        "schema_version": 2, "execution_id": "e", "job_id": "j", "pipeline_name": "missing",
+        "schema_version": 2,
+        "execution_id": "e",
+        "job_id": "j",
+        "pipeline_name": "missing",
         "source": {"type": "StaticSource", "config": {"records": [{"v": "a"}]}},
-        "metadata": {"batch_id": "b", "created_at": "t", "batch_number": 1,
-                     "total_batches": 1, "retry_count": 0, "is_retry": False,
-                     "runtime_params": {}, "source_metadata": None},
+        "metadata": {
+            "batch_id": "b",
+            "created_at": "t",
+            "batch_number": 1,
+            "total_batches": 1,
+            "retry_count": 0,
+            "is_retry": False,
+            "runtime_params": {},
+            "source_metadata": None,
+        },
     }
     ok = await ex.execute_job(payload)
     assert ok is False  # execute_job catches the RuntimeError and reports failure

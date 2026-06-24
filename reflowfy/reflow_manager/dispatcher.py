@@ -62,9 +62,11 @@ class KafkaDispatcher(BaseDispatcher):
 
         # Handle comma-separated string
         if isinstance(kafka_bootstrap_servers, str) and "," in kafka_bootstrap_servers:
-             self.kafka_bootstrap_servers = [s.strip() for s in kafka_bootstrap_servers.split(",") if s.strip()]
+            self.kafka_bootstrap_servers = [
+                s.strip() for s in kafka_bootstrap_servers.split(",") if s.strip()
+            ]
         else:
-             self.kafka_bootstrap_servers = kafka_bootstrap_servers
+            self.kafka_bootstrap_servers = kafka_bootstrap_servers
 
         self.kafka_topic = kafka_topic
 
@@ -83,7 +85,11 @@ class KafkaDispatcher(BaseDispatcher):
         loop = asyncio.get_running_loop()
 
         # Check if existing producer is bound to a different or closed loop
-        if self._producer and (self._producer_loop is None or self._producer_loop != loop or self._producer_loop.is_closed()):
+        if self._producer and (
+            self._producer_loop is None
+            or self._producer_loop != loop
+            or self._producer_loop.is_closed()
+        ):
             print("🔄 Detected event loop change, resetting Kafka producer")
             # We cannot strictly close() the old producer if its loop is closed, just discard it
             self._producer = None
@@ -99,13 +105,15 @@ class KafkaDispatcher(BaseDispatcher):
 
             # Add SASL config if credentials provided
             if self.sasl_username and self.sasl_password:
-                producer_kwargs.update({
-                    "security_protocol": self.security_protocol or "SASL_PLAINTEXT",
-                    "sasl_mechanism": self.sasl_mechanism or "SCRAM-SHA-256",
-                    "sasl_plain_username": self.sasl_username,
-                    "sasl_plain_password": self.sasl_password,
-                    "client_id": self.sasl_username,  # client_id = username
-                })
+                producer_kwargs.update(
+                    {
+                        "security_protocol": self.security_protocol or "SASL_PLAINTEXT",
+                        "sasl_mechanism": self.sasl_mechanism or "SCRAM-SHA-256",
+                        "sasl_plain_username": self.sasl_username,
+                        "sasl_plain_password": self.sasl_password,
+                        "client_id": self.sasl_username,  # client_id = username
+                    }
+                )
 
             self._producer = AIOKafkaProducer(**producer_kwargs)
             await self._producer.start()

@@ -115,7 +115,9 @@ def _create_id_based_route(
 
     async def run_pipeline(
         body: BodyModel,
-        mode: Literal["local", "distributed"] = Query("distributed", description="Execution mode: 'local' or 'distributed'"),
+        mode: Literal["local", "distributed"] = Query(
+            "distributed", description="Execution mode: 'local' or 'distributed'"
+        ),
         rate_limit: float = Query(None, description="Override rate limit (jobs per second)"),
     ):
         """
@@ -201,8 +203,11 @@ def _create_standard_route(
             parameters=[mode_param, rate_limit_param] + typed_params
         )
     else:
+
         async def run_pipeline(
-            mode: Literal["local", "distributed"] = Query("distributed", description="Execution mode: 'local' or 'distributed'"),
+            mode: Literal["local", "distributed"] = Query(
+                "distributed", description="Execution mode: 'local' or 'distributed'"
+            ),
             rate_limit: float = Query(None, description="Override rate limit (jobs per second)"),
         ):
             """Execute pipeline (no runtime parameters)."""

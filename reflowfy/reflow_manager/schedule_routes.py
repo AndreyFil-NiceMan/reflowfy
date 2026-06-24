@@ -15,28 +15,22 @@ router = APIRouter()
 @router.get("/schedules")
 def list_schedules(db: Session = Depends(get_db)):
     """List all pipeline schedule entries."""
-    rows = (
-        db.query(PipelineSchedule)
-        .order_by(PipelineSchedule.pipeline_name)
-        .all()
-    )
+    rows = db.query(PipelineSchedule).order_by(PipelineSchedule.pipeline_name).all()
     return {"schedules": [r.to_dict() for r in rows], "total": len(rows)}
 
 
 @router.get("/schedules/{pipeline_name}")
 def get_schedule(pipeline_name: str, db: Session = Depends(get_db)):
     """Get a single pipeline schedule with last-execution enrichment."""
-    row = db.query(PipelineSchedule).filter(
-        PipelineSchedule.pipeline_name == pipeline_name
-    ).first()
+    row = db.query(PipelineSchedule).filter(PipelineSchedule.pipeline_name == pipeline_name).first()
     if not row:
         raise HTTPException(status_code=404, detail=f"Schedule '{pipeline_name}' not found")
 
     data = row.to_dict()
     if row.last_execution_id:
-        exec_row = db.query(Execution).filter(
-            Execution.execution_id == row.last_execution_id
-        ).first()
+        exec_row = (
+            db.query(Execution).filter(Execution.execution_id == row.last_execution_id).first()
+        )
         if exec_row:
             data["last_execution_state"] = exec_row.state
             data["last_execution_jobs_completed"] = exec_row.jobs_completed
@@ -47,9 +41,7 @@ def get_schedule(pipeline_name: str, db: Session = Depends(get_db)):
 @router.get("/schedules/{pipeline_name}/stats")
 def get_schedule_stats(pipeline_name: str, db: Session = Depends(get_db)):
     """Execution history stats for a scheduled pipeline."""
-    row = db.query(PipelineSchedule).filter(
-        PipelineSchedule.pipeline_name == pipeline_name
-    ).first()
+    row = db.query(PipelineSchedule).filter(PipelineSchedule.pipeline_name == pipeline_name).first()
     if not row:
         raise HTTPException(status_code=404, detail=f"Schedule '{pipeline_name}' not found")
 
@@ -64,9 +56,9 @@ def get_schedule_stats(pipeline_name: str, db: Session = Depends(get_db)):
 
     last_exec_state = None
     if row.last_execution_id:
-        exec_row = db.query(Execution).filter(
-            Execution.execution_id == row.last_execution_id
-        ).first()
+        exec_row = (
+            db.query(Execution).filter(Execution.execution_id == row.last_execution_id).first()
+        )
         last_exec_state = exec_row.state if exec_row else None
 
     return {

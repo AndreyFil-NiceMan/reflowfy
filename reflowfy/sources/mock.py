@@ -64,7 +64,7 @@ class MockSource(BaseSource):
         batch_size = self.config.get("batch_size", batch_size)
 
         for i in range(0, len(data), batch_size):
-            batch = data[i:i + batch_size]
+            batch = data[i : i + batch_size]
 
             yield SourceJob(
                 records=batch,
@@ -117,15 +117,17 @@ def generate_sample_data(count: int = 100) -> List[Dict[str, Any]]:
 
     data = []
     for i in range(count):
-        data.append({
-            "id": i + 1,
-            "first_name": random.choice(first_names),
-            "last_name": random.choice(last_names),
-            "email": f"user{i+1}@example.com",
-            "age": random.randint(18, 70),
-            "city": random.choice(cities),
-            "salary": random.randint(30000, 150000),
-            "active": random.choice([True, False]),
-        })
+        data.append(
+            {
+                "id": i + 1,
+                "first_name": random.choice(first_names),
+                "last_name": random.choice(last_names),
+                "email": f"user{i+1}@example.com",
+                "age": random.randint(18, 70),
+                "city": random.choice(cities),
+                "salary": random.randint(30000, 150000),
+                "active": random.choice([True, False]),
+            }
+        )
 
     return data

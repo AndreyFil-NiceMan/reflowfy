@@ -146,8 +146,12 @@ class ElasticSource(BaseSource):
         pit_id = pit["id"]
         for i in range(num_slices):
             sub = ElasticSource(
-                url=resolved["url"], index=resolved["index"], base_query=resolved["base_query"],
-                scroll=resolved["scroll"], size=resolved["size"], auth=resolved.get("auth"),
+                url=resolved["url"],
+                index=resolved["index"],
+                base_query=resolved["base_query"],
+                scroll=resolved["scroll"],
+                size=resolved["size"],
+                auth=resolved.get("auth"),
                 verify_certs=resolved["verify_certs"],
             )
             sub.config["pit_id"] = pit_id

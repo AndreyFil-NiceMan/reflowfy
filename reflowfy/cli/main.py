@@ -25,7 +25,12 @@ def version_callback(value: bool) -> None:
 @app.callback()
 def main(
     version: Optional[bool] = typer.Option(
-        None, "-v", "--version", callback=version_callback, is_eager=True, help="Show version and exit."
+        None,
+        "-v",
+        "--version",
+        callback=version_callback,
+        is_eager=True,
+        help="Show version and exit.",
     ),
 ) -> None:
     pass
@@ -35,6 +40,7 @@ def main(
 def version_cmd() -> None:
     """Show the reflowfy version."""
     typer.echo(f"reflowfy {__version__}")
+
 
 # Load .env file if it exists
 env_path = Path(".") / ".env"
