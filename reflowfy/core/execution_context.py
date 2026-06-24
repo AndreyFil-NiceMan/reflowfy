@@ -29,7 +29,9 @@ class ExecutionContext:
     pipeline_name: str = ""
     runtime_params: Dict[str, Any] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    created_at: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
+    )
     batch_number: int = 0
     total_batches: int = 0
     retry_count: int = 0
@@ -47,7 +49,6 @@ class ExecutionContext:
             "batch_id": self.batch_id,
             "pipeline_name": self.pipeline_name,
             "runtime_params": self.runtime_params,
-            "metadata": self.metadata,
             "created_at": self.created_at.isoformat(),
             "batch_number": self.batch_number,
             "total_batches": self.total_batches,

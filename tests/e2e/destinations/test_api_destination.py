@@ -286,23 +286,43 @@ class TestRecordDelivery:
         )
 
     def test_10_batches_of_10_records(self, manager_client):
-        """Pipeline uses count=100 and batch_size=10 → 10 batches of 10 records each."""
-        stats = _run_and_wait(manager_client)
+        """Pipeline uses count=100 and batch_size=10 → 10 batches of 10 records each.
+
+        The mock server's ``/stats`` endpoint tracks a *global* ``batches``
+        window (last 10) and counters shared across the whole test module. A
+        stale in-flight request from a previous test can land after our
+        ``reset_mock`` fixture clears state but before/while this test's own
+        batches arrive, polluting that shared window/counter. To make this
+        assertion robust and self-contained regardless of test ordering or
+        timing, we filter ``/stats`` batches down to only this run's own
+        ``execution_id`` (sent in the pipeline body — see
+        ``api_dest_test_pipeline.py``) rather than trusting the raw window.
+        """
+        execution_id = _run_pipeline(manager_client, DEFAULT_RUNTIME_PARAMS)
+        stats = _wait_for_pipeline(manager_client, execution_id)
         assert stats["state"] == "completed"
 
         mock_stats = httpx.get(f"{MOCK_API_URL}/stats", timeout=10.0).json()
-        # The stats endpoint returns the last 10 batches. We verify the batch
-        # window is full (10 entries) and every visible batch has exactly 10 records.
-        # We don't assert total_batches == 10 because a stale in-flight request
-        # from the previous test can arrive after the mock reset, incrementing the
-        # global counter while the window of last-10 still reflects only our run.
-        assert len(mock_stats["batches"]) == 10, (
-            f"Expected 10 batches in stats window, got {len(mock_stats['batches'])}"
+        our_batches = [
+            b
+            for b in mock_stats["batches"]
+            if b.get("extra_body_fields", {}).get("execution_id") == execution_id
+        ]
+        assert len(our_batches) == 10, (
+            f"Expected 10 batches attributable to execution {execution_id}, "
+            f"got {len(our_batches)}: {our_batches}"
         )
-        for batch in mock_stats["batches"]:
+        for batch in our_batches:
             assert batch["record_count"] == 10, (
                 f"Expected 10 records per batch, got {batch['record_count']}"
             )
+
+        # Cross-check total record delivery is unaffected by any contamination.
+        resp = httpx.get(f"{MOCK_API_URL}/records", params={"limit": 2000}, timeout=10.0).json()
+        our_records = [r for r in resp["records"] if r.get("_execution_id") == execution_id]
+        assert len(our_records) == 100, (
+            f"Expected 100 records for execution {execution_id}, got {len(our_records)}"
+        )
 
     def test_records_tagged_with_destination_type_api(self, manager_client):
         stats = _run_and_wait(manager_client)

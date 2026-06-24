@@ -1,13 +1,14 @@
 """Pipeline execution runner for ReflowManager."""
 
 import asyncio
-import copy
 import hashlib
 import json
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
+from reflowfy.core.serialization import to_json_safe
+from reflowfy.factories.source_factory import SourceFactory
 from reflowfy.reflow_manager.dispatcher import JobDispatcher
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
@@ -16,6 +17,9 @@ from reflowfy.reflow_manager.job_manager import JobManager
 CHECKPOINT_BATCH_SIZE = 25  # Jobs per checkpoint batch
 CHECKPOINT_BATCH_TIMEOUT = 300  # 5 minutes timeout per batch
 CHECKPOINT_POLL_INTERVAL = 2.0  # Poll every 2 seconds
+
+# Worker job message schema version
+JOB_SCHEMA_VERSION = 2
 
 
 def _chunk(lst: List, size: int) -> List[List]:
@@ -35,20 +39,23 @@ def _filter_volatile_keys(d: dict) -> dict:
 
 def generate_job_id(
     pipeline_name: str,
-    transformations: list,
-    records: list,
-    source_metadata: dict,
+    source: Dict[str, Any],
+    current_ids: Optional[list] = None,
 ) -> str:
-    """Return a deterministic SHA256 job ID derived from stable job content.
+    """Return a deterministic SHA256 job ID derived from the source slice.
 
-    Used when enable_duplicate_jobs=False to ensure the same data always
-    produces the same job ID across pipeline runs.
+    Used when enable_duplicate_jobs=False. The narrowed source ``config``
+    encodes the slice (id-range, scroll/PIT id, key list, or — for
+    StaticSource — the records themselves), so identical slices produce the
+    same ID across runs. Volatile date/time keys are stripped from config.
     """
     stable = {
         "pipeline_name": pipeline_name,
-        "transformations": sorted(transformations),
-        "records": records,
-        "source_metadata": _filter_volatile_keys(source_metadata or {}),
+        "source": {
+            "type": source.get("type"),
+            "config": _filter_volatile_keys(source.get("config", {}) or {}),
+        },
+        "current_ids": current_ids,
     }
     content = json.dumps(stable, sort_keys=True, default=str)
     return hashlib.sha256(content.encode()).hexdigest()
@@ -75,6 +82,24 @@ def _run_async(coro):
 
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 return pool.submit(asyncio.run, coro).result()
+
+
+def build_job_payload(
+    execution_id: str,
+    job_id: str,
+    pipeline_name: str,
+    sub_source: Any,
+    metadata: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Assemble the v2 worker job message for one narrowed sub-source."""
+    return {
+        "schema_version": JOB_SCHEMA_VERSION,
+        "execution_id": execution_id,
+        "job_id": job_id,
+        "pipeline_name": pipeline_name,
+        "source": SourceFactory.serialize(sub_source),
+        "metadata": metadata,
+    }
 
 
 class PipelineRunner:
@@ -453,88 +478,35 @@ class PipelineRunner:
         dedup_count = 0
         current_job_ids = []
 
-        for source_job in pipeline.source.split_jobs(enriched_params):
-            # Use per-job params so in-place enrichment does not bleed across jobs.
-            job_params = dict(enriched_params)
-            if source_job.metadata:
-                for key, value in source_job.metadata.items():
-                    if key not in job_params:
-                        job_params[key] = value
+        base_source = pipeline.source
+        for sub_source in base_source.split(enriched_params):
+            context.batch_number = batch_number
+            context_dict = context.to_dict()
+            context_dict["runtime_params"] = dict(enriched_params)
+            metadata = {**context_dict, "source_metadata": None}
 
-            # Resolve transformation chain and destination for this source job.
-            resolved_transformations = list(
-                pipeline.define_transformations(source_job.records, job_params)
-            )
-            transformed_preview = copy.deepcopy(source_job.records)
-            for t in resolved_transformations:
-                transformed_preview = t.apply(transformed_preview, job_params)
-
-            destination = pipeline.define_destination(transformed_preview, job_params)
-            transformation_names = [t.name for t in resolved_transformations]
-            transformation_specs = [
-                {
-                    "name": t.name,
-                    "module": t.__class__.__module__,
-                    "class_name": t.__class__.__name__,
-                }
-                for t in resolved_transformations
-            ]
-
+            source_descriptor = SourceFactory.serialize(sub_source)
             if enable_duplicate_jobs:
                 job_id = str(uuid.uuid4())
             else:
-                job_id = generate_job_id(
-                    pipeline_name=pipeline_name,
-                    transformations=transformation_names,
-                    records=source_job.records,
-                    source_metadata=source_job.metadata or {},
-                )
+                job_id = generate_job_id(pipeline_name, source_descriptor, current_ids=None)
                 if self.job_manager.get_job(job_id):
-                    print(f"  [no-dup] Skipping job {job_id[:12]}... (already exists)")
                     dedup_count += 1
                     continue
 
-            # Set current batch number on context before embedding in payload
-            context.batch_number = batch_number
-
-            # Ensure workers receive per-job enriched runtime params.
-            context_dict = context.to_dict()
-            context_dict["runtime_params"] = dict(job_params)
-
-            # Create job payload
-            job_payload = {
-                "execution_id": execution_id,
-                "job_id": job_id,
-                "pipeline_name": pipeline_name,
-                "transformations": transformation_names,
-                "transformation_specs": transformation_specs,
-                "destination": {
-                    "type": destination.__class__.__name__,
-                    "config": destination.config,
-                },
-                "rate_limit": pipeline.rate_limit,
-                "records": source_job.records,
-                "metadata": {
-                    **context_dict,
-                    "source_metadata": source_job.metadata,
-                },
-            }
-
-            # Serialize to handle non-JSON-serializable objects
+            job_payload = build_job_payload(
+                execution_id, job_id, pipeline_name, sub_source, metadata
+            )
             job_payload = self._serialize_for_json(job_payload)
 
-            # Save job to database
             self.job_manager.create_job(
                 execution_id=execution_id,
                 job_id=job_id,
                 job_payload=job_payload,
                 batch_number=batch_number,
             )
-
             current_job_ids.append(job_id)
             job_count += 1
-
-            # When batch is full, increment batch number
             if len(current_job_ids) >= CHECKPOINT_BATCH_SIZE:
                 batch_number += 1
                 current_job_ids = []
@@ -566,16 +538,6 @@ class PipelineRunner:
             print("  Phase 2: Executing batches locally (in-process)...")
         else:
             print("  Phase 2: Dispatching batches...")
-
-        # Pre-dispatch destination lag health check (Kafka only, opt-in).
-        # Runs in both local and distributed mode — high lag should block
-        # dispatch regardless of how jobs are executed.
-        if job_count > 0:
-            lag_ok = _run_async(
-                self._check_destination_lag_health(execution_id, pipeline_name, runtime_params)
-            )
-            if not lag_ok:
-                return  # execution already marked failed; DLQ entry inserted
 
         total_dispatched = 0
         total_completed = 0
@@ -736,94 +698,40 @@ class PipelineRunner:
         for ids_batch in id_batches:
             print(f"    Processing ID batch: {ids_batch}")
 
-            # Resolve source for this batch of IDs.
-            # batch_params is a per-batch copy of params enriched by define_source.
             resolved = pipeline.resolve_for_ids(params, ids_batch)
             source = resolved["source"]
             batch_params = resolved.get("batch_params", params)
 
-            # Split this batch's source into jobs
-            for source_job in source.split_jobs(batch_params):
-                # Per-job params start from batch params and include source metadata.
-                job_params = dict(batch_params)
-                if source_job.metadata:
-                    for key, value in source_job.metadata.items():
-                        if key not in job_params:
-                            job_params[key] = value
+            for sub_source in source.split(batch_params):
+                context.batch_number = batch_number
+                context_dict = context.to_dict()
+                context_dict["runtime_params"] = dict(batch_params)
+                metadata = {**context_dict, "current_ids": ids_batch, "source_metadata": None}
 
-                transformations = list(
-                    pipeline.define_transformations(source_job.records, job_params)
-                )
-                transformed_preview = copy.deepcopy(source_job.records)
-                for t in transformations:
-                    transformed_preview = t.apply(transformed_preview, job_params)
-
-                destination = pipeline.define_destination(transformed_preview, job_params)
-                transformation_names = [t.name for t in transformations]
-                transformation_specs = [
-                    {
-                        "name": t.name,
-                        "module": t.__class__.__module__,
-                        "class_name": t.__class__.__name__,
-                    }
-                    for t in transformations
-                ]
+                source_descriptor = SourceFactory.serialize(sub_source)
                 if enable_duplicate_jobs:
                     job_id = str(uuid.uuid4())
                 else:
                     job_id = generate_job_id(
-                        pipeline_name=pipeline_name,
-                        transformations=transformation_names,
-                        records=source_job.records,
-                        source_metadata=source_job.metadata or {},
+                        pipeline_name, source_descriptor, current_ids=ids_batch
                     )
                     if self.job_manager.get_job(job_id):
-                        print(f"  [no-dup] Skipping job {job_id[:12]}... (already exists)")
                         dedup_count += 1
                         continue
 
-                # Set current batch number on context before embedding in payload
-                context.batch_number = batch_number
-
-                # Create job payload with current_ids list in metadata.
-                # runtime_params in metadata is the per-job enriched version so
-                # workers receive any keys added by define_source and job metadata.
-                context_dict = context.to_dict()
-                context_dict["runtime_params"] = dict(job_params)
-                job_payload = {
-                    "execution_id": execution_id,
-                    "job_id": job_id,
-                    "pipeline_name": pipeline_name,
-                    "transformations": transformation_names,
-                    "transformation_specs": transformation_specs,
-                    "destination": {
-                        "type": destination.__class__.__name__,
-                        "config": destination.config,
-                    },
-                    "rate_limit": pipeline.rate_limit,
-                    "records": source_job.records,
-                    "metadata": {
-                        **context_dict,
-                        "current_ids": ids_batch,
-                        "source_metadata": source_job.metadata,
-                    },
-                }
-
-                # Serialize to handle non-JSON-serializable objects
+                job_payload = build_job_payload(
+                    execution_id, job_id, pipeline_name, sub_source, metadata
+                )
                 job_payload = self._serialize_for_json(job_payload)
 
-                # Save job to database
                 self.job_manager.create_job(
                     execution_id=execution_id,
                     job_id=job_id,
                     job_payload=job_payload,
                     batch_number=batch_number,
                 )
-
                 current_job_ids.append(job_id)
                 job_count += 1
-
-                # When batch is full, increment batch number
                 if len(current_job_ids) >= CHECKPOINT_BATCH_SIZE:
                     batch_number += 1
                     current_job_ids = []
@@ -944,87 +852,6 @@ class PipelineRunner:
             f"IdBasedPipeline {final_state}: {dispatched} dispatched, {completed} completed, {failed} failed ({len(ids)} IDs)"
         )
 
-    async def _check_destination_lag_health(
-        self,
-        execution_id: str,
-        pipeline_name: str,
-        runtime_params: Dict[str, Any],
-    ) -> bool:
-        """
-        Run a lag health check on the Kafka destination before dispatching.
-
-        Looks at the first job in batch 1 to discover the destination config.
-        If the destination is KafkaDestination with lag_health_check_enabled=True
-        and the measured lag exceeds lag_threshold, the execution is immediately
-        failed and a DLQJob is inserted for later retry.
-
-        Returns True if dispatch should proceed, False if it was blocked.
-        Fails open on any unexpected error (returns True).
-        """
-        try:
-            first_jobs = self.job_manager.get_pending_jobs_by_batch_number(execution_id, 1)
-            if not first_jobs:
-                return True
-
-            job_payload = first_jobs[0].job_payload
-            dest_info = job_payload.get("destination", {})
-            if dest_info.get("type") != "KafkaDestination":
-                return True
-
-            dest_kwargs = dest_info.get("config", {})
-            if not dest_kwargs.get("lag_health_check_enabled"):
-                return True
-
-            from reflowfy.destinations.kafka import KafkaDestination
-            destination = KafkaDestination(**dest_kwargs)
-
-            try:
-                is_healthy = await destination.health_check()
-            finally:
-                await destination.close()
-
-        except Exception as exc:
-            print(f"⚠️ Lag health check error (fail open): {exc}")
-            return True
-
-        if not is_healthy:
-            print(f"🚫 Kafka lag threshold exceeded for '{pipeline_name}' — rescheduling via DLQ")
-
-            from datetime import datetime, timedelta, timezone
-            from reflowfy.reflow_manager.models import DLQJob
-
-            delay_minutes = 5
-            dlq_job = DLQJob(
-                job_payload=runtime_params,
-                pipeline_name=pipeline_name,
-                scheduled_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=delay_minutes),
-                delay_minutes=delay_minutes,
-                status="pending",
-                retry_count=0,
-                max_retries=5,
-            )
-            try:
-                self.execution_manager.db.add(dlq_job)
-                self.execution_manager.db.commit()
-            except Exception as dlq_exc:
-                print(f"⚠️ Failed to insert DLQ entry: {dlq_exc}")
-                try:
-                    self.execution_manager.db.rollback()
-                except Exception:
-                    pass
-
-            self.execution_manager.update_execution_state(
-                execution_id,
-                "failed",
-                error_message=(
-                    "Kafka destination lag threshold exceeded — "
-                    "job rescheduled via DLQ"
-                ),
-            )
-            return False
-
-        return True
-
     def _set_total_jobs(self, execution_id: str, total: int) -> None:
         """Set total_jobs for an execution (uses SET, not +=)."""
         execution = self.execution_manager.get_execution(execution_id)
@@ -1128,15 +955,4 @@ class PipelineRunner:
 
     def _serialize_for_json(self, obj: Any) -> Any:
         """Recursively convert objects to JSON-serializable form."""
-        if isinstance(obj, (str, int, float, bool, type(None))):
-            return obj
-        elif isinstance(obj, dict):
-            return {k: self._serialize_for_json(v) for k, v in obj.items()}
-        elif isinstance(obj, (list, tuple)):
-            return [self._serialize_for_json(item) for item in obj]
-        elif hasattr(obj, "to_dict"):
-            return self._serialize_for_json(obj.to_dict())
-        elif hasattr(obj, "__dict__"):
-            return self._serialize_for_json(obj.__dict__)
-        else:
-            return str(obj)
+        return to_json_safe(obj)

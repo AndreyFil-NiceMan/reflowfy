@@ -136,16 +136,26 @@ def add_source_info(records, runtime_params):
 
 @transformation("elastic_add_metadata_and_route")
 def elastic_add_metadata_and_route(records, runtime_params):
-    """Adds per-document metadata and a per-job route hint for destination selection."""
-    page_num = int(runtime_params.get("page_num", 0))
-    route_target = "primary" if page_num % 2 == 0 else "secondary"
+    """Adds per-document metadata and a content-based route hint for destination selection.
+
+    v2 worker-side sourcing: jobs are per-slice (``ElasticSource.split()``),
+    not per-scroll-page, and no ``page_num`` is injected into
+    ``runtime_params`` (only one source descriptor + execution metadata is
+    sent per job). So routing can no longer key off a per-page job identity.
+    Instead we route deterministically off record content (``user_id``,
+    stable per document) so that, across the slices, both 'primary' and
+    'secondary' destinations are exercised.
+    """
     execution_id = runtime_params.get("execution_id", "unknown")
 
     for record in records:
+        user_id = record.get("user_id", 0)
+        route_target = "primary" if int(user_id) % 2 == 0 else "secondary"
+
         record["_source_type"] = "elasticsearch"
         record["_test_pipeline"] = "elastic_routed_destinations"
         record["_execution_id"] = execution_id
-        record["_page_num"] = page_num
+        record["_page_num"] = int(runtime_params.get("batch_number", 0))
         record["_event_type"] = record.get("event_type", "unknown")
         record["_has_amount"] = record.get("amount") is not None
         record["_route_target"] = route_target

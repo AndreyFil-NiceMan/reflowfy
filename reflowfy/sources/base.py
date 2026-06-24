@@ -42,6 +42,11 @@ class BaseSource(ABC):
         self.config = config
         self._resolved_config: Optional[Dict[str, Any]] = None
 
+    @property
+    def registry_type(self) -> str:
+        """Stable type name used to serialize/reconstruct this source."""
+        return self.__class__.__name__
+
     def resolve_parameters(self, runtime_params: Dict[str, Any]) -> Dict[str, Any] | None:
         """
         Resolve Jinja2 templates in configuration with runtime parameters.
@@ -63,6 +68,16 @@ class BaseSource(ABC):
             List of parameter names used in templates
         """
         return list(parameter_resolver.extract_parameters(self.config))
+
+    def split(self, runtime_params: Dict[str, Any]) -> "Iterator[BaseSource]":
+        """Manager-side planning. Yield one narrowed source per job.
+
+        Metadata-only and cheap — MUST NOT fetch bulk data. The default
+        yields ``self`` (a single job; the worker fetches the whole source).
+        Sources that can shard cheaply override this to yield N sub-sources,
+        each with its slice baked into ``config``.
+        """
+        yield self
 
     @abstractmethod
     def fetch(self, runtime_params: Dict[str, Any], limit: Optional[int] = None) -> List[Any]:

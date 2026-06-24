@@ -58,9 +58,12 @@ class ElasticSource(BaseSource):
     def _get_client(self) -> Elasticsearch:
         """Get or create Elasticsearch client."""
         if self._client is None:
+            auth = self.config.get("auth")
+            if isinstance(auth, list):
+                auth = tuple(auth)
             self._client = Elasticsearch(
                 hosts=[self.config["url"]],
-                basic_auth=self.config.get("auth"),
+                basic_auth=auth,
                 verify_certs=self.config["verify_certs"],
             )
         return self._client
@@ -83,6 +86,33 @@ class ElasticSource(BaseSource):
 
         client = self._get_client()
 
+        pit_id = resolved_config.get("pit_id")
+        slice_spec = resolved_config.get("slice")
+        if pit_id and slice_spec is not None:
+            try:
+                body = dict(resolved_config["base_query"])
+                body["slice"] = slice_spec
+                body["pit"] = {"id": pit_id, "keep_alive": resolved_config["scroll"]}
+                records: List[Any] = []
+                search_after = None
+                while True:
+                    page_body = dict(body)
+                    if search_after is not None:
+                        page_body["search_after"] = search_after
+                    page_body.setdefault("sort", ["_shard_doc"])
+                    resp = client.search(body=page_body, size=resolved_config["size"])
+                    resp = resp.body if hasattr(resp, "body") else resp
+                    hits = resp["hits"]["hits"]
+                    if not hits:
+                        break
+                    records.extend(h["_source"] for h in hits)
+                    search_after = hits[-1]["sort"]
+                    if limit and len(records) >= limit:
+                        return records[:limit]
+                return records
+            except ApiError as e:
+                raise SourceError("elasticsearch", f"Failed to fetch data: {e}", e)
+
         try:
             # Use search API with limit for local mode
             search_size = min(limit, resolved_config["size"]) if limit else resolved_config["size"]
@@ -98,6 +128,35 @@ class ElasticSource(BaseSource):
 
         except ApiError as e:
             raise SourceError("elasticsearch", f"Failed to fetch data: {e}", e)
+
+    def split(self, runtime_params: Dict[str, Any]) -> Iterator["ElasticSource"]:
+        """Open a PIT and yield one source per sliced-scroll slice.
+
+        ``num_slices`` (config, default 1) controls parallelism. With 1 slice
+        this is a single job. No documents are fetched here.
+        """
+        resolved = self.resolve_parameters(runtime_params) or self.config
+        num_slices = int(resolved.get("num_slices", 1))
+        if num_slices <= 1:
+            yield self
+            return
+
+        client = self._get_client()
+        pit = client.open_point_in_time(index=resolved["index"], keep_alive=resolved["scroll"])
+        pit_id = pit["id"]
+        for i in range(num_slices):
+            sub = ElasticSource(
+                url=resolved["url"],
+                index=resolved["index"],
+                base_query=resolved["base_query"],
+                scroll=resolved["scroll"],
+                size=resolved["size"],
+                auth=resolved.get("auth"),
+                verify_certs=resolved["verify_certs"],
+            )
+            sub.config["pit_id"] = pit_id
+            sub.config["slice"] = {"id": i, "max": num_slices}
+            yield sub
 
     def split_jobs(
         self, runtime_params: Dict[str, Any], batch_size: int = 1000

@@ -88,6 +88,50 @@ class SqlSource(BaseSource):
         except SQLAlchemyError as e:
             raise SourceError("sql", f"Failed to fetch data: {e}", e)
 
+    def split(self, runtime_params: Dict[str, Any]) -> Iterator["SqlSource"]:
+        """Plan id-range windows using MIN/MAX only — no row fetch.
+
+        Falls back to a single job (yield self) when no id_column is set,
+        since offset windows would require counting/among-pages coordination.
+        """
+        resolved = self.resolve_parameters(runtime_params) or self.config
+        id_column = resolved.get("id_column")
+        if not id_column:
+            yield self
+            return
+
+        base_query = resolved["query"]
+        batch_size = resolved.get("batch_size", 1000)
+        engine = self._get_engine()
+        with engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    f"SELECT MIN({id_column}) AS lo, MAX({id_column}) AS hi "
+                    f"FROM ({base_query}) AS sub"
+                )
+            ).fetchone()
+        if not row or row[0] is None:
+            return
+        lo, hi = int(row[0]), int(row[1])
+
+        cur = lo
+        while cur <= hi:
+            nxt = cur + batch_size
+            windowed = (
+                f"SELECT * FROM ({base_query}) AS sub "
+                f"WHERE {id_column} >= {cur} AND {id_column} < {nxt}"
+            )
+            sub = SqlSource(
+                connection_url=resolved["connection_url"],
+                query=windowed,
+                id_column=None,
+                time_column=resolved.get("time_column"),
+                batch_size=batch_size,
+            )
+            sub.config["slice"] = {"lo": cur, "hi": nxt}
+            yield sub
+            cur = nxt
+
     def split_jobs(
         self, runtime_params: Dict[str, Any], batch_size: int = 1000
     ) -> Iterator[SourceJob]:

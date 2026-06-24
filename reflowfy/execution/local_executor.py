@@ -8,7 +8,7 @@ from reflowfy.core.execution_context import (
     build_flat_runtime_params,
 )
 from reflowfy.execution.base import BaseExecutor, ExecutionState, ExecutionStatus
-from reflowfy.execution.transformation_runner import apply_transformations_iteratively
+from reflowfy.execution.job_runner import plan_slices, run_job_records
 
 
 class LocalExecutor(BaseExecutor):
@@ -96,43 +96,47 @@ class LocalExecutor(BaseExecutor):
         )
 
         try:
-            # 1. Fetch data from source (limited)
-            print(f"🔍 Fetching data from source (limit: {self.max_records})...")
-            records = pipeline.source.fetch(resolved_params, limit=self.max_records)
+            # Plan slices exactly as the manager does, then run each through the
+            # same v2 core the worker uses (fetch → normalize → transform →
+            # resolve destination). max_records caps the preview across slices.
+            total_fetched = 0
+            total_sent = 0
+            for sub in plan_slices(pipeline.source, flat_runtime_params):
+                remaining = self.max_records - total_fetched
+                if remaining <= 0:
+                    break
+                print(f"🔍 Fetching data from source (limit: {remaining})...")
+                records, transformed_records, applied, destination = run_job_records(
+                    sub, pipeline, flat_runtime_params, limit=remaining
+                )
 
-            if not records:
+                if not records:
+                    continue
+
+                print(f"✓ Fetched {len(records)} records")
+                for name, _duration in applied:
+                    print(f"✓ Applied transformation: {name}")
+
+                print(f"📤 Sending {len(transformed_records)} records to destination...")
+                destination.send_with_retry(
+                    transformed_records,
+                    metadata=flat_runtime_params,
+                )
+                total_fetched += len(records)
+                total_sent += len(transformed_records)
+
+            if total_fetched == 0:
                 print("⚠️  No records fetched")
                 status.state = ExecutionState.COMPLETED
                 status.completed_jobs = 1
                 status.metadata["records_count"] = 0
                 return status
 
-            print(f"✓ Fetched {len(records)} records")
-
-            # 2 + 3. Resolve and apply transformations iteratively so that params
-            # mutated mid-chain can reveal later transformations.
-            transformed_records, applied = apply_transformations_iteratively(
-                pipeline, records, flat_runtime_params
-            )
-            for name, _duration in applied:
-                print(f"✓ Applied transformation: {name}")
-
-            # 4. Resolve destination from post-transformation records and send
-            destination = pipeline.define_destination(transformed_records, flat_runtime_params)
-            print(f"📤 Sending {len(transformed_records)} records to destination...")
-
-            destination.send_with_retry(
-                transformed_records,
-                metadata=flat_runtime_params,
-            )
-
             print("✓ Records sent successfully")
-
-            # 4. Update status
             status.state = ExecutionState.COMPLETED
             status.completed_jobs = 1
-            status.metadata["records_fetched"] = len(records)
-            status.metadata["records_sent"] = len(transformed_records)
+            status.metadata["records_fetched"] = total_fetched
+            status.metadata["records_sent"] = total_sent
 
             return status
 
@@ -199,18 +203,7 @@ class LocalExecutor(BaseExecutor):
                 source = resolved["source"]
                 batch_params = resolved.get("batch_params", params)
 
-                # 1. Fetch data
-                records = source.fetch(batch_params, limit=self.max_records)
-                if not records:
-                    print(f"  ⚠️ No records for ID: {current_id}")
-                    status.completed_jobs += 1
-                    continue
-
-                print(f"  ✓ Fetched {len(records)} records for {current_id}")
-                total_records_fetched += len(records)
-
-                # 2. Build flat mutable runtime_params for this ID's chain.
-                transformed_records = records
+                # Build flat mutable runtime_params for this ID's chain.
                 flat_id_params = build_flat_runtime_params(
                     batch_params,
                     execution_id=context.execution_id,
@@ -225,26 +218,38 @@ class LocalExecutor(BaseExecutor):
                 )
                 flat_id_params["current_id"] = current_id
 
-                # Resolve and apply transformations iteratively for this ID's chain.
-                transformed_records, applied = apply_transformations_iteratively(
-                    pipeline, records, flat_id_params
-                )
-                for name, _duration in applied:
-                    print(f"  ✓ Applied: {name}")
+                # Plan slices and run each through the shared v2 core, exactly as
+                # the worker does (capped at max_records for the preview).
+                id_fetched = 0
+                id_sent = 0
+                for sub in plan_slices(source, flat_id_params):
+                    remaining = self.max_records - id_fetched
+                    if remaining <= 0:
+                        break
+                    records, transformed_records, applied, destination = run_job_records(
+                        sub, pipeline, flat_id_params, limit=remaining
+                    )
+                    if not records:
+                        continue
+                    for name, _duration in applied:
+                        print(f"  ✓ Applied: {name}")
+                    destination.send_with_retry(
+                        transformed_records,
+                        metadata=flat_id_params,
+                    )
+                    id_fetched += len(records)
+                    id_sent += len(transformed_records)
 
-                # 3. Resolve destination from post-transformation records and send.
-                destination = pipeline.define_destination(
-                    transformed_records,
-                    flat_id_params,
-                )
-                destination.send_with_retry(
-                    transformed_records,
-                    metadata=flat_id_params,
-                )
+                if id_fetched == 0:
+                    print(f"  ⚠️ No records for ID: {current_id}")
+                    status.completed_jobs += 1
+                    continue
 
-                total_records_sent += len(transformed_records)
+                print(f"  ✓ Fetched {id_fetched} records for {current_id}")
+                total_records_fetched += id_fetched
+                total_records_sent += id_sent
                 status.completed_jobs += 1
-                print(f"  ✓ Sent {len(transformed_records)} records for {current_id}")
+                print(f"  ✓ Sent {id_sent} records for {current_id}")
 
             status.state = ExecutionState.COMPLETED
             status.metadata["ids_processed"] = len(ids)

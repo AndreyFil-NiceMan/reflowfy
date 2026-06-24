@@ -1,23 +1,19 @@
 """Worker job executor with async support."""
 
-import importlib
 import os
 import time
 import traceback
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from reflowfy.core.execution_context import build_flat_runtime_params_from_metadata
 from reflowfy.core.registry import pipeline_registry
-from reflowfy.destinations.api import ApiDestination
-from reflowfy.destinations.console import ConsoleDestination
-from reflowfy.destinations.kafka import KafkaDestination
-from reflowfy.execution.transformation_runner import apply_transformations_iteratively
+from reflowfy.execution.job_runner import run_job_records
+from reflowfy.factories.source_factory import SourceFactory
 from reflowfy.reflow_manager.models import Job
-from reflowfy.transformations.registry import transformation_registry
 
 
 class JobStats:
@@ -45,9 +41,9 @@ class JobStats:
             "duration_seconds": round(duration, 3),
             "records_input": self.records_input,
             "records_output": self.records_output,
-            "throughput_records_per_second": round(self.records_output / duration, 2)
-            if duration > 0
-            else 0,
+            "throughput_records_per_second": (
+                round(self.records_output / duration, 2) if duration > 0 else 0
+            ),
             "transformation_times": self.transformation_times,
             "destination_write_time": round(self.destination_write_time, 3),
             "error": self.error,
@@ -118,20 +114,26 @@ class WorkerExecutor:
         _pipeline_name = job_payload.get("pipeline_name", "unknown")
 
         try:
-            # Extract job data
-            transformation_names = job_payload.get("transformations", [])
-            transformation_specs = job_payload.get("transformation_specs", [])
-            destination_config = job_payload.get("destination", {})
-            records = job_payload.get("records", [])
             metadata = job_payload.get("metadata", {})
+            source_descriptor = job_payload.get("source") or {}
 
-            # Build one shared flat mutable runtime_params dict for the job.
-            # The same object is passed through all transformations and then
-            # into destination.send_with_retry, so in-place enrichments flow
-            # end-to-end within this job execution.
             runtime_params = build_flat_runtime_params_from_metadata(metadata)
 
-            # Track input records
+            # Rebuild the planned source slice the manager assigned to this job.
+            source = SourceFactory.create(source_descriptor["type"], source_descriptor["config"])
+
+            # Pipeline is required to resolve transforms + destination dynamically.
+            pipeline = pipeline_registry.get(_pipeline_name)
+            if pipeline is None:
+                raise RuntimeError(
+                    f"Pipeline '{_pipeline_name}' not found in worker registry; "
+                    "worker-side sourcing requires the pipeline to be discoverable."
+                )
+
+            # Shared v2 core: fetch this slice, normalize, transform, resolve destination.
+            records, transformed_records, applied, destination = run_job_records(
+                source, pipeline, runtime_params
+            )
             stats.records_input = len(records)
 
             if not records:
@@ -143,41 +145,11 @@ class WorkerExecutor:
                 return True
 
             print(f"🔄 Processing job {job_id}: {len(records)} records")
+            for name, duration in applied:
+                stats.transformation_times[name] = round(duration, 3)
+                print(f"  ✓ {name}")
 
-            # Load and apply transformations (CPU-bound, stays sync).
-            pipeline_name = job_payload.get("pipeline_name")
-            pipeline = pipeline_registry.get(pipeline_name) if pipeline_name else None
-
-            if pipeline is not None:
-                # Dynamic resolution: re-resolve after each step so params mutated
-                # mid-chain can reveal later transformations (matches local/test).
-                transformed_records, applied = apply_transformations_iteratively(
-                    pipeline, records, runtime_params
-                )
-                for name, duration in applied:
-                    stats.transformation_times[name] = round(duration, 3)
-                    print(f"  ✓ {name}")
-            else:
-                # Fallback: pipeline not discoverable in this worker process — replay
-                # the frozen transformation list from the producer (no dynamic tail).
-                transformed_records = self._apply_frozen_transformations(
-                    records, runtime_params, transformation_names, transformation_specs, stats
-                )
-
-            # Track output records
             stats.records_output = len(transformed_records)
-
-            # Build the destination from the pipeline using THIS worker's
-            # transformed records and full runtime_params (which carry the
-            # execution context: execution_id, batch_id, ...). This mirrors
-            # LocalExecutor, so a user-authored ``body`` in define_destination
-            # reflects the real records/context rather than the manager's
-            # context-less preview. Fall back to the serialized config only when
-            # the pipeline is not discoverable in this worker process.
-            if pipeline is not None:
-                destination = pipeline.define_destination(transformed_records, runtime_params)
-            else:
-                destination = self._create_destination(destination_config)
 
             # Health check (async)
             if not await destination.health_check():
@@ -222,47 +194,6 @@ class WorkerExecutor:
             await self._update_job_in_db(execution_id, job_id, stats)
 
             return False
-
-    def _apply_frozen_transformations(
-        self,
-        records: List[Any],
-        runtime_params: Dict[str, Any],
-        transformation_names: List[str],
-        transformation_specs: List[Dict[str, Any]],
-        stats: JobStats,
-    ) -> List[Any]:
-        """Replay a frozen transformation list (fallback when the pipeline is not
-        discoverable in this worker process). No dynamic re-resolution."""
-        transformed_records = records
-        for idx, transformation_name in enumerate(transformation_names):
-            print(f"  🔄 Applying: {transformation_name}")
-            transform_start = time.time()
-
-            # Prefer explicit transformation spec from producer process to
-            # avoid name-collision ambiguity in registry for duplicated names.
-            transformation = None
-            if idx < len(transformation_specs):
-                spec = transformation_specs[idx] or {}
-                spec_name = spec.get("name")
-                module_name = spec.get("module")
-                class_name = spec.get("class_name")
-                if spec_name == transformation_name and module_name and class_name:
-                    module = importlib.import_module(module_name)
-                    cls = getattr(module, class_name)
-                    transformation = cls()
-
-            if transformation is None:
-                transformation = transformation_registry.create_instance(transformation_name)
-
-            transformed_records = transformation.apply(transformed_records, runtime_params)
-
-            transform_duration = time.time() - transform_start
-            stats.transformation_times[transformation_name] = round(transform_duration, 3)
-            print(
-                f"  ✓ {transformation_name}: {len(transformed_records)} records "
-                f"({transform_duration:.2f}s)"
-            )
-        return transformed_records
 
     async def _update_job_in_db(self, execution_id: str, job_id: str, stats: JobStats):
         """
@@ -313,28 +244,6 @@ class WorkerExecutor:
             except Exception as e:
                 print(f"  ⚠️  Failed to update database: {e}")
                 await db.rollback()
-
-    def _create_destination(self, destination_config: Dict[str, Any]) -> Any:
-        """
-        Create destination instance from config.
-
-        Args:
-            destination_config: Destination configuration
-
-        Returns:
-            Destination instance
-        """
-        dest_type = destination_config.get("type", "")
-        config = destination_config.get("config", {})
-
-        if dest_type == "KafkaDestination":
-            return KafkaDestination(**config)
-        elif dest_type == "ApiDestination":
-            return ApiDestination(**config)
-        elif dest_type == "ConsoleDestination":
-            return ConsoleDestination(**config)
-        else:
-            raise ValueError(f"Unknown destination type: {dest_type}")
 
     async def close(self):
         """Close database connections."""

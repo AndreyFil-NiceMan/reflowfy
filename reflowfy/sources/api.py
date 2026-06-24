@@ -264,6 +264,36 @@ class IDBasedAPISource(BaseSource):
                 )
             batch_num += 1
 
+    def split(self, runtime_params: Dict[str, Any]) -> Iterator["IDBasedAPISource"]:
+        """Per-ID mode: group ids into batch_size chunks, one source each.
+
+        Batch mode (no ``{id}`` in the template) is a single request, so it
+        yields one job (self).
+        """
+        if not self._is_per_id_mode():
+            yield self
+            return
+
+        ids = self._get_all_ids(runtime_params)
+        size = self.config["batch_size"]
+        c = self.config
+        for i in range(0, len(ids), size):
+            yield IDBasedAPISource(
+                base_url=c["base_url"],
+                endpoint_template=c["endpoint_template"],
+                ids=ids[i : i + size],
+                method=c["method"],
+                headers=c["headers"],
+                auth_type=c["auth_type"],
+                auth_token=c["auth_token"],
+                batch_size=size,
+                timeout=c["timeout"],
+                response_key=c["response_key"],
+                body=c["body"],
+                params=c["params"],
+                health_check_enabled=c["health_check_enabled"],
+            )
+
     def health_check(self) -> bool:
         """Check if the API is accessible."""
         if not self.config.get("health_check_enabled", True):

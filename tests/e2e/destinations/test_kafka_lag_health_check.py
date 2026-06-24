@@ -2,7 +2,11 @@
 E2E Tests: Kafka Destination Lag Health Check.
 
 Two scenarios:
-  1. High lag  → execution fails, no jobs dispatched, DLQ entry created.
+  1. High lag  → job IS dispatched (worker-side sourcing always dispatches the
+     planned slice); the worker's destination.health_check() fails and the
+     job is marked failed. No pre-dispatch manager gate and no DLQ entry
+     exist anymore — see docs/superpowers/specs/2026-06-24-worker-side-
+     sourcing-design.md ("Lag backpressure" / pre-dispatch lag check removed).
   2. Low lag   → execution completes, jobs are dispatched normally.
 
 Prerequisites:
@@ -117,15 +121,18 @@ class TestKafkaLagHealthCheck:
         assert resp.status_code == 200
 
     @pytest.mark.asyncio
-    async def test_high_lag_blocks_dispatch(self, client, kafka_producer):
+    async def test_high_lag_fails_job_after_dispatch(self, client, kafka_producer):
         """
-        Jobs should NOT be dispatched when consumer lag exceeds the threshold.
+        Jobs ARE dispatched (worker-side sourcing has no pre-dispatch manager
+        gate), but the worker's destination.health_check() fails when lag
+        exceeds the threshold, so the job is marked failed.
 
         Strategy:
           - LAG_TEST_GROUP never commits offsets to LAG_TEST_TOPIC, so
             measured lag == current end-offset of the topic.
           - Produce 10 000 messages → end-offset grows to ≥ 10 000.
-          - Run pipeline with lag_threshold=100 (100 << 10 000) → must fail.
+          - Run pipeline with lag_threshold=100 (100 << 10 000) → job dispatches
+            but fails worker-side health check.
         """
         # 1. Flood the topic — LAG_TEST_GROUP has no committed offsets,
         #    so lag = end_offset of the topic after flooding.
@@ -145,30 +152,26 @@ class TestKafkaLagHealthCheck:
         # 3. Wait for terminal state
         final_state = poll_until_terminal(client, execution_id, timeout=60)
 
-        # 4. Assertions
+        # 4. Assertions — v2: the job IS dispatched (no manager-side pre-dispatch
+        # gate anymore), the worker's health check fails it, and the execution
+        # ends up failed via the normal job-failure path (no DLQ entry — the
+        # manager-side DLQ-reschedule-on-lag mechanism was removed; see
+        # docs/superpowers/specs/2026-06-24-worker-side-sourcing-design.md).
         stats = client.get(f"/executions/{execution_id}/stats").json()
         assert final_state == "failed", (
             f"Expected 'failed', got '{final_state}'. Stats: {stats}"
         )
-        assert stats["jobs_dispatched"] == 0, (
-            f"Expected 0 dispatched jobs, got {stats['jobs_dispatched']}"
+        assert stats["jobs_dispatched"] >= 1, (
+            f"Expected >=1 dispatched job (worker-side health check, not a "
+            f"pre-dispatch gate), got {stats['jobs_dispatched']}"
         )
-
-        # DLQ entry should have been created for later retry
-        dlq_resp = client.get(
-            "/dlq/jobs",
-            params={"pipeline_name": "e2e_kafka_lag_health_check"},
-        )
-        assert dlq_resp.status_code == 200, dlq_resp.text
-        dlq_data = dlq_resp.json()
-        pending = [j for j in dlq_data.get("jobs", []) if j["status"] == "pending"]
-        assert len(pending) >= 1, (
-            f"Expected ≥1 pending DLQ entry, got: {dlq_data}"
+        assert stats["jobs_failed"] >= 1, (
+            f"Expected >=1 failed job, got {stats['jobs_failed']}"
         )
 
         print(
             f"✅ High-lag test passed: state={final_state}, "
-            f"dispatched={stats['jobs_dispatched']}, dlq_entries={len(pending)}"
+            f"dispatched={stats['jobs_dispatched']}, failed={stats['jobs_failed']}"
         )
 
     @pytest.mark.asyncio

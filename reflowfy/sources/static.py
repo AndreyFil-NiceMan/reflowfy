@@ -39,6 +39,10 @@ class StaticSource(BaseSource):
             return records[:limit]
         return records
 
+    def split(self, runtime_params: Dict[str, Any]) -> Iterator["StaticSource"]:
+        """A static source is already one job — its records are in config."""
+        yield self
+
     def split_jobs(
         self, runtime_params: Dict[str, Any], batch_size: int = 1000
     ) -> Iterator[SourceJob]:

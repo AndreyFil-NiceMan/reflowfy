@@ -100,7 +100,9 @@ class KafkaJobConsumer:
             except KafkaError as e:
                 if attempt < max_retries - 1:
                     wait_time = 2**attempt  # Exponential backoff
-                    print(f"⚠️  Failed to start consumer (attempt {attempt + 1}/{max_retries}): {e}")
+                    print(
+                        f"⚠️  Failed to start consumer (attempt {attempt + 1}/{max_retries}): {e}"
+                    )
                     print(f"   Retrying in {wait_time}s...")
                     await asyncio.sleep(wait_time)
                 else:
@@ -130,6 +132,12 @@ class KafkaJobConsumer:
                 return
 
             job_payload = json.loads(msg.value.decode("utf-8"))
+
+            version = job_payload.get("schema_version")
+            if version != 2:
+                print(f"❌ Unsupported job schema_version={version!r}; skipping")
+                await self.consumer.commit()
+                return
 
             print(f"📦 Received job: {job_payload.get('job_id', 'unknown')}")
 
