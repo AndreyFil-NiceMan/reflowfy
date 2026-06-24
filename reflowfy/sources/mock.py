@@ -78,11 +78,6 @@ class MockSource(BaseSource):
         """Slice the in-memory data into batch_size-sized MockSources."""
         data = self.config["data"]
         size = self.config["batch_size"]
-
-        if len(data) <= size:
-            yield self
-            return
-
         for i in range(0, len(data), size):
             yield MockSource(data=data[i : i + size], batch_size=size)
 

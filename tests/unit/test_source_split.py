@@ -3,7 +3,19 @@ from reflowfy.sources.mock import MockSource
 
 
 def test_default_split_yields_self():
-    src = MockSource(data=[{"a": 1}], batch_size=1000)
+    from reflowfy.sources.base import BaseSource
+
+    class _PlainSource(BaseSource):
+        def fetch(self, runtime_params, limit=None):
+            return []
+
+        def split_jobs(self, runtime_params, batch_size=1000):
+            yield from ()
+
+        def health_check(self):
+            return True
+
+    src = _PlainSource(config={"k": "v"})
     subs = list(src.split({}))
     assert subs == [src]  # default: one job, identity
 
@@ -16,7 +28,6 @@ def test_static_split_yields_self():
 
 
 def test_mock_split_by_batch_size():
-    from reflowfy.sources.mock import MockSource
     src = MockSource(data=[{"i": i} for i in range(25)], batch_size=10)
     subs = list(src.split({}))
     assert len(subs) == 3
