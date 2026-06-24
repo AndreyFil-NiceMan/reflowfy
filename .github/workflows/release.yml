@@ -34,7 +34,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref_name }}
+          # Release event: check out the tagged commit. Manual dispatch: check out
+          # the dispatched branch HEAD — the tag may not exist yet (we create it below).
+          ref: ${{ github.event_name == 'release' && github.ref_name || github.sha }}
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -87,6 +90,21 @@ jobs:
           docker save "reflowfy-base:${VERSION}" "reflowfy-base:latest" \
             | gzip > "reflowfy-base-${VERSION}.tar.gz"
           ls -lh "reflowfy-base-${VERSION}.tar.gz"
+
+      - name: Create the GitHub Release (manual dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Release ${RELEASE_TAG} already exists — will upload to it."
+          else
+            echo "Creating release ${RELEASE_TAG} (tag at ${GITHUB_SHA})"
+            gh release create "${RELEASE_TAG}" \
+              --target "${GITHUB_SHA}" \
+              --title "${RELEASE_TAG}" \
+              --generate-notes
+          fi
 
       - name: Attach base image tar to the Release
         env:
