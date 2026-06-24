@@ -11,8 +11,8 @@ from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from reflowfy.core.execution_context import build_flat_runtime_params_from_metadata
 from reflowfy.core.registry import pipeline_registry
-from reflowfy.core.serialization import to_json_safe
-from reflowfy.execution.transformation_runner import apply_transformations_iteratively
+from reflowfy.execution.job_runner import run_job_records
+from reflowfy.factories.source_factory import SourceFactory
 from reflowfy.reflow_manager.models import Job
 
 
@@ -119,12 +119,21 @@ class WorkerExecutor:
 
             runtime_params = build_flat_runtime_params_from_metadata(metadata)
 
-            # 1. Rebuild the planned source and fetch THIS slice (worker-side).
-            from reflowfy.factories.source_factory import SourceFactory
-
+            # Rebuild the planned source slice the manager assigned to this job.
             source = SourceFactory.create(source_descriptor["type"], source_descriptor["config"])
-            records = source.fetch(runtime_params)
-            records = to_json_safe(records)
+
+            # Pipeline is required to resolve transforms + destination dynamically.
+            pipeline = pipeline_registry.get(_pipeline_name)
+            if pipeline is None:
+                raise RuntimeError(
+                    f"Pipeline '{_pipeline_name}' not found in worker registry; "
+                    "worker-side sourcing requires the pipeline to be discoverable."
+                )
+
+            # Shared v2 core: fetch this slice, normalize, transform, resolve destination.
+            records, transformed_records, applied, destination = run_job_records(
+                source, pipeline, runtime_params
+            )
             stats.records_input = len(records)
 
             if not records:
@@ -136,25 +145,11 @@ class WorkerExecutor:
                 return True
 
             print(f"🔄 Processing job {job_id}: {len(records)} records")
-
-            # 2. Dynamic, content-aware transform resolution (pipeline required).
-            pipeline = pipeline_registry.get(_pipeline_name)
-            if pipeline is None:
-                raise RuntimeError(
-                    f"Pipeline '{_pipeline_name}' not found in worker registry; "
-                    "worker-side sourcing requires the pipeline to be discoverable."
-                )
-            transformed_records, applied = apply_transformations_iteratively(
-                pipeline, records, runtime_params
-            )
             for name, duration in applied:
                 stats.transformation_times[name] = round(duration, 3)
                 print(f"  ✓ {name}")
 
             stats.records_output = len(transformed_records)
-
-            # 3. Dynamic destination resolution against real records.
-            destination = pipeline.define_destination(transformed_records, runtime_params)
 
             # Health check (async)
             if not await destination.health_check():

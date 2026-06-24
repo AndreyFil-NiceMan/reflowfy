@@ -13,7 +13,7 @@ import typer
 
 from reflowfy.cli.utils import console
 from reflowfy.core.execution_context import ExecutionContext
-from reflowfy.execution.transformation_runner import apply_transformations_iteratively
+from reflowfy.execution.job_runner import plan_slices, run_job_records
 from reflowfy.transformations.base import TransformationError
 
 
@@ -209,23 +209,7 @@ def register(app: typer.Typer):
 
                 console.print(f"  [bold]🔌 Source:[/bold] {source}")
 
-                # Fetch records
-                console.print(f"  [cyan]Fetching records (limit={limit})...[/cyan]")
-                try:
-                    records = source.fetch(batch_params, limit=limit)
-                except Exception as e:
-                    console.print(f"  [red]❌ Source fetch failed for batch {ids_batch}: {e}[/red]")
-                    traceback.print_exc()
-                    continue
-
-                console.print(f"  [green]✓ Fetched {len(records)} records[/green]")
-
-                if not records:
-                    console.print(f"  [yellow]⚠️ No records for batch: {ids_batch}[/yellow]")
-                    continue
-
                 # Build flat mutable runtime_params for this batch's chain.
-                transformed = records
                 meta = dict(batch_params)
                 meta.update(
                     {
@@ -238,15 +222,41 @@ def register(app: typer.Typer):
                     }
                 )
 
+                # Plan slices and run each through the shared v2 core, capped at
+                # `limit` across slices.
+                console.print(f"  [cyan]Fetching records (limit={limit})...[/cyan]")
+                transformed = []
+                applied = []
+                batch_fetched = 0
                 try:
-                    transformed, applied = apply_transformations_iteratively(
-                        pipeline, records, meta
-                    )
-                    for name, _duration in applied:
-                        console.print(f"    [green]✓ {name}: {len(transformed)} records[/green]")
+                    for sub in plan_slices(source, meta):
+                        remaining = limit - batch_fetched
+                        if remaining <= 0:
+                            break
+                        records, t_records, t_applied, _dest = run_job_records(
+                            sub, pipeline, meta, limit=remaining
+                        )
+                        batch_fetched += len(records)
+                        transformed.extend(t_records)
+                        applied.extend(t_applied)
                 except TransformationError as e:
                     console.print(f"    [red]❌ {e.transformation_name} failed: {e}[/red]")
                     traceback.print_exc()
+                    continue
+                except Exception as e:
+                    console.print(
+                        f"  [red]❌ Source fetch/transform failed for batch {ids_batch}: {e}[/red]"
+                    )
+                    traceback.print_exc()
+                    continue
+
+                console.print(f"  [green]✓ Fetched {batch_fetched} records[/green]")
+                if batch_fetched == 0:
+                    console.print(f"  [yellow]⚠️ No records for batch: {ids_batch}[/yellow]")
+                    continue
+
+                for name, _duration in applied:
+                    console.print(f"    [green]✓ {name}: {len(transformed)} records[/green]")
 
                 # Show sample output
                 console.print(
@@ -263,8 +273,8 @@ def register(app: typer.Typer):
                         destination = pipeline.define_destination(transformed, meta)
                         console.print(f"  [bold]📤 Destination:[/bold] {destination}")
 
-                        async def _send_batch(recs=transformed, m=meta):
-                            await destination.send_with_retry(recs, m)
+                        async def _send_batch(recs=transformed, m=meta, dest=destination):
+                            await dest.send_with_retry(recs, m)
 
                         asyncio.run(_send_batch())
                         console.print(f"  [green]✓ Sent {len(transformed)} records[/green]")
@@ -298,21 +308,6 @@ def register(app: typer.Typer):
 
         console.print(f"\n[bold]🔌 Source:[/bold] {source}")
 
-        # Fetch records
-        console.print(f"\n[cyan]Fetching records (limit={limit})...[/cyan]")
-        try:
-            records = source.fetch(test_params, limit=limit)
-        except Exception as e:
-            console.print(f"[red]❌ Source fetch failed: {e}[/red]")
-            traceback.print_exc()
-            raise typer.Exit(1)
-
-        console.print(f"[green]✓ Fetched {len(records)} records[/green]")
-
-        if not records:
-            console.print("[yellow]⚠️  No records returned from source[/yellow]")
-            raise typer.Exit(0)
-
         # Build execution context (mirrors local_executor behavior)
         context = ExecutionContext(
             execution_id=str(uuid.uuid4()),
@@ -331,18 +326,40 @@ def register(app: typer.Typer):
             }
         )
 
-        # Resolve and apply transformations iteratively (matches production semantics).
-        transformed = records
+        # Plan slices and run each through the same v2 core the worker runs
+        # (fetch → normalize → transform → resolve destination), capped at
+        # `limit` across slices. The wire round-trip exercises serialization.
+        console.print(f"\n[cyan]Fetching records (limit={limit})...[/cyan]")
+        transformed = []
+        applied = []
+        total_fetched = 0
         try:
-            transformed, applied = apply_transformations_iteratively(
-                pipeline, records, flat_test_params
-            )
-            for name, _duration in applied:
-                console.print(f"  [green]✓ {name}: {len(transformed)} records[/green]")
+            for sub in plan_slices(source, flat_test_params):
+                remaining = limit - total_fetched
+                if remaining <= 0:
+                    break
+                records, t_records, t_applied, _dest = run_job_records(
+                    sub, pipeline, flat_test_params, limit=remaining
+                )
+                total_fetched += len(records)
+                transformed.extend(t_records)
+                applied.extend(t_applied)
         except TransformationError as e:
             console.print(f"  [red]❌ {e.transformation_name} failed: {e}[/red]")
             traceback.print_exc()
             raise typer.Exit(1)
+        except Exception as e:
+            console.print(f"[red]❌ Source fetch/transform failed: {e}[/red]")
+            traceback.print_exc()
+            raise typer.Exit(1)
+
+        console.print(f"[green]✓ Fetched {total_fetched} records[/green]")
+        if total_fetched == 0:
+            console.print("[yellow]⚠️  No records returned from source[/yellow]")
+            raise typer.Exit(0)
+
+        for name, _duration in applied:
+            console.print(f"  [green]✓ {name}: {len(transformed)} records[/green]")
 
         # Show sample output
         console.print(

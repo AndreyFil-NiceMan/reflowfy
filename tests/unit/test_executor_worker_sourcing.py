@@ -73,17 +73,14 @@ async def test_worker_applies_transformations(monkeypatch):
             return _FakeDest(captured)
 
     # A pipeline whose iterative transform uppercases the "v" field.
-    from reflowfy.execution import transformation_runner
+    # The shared core (reflowfy.execution.job_runner) binds the symbol, so patch it there.
+    from reflowfy.execution import job_runner
 
     def _fake_iter(pipeline, records, runtime_params):
         out = [{**r, "v": r["v"].upper()} for r in records]
         return out, [("upper", 0.0)]
 
-    monkeypatch.setattr(transformation_runner, "apply_transformations_iteratively", _fake_iter)
-    # executor.py imported the symbol directly, so patch it there too:
-    from reflowfy.worker import executor as executor_mod
-
-    monkeypatch.setattr(executor_mod, "apply_transformations_iteratively", _fake_iter)
+    monkeypatch.setattr(job_runner, "apply_transformations_iteratively", _fake_iter)
 
     from reflowfy.core.registry import pipeline_registry
 
@@ -222,3 +219,63 @@ async def test_worker_normalizes_non_json_records(monkeypatch):
     import json
 
     json.dumps(captured)  # must not raise
+
+
+async def test_v2_payload_survives_kafka_json_wire(monkeypatch):
+    """Full wire path: manager normalize -> KafkaDispatcher json.dumps ->
+    consumer json.loads -> worker execute_job. No other test/E2E covers this."""
+    import datetime as _dt
+    import json as _json
+
+    from reflowfy.core.serialization import to_json_safe
+    from reflowfy.reflow_manager.pipeline_runner import build_job_payload
+    from reflowfy.sources.static import StaticSource
+
+    captured = []
+
+    class _Pipe:
+        name = "p"
+
+        def define_transformations(self, records, params):
+            return []
+
+        def define_destination(self, records, params):
+            return _FakeDest(captured)
+
+    from reflowfy.core.registry import pipeline_registry
+
+    monkeypatch.setattr(pipeline_registry, "get", lambda name: _Pipe())
+
+    ex = WorkerExecutor(database_url="postgresql://x/y")
+    monkeypatch.setattr(ex, "_update_job_in_db", _async_noop)
+
+    ts = _dt.datetime(2026, 6, 24, 10, 0, 0)
+    sub = StaticSource([{"ts": ts, "n": 1}])
+    payload = build_job_payload(
+        execution_id="e",
+        job_id="j",
+        pipeline_name="p",
+        sub_source=sub,
+        metadata={
+            "batch_id": "b",
+            "created_at": "t",
+            "batch_number": 1,
+            "total_batches": 1,
+            "retry_count": 0,
+            "is_retry": False,
+            "runtime_params": {},
+            "source_metadata": None,
+        },
+    )
+
+    # Manager normalizes the payload (datetime -> str), KafkaDispatcher does a
+    # plain json.dumps (no default=str), the consumer json.loads the bytes.
+    normalized = to_json_safe(payload)
+    wire_bytes = _json.dumps(normalized).encode("utf-8")  # KafkaDispatcher
+    decoded = _json.loads(wire_bytes.decode("utf-8"))  # KafkaJobConsumer
+
+    assert decoded["schema_version"] == 2
+    ok = await ex.execute_job(decoded)
+    assert ok is True
+    # datetime arrived at the destination as a JSON-safe string, end to end
+    assert captured == [{"ts": str(ts), "n": 1}]
