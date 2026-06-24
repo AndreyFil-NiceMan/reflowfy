@@ -282,7 +282,7 @@ class S3Source(BaseSource):
             Bucket=resolved["bucket"], Prefix=resolved["prefix"],
             PaginationConfig={"PageSize": page_size},
         )
-        c = self.config
+        c = resolved
         for page in pages:
             keys = [o["Key"] for o in page.get("Contents", []) if self._matches_pattern(o["Key"])]
             if not keys:

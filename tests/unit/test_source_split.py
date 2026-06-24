@@ -96,3 +96,23 @@ def test_s3_split_lists_keys_only(monkeypatch):
 
 class _Dt:
     def isoformat(self): return "t"
+
+
+def test_s3_split_resolves_templated_config(monkeypatch):
+    from reflowfy.sources.s3 import S3Source
+    src = S3Source(bucket="{{ env }}-data", prefix="logs/{{ env }}/",
+                   page_size=2, read_content=False)
+
+    pages = [{"Contents": [{"Key": "logs/prod/a", "Size": 1, "ETag": "x",
+                            "LastModified": _Dt()}]}]
+
+    class _Paginator:
+        def paginate(self, **k): return iter(pages)
+    class _Client:
+        def get_paginator(self, n): return _Paginator()
+    monkeypatch.setattr(src, "_get_client", lambda: _Client())
+
+    subs = list(src.split({"env": "prod"}))
+    assert subs[0].config["bucket"] == "prod-data"
+    assert subs[0].config["prefix"] == "logs/prod/"
+    assert subs[0].config["keys"] == ["logs/prod/a"]
