@@ -27,6 +27,11 @@ def test_static_split_yields_self():
     assert subs[0].config == {"records": [1, 2, 3]}
 
 
+def test_static_split_empty_yields_nothing():
+    src = StaticSource([])
+    assert list(src.split({})) == []
+
+
 def test_mock_split_by_batch_size():
     src = MockSource(data=[{"i": i} for i in range(25)], batch_size=10)
     subs = list(src.split({}))
@@ -68,6 +73,58 @@ def test_sql_split_id_range(monkeypatch):
     bounds = [(s.config["slice"]["lo"], s.config["slice"]["hi"]) for s in subs]
     assert bounds == [(0, 100), (100, 200), (200, 300)]
     assert "BETWEEN" in subs[0].config["query"] or ">=" in subs[0].config["query"]
+
+
+def test_sql_split_no_id_column_empty_yields_nothing(monkeypatch):
+    from reflowfy.sources.sql import SqlSource
+
+    src = SqlSource(connection_url="sqlite://", query="SELECT * FROM t", batch_size=100)
+
+    class _Result:
+        def fetchone(self):
+            return None  # existence probe finds no rows
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, *a, **k):
+            return _Result()
+
+    monkeypatch.setattr(
+        src, "_get_engine", lambda: type("E", (), {"connect": lambda self: _Conn()})()
+    )
+    assert list(src.split({})) == []
+
+
+def test_sql_split_no_id_column_nonempty_yields_self(monkeypatch):
+    from reflowfy.sources.sql import SqlSource
+
+    src = SqlSource(connection_url="sqlite://", query="SELECT * FROM t", batch_size=100)
+
+    class _Result:
+        def fetchone(self):
+            return (1,)  # at least one row exists
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, *a, **k):
+            return _Result()
+
+    monkeypatch.setattr(
+        src, "_get_engine", lambda: type("E", (), {"connect": lambda self: _Conn()})()
+    )
+    subs = list(src.split({}))
+    assert len(subs) == 1
+    assert subs[0] is src
 
 
 def test_api_split_per_id_mode_groups_ids():
@@ -163,6 +220,9 @@ def test_elastic_split_opens_pit_and_yields_slices(monkeypatch):
     src.config["num_slices"] = 4
 
     class _Client:
+        def count(self, **k):
+            return {"count": 100}
+
         def open_point_in_time(self, **k):
             return {"id": "PIT123"}
 
@@ -177,6 +237,41 @@ def test_elastic_split_opens_pit_and_yields_slices(monkeypatch):
         {"id": 2, "max": 4},
         {"id": 3, "max": 4},
     ]
+
+
+def test_elastic_split_empty_yields_nothing(monkeypatch):
+    from reflowfy.sources.elastic import ElasticSource
+
+    src = ElasticSource(
+        url="http://es:9200", index="logs-*", base_query={"query": {"match_all": {}}}, size=1000
+    )
+
+    class _Client:
+        def count(self, **k):
+            return {"count": 0}
+
+        def open_point_in_time(self, **k):
+            raise AssertionError("must not open a PIT when the query matches no documents")
+
+    monkeypatch.setattr(src, "_get_client", lambda: _Client())
+    assert list(src.split({})) == []
+
+
+def test_elastic_split_single_slice_nonempty_yields_self(monkeypatch):
+    from reflowfy.sources.elastic import ElasticSource
+
+    src = ElasticSource(
+        url="http://es:9200", index="logs-*", base_query={"query": {"match_all": {}}}, size=1000
+    )
+
+    class _Client:
+        def count(self, **k):
+            return {"count": 5}
+
+    monkeypatch.setattr(src, "_get_client", lambda: _Client())
+    subs = list(src.split({}))
+    assert len(subs) == 1
+    assert subs[0] is src
 
 
 def test_elastic_fetch_slice_paginates(monkeypatch):

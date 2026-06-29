@@ -93,14 +93,20 @@ class SqlSource(BaseSource):
 
         Falls back to a single job (yield self) when no id_column is set,
         since offset windows would require counting/among-pages coordination.
+        That fallback first probes for at least one row, so an empty result
+        set does not produce a no-op job.
         """
         resolved = self.resolve_parameters(runtime_params) or self.config
         id_column = resolved.get("id_column")
+        base_query = resolved["query"]
         if not id_column:
-            yield self
+            engine = self._get_engine()
+            with engine.connect() as conn:
+                row = conn.execute(text(f"SELECT 1 FROM ({base_query}) AS sub LIMIT 1")).fetchone()
+            if row is not None:
+                yield self
             return
 
-        base_query = resolved["query"]
         batch_size = resolved.get("batch_size", 1000)
         engine = self._get_engine()
         with engine.connect() as conn:
