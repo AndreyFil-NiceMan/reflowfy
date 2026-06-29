@@ -109,6 +109,7 @@ class WorkerExecutor:
         """
         # Initialize statistics
         stats = JobStats()
+        claimed_content_hash = None
 
         execution_id = job_payload.get("execution_id", "unknown")
         job_id = job_payload.get("job_id", "unknown")
@@ -152,12 +153,40 @@ class WorkerExecutor:
 
             stats.records_output = len(transformed_records)
 
+            # Worker-side content deduplication (enable_duplicate_jobs=False).
+            dedup_check = bool(job_payload.get("dedup_check", False))
+            if dedup_check:
+                from reflowfy.execution.content_dedup import (
+                    compute_content_hash,
+                    claim_content_hash,
+                )
+
+                transformation_names = [name for name, _ in applied]
+                content_hash = compute_content_hash(
+                    _pipeline_name, transformation_names, records
+                )
+                won = await claim_content_hash(
+                    self._async_session, content_hash, _pipeline_name, job_id, execution_id
+                )
+                if not won:
+                    print(f"⏭️  Job {job_id}: content already processed — deduplicated")
+                    stats.deduplicated = True
+                    stats.success = True
+                    stats.records_output = 0
+                    stats.end_time = time.time()
+                    await self._update_job_in_db(execution_id, job_id, stats)
+                    return True
+                claimed_content_hash = content_hash
+
             # Health check (async)
             if not await destination.health_check():
                 print("❌ Destination health check failed")
                 stats.success = False
                 stats.error = "Destination health check failed"
                 stats.end_time = time.time()
+                if claimed_content_hash:
+                    from reflowfy.execution.content_dedup import release_content_hash
+                    await release_content_hash(self._async_session, claimed_content_hash, job_id)
                 await self._update_job_in_db(execution_id, job_id, stats)
                 return False
 
@@ -190,6 +219,13 @@ class WorkerExecutor:
             stats.error = str(e)
             stats.error_traceback = tb_str
             stats.end_time = time.time()
+
+            if claimed_content_hash:
+                try:
+                    from reflowfy.execution.content_dedup import release_content_hash
+                    await release_content_hash(self._async_session, claimed_content_hash, job_id)
+                except Exception:
+                    pass
 
             # Update job status in PostgreSQL (async)
             await self._update_job_in_db(execution_id, job_id, stats)
