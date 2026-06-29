@@ -30,6 +30,7 @@ class JobStats:
         self.error: Optional[str] = None
         self.error_traceback: Optional[str] = None
         self.success = False
+        self.deduplicated = False
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -211,7 +212,12 @@ class WorkerExecutor:
             try:
                 from sqlalchemy import update
 
-                state = "completed" if stats.success else "failed"
+                if stats.deduplicated:
+                    state = "deduplicated"
+                elif stats.success:
+                    state = "completed"
+                else:
+                    state = "failed"
                 now = datetime.now(timezone.utc).replace(tzinfo=None)
 
                 # Update job state
