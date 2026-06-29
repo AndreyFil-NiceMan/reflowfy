@@ -437,7 +437,7 @@ else
             pytest tests/e2e/test_auto_registration.py tests/e2e/test_decorator_components.py tests/e2e/test_cli_scaffolding.py tests/e2e/test_cli_build.py tests/e2e/test_cli_run.py tests/e2e/test_cli_check.py tests/e2e/test_cli_deploy.py tests/e2e/test_cli_test.py -v --tb=short -ra
             ;;
         schedule)
-            pytest tests/e2e/test_schedule.py -v --tb=short -ra
+            pytest tests/e2e/test_schedule.py tests/e2e/test_worker_content_dedup.py -v --tb=short -ra
             ;;
         all)
             pytest tests/e2e/ -v --tb=short -ra

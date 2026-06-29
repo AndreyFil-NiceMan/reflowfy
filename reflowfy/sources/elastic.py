@@ -129,19 +129,32 @@ class ElasticSource(BaseSource):
         except ApiError as e:
             raise SourceError("elasticsearch", f"Failed to fetch data: {e}", e)
 
+    def _count_documents(self, client: Any, resolved: Dict[str, Any]) -> int:
+        """Return how many documents the base query matches (metadata only)."""
+        base_query = resolved.get("base_query") or {}
+        query = base_query.get("query") if isinstance(base_query, dict) else None
+        body = {"query": query} if query is not None else None
+        resp = client.count(index=resolved["index"], body=body)
+        resp = resp.body if hasattr(resp, "body") else resp
+        return int(resp.get("count", 0))
+
     def split(self, runtime_params: Dict[str, Any]) -> Iterator["ElasticSource"]:
         """Open a PIT and yield one source per sliced-scroll slice.
 
         ``num_slices`` (config, default 1) controls parallelism. With 1 slice
-        this is a single job. No documents are fetched here.
+        this is a single job. No documents are fetched here — but the query is
+        counted first, so a query matching no documents yields no jobs.
         """
         resolved = self.resolve_parameters(runtime_params) or self.config
+        client = self._get_client()
+        if self._count_documents(client, resolved) == 0:
+            return
+
         num_slices = int(resolved.get("num_slices", 1))
         if num_slices <= 1:
             yield self
             return
 
-        client = self._get_client()
         pit = client.open_point_in_time(index=resolved["index"], keep_alive=resolved["scroll"])
         pit_id = pit["id"]
         for i in range(num_slices):

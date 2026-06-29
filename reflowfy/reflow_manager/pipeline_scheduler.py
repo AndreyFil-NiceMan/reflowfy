@@ -9,7 +9,7 @@ import threading
 import traceback
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from croniter import croniter
 from sqlalchemy.orm import Session
@@ -34,7 +34,7 @@ class PipelineScheduler:
     def __init__(
         self,
         poll_interval: int = PIPELINE_SCHEDULER_POLL_INTERVAL,
-        pipeline_runner_factory: Optional[callable] = None,
+        pipeline_runner_factory: Optional[Callable[..., Any]] = None,
     ):
         self.poll_interval = poll_interval
         self.pipeline_runner_factory = pipeline_runner_factory
@@ -112,7 +112,15 @@ class PipelineScheduler:
             db.close()
 
     def _trigger_pipeline(self, db: Session, schedule: PipelineSchedule, now: datetime) -> None:
-        """Fire an execution for a due scheduled pipeline and advance next_run_at."""
+        """Fire an execution for a due scheduled pipeline and advance next_run_at.
+
+        The execution record is created synchronously so it exists immediately
+        and the schedule timer can advance, but the actual job split/dispatch
+        runs on a background thread. This keeps the poll loop from blocking on
+        a long-running (or hung) execution, so the cron cadence never stalls.
+        Overlap is allowed: a new tick fires even if a previous run of the same
+        pipeline is still in flight.
+        """
         pipeline_name = schedule.pipeline_name
         execution_id = f"sched-{uuid.uuid4().hex[:12]}"
 
@@ -122,15 +130,11 @@ class PipelineScheduler:
             if not self.pipeline_runner_factory:
                 raise RuntimeError("Pipeline runner factory not configured")
 
-            runner = self.pipeline_runner_factory()
-            runner.run_pipeline(
-                pipeline_name=pipeline_name,
-                runtime_params={},
-                execution_id=execution_id,
-            )
+            self._create_execution(pipeline_name, execution_id)
+            self._dispatch_async(pipeline_name, execution_id)
 
             schedule.last_execution_id = execution_id
-            print(f"✅ Scheduled execution created: {execution_id}")
+            print(f"✅ Scheduled execution created and dispatched: {execution_id}")
 
         except Exception as e:
             print(f"❌ Failed to trigger scheduled pipeline '{pipeline_name}': {e}")
@@ -138,10 +142,61 @@ class PipelineScheduler:
             # Still advance the schedule to avoid a tight retry loop on persistent errors
 
         finally:
-            # Always advance the timer regardless of execution success
+            # Always advance the timer regardless of trigger success
             schedule.last_triggered_at = now
             schedule.next_run_at = self._compute_next_run(schedule.cron_expression, now)
             db.flush()
+
+    def _create_execution(self, pipeline_name: str, execution_id: str) -> None:
+        """Create the execution record synchronously, in its own session."""
+        factory = self.pipeline_runner_factory
+        if factory is None:
+            raise RuntimeError("Pipeline runner factory not configured")
+        runner = factory()
+        try:
+            runner.execution_manager.create_execution(
+                execution_id=execution_id,
+                pipeline_name=pipeline_name,
+                runtime_params={},
+            )
+            runner.execution_manager.db.commit()
+        finally:
+            runner.execution_manager.db.close()
+
+    def _dispatch_async(self, pipeline_name: str, execution_id: str) -> None:
+        """Run the pipeline's jobs on a background daemon thread.
+
+        Mirrors the API's background dispatch: a fresh runner (own DB session)
+        runs the existing execution; on failure the execution is marked failed.
+        """
+        factory = self.pipeline_runner_factory
+        if factory is None:
+            raise RuntimeError("Pipeline runner factory not configured")
+
+        def _run() -> None:
+            runner = factory()
+            try:
+                runner._run_pipeline_jobs(
+                    execution_id=execution_id,
+                    pipeline_name=pipeline_name,
+                    runtime_params={},
+                )
+            except Exception as e:
+                print(f"❌ Scheduled dispatch failed for {execution_id}: {e}")
+                traceback.print_exc()
+                try:
+                    runner.execution_manager.update_execution_state(
+                        execution_id, "failed", error_message=str(e)
+                    )
+                except Exception:
+                    pass
+            finally:
+                try:
+                    runner.execution_manager.db.close()
+                except Exception:
+                    pass
+
+        threading.Thread(target=_run, daemon=True).start()
 
     @staticmethod
     def _compute_next_run(cron_expression: str, after: datetime) -> datetime:
@@ -234,7 +289,7 @@ def get_pipeline_scheduler() -> Optional[PipelineScheduler]:
     return _scheduler
 
 
-def init_pipeline_scheduler(pipeline_runner_factory: callable) -> PipelineScheduler:
+def init_pipeline_scheduler(pipeline_runner_factory: Callable[..., Any]) -> PipelineScheduler:
     """Initialize and start the global PipelineScheduler."""
     global _scheduler
     _scheduler = PipelineScheduler(pipeline_runner_factory=pipeline_runner_factory)

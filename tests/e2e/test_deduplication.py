@@ -122,8 +122,12 @@ class TestDedupOff:
             f"Second run should complete cleanly, got {second_stats['state']}"
         )
         assert second_stats["jobs_failed"] == 0
-        assert second_stats["total_jobs"] == 0, (
-            f"All jobs should be skipped on second run, got total_jobs={second_stats['total_jobs']}"
+        # New semantics: jobs are always created/dispatched; the worker dedups.
+        assert second_stats["total_jobs"] > 0, (
+            "jobs are created every run now; dedup is a worker outcome"
+        )
+        assert second_stats["deduplicated_jobs"] == second_stats["total_jobs"], (
+            "every job on the repeat run must be deduplicated by the worker"
         )
 
     def test_api_override_enables_duplicates(self, client):
@@ -191,8 +195,12 @@ class TestDedupOn:
 
         assert second_stats["state"] == "completed"
         assert second_stats["jobs_failed"] == 0
-        assert second_stats["total_jobs"] == 0, (
-            "Second dedup run must skip all jobs"
+        # New semantics: worker-side dedup — jobs dispatched, then deduplicated.
+        assert second_stats["total_jobs"] > 0, (
+            "jobs are created every run now; dedup is a worker outcome"
+        )
+        assert second_stats["deduplicated_jobs"] == second_stats["total_jobs"], (
+            "every job on the repeat dedup run must be deduplicated by the worker"
         )
 
 

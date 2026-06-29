@@ -34,6 +34,10 @@ from reflowfy.reflow_manager.pipeline_scheduler import (  # noqa: E402
     stop_pipeline_scheduler,
     get_pipeline_scheduler,
 )
+from reflowfy.reflow_manager.content_dedup_scheduler import (  # noqa: E402
+    init_content_dedup_scheduler,
+    stop_content_dedup_scheduler,
+)
 
 
 @asynccontextmanager
@@ -553,6 +557,14 @@ async def _startup() -> None:
     except Exception as e:
         print(f"⚠️  Failed to initialize Pipeline Scheduler: {e}")
 
+    # Initialize Content Dedup Sweeper
+    print("\n🧹 Initializing Content Dedup Sweeper...")
+    try:
+        init_content_dedup_scheduler()
+        print("✅ Content Dedup Sweeper initialized")
+    except Exception as e:
+        print(f"⚠️ Failed to initialize Content Dedup Sweeper: {e}")
+
 
 async def _recover_interrupted_executions():
     """Find and resume any executions that were interrupted by a crash."""
@@ -620,6 +632,7 @@ async def _shutdown() -> None:
     print("\n🛑 Shutting down ReflowManager service...")
     stop_pipeline_scheduler()
     stop_dlq_scheduler()
+    stop_content_dedup_scheduler()
     print("✅ Shutdown complete")
 
 

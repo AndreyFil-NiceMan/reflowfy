@@ -129,5 +129,6 @@ asyncio_mode = "auto"
 
 [dependency-groups]
 dev = [
+    "aiosqlite>=0.22.1",
     "twine>=6.2.0",
 ]

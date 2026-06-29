@@ -40,7 +40,13 @@ class StaticSource(BaseSource):
         return records
 
     def split(self, runtime_params: Dict[str, Any]) -> Iterator["StaticSource"]:
-        """A static source is already one job — its records are in config."""
+        """A static source is already one job — its records are in config.
+
+        Yields nothing when there are no records, so an empty result set does
+        not produce a no-op job (consistent with the other sources' split()).
+        """
+        if not self.config["records"]:
+            return
         yield self
 
     def split_jobs(

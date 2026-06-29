@@ -245,6 +245,29 @@ class DLQJobArchive(Base):
         }
 
 
+class ProcessedContent(Base):
+    """Content-hash ledger for worker-side deduplication.
+
+    One row per processed record-content hash. The worker claims a hash
+    atomically (INSERT ... ON CONFLICT DO NOTHING) before sending to the
+    destination; a duplicate claim means the content was already processed.
+    Rows are purged after a retention window by the content dedup sweeper.
+    """
+
+    __tablename__ = "processed_content"
+
+    content_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    pipeline_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    job_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    execution_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        nullable=False,
+        index=True,
+    )
+
+
 class PipelineSchedule(Base):
     """
     Persistent cron schedule state for a scheduled pipeline.
