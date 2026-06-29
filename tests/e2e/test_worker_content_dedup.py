@@ -40,7 +40,7 @@ def _wait(client, execution_id):
 
 
 def _records():
-    return httpx.get(f"{MOCK_URL}/records", timeout=10).json()
+    return httpx.get(f"{MOCK_URL}/records", timeout=10).json().get("records", [])
 
 
 def _reset():
