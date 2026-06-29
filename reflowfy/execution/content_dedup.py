@@ -28,3 +28,38 @@ def compute_content_hash(
     }
     content = json.dumps(stable, sort_keys=True, default=str)
     return hashlib.sha256(content.encode()).hexdigest()
+
+
+async def claim_content_hash(
+    session_factory: Any,
+    content_hash: str,
+    pipeline_name: str,
+    job_id: str,
+    execution_id: str,
+) -> bool:
+    """Atomically claim a content hash. Returns True iff this caller inserted it."""
+    async with session_factory() as db:
+        stmt = (
+            pg_insert(ProcessedContent)
+            .values(
+                content_hash=content_hash,
+                pipeline_name=pipeline_name,
+                job_id=job_id,
+                execution_id=execution_id,
+            )
+            .on_conflict_do_nothing(index_elements=["content_hash"])
+        )
+        result = await db.execute(stmt)
+        await db.commit()
+        return (result.rowcount or 0) == 1
+
+
+async def release_content_hash(session_factory: Any, content_hash: str, job_id: str) -> None:
+    """Release this caller's own claim so a retry can reprocess."""
+    async with session_factory() as db:
+        stmt = delete(ProcessedContent).where(
+            ProcessedContent.content_hash == content_hash,
+            ProcessedContent.job_id == job_id,
+        )
+        await db.execute(stmt)
+        await db.commit()
