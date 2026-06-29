@@ -155,6 +155,38 @@ class TestElasticSourcePipeline:
         
         print(f"✅ Pipeline completed: {stats['jobs_completed']}/{stats['total_jobs']} jobs")
 
+    def test_empty_query_creates_no_jobs(self, client, check_elasticsearch):
+        """A query matching no documents must create 0 jobs (no no-op job).
+
+        Seeded @timestamps are within the last 90 days, so a 1990 range
+        matches nothing — ElasticSource.split() must yield no slices.
+        """
+        response = client.post("/run", json={
+            "pipeline_name": "e2e_elastic_source_test",
+            "runtime_params": {
+                "start_time": "1990-01-01T00:00:00",
+                "end_time": "1990-01-02T00:00:00",
+            },
+        })
+
+        assert response.status_code == 202
+        execution_id = response.json()["execution_id"]
+
+        max_wait = 60
+        start = time.time()
+        stats = {}
+        while time.time() - start < max_wait:
+            stats = client.get(f"/executions/{execution_id}/stats").json()
+            if stats.get("state") in ("completed", "failed"):
+                break
+            time.sleep(POLL_INTERVAL)
+
+        assert stats.get("state") == "completed", f"Expected completed, got {stats}"
+        assert stats.get("total_jobs", -1) == 0, (
+            f"empty Elastic query must create 0 jobs, got {stats.get('total_jobs')}"
+        )
+        print("✅ Empty Elastic query created 0 jobs")
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
