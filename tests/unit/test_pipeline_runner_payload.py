@@ -1,18 +1,5 @@
-from reflowfy.reflow_manager.pipeline_runner import build_job_payload, generate_job_id
+from reflowfy.reflow_manager.pipeline_runner import build_job_payload
 from reflowfy.sources.static import StaticSource
-
-
-def test_job_id_stable_for_same_slice():
-    src = {"type": "StaticSource", "config": {"records": [1, 2]}}
-    a = generate_job_id("p", source=src, current_ids=[1, 2])
-    b = generate_job_id("p", source=src, current_ids=[1, 2])
-    assert a == b
-
-
-def test_job_id_differs_for_different_slice():
-    a = generate_job_id("p", source={"type": "S", "config": {"lo": 0}}, current_ids=None)
-    b = generate_job_id("p", source={"type": "S", "config": {"lo": 1}}, current_ids=None)
-    assert a != b
 
 
 def test_build_job_payload_v2_shape():
@@ -40,3 +27,18 @@ def test_build_job_payload_v2_shape():
     assert "transformations" not in payload
     assert "destination" not in payload
     assert payload["metadata"]["current_ids"] == [101, 102]
+    assert payload["dedup_check"] is False
+
+
+def test_build_job_payload_sets_dedup_check():
+    from reflowfy.sources.static import StaticSource
+
+    payload = build_job_payload(
+        execution_id="e1",
+        job_id="j1",
+        pipeline_name="p",
+        sub_source=StaticSource([1]),
+        metadata={},
+        dedup_check=True,
+    )
+    assert payload["dedup_check"] is True

@@ -395,8 +395,13 @@ class TestScheduledPipelineNoDuplicateJobs:
             f"Second execution did not reach terminal state: {stats2['state']}"
         )
 
-        jobs_second_run = stats2.get("jobs_dispatched", 0)
-        assert jobs_second_run == 0, (
-            f"Second run with enable_duplicate_jobs=False should dispatch 0 jobs "
-            f"(same data already processed), but dispatched {jobs_second_run}"
+        # New semantics: the second run still creates/dispatches jobs, but the
+        # worker deduplicates them by content (same static data).
+        assert stats2["state"] == "completed", stats2
+        assert stats2["jobs_failed"] == 0
+        assert stats2.get("deduplicated_jobs", 0) == stats2.get("total_jobs", 0), (
+            "second run with identical data must be fully deduplicated by the worker"
+        )
+        assert stats2.get("total_jobs", 0) > 0, (
+            "jobs are always created now; dedup is a worker outcome"
         )
