@@ -204,6 +204,7 @@ class JobManager:
             "dispatched": 0,
             "completed": 0,
             "failed": 0,
+            "deduplicated": 0,
         }
 
         total = 0
