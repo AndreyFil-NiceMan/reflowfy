@@ -25,7 +25,7 @@ def purge_expired_content(db: Session, retention_hours: int, now: Optional[datet
     now = now or datetime.now(timezone.utc).replace(tzinfo=None)
     cutoff = now - timedelta(hours=retention_hours)
     result = db.execute(delete(ProcessedContent).where(ProcessedContent.created_at < cutoff))
-    return result.rowcount or 0
+    return getattr(result, "rowcount", 0) or 0
 
 
 class ContentDedupScheduler:
