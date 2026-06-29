@@ -1,8 +1,6 @@
 """Pipeline execution runner for ReflowManager."""
 
 import asyncio
-import hashlib
-import json
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
@@ -27,38 +25,9 @@ def _chunk(lst: List, size: int) -> List[List]:
     return [lst[i : i + size] for i in range(0, len(lst), size)]
 
 
-# Keys that indicate date/time values — stripped from source_metadata before hashing
-# so the job ID stays stable across runs even when these fields change.
-_DATE_KEY_PATTERNS = ("date", "time", "timestamp", "created_at", "updated_at")
-
-
-def _filter_volatile_keys(d: dict) -> dict:
-    """Remove date/time keys from a dict to keep only stable content."""
-    return {k: v for k, v in d.items() if not any(pat in k.lower() for pat in _DATE_KEY_PATTERNS)}
-
-
-def generate_job_id(
-    pipeline_name: str,
-    source: Dict[str, Any],
-    current_ids: Optional[list] = None,
-) -> str:
-    """Return a deterministic SHA256 job ID derived from the source slice.
-
-    Used when enable_duplicate_jobs=False. The narrowed source ``config``
-    encodes the slice (id-range, scroll/PIT id, key list, or — for
-    StaticSource — the records themselves), so identical slices produce the
-    same ID across runs. Volatile date/time keys are stripped from config.
-    """
-    stable = {
-        "pipeline_name": pipeline_name,
-        "source": {
-            "type": source.get("type"),
-            "config": _filter_volatile_keys(source.get("config", {}) or {}),
-        },
-        "current_ids": current_ids,
-    }
-    content = json.dumps(stable, sort_keys=True, default=str)
-    return hashlib.sha256(content.encode()).hexdigest()
+def _finished_count(completed: int, failed: int, deduplicated: int) -> int:
+    """Jobs in a terminal state. Deduplicated jobs are a success outcome."""
+    return completed + failed + deduplicated
 
 
 def _run_async(coro):
@@ -90,6 +59,7 @@ def build_job_payload(
     pipeline_name: str,
     sub_source: Any,
     metadata: Dict[str, Any],
+    dedup_check: bool = False,
 ) -> Dict[str, Any]:
     """Assemble the v2 worker job message for one narrowed sub-source."""
     return {
@@ -98,6 +68,7 @@ def build_job_payload(
         "job_id": job_id,
         "pipeline_name": pipeline_name,
         "source": SourceFactory.serialize(sub_source),
+        "dedup_check": dedup_check,
         "metadata": metadata,
     }
 
@@ -475,7 +446,6 @@ class PipelineRunner:
         print("  Phase 1: Saving jobs to database...")
         batch_number = 1
         job_count = 0
-        dedup_count = 0
         current_job_ids = []
 
         base_source = pipeline.source
@@ -485,17 +455,11 @@ class PipelineRunner:
             context_dict["runtime_params"] = dict(enriched_params)
             metadata = {**context_dict, "source_metadata": None}
 
-            source_descriptor = SourceFactory.serialize(sub_source)
-            if enable_duplicate_jobs:
-                job_id = str(uuid.uuid4())
-            else:
-                job_id = generate_job_id(pipeline_name, source_descriptor, current_ids=None)
-                if self.job_manager.get_job(job_id):
-                    dedup_count += 1
-                    continue
+            dedup_check = not enable_duplicate_jobs
+            job_id = str(uuid.uuid4())
 
             job_payload = build_job_payload(
-                execution_id, job_id, pipeline_name, sub_source, metadata
+                execution_id, job_id, pipeline_name, sub_source, metadata, dedup_check=dedup_check
             )
             job_payload = self._serialize_for_json(job_payload)
 
@@ -513,11 +477,6 @@ class PipelineRunner:
 
         # Set total_jobs correctly (once, after all jobs saved)
         self._set_total_jobs(execution_id, job_count)
-
-        # Persist dedup count so it shows in stats
-        if dedup_count > 0:
-            self.execution_manager.update_deduplicated_count(execution_id, dedup_count)
-            print(f"  Deduplicated {dedup_count} jobs (content hash match)")
 
         # Back-fill total_batches into every job's metadata payload (best-effort)
         try:
@@ -692,7 +651,6 @@ class PipelineRunner:
         )
         batch_number = 1
         job_count = 0
-        dedup_count = 0
         current_job_ids = []
 
         for ids_batch in id_batches:
@@ -708,19 +666,12 @@ class PipelineRunner:
                 context_dict["runtime_params"] = dict(batch_params)
                 metadata = {**context_dict, "current_ids": ids_batch, "source_metadata": None}
 
-                source_descriptor = SourceFactory.serialize(sub_source)
-                if enable_duplicate_jobs:
-                    job_id = str(uuid.uuid4())
-                else:
-                    job_id = generate_job_id(
-                        pipeline_name, source_descriptor, current_ids=ids_batch
-                    )
-                    if self.job_manager.get_job(job_id):
-                        dedup_count += 1
-                        continue
+                dedup_check = not enable_duplicate_jobs
+                job_id = str(uuid.uuid4())
 
                 job_payload = build_job_payload(
-                    execution_id, job_id, pipeline_name, sub_source, metadata
+                    execution_id, job_id, pipeline_name, sub_source, metadata,
+                    dedup_check=dedup_check,
                 )
                 job_payload = self._serialize_for_json(job_payload)
 
@@ -738,11 +689,6 @@ class PipelineRunner:
 
         # Set total_jobs correctly (once, after all jobs saved)
         self._set_total_jobs(execution_id, job_count)
-
-        # Persist dedup count so it shows in stats
-        if dedup_count > 0:
-            self.execution_manager.update_deduplicated_count(execution_id, dedup_count)
-            print(f"  Deduplicated {dedup_count} jobs (content hash match)")
 
         # Back-fill total_batches into every job's metadata payload (best-effort)
         try:
@@ -890,17 +836,19 @@ class PipelineRunner:
 
         completed = job_counts.get("completed", 0)
         failed = job_counts.get("failed", 0)
-        dispatched = job_counts.get("dispatched", 0) + completed + failed
+        deduplicated = job_counts.get("deduplicated", 0)
+        dispatched = job_counts.get("dispatched", 0) + completed + failed + deduplicated
 
         # Update execution with real counts
         execution = self.execution_manager.get_execution(execution_id)
         if execution:
             execution.jobs_dispatched = dispatched
-            execution.jobs_completed = completed
+            execution.jobs_completed = completed + deduplicated
             execution.jobs_failed = failed
+            execution.deduplicated_jobs = deduplicated
             self.execution_manager.db.commit()
 
-        return (dispatched, completed, failed)
+        return (dispatched, completed + deduplicated, failed)
 
     def _wait_for_batch_completion(
         self,
@@ -931,7 +879,7 @@ class PipelineRunner:
 
             for job_id in job_ids:
                 state = states.get(job_id, "pending")
-                if state == "completed":
+                if state in ("completed", "deduplicated"):
                     completed += 1
                 elif state == "failed":
                     failed += 1
@@ -948,7 +896,7 @@ class PipelineRunner:
         # Timeout reached - return current counts
         print(f"  Warning: Batch timeout after {timeout}s, some jobs may not have completed")
         states = self.checkpoint_manager.get_job_states(job_ids)
-        completed = sum(1 for s in states.values() if s == "completed")
+        completed = sum(1 for s in states.values() if s in ("completed", "deduplicated"))
         failed = sum(1 for s in states.values() if s == "failed")
 
         return (completed, failed)
