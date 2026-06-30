@@ -110,6 +110,7 @@ class WorkerExecutor:
         # Initialize statistics
         stats = JobStats()
         claimed_content_hash = None
+        destination = None
 
         execution_id = job_payload.get("execution_id", "unknown")
         job_id = job_payload.get("job_id", "unknown")
@@ -231,6 +232,16 @@ class WorkerExecutor:
             await self._update_job_in_db(execution_id, job_id, stats)
 
             return False
+
+        finally:
+            # Always release the per-job destination's resources (e.g. the
+            # Kafka producer started during health_check/send). Without this,
+            # every job leaks a broker connection and a background sender task.
+            if destination is not None:
+                try:
+                    await destination.close()
+                except Exception as close_err:
+                    print(f"⚠️  Job {job_id}: failed to close destination: {close_err}")
 
     async def _update_job_in_db(self, execution_id: str, job_id: str, stats: JobStats):
         """

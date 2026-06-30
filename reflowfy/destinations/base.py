@@ -66,6 +66,16 @@ class BaseDestination(ABC):
         """
         pass
 
+    async def close(self) -> None:
+        """
+        Release any resources held by the destination (connections, clients).
+
+        Default is a no-op for stateless destinations. Connection-backed
+        destinations (e.g. Kafka) override this to close their producer.
+        Always safe and idempotent to call.
+        """
+        return None
+
     async def send_with_retry(
         self, records: List[Any], metadata: Optional[Dict[str, Any]] = None
     ) -> None:

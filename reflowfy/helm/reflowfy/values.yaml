@@ -1,3 +1,8 @@
+# Set by `reflowfy deploy` to a fresh value on every run so the pod template
+# always changes, forcing a rollout even when the image tag is unchanged.
+# Combined with image.pullPolicy=Always this guarantees pods pull the latest image.
+deployTimestamp: ""
+
 #####################################
 # INFRASTRUCTURE - POSTGRESQL
 #####################################
