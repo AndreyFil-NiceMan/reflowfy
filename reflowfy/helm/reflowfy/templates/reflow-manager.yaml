@@ -14,6 +14,10 @@ spec:
       app.kubernetes.io/instance: {{ .Release.Name }}
   template:
     metadata:
+      {{- if .Values.deployTimestamp }}
+      annotations:
+        reflowfy.io/restartedAt: {{ .Values.deployTimestamp | quote }}
+      {{- end }}
       labels:
         app: reflowfy-reflow-manager
         app.kubernetes.io/instance: {{ .Release.Name }}

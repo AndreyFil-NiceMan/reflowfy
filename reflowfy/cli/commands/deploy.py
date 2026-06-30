@@ -3,6 +3,7 @@
 import os
 import subprocess
 import typer
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -94,6 +95,9 @@ def register(app: typer.Typer):
             "--set", "api.image.pullPolicy=Always",
             "--set", "reflowManager.image.pullPolicy=Always",
             "--set", "worker.image.pullPolicy=Always",
+            # Fresh timestamp on every deploy mutates the pod template so K8s rolls
+            # the deployments even when the image tag is unchanged (pulls latest image).
+            "--set", f"deployTimestamp={datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
             "--set", "kafka.external.bootstrapServers=" + kafka.replace(",", "\\,"),
             "--set", f"kafka.topic={kafka_topic}",
             "--set", f"kafka.groupId={kafka_group_id}",

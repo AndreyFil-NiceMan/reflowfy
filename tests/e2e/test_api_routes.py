@@ -330,13 +330,14 @@ class TestIdBasedRouteBody:
         _, kwargs = local.execute.call_args
         assert kwargs["runtime_params"]["ids"] == [10, 20, 30]
 
-    def test_extra_body_param_passed(self, id_based_client):
+    def test_extra_scalar_param_passed_as_query(self, id_based_client):
+        """Scalar params (e.g. `env`) are query params; only `ids` is in the body."""
         client, local, _ = id_based_client
         local.reset_mock()
         client.post(
             "/pipelines/_test_id_based/run",
-            params={"mode": "local"},
-            json={"ids": [1], "env": "staging"},
+            params={"mode": "local", "env": "staging"},
+            json={"ids": [1]},
         )
         _, kwargs = local.execute.call_args
         assert kwargs["runtime_params"]["env"] == "staging"

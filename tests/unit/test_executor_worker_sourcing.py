@@ -2,14 +2,19 @@ from reflowfy.worker.executor import WorkerExecutor
 
 
 class _FakeDest:
-    def __init__(self, sink):
+    def __init__(self, sink, healthy=True):
         self.sink = sink
+        self.healthy = healthy
+        self.closed = False
 
     async def health_check(self):
-        return True
+        return self.healthy
 
     async def send_with_retry(self, records, params):
         self.sink.extend(records)
+
+    async def close(self):
+        self.closed = True
 
 
 class _FakePipeline:
@@ -58,6 +63,64 @@ async def test_worker_fetches_static_source_and_runs(monkeypatch):
     ok = await ex.execute_job(payload)
     assert ok is True
     assert captured == [{"id": 1}, {"id": 2}]
+
+
+def _static_payload():
+    return {
+        "schema_version": 2,
+        "execution_id": "e",
+        "job_id": "j",
+        "pipeline_name": "p",
+        "source": {"type": "StaticSource", "config": {"records": [{"id": 1}]}},
+        "metadata": {
+            "batch_id": "b",
+            "created_at": "t",
+            "batch_number": 1,
+            "total_batches": 1,
+            "retry_count": 0,
+            "is_retry": False,
+            "runtime_params": {},
+            "source_metadata": None,
+        },
+    }
+
+
+async def test_worker_closes_destination_on_success(monkeypatch):
+    """Regression: the per-job destination must be closed so Kafka producers
+    (started during health_check/send) don't leak a connection per job."""
+    dest = _FakeDest([])
+    pipe = _FakePipeline()
+    pipe.define_destination = lambda records, params: dest  # noqa: E731
+
+    from reflowfy.core.registry import pipeline_registry
+
+    monkeypatch.setattr(pipeline_registry, "get", lambda name: pipe)
+
+    ex = WorkerExecutor(database_url="postgresql://x/y")
+    monkeypatch.setattr(ex, "_update_job_in_db", _async_noop)
+
+    ok = await ex.execute_job(_static_payload())
+    assert ok is True
+    assert dest.closed is True
+
+
+async def test_worker_closes_destination_when_health_check_fails(monkeypatch):
+    """Even when health_check fails (a producer was already started), the
+    destination must still be closed."""
+    dest = _FakeDest([], healthy=False)
+    pipe = _FakePipeline()
+    pipe.define_destination = lambda records, params: dest  # noqa: E731
+
+    from reflowfy.core.registry import pipeline_registry
+
+    monkeypatch.setattr(pipeline_registry, "get", lambda name: pipe)
+
+    ex = WorkerExecutor(database_url="postgresql://x/y")
+    monkeypatch.setattr(ex, "_update_job_in_db", _async_noop)
+
+    ok = await ex.execute_job(_static_payload())
+    assert ok is False
+    assert dest.closed is True
 
 
 async def test_worker_applies_transformations(monkeypatch):
