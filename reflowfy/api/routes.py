@@ -1,6 +1,6 @@
 """Dynamic route generation for pipelines."""
 
-from typing import Any, Dict, List, Literal
+from typing import Any, Dict, Literal
 from inspect import Parameter, Signature
 
 import pydantic
@@ -91,72 +91,38 @@ def _param_annotation(p: Any):
     return p.param_type
 
 
-def _create_id_based_route(
+# list/dict parameters are accepted in the JSON request body; scalar parameters
+# (str/int/float/bool, or anything with `choices`) are exposed as query params.
+_BODY_PARAM_TYPES = (list, dict)
+
+
+def _is_body_param(p: Any) -> bool:
+    """Whether a PipelineParameter is carried in the request body vs the query string.
+
+    List/dict values (e.g. an `ids` list) don't round-trip well as query params —
+    they get clunky Swagger rendering and string-coerced items — so they go in the
+    body. Anything with `choices` stays a query-string dropdown.
+    """
+    return p.choices is None and p.param_type in _BODY_PARAM_TYPES
+
+
+def _create_run_route(
     app: FastAPI,
     pipeline: Any,
     local_executor: Any,
     distributed_executor: Any,
+    params: Any,
 ) -> None:
     """
-    Register a run route for an IdBasedPipeline.
+    Register the POST /pipelines/{name}/run route for a pipeline.
 
-    `ids` and any extra user-defined parameters are accepted in the request body.
+    Parameters are split by type: list/dict params go in the JSON request body,
+    scalar params are exposed as typed query parameters. `mode` and `rate_limit`
+    are always query parameters.
     """
     pipeline_name = pipeline.name
-    extra_params = pipeline.define_parameters()  # user-defined params beyond ids
-
-    # Build dynamic Pydantic body model: ids + extra typed fields
-    fields: Dict[str, Any] = {"ids": (List[Any], ...)}
-    for p in extra_params:
-        default = ... if p.required else p.default
-        fields[p.name] = (_param_annotation(p), default)
-
-    BodyModel = pydantic.create_model(f"{pipeline_name}_Body", **fields)
-
-    async def run_pipeline(
-        body: BodyModel,
-        mode: Literal["local", "distributed"] = Query("distributed", description="Execution mode: 'local' or 'distributed'"),
-        rate_limit: float = Query(None, description="Override rate limit (jobs per second)"),
-    ):
-        """
-        Execute IdBasedPipeline.
-
-        Send `ids` (and any extra parameters) in the JSON request body.
-        """
-        return _run_body(
-            pipeline=pipeline,
-            local_executor=local_executor,
-            distributed_executor=distributed_executor,
-            pipeline_name=pipeline_name,
-            runtime_params_dict=body.model_dump(),
-            mode=mode,
-            rate_limit=rate_limit,
-        )
-
-    app.post(
-        f"/pipelines/{pipeline_name}/run",
-        response_model=PipelineRunResponse,
-        tags=["pipelines"],
-        summary=f"Run {pipeline_name}",
-        description=f"Execute {pipeline_name} (IdBasedPipeline). Send ids list in JSON body.",
-    )(run_pipeline)
-
-    print(f"  ✓ POST /pipelines/{pipeline_name}/run  [body: ids + params]")
-
-
-def _create_standard_route(
-    app: FastAPI,
-    pipeline: Any,
-    local_executor: Any,
-    distributed_executor: Any,
-) -> None:
-    """
-    Register a run route for a standard AbstractPipeline.
-
-    Runtime parameters are exposed as typed query parameters.
-    """
-    pipeline_name = pipeline.name
-    param_objects = pipeline.define_parameters()
+    body_params = [p for p in params if _is_body_param(p)]
+    query_params = [p for p in params if not _is_body_param(p)]
 
     mode_param = Parameter(
         "mode",
@@ -170,51 +136,51 @@ def _create_standard_route(
         default=Query(None, description="Override rate limit (jobs per second)"),
         annotation=float,
     )
+    sig_params = [mode_param, rate_limit_param]
 
-    if param_objects:
-        typed_params = [
-            Parameter(
-                p.name,
-                Parameter.KEYWORD_ONLY,
-                default=Query(
-                    p.default if not p.required else ...,
-                    description=p.description or f"Runtime parameter: {p.name}",
-                ),
-                annotation=_param_annotation(p),
+    if body_params:
+        fields: Dict[str, Any] = {}
+        for p in body_params:
+            default = ... if p.required else p.default
+            fields[p.name] = (
+                _param_annotation(p),
+                pydantic.Field(default, description=p.description or f"Runtime parameter: {p.name}"),
             )
-            for p in param_objects
-        ]
-
-        async def run_pipeline(mode: str = "distributed", rate_limit: float = None, **kwargs):
-            """Execute pipeline with typed query parameters."""
-            return _run_body(
-                pipeline=pipeline,
-                local_executor=local_executor,
-                distributed_executor=distributed_executor,
-                pipeline_name=pipeline_name,
-                runtime_params_dict=kwargs,
-                mode=mode,
-                rate_limit=rate_limit,
-            )
-
-        run_pipeline.__signature__ = Signature(
-            parameters=[mode_param, rate_limit_param] + typed_params
+        BodyModel = pydantic.create_model(f"{pipeline_name}_Body", **fields)
+        sig_params.insert(
+            0,
+            Parameter("body", Parameter.KEYWORD_ONLY, default=..., annotation=BodyModel),
         )
-    else:
-        async def run_pipeline(
-            mode: Literal["local", "distributed"] = Query("distributed", description="Execution mode: 'local' or 'distributed'"),
-            rate_limit: float = Query(None, description="Override rate limit (jobs per second)"),
-        ):
-            """Execute pipeline (no runtime parameters)."""
-            return _run_body(
-                pipeline=pipeline,
-                local_executor=local_executor,
-                distributed_executor=distributed_executor,
-                pipeline_name=pipeline_name,
-                runtime_params_dict={},
-                mode=mode,
-                rate_limit=rate_limit,
-            )
+
+    sig_params += [
+        Parameter(
+            p.name,
+            Parameter.KEYWORD_ONLY,
+            default=Query(
+                p.default if not p.required else ...,
+                description=p.description or f"Runtime parameter: {p.name}",
+            ),
+            annotation=_param_annotation(p),
+        )
+        for p in query_params
+    ]
+
+    async def run_pipeline(mode="distributed", rate_limit=None, body=None, **kwargs):
+        """Execute pipeline. List/dict params come from the JSON body; scalars from the query string."""
+        runtime_params = dict(kwargs)
+        if body is not None:
+            runtime_params.update(body.model_dump())
+        return _run_body(
+            pipeline=pipeline,
+            local_executor=local_executor,
+            distributed_executor=distributed_executor,
+            pipeline_name=pipeline_name,
+            runtime_params_dict=runtime_params,
+            mode=mode,
+            rate_limit=rate_limit,
+        )
+
+    run_pipeline.__signature__ = Signature(parameters=sig_params)
 
     app.post(
         f"/pipelines/{pipeline_name}/run",
@@ -224,9 +190,10 @@ def _create_standard_route(
         description=f"Execute {pipeline_name}. Use mode='local' for testing, 'distributed' for production.",
     )(run_pipeline)
 
-    params_str = "&".join(p.name + "=..." for p in param_objects) if param_objects else ""
-    full_params = "?mode=distributed&rate_limit=..." + (f"&{params_str}" if params_str else "")
-    print(f"  ✓ POST /pipelines/{pipeline_name}/run{full_params}")
+    body_str = ("body: " + ", ".join(p.name for p in body_params)) if body_params else "no body"
+    query_str = "&".join(p.name + "=..." for p in query_params)
+    full_query = "?mode=distributed&rate_limit=..." + (f"&{query_str}" if query_str else "")
+    print(f"  ✓ POST /pipelines/{pipeline_name}/run{full_query}  [{body_str}]")
 
 
 def create_pipeline_routes(
@@ -244,10 +211,14 @@ def create_pipeline_routes(
     """
     from reflowfy.core.id_based_pipeline import IdBasedPipeline
 
+    # IdBasedPipeline exposes the auto-injected 'ids' param via get_all_parameters();
+    # AbstractPipeline exposes only its declared params.
     if isinstance(pipeline, IdBasedPipeline):
-        _create_id_based_route(app, pipeline, local_executor, distributed_executor)
+        params = pipeline.get_all_parameters()
     else:
-        _create_standard_route(app, pipeline, local_executor, distributed_executor)
+        params = pipeline.define_parameters()
+
+    _create_run_route(app, pipeline, local_executor, distributed_executor, params)
 
     pipeline_name = pipeline.name
 
