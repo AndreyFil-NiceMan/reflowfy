@@ -226,7 +226,7 @@ class JobManager:
         self.db.execute(
             text(
                 "UPDATE jobs "
-                "SET job_payload = jsonb_set(job_payload::jsonb, '{metadata,total_batches}', :val::jsonb) "
+                "SET job_payload = jsonb_set(job_payload::jsonb, '{metadata,total_batches}', CAST(:val AS jsonb)) "
                 "WHERE execution_id = :eid"
             ),
             {"val": str(total_batches), "eid": execution_id},
