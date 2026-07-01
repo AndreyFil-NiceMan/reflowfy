@@ -8,7 +8,7 @@ import threading
 import traceback
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from collections import defaultdict
 
 from sqlalchemy.orm import Session
@@ -34,7 +34,7 @@ class DLQScheduler:
     def __init__(
         self,
         poll_interval: int = DLQ_POLL_INTERVAL_SECONDS,
-        pipeline_runner_factory: Optional[callable] = None,
+        pipeline_runner_factory: Optional[Callable[..., Any]] = None,
     ):
         """
         Initialize DLQ scheduler.
@@ -332,7 +332,7 @@ def get_dlq_scheduler() -> Optional[DLQScheduler]:
     return _scheduler
 
 
-def init_dlq_scheduler(pipeline_runner_factory: callable) -> DLQScheduler:
+def init_dlq_scheduler(pipeline_runner_factory: Callable[..., Any]) -> DLQScheduler:
     """Initialize and start the global DLQ scheduler."""
     global _scheduler
     _scheduler = DLQScheduler(pipeline_runner_factory=pipeline_runner_factory)

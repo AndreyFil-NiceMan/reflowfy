@@ -92,7 +92,7 @@ class KafkaDispatcher(BaseDispatcher):
 
         if self._producer is None or not self._started:
             # Build producer kwargs
-            producer_kwargs = {
+            producer_kwargs: Dict[str, Any] = {
                 "bootstrap_servers": self.kafka_bootstrap_servers,
                 "compression_type": "gzip",
             }
@@ -178,4 +178,4 @@ class KafkaDispatcher(BaseDispatcher):
 
 
 # Backward compatibility alias
-JobDispatcher = KafkaDispatcher
+JobDispatcher = BaseDispatcher

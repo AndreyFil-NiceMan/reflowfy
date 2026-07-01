@@ -28,14 +28,6 @@ class DispatchJobsRequest(BaseModel):
     rate_limit: Optional[float] = None
 
 
-class CheckpointRequest(BaseModel):
-    """Request to create a checkpoint."""
-
-    execution_id: str
-    job_id: str
-    processed_records: int = 0
-
-
 class RunPipelineRequest(BaseModel):
     """Request to run a pipeline."""
 

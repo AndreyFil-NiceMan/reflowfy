@@ -1,6 +1,6 @@
 """Elasticsearch source with scroll-based pagination."""
 
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Tuple, cast
 
 from elasticsearch import Elasticsearch
 from elasticsearch.exceptions import ApiError
@@ -25,9 +25,9 @@ class ElasticSource(BaseSource):
         base_query: Dict[str, Any],
         scroll: str = "2m",
         size: int = 1000,
-        auth: Optional[tuple] = None,
+        auth: Optional[Tuple[str, str]] = None,
         verify_certs: bool = True,
-        **kwargs,
+        **kwargs: Any,
     ):
         """
         Initialize Elasticsearch source.
@@ -207,8 +207,9 @@ class ElasticSource(BaseSource):
             if hasattr(response, "body"):
                 response = response.body
             elif not isinstance(response, dict):
-                response = dict(response)
+                response = dict(response)  # pyright: ignore[reportCallIssue, reportArgumentType]
 
+            response = cast(Dict[str, Any], response)
             scroll_id = response["_scroll_id"]
             hits = response["hits"]["hits"]
 
@@ -238,8 +239,9 @@ class ElasticSource(BaseSource):
                 if hasattr(response, "body"):
                     response = response.body
                 elif not isinstance(response, dict):
-                    response = dict(response)
+                    response = dict(response)  # pyright: ignore[reportCallIssue, reportArgumentType]
 
+                response = cast(Dict[str, Any], response)
                 scroll_id = response["_scroll_id"]
                 hits = response["hits"]["hits"]
 
@@ -265,9 +267,9 @@ def elastic_source(
     base_query: Dict[str, Any],
     scroll: str = "2m",
     size: int = 1000,
-    auth: Optional[tuple] = None,
+    auth: Optional[Tuple[str, str]] = None,
     verify_certs: bool = True,
-    **kwargs,
+    **kwargs: Any,
 ) -> ElasticSource:
     """
     Factory function for Elasticsearch source.

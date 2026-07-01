@@ -16,29 +16,29 @@ Example:
         return production_kafka(topic="my-output")
 """
 
-from typing import Callable, Dict, Optional, TypeVar
+from typing import Any, Callable, Dict, List, Optional, TypeVar
 
-F = TypeVar("F", bound=Callable)
+F = TypeVar("F", bound=Callable[..., Any])
 
 
 class DestinationRegistry:
     """Registry for reusable destination factory functions."""
 
-    _destinations: Dict[str, Callable] = {}
+    _destinations: Dict[str, Callable[..., Any]] = {}
 
     @classmethod
-    def register(cls, name: str, factory: Callable) -> None:
+    def register(cls, name: str, factory: Callable[..., Any]) -> None:
         """Register a destination factory function."""
         cls._destinations[name] = factory
         print(f"✓ Registered reusable destination: {name}")
 
     @classmethod
-    def get(cls, name: str) -> Optional[Callable]:
+    def get(cls, name: str) -> Optional[Callable[..., Any]]:
         """Get a destination factory by name."""
         return cls._destinations.get(name)
 
     @classmethod
-    def list_all(cls) -> list:
+    def list_all(cls) -> List[str]:
         """List all registered destination names."""
         return list(cls._destinations.keys())
 

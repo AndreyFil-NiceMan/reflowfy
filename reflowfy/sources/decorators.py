@@ -17,29 +17,29 @@ Example:
         return production_elastic(index="my-specific-index")
 """
 
-from typing import Callable, Dict, Optional, TypeVar
+from typing import Any, Callable, Dict, List, Optional, TypeVar
 
-F = TypeVar("F", bound=Callable)
+F = TypeVar("F", bound=Callable[..., Any])
 
 
 class SourceRegistry:
     """Registry for reusable source factory functions."""
 
-    _sources: Dict[str, Callable] = {}
+    _sources: Dict[str, Callable[..., Any]] = {}
 
     @classmethod
-    def register(cls, name: str, factory: Callable) -> None:
+    def register(cls, name: str, factory: Callable[..., Any]) -> None:
         """Register a source factory function."""
         cls._sources[name] = factory
         print(f"✓ Registered reusable source: {name}")
 
     @classmethod
-    def get(cls, name: str) -> Optional[Callable]:
+    def get(cls, name: str) -> Optional[Callable[..., Any]]:
         """Get a source factory by name."""
         return cls._sources.get(name)
 
     @classmethod
-    def list_all(cls) -> list:
+    def list_all(cls) -> List[str]:
         """List all registered source names."""
         return list(cls._sources.keys())
 

@@ -1,15 +1,25 @@
 """Pipeline execution runner for ReflowManager."""
 
 import asyncio
+import logging
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+
+from sqlalchemy import func
 
 from reflowfy.core.serialization import to_json_safe
 from reflowfy.factories.source_factory import SourceFactory
 from reflowfy.reflow_manager.dispatcher import JobDispatcher
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
+from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
+from reflowfy.reflow_manager.models import Job
+
+if TYPE_CHECKING:
+    from reflowfy.core.id_based_pipeline import IdBasedPipeline
+
+logger = logging.getLogger(__name__)
 
 # Checkpoint batch configuration
 CHECKPOINT_BATCH_SIZE = 25  # Jobs per checkpoint batch
@@ -20,7 +30,7 @@ CHECKPOINT_POLL_INTERVAL = 2.0  # Poll every 2 seconds
 JOB_SCHEMA_VERSION = 2
 
 
-def _chunk(lst: List, size: int) -> List[List]:
+def _chunk(lst: List[Any], size: int) -> List[List[Any]]:
     """Split a list into consecutive chunks of at most `size` elements."""
     return [lst[i : i + size] for i in range(0, len(lst), size)]
 
@@ -30,7 +40,7 @@ def _finished_count(completed: int, failed: int, deduplicated: int) -> int:
     return completed + failed + deduplicated
 
 
-def _run_async(coro):
+def _run_async(coro: Any) -> Any:
     """Run async code in sync context, handling nested event loops."""
     try:
         asyncio.get_running_loop()
@@ -101,9 +111,6 @@ class PipelineRunner:
         self.job_manager = job_manager
         self.dispatcher = dispatcher
 
-        # Backward compatibility alias
-        self.checkpoint_manager = self.job_manager
-
     def run_pipeline(
         self,
         pipeline_name: str,
@@ -132,11 +139,10 @@ class PipelineRunner:
         if not pipeline:
             raise ValueError(f"Pipeline '{pipeline_name}' not found in registry")
 
-        print(f"🚀 Running pipeline: {pipeline_name}")
-        print(f"📊 Execution ID: {execution_id}")
+        logger.info("Running pipeline: %s (execution %s)", pipeline_name, execution_id)
 
         # Create execution record
-        execution = self.execution_manager.create_execution(
+        self.execution_manager.create_execution(
             execution_id=execution_id,
             pipeline_name=pipeline_name,
             runtime_params=runtime_params,
@@ -144,7 +150,7 @@ class PipelineRunner:
 
         # Run the job dispatch; always leave execution in a terminal state
         try:
-            self._run_pipeline_jobs(
+            self.run_pipeline_jobs(
                 execution_id=execution_id,
                 pipeline_name=pipeline_name,
                 runtime_params=runtime_params,
@@ -156,7 +162,7 @@ class PipelineRunner:
                     execution_id, "failed", error_message=str(exc)
                 )
             except Exception:
-                pass
+                logger.exception("Failed to mark execution %s as failed", execution_id)
             raise
 
         # Refresh execution to get final counts
@@ -191,7 +197,7 @@ class PipelineRunner:
         # Get execution record
         execution = self.execution_manager.get_execution(execution_id)
         if not execution:
-            print(f"⚠️ Execution {execution_id} not found, skipping resume")
+            logger.warning("Execution %s not found, skipping resume", execution_id)
             return
 
         pipeline_name = execution.pipeline_name
@@ -199,7 +205,11 @@ class PipelineRunner:
         # Load pipeline from registry
         pipeline = pipeline_registry.get(pipeline_name)
         if not pipeline:
-            print(f"⚠️ Pipeline '{pipeline_name}' not in registry, marking execution as failed")
+            logger.warning(
+                "Pipeline '%s' not in registry, marking execution %s as failed",
+                pipeline_name,
+                execution_id,
+            )
             self.execution_manager.update_execution_state(
                 execution_id,
                 "failed",
@@ -211,32 +221,25 @@ class PipelineRunner:
         first_incomplete_batch = self.job_manager.get_first_incomplete_batch(execution_id)
         if first_incomplete_batch is None:
             # All batches complete - just update final state
-            print(f"✓ Execution {execution_id} has no incomplete batches, syncing state")
+            logger.info("Execution %s has no incomplete batches, syncing state", execution_id)
             self._sync_counts_from_db(execution_id)
             counts = self.job_manager.get_job_counts(execution_id)
             final_state = "completed" if counts.get("failed", 0) == 0 else "failed"
             self.execution_manager.update_execution_state(execution_id, final_state)
             return
 
-        print(f"🔄 Resuming execution {execution_id} from batch {first_incomplete_batch}")
+        logger.info("Resuming execution %s from batch %d", execution_id, first_incomplete_batch)
 
         # Determine effective rate limit
         effective_rate_limit = rate_limit_override
         if effective_rate_limit is None and pipeline.rate_limit:
             effective_rate_limit = pipeline.rate_limit
 
-        # Check if we're in local execution mode
         # In local mode, dispatched jobs that weren't completed are orphaned
-        # (the executor that was processing them died with the restart)
-        from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
-
+        # (the executor that was processing them died with the restart), so
+        # reset them to pending for re-dispatch.
         is_local_mode = isinstance(self.dispatcher, LocalDispatcher)
-
         if is_local_mode:
-            # Reset any "dispatched" jobs back to "pending" - they need re-dispatch
-            # because the local executor that was processing them is gone
-            from reflowfy.reflow_manager.models import Job
-
             orphaned = (
                 self.job_manager.db.query(Job)
                 .filter(
@@ -246,8 +249,8 @@ class PipelineRunner:
                 .all()
             )
             if orphaned:
-                print(
-                    f"  ⚠️ Local mode: Resetting {len(orphaned)} orphaned dispatched jobs to pending"
+                logger.warning(
+                    "Local mode: resetting %d orphaned dispatched jobs to pending", len(orphaned)
                 )
                 for job in orphaned:
                     job.state = "pending"
@@ -256,11 +259,6 @@ class PipelineRunner:
         # Get total jobs and max batch number from DB
         job_counts = self.job_manager.get_job_counts(execution_id)
         total_jobs = job_counts.get("total", 0)
-
-        # Find max batch number
-        from sqlalchemy import func
-
-        from reflowfy.reflow_manager.models import Job
 
         max_batch_result = (
             self.job_manager.db.query(func.max(Job.batch_number))
@@ -274,13 +272,13 @@ class PipelineRunner:
 
         # Resume from first incomplete batch
         for current_batch_num in range(first_incomplete_batch, max_batch + 1):
-            # Load pending jobs for this batch
             jobs = self.job_manager.get_pending_jobs_by_batch_number(
                 execution_id, current_batch_num
             )
 
             if not jobs:
-                # Batch might already be complete, check dispatched jobs
+                # No pending jobs. In distributed mode, workers may still be
+                # processing jobs already dispatched to Kafka — wait for them.
                 dispatched_jobs = (
                     self.job_manager.db.query(Job)
                     .filter(
@@ -290,13 +288,12 @@ class PipelineRunner:
                     )
                     .all()
                 )
-
                 if dispatched_jobs:
-                    # In distributed mode, wait for already-dispatched jobs
-                    # (workers may still be processing them via Kafka)
                     job_ids = [job.job_id for job in dispatched_jobs]
-                    print(
-                        f"    Waiting for {len(dispatched_jobs)} dispatched jobs in batch {current_batch_num}..."
+                    logger.info(
+                        "Waiting for %d dispatched jobs in batch %d...",
+                        len(dispatched_jobs),
+                        current_batch_num,
                     )
                     completed, failed = self._wait_for_batch_completion(
                         job_ids=job_ids,
@@ -307,38 +304,16 @@ class PipelineRunner:
                     total_failed += failed
                 continue
 
-            job_ids = [job.job_id for job in jobs]
-            job_payloads = [job.job_payload for job in jobs]
-
-            print(f"    Dispatching batch {current_batch_num} ({len(jobs)} jobs)...")
-
-            # Dispatch to Kafka (async method, run in sync context)
-            # Use execution-scoped key for rate limiting to prevent
-            # concurrent executions of the same pipeline from contending
-            # on the same rate limiter bucket
-            rate_limit_key = f"{pipeline_name}:{execution_id}"
-            dispatched = _run_async(
-                self.dispatcher.dispatch_jobs_batch(
-                    jobs=job_payloads,
-                    pipeline_name=rate_limit_key,
-                    rate_limit=effective_rate_limit,
-                )
+            logger.info("Dispatching batch %d (%d jobs)...", current_batch_num, len(jobs))
+            dispatched, completed, failed = self._dispatch_one_batch(
+                execution_id,
+                pipeline_name,
+                jobs,
+                effective_rate_limit,
+                is_local_mode,
+                prior_dispatched=total_dispatched,
             )
-
-            # Mark jobs as dispatched
-            self.job_manager.mark_jobs_dispatched(job_ids)
             total_dispatched += dispatched
-
-            self._set_job_counts(execution_id, dispatched=total_dispatched)
-
-            # Wait for batch completion
-            print(f"    Waiting for batch {current_batch_num}...")
-            completed, failed = self._wait_for_batch_completion(
-                job_ids=job_ids,
-                timeout=CHECKPOINT_BATCH_TIMEOUT,
-                poll_interval=CHECKPOINT_POLL_INTERVAL,
-            )
-
             total_completed += completed
             total_failed += failed
 
@@ -348,25 +323,21 @@ class PipelineRunner:
                 completed=total_completed,
                 failed=total_failed,
             )
-
-            print(f"    Batch {current_batch_num}: {completed} completed, {failed} failed")
+            logger.info("Batch %d: %d completed, %d failed", current_batch_num, completed, failed)
 
         # Final state update
-        dispatched, completed, failed = self._sync_counts_from_db(execution_id)
-
-        total_finished = completed + failed
-        if total_finished == total_jobs:
-            final_state = "completed" if failed == 0 else "failed"
-        else:
-            final_state = "failed"
-            print(f"  Warning: Only {total_finished} of {total_jobs} jobs finished")
-
-        self.execution_manager.update_execution_state(execution_id, final_state)
-        print(
-            f"✓ Resumed execution {final_state}: {dispatched} dispatched, {completed} completed, {failed} failed"
+        dispatched, completed, failed = self._finalize_execution_state(
+            execution_id, total_jobs, (total_dispatched, total_completed, total_failed)
+        )
+        logger.info(
+            "Resumed execution %s: %d dispatched, %d completed, %d failed",
+            execution_id,
+            dispatched,
+            completed,
+            failed,
         )
 
-    def _run_pipeline_jobs(
+    def run_pipeline_jobs(
         self,
         execution_id: str,
         pipeline_name: str,
@@ -418,8 +389,7 @@ class PipelineRunner:
         if hasattr(pipeline, "resolve"):
             pipeline.resolve(runtime_params)
 
-        print(f"🚀 Job dispatch starting: {pipeline_name}")
-        print(f"📊 Execution ID: {execution_id}")
+        logger.info("Job dispatch starting: %s (execution %s)", pipeline_name, execution_id)
 
         # Update state to running
         self.execution_manager.update_execution_state(execution_id, "running")
@@ -440,13 +410,13 @@ class PipelineRunner:
         if effective_rate_limit is None and pipeline.rate_limit:
             effective_rate_limit = pipeline.rate_limit
 
-        print(f"Splitting source data into jobs (rate: {effective_rate_limit}/sec)...")
+        logger.info("Splitting source data into jobs (rate: %s/sec)...", effective_rate_limit)
 
         # Phase 1: Stream all jobs to database (not RAM)
-        print("  Phase 1: Saving jobs to database...")
+        logger.info("Phase 1: Saving jobs to database...")
         batch_number = 1
         job_count = 0
-        current_job_ids = []
+        current_job_ids: List[str] = []
 
         base_source = pipeline.source
         for sub_source in base_source.split(enriched_params):
@@ -477,120 +447,25 @@ class PipelineRunner:
 
         # Set total_jobs correctly (once, after all jobs saved)
         self._set_total_jobs(execution_id, job_count)
+        self._backfill_total_batches(execution_id, batch_number)
+        logger.info("Saved %d jobs to database in %d batches", job_count, batch_number)
 
-        # Back-fill total_batches into every job's metadata payload (best-effort)
-        try:
-            self.job_manager.bulk_set_total_batches(execution_id, batch_number)
-        except Exception as _e:
-            self.job_manager.db.rollback()
-            print(f"  Warning: could not back-fill total_batches ({_e}); continuing")
-
-        print(f"  Saved {job_count} jobs to database in {batch_number} batches")
-
-        # Phase 2: Dispatch and wait for each batch
-        # Check if we're in local mode (no need to poll for completion)
-        from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
-
-        is_local_mode = isinstance(self.dispatcher, LocalDispatcher)
-
-        if is_local_mode:
-            print("  Phase 2: Executing batches locally (in-process)...")
-        else:
-            print("  Phase 2: Dispatching batches...")
-
-        total_dispatched = 0
-        total_completed = 0
-        total_failed = 0
-
-        for current_batch_num in range(1, batch_number + 1):
-            # Load jobs for this batch from database
-            jobs = self.job_manager.get_pending_jobs_by_batch_number(
-                execution_id, current_batch_num
-            )
-
-            if not jobs:
-                continue
-
-            job_ids = [job.job_id for job in jobs]
-            job_payloads = [job.job_payload for job in jobs]
-
-            print(
-                f"    {'Executing' if is_local_mode else 'Dispatching'} batch {current_batch_num} ({len(jobs)} jobs)..."
-            )
-
-            # Dispatch (in local mode, this executes jobs synchronously)
-            # Use execution-scoped key for rate limiting to prevent
-            # concurrent executions of the same pipeline from contending
-            # on the same rate limiter bucket
-            rate_limit_key = f"{pipeline_name}:{execution_id}"
-            dispatched = _run_async(
-                self.dispatcher.dispatch_jobs_batch(
-                    jobs=job_payloads,
-                    pipeline_name=rate_limit_key,
-                    rate_limit=effective_rate_limit,
-                )
-            )
-
-            # Mark jobs as dispatched in database
-            self.job_manager.mark_jobs_dispatched(job_ids)
-            total_dispatched += dispatched
-
-            # Update execution counts (SET, not +=)
-            self._set_job_counts(execution_id, dispatched=total_dispatched)
-
-            if is_local_mode:
-                # Local mode: jobs already executed synchronously by LocalDispatcher.
-                # WorkerExecutor updated job states directly in DB.
-                # No need to poll — just count results from dispatch.
-                completed = dispatched
-                failed = len(jobs) - dispatched
-            else:
-                # Distributed mode: jobs sent to Kafka, wait for workers to complete
-                print(f"    Waiting for batch {current_batch_num}...")
-                completed, failed = self._wait_for_batch_completion(
-                    job_ids=job_ids,
-                    timeout=CHECKPOINT_BATCH_TIMEOUT,
-                    poll_interval=CHECKPOINT_POLL_INTERVAL,
-                )
-
-            total_completed += completed
-            total_failed += failed
-
-            # Update completion counts
-            self._set_job_counts(
-                execution_id,
-                dispatched=total_dispatched,
-                completed=total_completed,
-                failed=total_failed,
-            )
-
-            print(f"    Batch {current_batch_num}: {completed} completed, {failed} failed")
-
-        # Final state update - sync actual counts from database
-        try:
-            dispatched, completed, failed = self._sync_counts_from_db(execution_id)
-        except Exception:
-            dispatched, completed, failed = total_dispatched, total_completed, total_failed
-
-        # Determine final state based on actual DB counts
-        total_finished = completed + failed
-        if total_finished == job_count:
-            final_state = "completed" if failed == 0 else "failed"
-        else:
-            # Some jobs may not have completed properly
-            final_state = "failed"
-            print(f"  Warning: Only {total_finished} of {job_count} jobs finished")
-
-        self.execution_manager.update_execution_state(execution_id, final_state)
-
-        print(
-            f"Execution {final_state}: {dispatched} dispatched, {completed} completed, {failed} failed"
+        # Phase 2: dispatch and wait for each batch
+        dispatched, completed, failed = self._dispatch_and_wait_batches(
+            execution_id, pipeline_name, batch_number, job_count, effective_rate_limit
+        )
+        logger.info(
+            "Execution %s: %d dispatched, %d completed, %d failed",
+            execution_id,
+            dispatched,
+            completed,
+            failed,
         )
 
     def _run_id_based_pipeline_jobs(
         self,
         execution_id: str,
-        pipeline: Any,
+        pipeline: "IdBasedPipeline",
         pipeline_name: str,
         runtime_params: Dict[str, Any],
         rate_limit_override: Optional[float] = None,
@@ -625,9 +500,10 @@ class PipelineRunner:
         ids = params.get("ids", [])
         ids_batch_size = getattr(pipeline, "ids_batch_size", 1)
 
-        print(f"🚀 IdBasedPipeline dispatch starting: {pipeline_name}")
-        print(f"📊 Execution ID: {execution_id}")
-        print(f"🔑 Processing {len(ids)} IDs (batch_size={ids_batch_size}): {ids}")
+        logger.info(
+            "IdBasedPipeline dispatch starting: %s (execution %s)", pipeline_name, execution_id
+        )
+        logger.info("Processing %d IDs (batch_size=%d): %s", len(ids), ids_batch_size, ids)
 
         # Update state to running
         self.execution_manager.update_execution_state(execution_id, "running")
@@ -646,15 +522,17 @@ class PipelineRunner:
 
         # Phase 1: For each ID-batch, resolve source and save jobs to database
         id_batches = _chunk(ids, ids_batch_size)
-        print(
-            f"  Phase 1: Saving jobs to database for {len(ids)} IDs in {len(id_batches)} batches..."
+        logger.info(
+            "Phase 1: Saving jobs to database for %d IDs in %d batches...",
+            len(ids),
+            len(id_batches),
         )
         batch_number = 1
         job_count = 0
-        current_job_ids = []
+        current_job_ids: List[str] = []
 
         for ids_batch in id_batches:
-            print(f"    Processing ID batch: {ids_batch}")
+            logger.info("Processing ID batch: %s", ids_batch)
 
             resolved = pipeline.resolve_for_ids(params, ids_batch)
             source = resolved["source"]
@@ -670,7 +548,11 @@ class PipelineRunner:
                 job_id = str(uuid.uuid4())
 
                 job_payload = build_job_payload(
-                    execution_id, job_id, pipeline_name, sub_source, metadata,
+                    execution_id,
+                    job_id,
+                    pipeline_name,
+                    sub_source,
+                    metadata,
                     dedup_check=dedup_check,
                 )
                 job_payload = self._serialize_for_json(job_payload)
@@ -689,114 +571,197 @@ class PipelineRunner:
 
         # Set total_jobs correctly (once, after all jobs saved)
         self._set_total_jobs(execution_id, job_count)
-
-        # Back-fill total_batches into every job's metadata payload (best-effort)
-        try:
-            self.job_manager.bulk_set_total_batches(execution_id, batch_number)
-        except Exception as _e:
-            self.job_manager.db.rollback()
-            print(f"  Warning: could not back-fill total_batches ({_e}); continuing")
-
-        print(
-            f"  Saved {job_count} jobs to database in {batch_number} batches (from {len(ids)} IDs)"
+        self._backfill_total_batches(execution_id, batch_number)
+        logger.info(
+            "Saved %d jobs to database in %d batches (from %d IDs)",
+            job_count,
+            batch_number,
+            len(ids),
         )
 
-        # Phase 2: Dispatch and wait for each batch (reuses existing logic)
-        # Check if we're in local mode (no need to poll for completion)
-        from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
+        # Phase 2: dispatch and wait for each batch
+        dispatched, completed, failed = self._dispatch_and_wait_batches(
+            execution_id, pipeline_name, batch_number, job_count, effective_rate_limit
+        )
+        logger.info(
+            "IdBasedPipeline %s: %d dispatched, %d completed, %d failed (%d IDs)",
+            execution_id,
+            dispatched,
+            completed,
+            failed,
+            len(ids),
+        )
 
-        is_local_mode = isinstance(self.dispatcher, LocalDispatcher)
+    def _backfill_total_batches(self, execution_id: str, total_batches: int) -> None:
+        """Back-fill total_batches into every job's metadata payload (best-effort)."""
+        try:
+            self.job_manager.bulk_set_total_batches(execution_id, total_batches)
+        except Exception:
+            self.job_manager.db.rollback()
+            logger.warning(
+                "Could not back-fill total_batches for %s; continuing",
+                execution_id,
+                exc_info=True,
+            )
+
+    def _dispatch_one_batch(
+        self,
+        execution_id: str,
+        pipeline_name: str,
+        jobs: List[Job],
+        effective_rate_limit: Optional[float],
+        is_local_mode: bool,
+        prior_dispatched: int = 0,
+    ) -> Tuple[int, int, int]:
+        """
+        Dispatch a single batch of jobs and report its counts.
+
+        Returns:
+            Tuple of (dispatched, completed, failed) for this batch only.
+        """
+        job_ids = [job.job_id for job in jobs]
+        job_payloads = [job.job_payload for job in jobs]
+
+        # Use an execution-scoped rate-limit key so concurrent executions of the
+        # same pipeline don't contend on the same rate limiter bucket.
+        rate_limit_key = f"{pipeline_name}:{execution_id}"
+        dispatched = _run_async(
+            self.dispatcher.dispatch_jobs_batch(
+                jobs=job_payloads,
+                pipeline_name=rate_limit_key,
+                rate_limit=effective_rate_limit,
+            )
+        )
+
+        # Mark jobs as dispatched and surface progress before the (possibly long) wait.
+        self.job_manager.mark_jobs_dispatched(job_ids)
+        self._set_job_counts(execution_id, dispatched=prior_dispatched + dispatched)
 
         if is_local_mode:
-            print("  Phase 2: Executing batches locally (in-process)...")
+            # LocalDispatcher executed jobs synchronously and wrote their states
+            # directly to the DB, so no polling is needed.
+            completed = dispatched
+            failed = len(jobs) - dispatched
         else:
-            print("  Phase 2: Dispatching batches...")
+            # Distributed mode: jobs sent to Kafka, wait for workers to complete.
+            logger.info("Waiting for batch completion...")
+            completed, failed = self._wait_for_batch_completion(
+                job_ids=job_ids,
+                timeout=CHECKPOINT_BATCH_TIMEOUT,
+                poll_interval=CHECKPOINT_POLL_INTERVAL,
+            )
+
+        return dispatched, completed, failed
+
+    def _dispatch_and_wait_batches(
+        self,
+        execution_id: str,
+        pipeline_name: str,
+        batch_number: int,
+        job_count: int,
+        effective_rate_limit: Optional[float],
+    ) -> Tuple[int, int, int]:
+        """
+        Phase 2: dispatch every batch in order, then drive the execution to a terminal state.
+
+        Shared by the standard and ID-based pipeline flows.
+
+        Returns:
+            Final (dispatched, completed, failed) counts synced from the database.
+        """
+        is_local_mode = isinstance(self.dispatcher, LocalDispatcher)
+        if is_local_mode:
+            logger.info("Phase 2: Executing batches locally (in-process)...")
+        else:
+            logger.info("Phase 2: Dispatching batches...")
 
         total_dispatched = 0
         total_completed = 0
         total_failed = 0
 
         for current_batch_num in range(1, batch_number + 1):
-            # Load jobs for this batch from database
             jobs = self.job_manager.get_pending_jobs_by_batch_number(
                 execution_id, current_batch_num
             )
-
             if not jobs:
                 continue
 
-            job_ids = [job.job_id for job in jobs]
-            job_payloads = [job.job_payload for job in jobs]
-
-            print(
-                f"    {'Executing' if is_local_mode else 'Dispatching'} batch {current_batch_num} ({len(jobs)} jobs)..."
+            logger.info(
+                "%s batch %d (%d jobs)...",
+                "Executing" if is_local_mode else "Dispatching",
+                current_batch_num,
+                len(jobs),
             )
 
-            # Dispatch (in local mode, this executes jobs synchronously)
-            # Use execution-scoped key for rate limiting
-            rate_limit_key = f"{pipeline_name}:{execution_id}"
-            dispatched = _run_async(
-                self.dispatcher.dispatch_jobs_batch(
-                    jobs=job_payloads,
-                    pipeline_name=rate_limit_key,
-                    rate_limit=effective_rate_limit,
-                )
+            dispatched, completed, failed = self._dispatch_one_batch(
+                execution_id,
+                pipeline_name,
+                jobs,
+                effective_rate_limit,
+                is_local_mode,
+                prior_dispatched=total_dispatched,
             )
-
-            # Mark jobs as dispatched in database
-            self.job_manager.mark_jobs_dispatched(job_ids)
             total_dispatched += dispatched
-
-            # Update execution counts (SET, not +=)
-            self._set_job_counts(execution_id, dispatched=total_dispatched)
-
-            if is_local_mode:
-                # Local mode: jobs already executed synchronously by LocalDispatcher.
-                # WorkerExecutor updated job states directly in DB.
-                # No need to poll — just count results from dispatch.
-                completed = dispatched
-                failed = len(jobs) - dispatched
-            else:
-                # Distributed mode: jobs sent to Kafka, wait for workers to complete
-                print(f"    Waiting for batch {current_batch_num}...")
-                completed, failed = self._wait_for_batch_completion(
-                    job_ids=job_ids,
-                    timeout=CHECKPOINT_BATCH_TIMEOUT,
-                    poll_interval=CHECKPOINT_POLL_INTERVAL,
-                )
-
             total_completed += completed
             total_failed += failed
 
-            # Update completion counts
             self._set_job_counts(
                 execution_id,
                 dispatched=total_dispatched,
                 completed=total_completed,
                 failed=total_failed,
             )
+            logger.info("Batch %d: %d completed, %d failed", current_batch_num, completed, failed)
 
-            print(f"    Batch {current_batch_num}: {completed} completed, {failed} failed")
+        return self._finalize_execution_state(
+            execution_id, job_count, (total_dispatched, total_completed, total_failed)
+        )
 
-        # Final state update - sync actual counts from database
+    def _finalize_execution_state(
+        self,
+        execution_id: str,
+        expected_total: int,
+        fallback_counts: Tuple[int, int, int],
+    ) -> Tuple[int, int, int]:
+        """
+        Sync final counts from the DB and set the terminal execution state.
+
+        Args:
+            execution_id: Execution identifier
+            expected_total: Number of jobs that should have finished
+            fallback_counts: (dispatched, completed, failed) to use if the DB sync fails
+
+        Returns:
+            The (dispatched, completed, failed) counts used for the final state.
+        """
         try:
             dispatched, completed, failed = self._sync_counts_from_db(execution_id)
+            counts = self.job_manager.get_job_counts(execution_id)
+            total_finished = _finished_count(
+                counts.get("completed", 0),
+                counts.get("failed", 0),
+                counts.get("deduplicated", 0),
+            )
         except Exception:
-            dispatched, completed, failed = total_dispatched, total_completed, total_failed
+            logger.warning(
+                "Could not sync counts for %s; using in-memory totals",
+                execution_id,
+                exc_info=True,
+            )
+            dispatched, completed, failed = fallback_counts
+            # completed from the loop already includes any deduplicated jobs.
+            total_finished = completed + failed
 
-        # Determine final state based on actual DB counts
-        total_finished = completed + failed
-        if total_finished == job_count:
+        if total_finished == expected_total:
             final_state = "completed" if failed == 0 else "failed"
         else:
             final_state = "failed"
-            print(f"  Warning: Only {total_finished} of {job_count} jobs finished")
+            logger.warning(
+                "Only %d of %d jobs finished for %s", total_finished, expected_total, execution_id
+            )
 
         self.execution_manager.update_execution_state(execution_id, final_state)
-
-        print(
-            f"IdBasedPipeline {final_state}: {dispatched} dispatched, {completed} completed, {failed} failed ({len(ids)} IDs)"
-        )
+        return dispatched, completed, failed
 
     def _set_total_jobs(self, execution_id: str, total: int) -> None:
         """Set total_jobs for an execution (uses SET, not +=)."""
@@ -871,7 +836,7 @@ class PipelineRunner:
 
         while time.time() - start_time < timeout:
             # Get states for all checkpoints in this batch
-            states = self.checkpoint_manager.get_job_states(job_ids)
+            states = self.job_manager.get_job_states(job_ids)
 
             completed = 0
             failed = 0
@@ -894,8 +859,8 @@ class PipelineRunner:
             time.sleep(poll_interval)
 
         # Timeout reached - return current counts
-        print(f"  Warning: Batch timeout after {timeout}s, some jobs may not have completed")
-        states = self.checkpoint_manager.get_job_states(job_ids)
+        logger.warning("Batch timeout after %ss, some jobs may not have completed", timeout)
+        states = self.job_manager.get_job_states(job_ids)
         completed = sum(1 for s in states.values() if s in ("completed", "deduplicated"))
         failed = sum(1 for s in states.values() if s == "failed")
 

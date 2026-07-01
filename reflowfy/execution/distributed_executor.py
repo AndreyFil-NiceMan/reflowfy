@@ -150,7 +150,7 @@ class DistributedExecutor(BaseExecutor):
             self._client = None
 
 
-def get_executor(mode: str, **kwargs) -> BaseExecutor:
+def get_executor(mode: str, **kwargs: Any) -> BaseExecutor:
     """
     Factory function to get appropriate executor.
 

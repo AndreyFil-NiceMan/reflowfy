@@ -5,6 +5,7 @@ Transformations auto-register via metaclass when they subclass BaseTransformatio
 Just define the class and import it in any pipeline.
 """
 
+from typing import Any, Dict, List
 from reflowfy import BaseTransformation
 
 
@@ -13,7 +14,7 @@ class ExampleTransform(BaseTransformation):
 
     name = "example_transform"
 
-    def apply(self, records, runtime_params):
+    def apply(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
         """
         Transform a batch of records.
 

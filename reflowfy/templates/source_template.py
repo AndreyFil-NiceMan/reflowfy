@@ -5,12 +5,13 @@ Use the @source decorator to create named source configurations
 that can be reused across multiple pipelines.
 """
 
+from typing import Any
 import os
 from reflowfy import source, elastic_source
 
 
 @source("example_elastic")
-def example_elastic(**overrides):
+def example_elastic(**overrides: Any):
     """
     Example Elasticsearch source configuration.
 

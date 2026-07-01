@@ -16,10 +16,7 @@ class TestDispatchFailureMarksExecution:
             patch.object(app, "_get_kafka_config", return_value={}),
             patch.object(app, "ReflowManager", side_effect=RuntimeError("boom")),
             patch.object(app, "ExecutionManager", return_value=exec_manager) as em_cls,
-            patch(
-                "reflowfy.reflow_manager.database.SessionLocal",
-                return_value=fake_db,
-            ),
+            patch.object(app, "SessionLocal", return_value=fake_db),
         ):
             # Must not raise NameError; must mark the execution failed.
             app._dispatch_pipeline_jobs("exec-1", "my_pipeline", {})

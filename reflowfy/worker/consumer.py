@@ -67,7 +67,7 @@ class KafkaJobConsumer:
     async def start(self):
         """Start consuming and processing jobs asynchronously."""
         # Build consumer kwargs
-        consumer_kwargs = {
+        consumer_kwargs: dict[str, Any] = {
             "bootstrap_servers": self.bootstrap_servers,
             "group_id": self.group_id,
             "auto_offset_reset": self.auto_offset_reset,

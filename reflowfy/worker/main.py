@@ -33,8 +33,8 @@ def main():
     print("=" * 60)
 
     # Register signal handlers
-    signal.signal(signal.SIGTERM, handle_shutdown)
-    signal.signal(signal.SIGINT, handle_shutdown)
+    signal.signal(signal.SIGTERM, handle_shutdown)  # pyright: ignore[reportArgumentType]
+    signal.signal(signal.SIGINT, handle_shutdown)  # pyright: ignore[reportArgumentType]
 
     # Auto-discover and load pipelines (registers transformations)
     pipeline_module = os.getenv("PIPELINE_MODULE", "pipelines")

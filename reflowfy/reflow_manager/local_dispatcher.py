@@ -20,7 +20,7 @@ class LocalDispatcher(BaseDispatcher):
     used by KafkaDispatcher.
     """
 
-    def __init__(self, rate_limiter: RateLimiter, db_session=None):
+    def __init__(self, rate_limiter: RateLimiter, db_session: Any = None):
         super().__init__(rate_limiter)
 
     def _create_executor(self):

@@ -1,5 +1,6 @@
 """Test a pipeline locally without Docker."""
 
+from typing import Any
 import asyncio
 import importlib.util
 import json
@@ -121,7 +122,7 @@ def register(app: typer.Typer):
                     label += f" [dim]({param.description})[/dim]"
 
                 # Show type info
-                type_name = param._TYPE_NAMES.get(param.param_type, str(param.param_type))
+                type_name = param._TYPE_NAMES.get(param.param_type, str(param.param_type))  # pyright: ignore[reportPrivateUsage]
                 hints = [type_name]
                 if param.choices:
                     hints.append(f"choices: {param.choices}")
@@ -273,7 +274,7 @@ def register(app: typer.Typer):
                         destination = pipeline.define_destination(transformed, meta)
                         console.print(f"  [bold]📤 Destination:[/bold] {destination}")
 
-                        async def _send_batch(recs=transformed, m=meta, dest=destination):
+                        async def _send_batch(recs: Any = transformed, m: Any = meta, dest: Any = destination):
                             await dest.send_with_retry(recs, m)
 
                         asyncio.run(_send_batch())

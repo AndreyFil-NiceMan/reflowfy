@@ -108,7 +108,7 @@ class BaseDestination(ABC):
 class DestinationError(Exception):
     """Raised when a destination operation fails."""
 
-    def __init__(self, destination_type: str, message: str, original_error: Exception = None):
+    def __init__(self, destination_type: str, message: str, original_error: Optional[Exception] = None):
         self.destination_type = destination_type
         self.original_error = original_error
         super().__init__(f"Destination '{destination_type}' error: {message}")

@@ -1,6 +1,6 @@
 """Dynamic route generation for pipelines."""
 
-from typing import Any, Dict, Literal
+from typing import Any, Dict, Literal, Optional
 from inspect import Parameter, Signature
 
 import pydantic
@@ -165,7 +165,12 @@ def _create_run_route(
         for p in query_params
     ]
 
-    async def run_pipeline(mode="distributed", rate_limit=None, body=None, **kwargs):
+    async def run_pipeline(
+        mode: str = "distributed",
+        rate_limit: Optional[float] = None,
+        body: Any = None,
+        **kwargs: Any,
+    ):
         """Execute pipeline. List/dict params come from the JSON body; scalars from the query string."""
         runtime_params = dict(kwargs)
         if body is not None:
@@ -180,7 +185,7 @@ def _create_run_route(
             rate_limit=rate_limit,
         )
 
-    run_pipeline.__signature__ = Signature(parameters=sig_params)
+    setattr(run_pipeline, "__signature__", Signature(parameters=sig_params))
 
     app.post(
         f"/pipelines/{pipeline_name}/run",

@@ -17,7 +17,7 @@ Example:
         return [uppercase_names()]
 """
 
-from typing import Callable
+from typing import Any, Callable
 
 
 def transformation(name: str):
@@ -43,7 +43,7 @@ def transformation(name: str):
         def define_transformations(self, records, runtime_params):
             return [filter_active()]  # Instantiate to use
     """
-    def decorator(func: Callable) -> type:
+    def decorator(func: Callable[..., Any]) -> type:
         from reflowfy.transformations.base import BaseTransformation
 
         # Create a new BaseTransformation subclass dynamically

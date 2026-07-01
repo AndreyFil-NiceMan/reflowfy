@@ -135,7 +135,7 @@ class JobManager:
 
         Commits immediately to ensure the update is persisted.
         """
-        update_data = {
+        update_data: Dict[str, Any] = {
             "state": state,
             "updated_at": datetime.now(timezone.utc).replace(tzinfo=None),
         }
@@ -151,7 +151,7 @@ class JobManager:
 
         updated = self.db.query(Job).filter(
             Job.job_id == job_id
-        ).update(update_data, synchronize_session=False)
+        ).update(update_data, synchronize_session=False)  # pyright: ignore[reportArgumentType]
 
         self.db.commit()
 

@@ -176,7 +176,7 @@ class PipelineScheduler:
         def _run() -> None:
             runner = factory()
             try:
-                runner._run_pipeline_jobs(
+                runner.run_pipeline_jobs(
                     execution_id=execution_id,
                     pipeline_name=pipeline_name,
                     runtime_params={},
@@ -227,6 +227,7 @@ class PipelineScheduler:
 
             scheduled_names.add(pipeline.name)
             expr = pipeline.schedule
+            assert expr is not None  # guaranteed by is_scheduled guard above
 
             existing = db.query(PipelineSchedule).filter(
                 PipelineSchedule.pipeline_name == pipeline.name

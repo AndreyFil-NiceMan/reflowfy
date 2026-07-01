@@ -91,9 +91,6 @@ class ReflowManager:
             self.dispatcher,
         )
 
-        # Backward compatibility alias
-        self.checkpoint_manager = self.job_manager
-
     # ===== Execution Management (delegated) =====
 
     def create_execution(
@@ -115,7 +112,7 @@ class ReflowManager:
         jobs_dispatched: Optional[int] = None,
         jobs_completed: Optional[int] = None,
         jobs_failed: Optional[int] = None,
-    ):
+    ) -> Optional[Execution]:
         return self.execution_manager.update_job_counts(
             execution_id, jobs_dispatched, jobs_completed, jobs_failed
         )
@@ -145,7 +142,7 @@ class ReflowManager:
             pipeline_name, runtime_params, execution_id, rate_limit_override
         )
 
-    def _run_pipeline_jobs(
+    def run_pipeline_jobs(
         self,
         execution_id: str,
         pipeline_name: str,
@@ -153,7 +150,7 @@ class ReflowManager:
         rate_limit_override: Optional[float] = None,
         enable_duplicate_jobs: Optional[bool] = None,
     ) -> None:
-        return self.pipeline_runner._run_pipeline_jobs(
+        return self.pipeline_runner.run_pipeline_jobs(
             execution_id,
             pipeline_name,
             runtime_params,
@@ -193,7 +190,8 @@ class ReflowManager:
             "total_jobs": execution.total_jobs,
             "jobs_dispatched": job_counts.get("dispatched", 0)
             + job_counts.get("completed", 0)
-            + job_counts.get("failed", 0),
+            + job_counts.get("failed", 0)
+            + job_counts.get("deduplicated", 0),
             "jobs_pending": job_counts.get("pending", 0),
             "jobs_completed": job_counts.get("completed", 0),
             "jobs_failed": job_counts.get("failed", 0),

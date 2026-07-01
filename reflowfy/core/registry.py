@@ -20,16 +20,19 @@ class PipelineRegistry:
     - Look up pipelines for execution
     """
 
-    _instance = None
+    _instance: "Optional[PipelineRegistry]" = None
     _lock = threading.Lock()
 
-    def __new__(cls):
+    _pipelines: Dict[str, "AbstractPipeline"]
+    _registry_lock: threading.RLock
+
+    def __new__(cls) -> "PipelineRegistry":
         """Singleton pattern to ensure single registry instance."""
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
-                    cls._instance._pipelines: Dict[str, "AbstractPipeline"] = {}
+                    cls._instance._pipelines = {}
                     cls._instance._registry_lock = threading.RLock()
         return cls._instance
 
