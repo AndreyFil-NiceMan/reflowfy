@@ -1,7 +1,7 @@
 """Registry for transformation lookup by name."""
 
 import threading
-from typing import Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional, Type
 
 
 class TransformationRegistry:
@@ -12,20 +12,23 @@ class TransformationRegistry:
     Workers use this registry to load transformations by name from job metadata.
     """
 
-    _instance = None
+    _instance: "Optional[TransformationRegistry]" = None
     _lock = threading.Lock()
 
-    def __new__(cls):
+    _transformations: Dict[str, Type[Any]]
+    _registry_lock: threading.RLock
+
+    def __new__(cls) -> "TransformationRegistry":
         """Singleton pattern to ensure single registry instance."""
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
-                    cls._instance._transformations: Dict[str, Type] = {}
+                    cls._instance._transformations = {}
                     cls._instance._registry_lock = threading.RLock()
         return cls._instance
 
-    def register(self, transformation_class: Type) -> None:
+    def register(self, transformation_class: Type[Any]) -> None:
         """
         Register a transformation class.
 
@@ -54,7 +57,7 @@ class TransformationRegistry:
             self._transformations[name] = transformation_class
             print(f"✓ Registered transformation: {name}")
 
-    def get(self, name: str) -> Optional[Type]:
+    def get(self, name: str) -> Optional[Type[Any]]:
         """
         Get transformation class by name.
 
