@@ -5,8 +5,6 @@ Pipeline that reads from PostgreSQL and outputs to console.
 Uses a SQL query template loaded from queries/events_by_date.sql.
 """
 
-from pathlib import Path
-
 from reflowfy import AbstractPipeline, PipelineParameter
 from tests.e2e.test_pipelines.sources import e2e_sql
 from tests.e2e.test_pipelines.destinations import e2e_console
@@ -14,9 +12,6 @@ from tests.e2e.test_pipelines.transformations import (
     sql_filter_by_status,
     sql_add_source_info,
 )
-
-QUERIES_DIR = Path(__file__).parent / "queries"
-SQL_QUERY = (QUERIES_DIR / "events_by_date.sql").read_text()
 
 
 class E2ESqlSourceTestPipeline(AbstractPipeline):
@@ -34,7 +29,7 @@ class E2ESqlSourceTestPipeline(AbstractPipeline):
 
     def define_source(self, runtime_params):
         return e2e_sql(
-            query=SQL_QUERY,
+            query=self.load_query("events_by_date.sql"),
             id_column="id",
             batch_size=50,
         )

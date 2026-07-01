@@ -7,17 +7,13 @@ metadata, and routes each job to one of two destinations based on the
 majority content-based route hint among the job's own records.
 """
 
-import json
 import os
-from pathlib import Path
 
 from reflowfy import AbstractPipeline, PipelineParameter
 from reflowfy.destinations.api import api_destination
 from tests.e2e.test_pipelines.sources import e2e_elastic
 from tests.e2e.test_pipelines.transformations import elastic_add_metadata_and_route
 
-QUERIES_DIR = Path(__file__).parent / "queries"
-ELASTIC_QUERY = json.loads((QUERIES_DIR / "events_by_timestamp.json").read_text())
 INDEX_NAME = "e2e-test-events"
 MOCK_HTTP_URL = os.getenv("MOCK_HTTP_URL", "http://localhost:8091/webhook")
 
@@ -44,7 +40,7 @@ class E2EElasticRoutedDestinationsPipeline(AbstractPipeline):
     def define_source(self, runtime_params):
         return e2e_elastic(
             index=INDEX_NAME,
-            base_query=ELASTIC_QUERY,
+            base_query=self.load_query("events_by_timestamp.json"),
             scroll="2m",
             size=40,
             num_slices=NUM_SLICES,

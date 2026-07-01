@@ -99,6 +99,12 @@ class SimpleTestPipeline(AbstractPipeline):
 
     def define_source(self, runtime_params: Dict[str, Any]) -> Any:
         """Return mock data source."""
+        # Tip: load query templates from the queries/ folder with no boilerplate.
+        # self.load_query() finds the file (recursively, so subfolders work) and
+        # parses .json to a dict, returning .sql/.txt as text:
+        #
+        #   from reflowfy.sources.sql import sql_source
+        #   return sql_source(query=self.load_query("example_query.sql"), id_column="id")
         return mock_source(
             data=SAMPLE_DATA,
             batch_size=10,
@@ -111,7 +117,9 @@ class SimpleTestPipeline(AbstractPipeline):
             max_records_display=10,
         )
 
-    def define_transformations(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
+    def define_transformations(
+        self, records: List[Any], runtime_params: Dict[str, Any]
+    ) -> List[Any]:
         """Return transformation pipeline."""
         return [
             FilterActiveUsers(),
