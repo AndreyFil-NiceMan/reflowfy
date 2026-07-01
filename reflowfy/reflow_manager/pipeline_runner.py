@@ -30,7 +30,7 @@ def _finished_count(completed: int, failed: int, deduplicated: int) -> int:
     return completed + failed + deduplicated
 
 
-def _run_async(coro):
+def _run_async(coro: Any) -> Any:
     """Run async code in sync context, handling nested event loops."""
     try:
         asyncio.get_running_loop()

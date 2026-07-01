@@ -1,5 +1,6 @@
 """Test a pipeline locally without Docker."""
 
+from typing import Any
 import asyncio
 import importlib.util
 import json
@@ -273,7 +274,7 @@ def register(app: typer.Typer):
                         destination = pipeline.define_destination(transformed, meta)
                         console.print(f"  [bold]📤 Destination:[/bold] {destination}")
 
-                        async def _send_batch(recs=transformed, m=meta, dest=destination):
+                        async def _send_batch(recs: Any = transformed, m: Any = meta, dest: Any = destination):
                             await dest.send_with_retry(recs, m)
 
                         asyncio.run(_send_batch())

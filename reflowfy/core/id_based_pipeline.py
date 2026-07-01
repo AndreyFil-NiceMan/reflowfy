@@ -35,7 +35,7 @@ Example (batch mode):
 
 import re
 from abc import ABCMeta, abstractmethod
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from reflowfy.core.abstract_pipeline import PipelineParameter
 
@@ -48,7 +48,7 @@ class IdBasedPipelineMeta(ABCMeta):
     it is automatically instantiated and registered in the pipeline registry.
     """
 
-    def __new__(mcs, name, bases, namespace):
+    def __new__(mcs, name: str, bases: Tuple[type, ...], namespace: Dict[str, Any]):
         cls = super().__new__(mcs, name, bases, namespace)
 
         # Only register concrete pipelines (not the base class)

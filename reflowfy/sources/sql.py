@@ -25,7 +25,7 @@ class SqlSource(BaseSource):
         id_column: Optional[str] = None,
         time_column: Optional[str] = None,
         batch_size: int = 1000,
-        **engine_kwargs,
+        **engine_kwargs: Any,
     ):
         """
         Initialize SQL source.
@@ -270,7 +270,7 @@ def sql_source(
     id_column: Optional[str] = None,
     time_column: Optional[str] = None,
     batch_size: int = 1000,
-    **engine_kwargs,
+    **engine_kwargs: Any,
 ) -> SqlSource:
     """
     Factory function for SQL source.

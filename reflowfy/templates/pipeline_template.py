@@ -13,6 +13,7 @@ Perfect for testing the Reflowfy framework locally:
 Just run the API and call the /test endpoint!
 """
 
+from typing import Any, Dict, List
 from reflowfy import (
     AbstractPipeline,
     BaseTransformation,
@@ -30,7 +31,7 @@ class UppercaseNames(BaseTransformation):
 
     name = "uppercase_names"
 
-    def apply(self, records, runtime_params):
+    def apply(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
         """Convert first_name and last_name to uppercase."""
         transformed = []
 
@@ -53,7 +54,7 @@ class FilterActiveUsers(BaseTransformation):
 
     name = "filter_active_users"
 
-    def apply(self, records, runtime_params):
+    def apply(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
         """Keep only records where active=True."""
         return [r for r in records if r.get("active", False)]
 
@@ -63,7 +64,7 @@ class AddProcessingInfo(BaseTransformation):
 
     name = "add_processing_info"
 
-    def apply(self, records, runtime_params):
+    def apply(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
         """Add processing information from context."""
         execution_id = runtime_params.get("execution_id", "unknown")
 
@@ -96,21 +97,21 @@ class SimpleTestPipeline(AbstractPipeline):
         """No parameters needed for this simple test pipeline."""
         return []
 
-    def define_source(self, runtime_params):
+    def define_source(self, runtime_params: Dict[str, Any]) -> Any:
         """Return mock data source."""
         return mock_source(
             data=SAMPLE_DATA,
             batch_size=10,
         )
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(self, records: List[Any], runtime_params: Dict[str, Any]) -> Any:
         """Return console destination."""
         return console_destination(
             pretty_print=True,
             max_records_display=10,
         )
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
         """Return transformation pipeline."""
         return [
             FilterActiveUsers(),

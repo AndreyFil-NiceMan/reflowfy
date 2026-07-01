@@ -36,7 +36,7 @@ class KafkaDestination(BaseDestination):
         consumer_group_id: Optional[str] = None,
         lag_threshold: int = 10000,
         lag_check_timeout: float = 10.0,
-        **producer_config,
+        **producer_config: Any,
     ):
         """
         Initialize Kafka destination.
@@ -272,7 +272,7 @@ def kafka_destination(
     consumer_group_id: Optional[str] = None,
     lag_threshold: int = 10000,
     lag_check_timeout: float = 10.0,
-    **producer_config,
+    **producer_config: Any,
 ) -> KafkaDestination:
     """
     Factory function for Kafka destination.

@@ -1,7 +1,7 @@
 """Base transformation class with automatic registration."""
 
 from abc import ABCMeta, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 class TransformationMeta(ABCMeta):
@@ -14,7 +14,7 @@ class TransformationMeta(ABCMeta):
     Inherits from ABCMeta to be compatible with ABC.
     """
 
-    def __new__(mcs, name, bases, namespace):
+    def __new__(mcs, name: str, bases: Tuple[type, ...], namespace: Dict[str, Any]):
         cls = super().__new__(mcs, name, bases, namespace)
 
         # Only register concrete transformations (not the base class)

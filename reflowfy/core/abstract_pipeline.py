@@ -29,7 +29,7 @@ Example:
 import re
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 
 class PipelineMeta(ABCMeta):
@@ -42,7 +42,7 @@ class PipelineMeta(ABCMeta):
     Inherits from ABCMeta to be compatible with ABC.
     """
 
-    def __new__(mcs, name, bases, namespace):
+    def __new__(mcs, name: str, bases: Tuple[type, ...], namespace: Dict[str, Any]):
         cls = super().__new__(mcs, name, bases, namespace)
 
         # Only register concrete pipelines (not the base class)

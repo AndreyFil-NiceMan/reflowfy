@@ -5,12 +5,13 @@ Use the @destination decorator to create named destination configurations
 that can be reused across multiple pipelines.
 """
 
+from typing import Any
 import os
 from reflowfy import destination, kafka_destination
 
 
 @destination("example_kafka")
-def example_kafka(**overrides):
+def example_kafka(**overrides: Any):
     """
     Example Kafka destination configuration.
 

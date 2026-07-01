@@ -29,7 +29,7 @@ class S3Source(BaseSource):
         aws_secret_access_key: Optional[str] = None,
         region_name: str = "us-east-1",
         endpoint_url: Optional[str] = None,
-        **kwargs,
+        **kwargs: Any,
     ):
         """
         Initialize S3 source.
@@ -324,7 +324,7 @@ def s3_source(
     aws_secret_access_key: Optional[str] = None,
     region_name: str = "us-east-1",
     endpoint_url: Optional[str] = None,
-    **kwargs,
+    **kwargs: Any,
 ) -> S3Source:
     """
     Factory function for S3 source.

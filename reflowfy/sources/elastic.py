@@ -27,7 +27,7 @@ class ElasticSource(BaseSource):
         size: int = 1000,
         auth: Optional[Tuple[str, str]] = None,
         verify_certs: bool = True,
-        **kwargs,
+        **kwargs: Any,
     ):
         """
         Initialize Elasticsearch source.
@@ -267,7 +267,7 @@ def elastic_source(
     size: int = 1000,
     auth: Optional[Tuple[str, str]] = None,
     verify_certs: bool = True,
-    **kwargs,
+    **kwargs: Any,
 ) -> ElasticSource:
     """
     Factory function for Elasticsearch source.
