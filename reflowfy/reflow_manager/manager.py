@@ -153,7 +153,7 @@ class ReflowManager:
         rate_limit_override: Optional[float] = None,
         enable_duplicate_jobs: Optional[bool] = None,
     ) -> None:
-        return self.pipeline_runner._run_pipeline_jobs(
+        return self.pipeline_runner._run_pipeline_jobs(  # pyright: ignore[reportPrivateUsage]
             execution_id,
             pipeline_name,
             runtime_params,

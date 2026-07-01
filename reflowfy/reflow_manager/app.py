@@ -419,7 +419,7 @@ def _dispatch_pipeline_jobs(
         )
 
         # Run the pipeline (this updates the existing execution record)
-        manager._run_pipeline_jobs(
+        manager._run_pipeline_jobs(  # pyright: ignore[reportPrivateUsage]
             execution_id=execution_id,
             pipeline_name=pipeline_name,
             runtime_params=runtime_params,

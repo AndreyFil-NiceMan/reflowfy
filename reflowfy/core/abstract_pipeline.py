@@ -217,7 +217,7 @@ class PipelineParameter:
     def to_dict(self) -> Dict[str, Any]:
         """Serialize parameter info for API documentation."""
         type_name = self._TYPE_NAMES.get(self.param_type, self.param_type.__name__)
-        result = {
+        result: Dict[str, Any] = {
             "name": self.name,
             "description": self.description,
             "required": self.required,

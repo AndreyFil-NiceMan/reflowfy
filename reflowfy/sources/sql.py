@@ -83,7 +83,7 @@ class SqlSource(BaseSource):
 
             with engine.connect() as conn:
                 result = conn.execute(text(query))
-                return [dict(row._mapping) for row in result]
+                return [dict(row._mapping) for row in result]  # pyright: ignore[reportPrivateUsage]
 
         except SQLAlchemyError as e:
             raise SourceError("sql", f"Failed to fetch data: {e}", e)
@@ -205,7 +205,7 @@ class SqlSource(BaseSource):
                 """
 
                 result = conn.execute(text(range_query))
-                records = [dict(row._mapping) for row in result]
+                records = [dict(row._mapping) for row in result]  # pyright: ignore[reportPrivateUsage]
 
                 if records:
                     yield SourceJob(
@@ -233,7 +233,7 @@ class SqlSource(BaseSource):
                 paginated_query = f"{base_query} LIMIT {batch_size} OFFSET {offset}"
 
                 result = conn.execute(text(paginated_query))
-                records = [dict(row._mapping) for row in result]
+                records = [dict(row._mapping) for row in result]  # pyright: ignore[reportPrivateUsage]
 
                 if not records:
                     break

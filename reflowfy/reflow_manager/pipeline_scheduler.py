@@ -227,6 +227,7 @@ class PipelineScheduler:
 
             scheduled_names.add(pipeline.name)
             expr = pipeline.schedule
+            assert expr is not None  # guaranteed by is_scheduled guard above
 
             existing = db.query(PipelineSchedule).filter(
                 PipelineSchedule.pipeline_name == pipeline.name

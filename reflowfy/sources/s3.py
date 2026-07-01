@@ -78,7 +78,7 @@ class S3Source(BaseSource):
             if self.config.get("endpoint_url"):
                 client_kwargs["endpoint_url"] = self.config["endpoint_url"]
 
-            self._client = boto3.client(**client_kwargs)
+            self._client = boto3.client(**client_kwargs)  # pyright: ignore[reportCallIssue, reportArgumentType]
 
         return self._client
 

@@ -178,4 +178,4 @@ class KafkaDispatcher(BaseDispatcher):
 
 
 # Backward compatibility alias
-JobDispatcher = KafkaDispatcher
+JobDispatcher = BaseDispatcher

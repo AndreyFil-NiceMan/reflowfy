@@ -185,7 +185,7 @@ def _create_run_route(
             rate_limit=rate_limit,
         )
 
-    run_pipeline.__signature__ = Signature(parameters=sig_params)
+    setattr(run_pipeline, "__signature__", Signature(parameters=sig_params))
 
     app.post(
         f"/pipelines/{pipeline_name}/run",

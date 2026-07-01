@@ -122,7 +122,7 @@ def register(app: typer.Typer):
                     label += f" [dim]({param.description})[/dim]"
 
                 # Show type info
-                type_name = param._TYPE_NAMES.get(param.param_type, str(param.param_type))
+                type_name = param._TYPE_NAMES.get(param.param_type, str(param.param_type))  # pyright: ignore[reportPrivateUsage]
                 hints = [type_name]
                 if param.choices:
                     hints.append(f"choices: {param.choices}")

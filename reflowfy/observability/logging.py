@@ -20,11 +20,11 @@ class JSONFormatter(logging.Formatter):
 
         # Add extra fields
         if hasattr(record, "execution_id"):
-            log_data["execution_id"] = record.execution_id
+            log_data["execution_id"] = getattr(record, "execution_id")
         if hasattr(record, "pipeline_name"):
-            log_data["pipeline_name"] = record.pipeline_name
+            log_data["pipeline_name"] = getattr(record, "pipeline_name")
         if hasattr(record, "batch_id"):
-            log_data["batch_id"] = record.batch_id
+            log_data["batch_id"] = getattr(record, "batch_id")
 
         # Add exception info if present
         if record.exc_info:
