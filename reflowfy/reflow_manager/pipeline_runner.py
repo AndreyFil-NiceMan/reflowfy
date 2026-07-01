@@ -20,7 +20,7 @@ CHECKPOINT_POLL_INTERVAL = 2.0  # Poll every 2 seconds
 JOB_SCHEMA_VERSION = 2
 
 
-def _chunk(lst: List, size: int) -> List[List]:
+def _chunk(lst: List[Any], size: int) -> List[List[Any]]:
     """Split a list into consecutive chunks of at most `size` elements."""
     return [lst[i : i + size] for i in range(0, len(lst), size)]
 

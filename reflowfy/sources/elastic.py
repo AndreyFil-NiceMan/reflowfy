@@ -1,6 +1,6 @@
 """Elasticsearch source with scroll-based pagination."""
 
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from elasticsearch import Elasticsearch
 from elasticsearch.exceptions import ApiError
@@ -25,7 +25,7 @@ class ElasticSource(BaseSource):
         base_query: Dict[str, Any],
         scroll: str = "2m",
         size: int = 1000,
-        auth: Optional[tuple] = None,
+        auth: Optional[Tuple[str, str]] = None,
         verify_certs: bool = True,
         **kwargs,
     ):
@@ -265,7 +265,7 @@ def elastic_source(
     base_query: Dict[str, Any],
     scroll: str = "2m",
     size: int = 1000,
-    auth: Optional[tuple] = None,
+    auth: Optional[Tuple[str, str]] = None,
     verify_certs: bool = True,
     **kwargs,
 ) -> ElasticSource:

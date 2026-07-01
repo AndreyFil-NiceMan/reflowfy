@@ -414,7 +414,7 @@ class IdBasedPipeline(metaclass=IdBasedPipelineMeta):
             f"list of records, got {type(returned).__name__}"
         )
 
-    def resolve_for_ids(self, runtime_params: Dict[str, Any], ids_batch: List[Any]) -> dict:
+    def resolve_for_ids(self, runtime_params: Dict[str, Any], ids_batch: List[Any]) -> Dict[str, Any]:
         """
         Resolve source for a batch of IDs and prepare per-batch params.
 
@@ -451,7 +451,7 @@ class IdBasedPipeline(metaclass=IdBasedPipelineMeta):
             "batch_params": batch_params,
         }
 
-    def resolve_for_id(self, runtime_params: Dict[str, Any], current_id: Any) -> dict:
+    def resolve_for_id(self, runtime_params: Dict[str, Any], current_id: Any) -> Dict[str, Any]:
         """Backward-compat shim: wraps single ID in a list and calls resolve_for_ids."""
         return self.resolve_for_ids(runtime_params, [current_id])
 

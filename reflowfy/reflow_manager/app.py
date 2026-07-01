@@ -3,7 +3,7 @@
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, Dict, Optional
 from fastapi import FastAPI, HTTPException, Depends, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -76,7 +76,7 @@ app.include_router(schedule_router)
 
 
 # Helper to get Kafka configuration from environment (including SASL)
-def _get_kafka_config() -> dict:
+def _get_kafka_config() -> Dict[str, Any]:
     """Get Kafka configuration from environment variables."""
     return {
         "kafka_bootstrap_servers": os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
@@ -395,7 +395,7 @@ def _reset_pipeline_schedule_if_needed(db: Session, pipeline_name: str) -> None:
 def _dispatch_pipeline_jobs(
     execution_id: str,
     pipeline_name: str,
-    runtime_params: dict,
+    runtime_params: Dict[str, Any],
     rate_limit_override: Optional[float] = None,
     mode: Optional[str] = None,
     enable_duplicate_jobs: Optional[bool] = None,

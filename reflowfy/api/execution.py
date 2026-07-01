@@ -1,7 +1,7 @@
 """Execution tracking and status management."""
 
 import threading
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 from reflowfy.execution.base import ExecutionStatus
 
 
@@ -88,7 +88,7 @@ class ExecutionTracker:
                 else:
                     status.state = ExecutionState.PARTIALLY_FAILED
 
-    def list_all(self) -> list:
+    def list_all(self) -> List[Any]:
         """Get all tracked executions."""
         with self._lock:
             return list(self._executions.values())
