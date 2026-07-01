@@ -54,7 +54,7 @@ class _FakeRunner:
         self._rec = rec
         self.execution_manager = _FakeExecMgr(rec)
 
-    def _run_pipeline_jobs(self, execution_id, pipeline_name, runtime_params):
+    def run_pipeline_jobs(self, execution_id, pipeline_name, runtime_params):
         # Block until the test releases the gate, simulating a slow run.
         self._rec.gate.wait(5)
         self._rec.ran.append(execution_id)
@@ -134,7 +134,7 @@ def test_dispatch_failure_marks_execution_failed():
     rec.gate.set()  # don't block; we want the run to proceed then fail
 
     class _FailingRunner(_FakeRunner):
-        def _run_pipeline_jobs(self, execution_id, pipeline_name, runtime_params):
+        def run_pipeline_jobs(self, execution_id, pipeline_name, runtime_params):
             raise RuntimeError("boom")
 
     sched = PipelineScheduler(pipeline_runner_factory=lambda: _FailingRunner(rec))

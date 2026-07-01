@@ -176,7 +176,7 @@ class PipelineScheduler:
         def _run() -> None:
             runner = factory()
             try:
-                runner._run_pipeline_jobs(
+                runner.run_pipeline_jobs(
                     execution_id=execution_id,
                     pipeline_name=pipeline_name,
                     runtime_params={},
