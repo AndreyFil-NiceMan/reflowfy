@@ -114,17 +114,35 @@ class ElasticSource(BaseSource):
                 raise SourceError("elasticsearch", f"Failed to fetch data: {e}", e)
 
         try:
-            # Use search API with limit for local mode
-            search_size = min(limit, resolved_config["size"]) if limit else resolved_config["size"]
+            # Scroll through the whole job. ``size`` is the per-page batch
+            # size, not a cap on the job — a single job fetches every matching
+            # document. ``limit`` (test/preview only) caps the sample early.
+            page_size = min(limit, resolved_config["size"]) if limit else resolved_config["size"]
+            scroll = resolved_config["scroll"]
 
-            response = client.search(
+            raw = client.search(
                 index=resolved_config["index"],
                 body=resolved_config["base_query"],
-                size=search_size,
+                scroll=scroll,
+                size=page_size,
             )
+            page = cast(Dict[str, Any], raw.body if hasattr(raw, "body") else raw)
+            scroll_id = page["_scroll_id"]
+            hits = page["hits"]["hits"]
 
-            hits = response["hits"]["hits"]
-            return [hit["_source"] for hit in hits]
+            records = []
+            while hits:
+                records.extend(hit["_source"] for hit in hits)
+                if limit and len(records) >= limit:
+                    records = records[:limit]
+                    break
+                raw = client.scroll(scroll_id=scroll_id, scroll=scroll)
+                page = cast(Dict[str, Any], raw.body if hasattr(raw, "body") else raw)
+                scroll_id = page["_scroll_id"]
+                hits = page["hits"]["hits"]
+
+            client.clear_scroll(scroll_id=scroll_id)
+            return records
 
         except ApiError as e:
             raise SourceError("elasticsearch", f"Failed to fetch data: {e}", e)

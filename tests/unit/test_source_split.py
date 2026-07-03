@@ -302,3 +302,30 @@ def test_elastic_fetch_slice_paginates(monkeypatch):
     out = src.fetch({})
     assert out == [{"a": 1}, {"a": 2}]
     assert calls["n"] == 2
+
+
+def test_elastic_fetch_single_job_scrolls_all_pages(monkeypatch):
+    # Default (num_slices=1) job must fetch every doc, not just one `size` page.
+    from reflowfy.sources.elastic import ElasticSource
+
+    src = ElasticSource(url="http://es", index="i", base_query={"query": {"match_all": {}}}, size=2)
+
+    pages = [
+        {"_scroll_id": "S", "hits": {"hits": [{"_source": {"a": 1}}, {"_source": {"a": 2}}]}},
+        {"_scroll_id": "S", "hits": {"hits": [{"_source": {"a": 3}}]}},
+        {"_scroll_id": "S", "hits": {"hits": []}},
+    ]
+
+    class _Client:
+        def search(self, index=None, body=None, scroll=None, size=None):
+            return pages[0]
+
+        def scroll(self, scroll_id=None, scroll=None):
+            return pages.pop(1) if len(pages) > 1 else pages[-1]
+
+        def clear_scroll(self, scroll_id=None):
+            pass
+
+    monkeypatch.setattr(src, "_get_client", lambda: _Client())
+
+    assert src.fetch({}) == [{"a": 1}, {"a": 2}, {"a": 3}]
