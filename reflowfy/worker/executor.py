@@ -11,6 +11,11 @@ from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from reflowfy.core.execution_context import build_flat_runtime_params_from_metadata
 from reflowfy.core.registry import pipeline_registry
+from reflowfy.execution.content_dedup import (
+    claim_content_hash,
+    compute_content_hash,
+    release_content_hash,
+)
 from reflowfy.execution.job_runner import run_job_records
 from reflowfy.factories.source_factory import SourceFactory
 from reflowfy.reflow_manager.models import Job
@@ -157,11 +162,6 @@ class WorkerExecutor:
             # Worker-side content deduplication (enable_duplicate_jobs=False).
             dedup_check = bool(job_payload.get("dedup_check", False))
             if dedup_check:
-                from reflowfy.execution.content_dedup import (
-                    compute_content_hash,
-                    claim_content_hash,
-                )
-
                 transformation_names = [name for name, _ in applied]
                 content_hash = compute_content_hash(
                     _pipeline_name, transformation_names, records
@@ -186,7 +186,6 @@ class WorkerExecutor:
                 stats.error = "Destination health check failed"
                 stats.end_time = time.time()
                 if claimed_content_hash:
-                    from reflowfy.execution.content_dedup import release_content_hash
                     await release_content_hash(self._async_session, claimed_content_hash, job_id)
                 await self._update_job_in_db(execution_id, job_id, stats)
                 return False
@@ -223,7 +222,6 @@ class WorkerExecutor:
 
             if claimed_content_hash:
                 try:
-                    from reflowfy.execution.content_dedup import release_content_hash
                     await release_content_hash(self._async_session, claimed_content_hash, job_id)
                 except Exception:
                     pass

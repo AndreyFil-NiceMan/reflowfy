@@ -141,15 +141,21 @@ class KafkaJobConsumer:
 
             print(f"📦 Received job: {job_payload.get('job_id', 'unknown')}")
 
-            # Execute job asynchronously
+            # Execute job asynchronously. execute_job durably records the outcome
+            # (completed/failed/deduplicated) in Postgres before returning.
             success = await self.executor.execute_job(job_payload)
 
-            if success:
-                # Commit offset on success
-                await self.consumer.commit()
-            else:
-                # On failure, don't commit - job will be retried
-                print("⚠️  Job failed, will retry")
+            # Commit whether the job succeeded or failed. Kafka does not own
+            # retries here — the failure is already recorded in Postgres and the
+            # DLQ (POST /dlq/schedule) owns re-runs. Not committing would not
+            # actually retry: arg-less commit() advances the whole partition, so
+            # the next successful message commits past this offset regardless,
+            # while risking a duplicate reprocess of a deterministic failure on
+            # restart. A crash *before* this line leaves the offset uncommitted,
+            # preserving at-least-once reprocessing.
+            if not success:
+                print(f"⚠️  Job {job_payload.get('job_id', 'unknown')} failed; recorded to DB")
+            await self.consumer.commit()
 
         except json.JSONDecodeError as e:
             print(f"❌ Invalid job payload: {e}")

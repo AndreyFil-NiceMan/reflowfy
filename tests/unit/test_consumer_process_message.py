@@ -39,6 +39,22 @@ class TestProcessMessage:
         c.executor.execute_job.assert_awaited_once()
         c.consumer.commit.assert_awaited_once()
 
+    async def test_failed_job_is_still_committed(self):
+        """A failed job (execute_job -> False) has its failure recorded in
+        Postgres; the offset must still be committed. Not committing does not
+        retry (arg-less commit advances the whole partition) and risks a
+        duplicate reprocess of a deterministic failure on restart."""
+        c = _consumer()
+        c.executor.execute_job = AsyncMock(return_value=False)
+        msg = SimpleNamespace(
+            value=json.dumps({"schema_version": 2, "job_id": "j1"}).encode("utf-8")
+        )
+
+        await c._process_message(msg)
+
+        c.executor.execute_job.assert_awaited_once()
+        c.consumer.commit.assert_awaited_once()
+
     async def test_unsupported_schema_version_is_skipped_and_committed(self):
         """A job without schema_version==2 must be skipped (not executed) and
         committed so the bad/legacy message is not redelivered forever."""

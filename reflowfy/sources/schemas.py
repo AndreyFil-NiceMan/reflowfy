@@ -6,26 +6,7 @@ ensuring type safety and clear error messages.
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
-
-
-class S3SourceConfig(BaseModel):
-    """Configuration for S3Source."""
-
-    bucket: str = Field(..., description="S3 bucket name")
-    prefix: str = Field(default="", description="Key prefix to filter objects")
-    pattern: str = Field(default="*", description="Glob pattern for filtering files")
-    region: Optional[str] = Field(default=None, description="AWS region")
-    aws_access_key_id: Optional[str] = Field(default=None, description="AWS access key")
-    aws_secret_access_key: Optional[str] = Field(default=None, description="AWS secret key")
-    page_size: int = Field(default=1000, ge=1, le=10000, description="Objects per page")
-
-    @field_validator("bucket")
-    @classmethod
-    def bucket_not_empty(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError("bucket cannot be empty")
-        return v.strip()
+from pydantic import BaseModel, Field
 
 
 class IDBasedAPISourceConfig(BaseModel):
@@ -64,36 +45,3 @@ class IDBasedAPISourceConfig(BaseModel):
     health_check_enabled: bool = Field(
         default=True, description="Enable/disable source health check"
     )
-
-
-class ElasticsearchSourceConfig(BaseModel):
-    """Configuration for ElasticsearchSource."""
-
-    url: str = Field(..., description="Elasticsearch URL")
-    index: str = Field(..., description="Index name or pattern")
-    query: Dict[str, Any] = Field(default_factory=dict, description="Elasticsearch query")
-    page_size: int = Field(default=1000, ge=1, le=10000, description="Documents per page")
-    scroll_time: str = Field(default="5m", description="Scroll context timeout")
-
-    @field_validator("url")
-    @classmethod
-    def validate_url(cls, v: str) -> str:
-        if not v.startswith(("http://", "https://")):
-            raise ValueError("url must start with http:// or https://")
-        return v.rstrip("/")
-
-
-class SQLSourceConfig(BaseModel):
-    """Configuration for SQLSource."""
-
-    connection_string: str = Field(..., description="Database connection string")
-    query: str = Field(..., description="SQL query to execute")
-    page_size: int = Field(default=1000, ge=1, le=100000, description="Rows per batch")
-    id_column: Optional[str] = Field(default=None, description="Column for range-based pagination")
-
-    @field_validator("query")
-    @classmethod
-    def validate_query(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError("query cannot be empty")
-        return v.strip()
