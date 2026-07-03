@@ -67,11 +67,17 @@ def _build_images(
         )
 
         try:
+            # load=True guarantees the built image (with all tags) is loaded into
+            # the local Docker daemon regardless of the active buildx driver. Without
+            # it, the default "docker" driver happens to load the image but the
+            # "docker-container" driver does not, leaving the subsequent push loop
+            # with no local image to push.
             docker.build(
                 str(build_context),
                 file=str(dockerfile_full),
                 tags=tags,
                 cache=not no_cache,
+                load=True,
                 build_args={"REFLOWFY_BASE_IMAGE": reflowfy_base},
             )
             console.print(f"✅ Built [bold]{', '.join(tags)}[/bold]", style="green")
