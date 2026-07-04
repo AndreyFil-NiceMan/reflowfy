@@ -175,3 +175,19 @@ securityContext:
 #####################################
 busybox:
   image: 'busybox:1.36'
+
+# Observability
+observability:
+  environment: production      # ECS service.environment tag on every log (filter in Kibana)
+  logDestination: stdout       # stdout | elastic | both
+  logJson: true
+  elasticLog:
+    url: ''                    # e.g. https://es:9200 — blank keeps logs on stdout only
+    index: reflowfy-logs       # daily index reflowfy-logs-YYYY.MM.DD
+    username: ''               # e.g. elastic
+    password: ''               # stored in a chart-managed Secret (<release>-elastic-log)
+    existingSecret: ''         # optional: reference a pre-created Secret instead of password
+    existingSecretPasswordKey: password
+  otel:
+    endpoint: ''               # e.g. http://apm-server:8200 — blank disables tracing
+    tracesSamplerArg: '0.1'    # 10% head sampling

@@ -1,0 +1,13 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: reflowfy-api
+    static_configs:
+      - targets: ['api:8000']
+  - job_name: reflowfy-manager
+    static_configs:
+      - targets: ['reflow-manager:8001']
+  - job_name: reflowfy-worker
+    static_configs:
+      - targets: ['worker:9100']

@@ -16,6 +16,7 @@ load_dotenv()
 
 from reflowfy import __version__  # noqa: E402
 
+from reflowfy.observability.logging import setup_logging  # noqa: E402
 from reflowfy.reflow_manager.database import get_db, init_db, SessionLocal  # noqa: E402
 from reflowfy.reflow_manager.manager import ReflowManager  # noqa: E402
 from reflowfy.reflow_manager.execution import ExecutionManager  # noqa: E402
@@ -72,6 +73,21 @@ app.add_middleware(
 app.include_router(dlq_router)
 app.include_router(stats_router)
 app.include_router(schedule_router)
+
+# Observability: expose Prometheus /metrics and instrument tracing.
+from fastapi import Response  # noqa: E402
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest  # noqa: E402
+from reflowfy.observability.tracing import init_tracing, instrument_fastapi  # noqa: E402
+
+
+@app.get("/metrics")
+def metrics_endpoint() -> Response:
+    """Prometheus scrape endpoint (served directly — no mount redirect)."""
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+init_tracing(service_name="reflow-manager")
+instrument_fastapi(app)
 
 
 def _get_kafka_config() -> Dict[str, Any]:
@@ -432,6 +448,7 @@ async def get_execution_stats(
 
 async def _startup() -> None:
     """Initialize database and load pipelines on startup."""
+    setup_logging(service_name="reflow-manager")
     logger.info("Starting ReflowManager service (version %s)", __version__)
 
     # Initialize database (retries internally until DB is ready)

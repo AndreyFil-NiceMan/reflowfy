@@ -74,6 +74,7 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           env:
+            {{- include "reflowfy.observability.env" . | nindent 12 }}
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: {{ include "reflowfy.kafka.bootstrapServers" . | quote }}
             - name: KAFKA_TOPIC

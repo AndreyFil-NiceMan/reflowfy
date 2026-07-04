@@ -18,7 +18,13 @@ from reflowfy.execution.content_dedup import (
 )
 from reflowfy.execution.job_runner import run_job_records
 from reflowfy.factories.source_factory import SourceFactory
+from reflowfy.observability import metrics
+from reflowfy.observability.context import log_context
+from reflowfy.observability.logging import get_logger
+from reflowfy.observability.tracing import extract_and_attach
 from reflowfy.reflow_manager.models import Job
+
+logger = get_logger("worker.executor")
 
 
 class JobStats:
@@ -33,6 +39,7 @@ class JobStats:
         self.transformation_times = {}
         self.destination_write_time: float = 0.0
         self.error: Optional[str] = None
+        self.error_type: Optional[str] = None
         self.error_traceback: Optional[str] = None
         self.success = False
         self.deduplicated = False
@@ -102,24 +109,70 @@ class WorkerExecutor:
             expire_on_commit=False,
         )
 
+    def record_job_metrics(
+        self,
+        pipeline: str,
+        success: bool,
+        deduplicated: bool,
+        error_type: Optional[str],
+        duration: float,
+        records: int,
+    ) -> None:
+        """Emit Prometheus metrics for one finished job.
+
+        # ponytail: error_type = exception class name only — never the message (cardinality).
+        """
+        status = "deduplicated" if deduplicated else ("completed" if success else "failed")
+        metrics.jobs_processed_total.labels(pipeline=pipeline, status=status).inc()
+        metrics.job_processing_duration_seconds.labels(pipeline=pipeline).observe(duration)
+        # Only count records that actually made it through (success); a job that
+        # failed at the destination has records_output set but nothing delivered.
+        if success and records:
+            metrics.records_processed_total.labels(pipeline=pipeline).inc(records)
+        if not success and error_type:
+            metrics.jobs_failed_total.labels(pipeline=pipeline, error_type=error_type).inc()
+
     async def execute_job(self, job_payload: Dict[str, Any]) -> bool:
-        """
-        Execute a single job asynchronously.
-
-        Args:
-            job_payload: Job payload from Kafka
-
-        Returns:
-            True if successful, False otherwise
-        """
-        # Initialize statistics
+        """Execute a job: bind log context, continue the trace, record metrics."""
         stats = JobStats()
-        claimed_content_hash = None
-        destination = None
-
         execution_id = job_payload.get("execution_id", "unknown")
         job_id = job_payload.get("job_id", "unknown")
-        _pipeline_name = job_payload.get("pipeline_name", "unknown")
+        pipeline_name = job_payload.get("pipeline_name", "unknown")
+
+        try:
+            from opentelemetry import trace
+
+            # Inside try so a malformed trace carrier can't skip metric recording.
+            parent = extract_and_attach(job_payload.get("metadata", {}))
+            with log_context(execution_id=execution_id, job_id=job_id, pipeline_name=pipeline_name):
+                with trace.get_tracer("worker").start_as_current_span(
+                    "process_job", context=parent
+                ):
+                    return await self._execute_job_inner(
+                        job_payload, stats, execution_id, job_id, pipeline_name
+                    )
+        finally:
+            duration = (stats.end_time or time.time()) - stats.start_time
+            self.record_job_metrics(
+                pipeline_name,
+                success=stats.success,
+                deduplicated=stats.deduplicated,
+                error_type=stats.error_type,
+                duration=duration,
+                records=stats.records_output,
+            )
+
+    async def _execute_job_inner(
+        self,
+        job_payload: Dict[str, Any],
+        stats: "JobStats",
+        execution_id: str,
+        job_id: str,
+        _pipeline_name: str,
+    ) -> bool:
+        """Fetch the slice, transform, write to destination, report to Postgres."""
+        claimed_content_hash = None
+        destination = None
 
         try:
             metadata = job_payload.get("metadata", {})
@@ -145,17 +198,17 @@ class WorkerExecutor:
             stats.records_input = len(records)
 
             if not records:
-                print(f"⚠️  Job {job_id}: No records to process")
+                logger.info("Job %s: no records to process", job_id)
                 stats.success = True
                 stats.records_output = 0
                 stats.end_time = time.time()
                 await self._update_job_in_db(execution_id, job_id, stats)
                 return True
 
-            print(f"🔄 Processing job {job_id}: {len(records)} records")
+            logger.info("Processing job %s: %d records", job_id, len(records))
             for name, duration in applied:
                 stats.transformation_times[name] = round(duration, 3)
-                print(f"  ✓ {name}")
+                logger.debug("Applied transformation %s (%.3fs)", name, duration)
 
             stats.records_output = len(transformed_records)
 
@@ -163,14 +216,12 @@ class WorkerExecutor:
             dedup_check = bool(job_payload.get("dedup_check", False))
             if dedup_check:
                 transformation_names = [name for name, _ in applied]
-                content_hash = compute_content_hash(
-                    _pipeline_name, transformation_names, records
-                )
+                content_hash = compute_content_hash(_pipeline_name, transformation_names, records)
                 won = await claim_content_hash(
                     self._async_session, content_hash, _pipeline_name, job_id, execution_id
                 )
                 if not won:
-                    print(f"⏭️  Job {job_id}: content already processed — deduplicated")
+                    logger.info("Job %s: content already processed — deduplicated", job_id)
                     stats.deduplicated = True
                     stats.success = True
                     stats.records_output = 0
@@ -181,7 +232,7 @@ class WorkerExecutor:
 
             # Health check (async)
             if not await destination.health_check():
-                print("❌ Destination health check failed")
+                logger.error("Job %s: destination health check failed", job_id)
                 stats.success = False
                 stats.error = "Destination health check failed"
                 stats.end_time = time.time()
@@ -191,7 +242,9 @@ class WorkerExecutor:
                 return False
 
             # Send to destination and track time (async)
-            print(f"  📤 Sending {len(transformed_records)} records to destination...")
+            logger.debug(
+                "Job %s: sending %d records to destination", job_id, len(transformed_records)
+            )
             dest_start = time.time()
             await destination.send_with_retry(transformed_records, runtime_params)
             stats.destination_write_time = time.time() - dest_start
@@ -200,8 +253,11 @@ class WorkerExecutor:
             stats.success = True
             stats.end_time = time.time()
 
-            print(
-                f"✓ Job {job_id} completed successfully (duration: {stats.end_time - stats.start_time:.2f}s)\n"
+            logger.info(
+                "Job %s completed (%.2fs, %d records)",
+                job_id,
+                stats.end_time - stats.start_time,
+                stats.records_output,
             )
 
             # Update job status in PostgreSQL (async)
@@ -210,13 +266,13 @@ class WorkerExecutor:
             return True
 
         except Exception as e:
-            print(f"❌ Job {job_id} failed: {e}")
             tb_str = traceback.format_exc()
-            print(tb_str)
+            logger.error("Job %s failed: %s", job_id, e, exc_info=True)
 
             # Mark as failed — capture both summary and full traceback
             stats.success = False
             stats.error = str(e)
+            stats.error_type = type(e).__name__
             stats.error_traceback = tb_str
             stats.end_time = time.time()
 
@@ -239,7 +295,7 @@ class WorkerExecutor:
                 try:
                     await destination.close()
                 except Exception as close_err:
-                    print(f"⚠️  Job {job_id}: failed to close destination: {close_err}")
+                    logger.warning("Job %s: failed to close destination: %s", job_id, close_err)
 
     async def _update_job_in_db(self, execution_id: str, job_id: str, stats: JobStats):
         """
@@ -285,15 +341,15 @@ class WorkerExecutor:
 
                 rowcount = getattr(result, "rowcount", None)
                 if rowcount == 0:
-                    print(f"  ⚠️  Job {job_id} not found in database")
+                    logger.warning("Job %s not found in database", job_id)
                     await db.rollback()
                     return
 
                 await db.commit()
-                print("  ✓ Updated job status in database")
+                logger.debug("Job %s: status updated in database", job_id)
 
             except Exception as e:
-                print(f"  ⚠️  Failed to update database: {e}")
+                logger.error("Job %s: failed to update database: %s", job_id, e, exc_info=True)
                 await db.rollback()
 
     async def close(self):

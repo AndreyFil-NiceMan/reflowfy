@@ -1,11 +1,12 @@
 """Local job dispatcher for ReflowManager."""
 
+import logging
 from typing import Dict, Any, List, Optional
 
 from reflowfy.reflow_manager.dispatcher import BaseDispatcher
 from reflowfy.reflow_manager.rate_limiter import RateLimiter
 
-
+logger = logging.getLogger(__name__)
 
 
 class LocalDispatcher(BaseDispatcher):
@@ -26,6 +27,7 @@ class LocalDispatcher(BaseDispatcher):
     def _create_executor(self):
         """Create a fresh WorkerExecutor instance."""
         from reflowfy.worker.executor import WorkerExecutor
+
         return WorkerExecutor()
 
     async def dispatch_job(
@@ -37,11 +39,9 @@ class LocalDispatcher(BaseDispatcher):
         """Dispatch single job locally with rate limiting."""
         # Rate limit: acquire a token before executing
         if rate_limit is not None:
-            acquired = self.rate_limiter.acquire_token(
-                pipeline_name, rate_limit, max_wait=60.0
-            )
+            acquired = self.rate_limiter.acquire_token(pipeline_name, rate_limit, max_wait=60.0)
             if not acquired:
-                print("⚠️ Rate limit timeout, skipping job")
+                logger.warning("⚠️ Rate limit timeout, skipping job")
                 return False
 
         executor = self._create_executor()
@@ -49,7 +49,7 @@ class LocalDispatcher(BaseDispatcher):
             await executor.execute_job(job_payload)
             return True
         except Exception as e:
-            print(f"❌ Local dispatch failed: {e}")
+            logger.error(f"❌ Local dispatch failed: {e}")
             return False
         finally:
             await executor.close()
@@ -72,14 +72,16 @@ class LocalDispatcher(BaseDispatcher):
                         pipeline_name, rate_limit, max_wait=60.0
                     )
                     if not acquired:
-                        print(f"⚠️ Rate limit timeout after 60s, stopping dispatch after {dispatched} jobs")
+                        logger.warning(
+                            f"⚠️ Rate limit timeout after 60s, stopping dispatch after {dispatched} jobs"
+                        )
                         break
 
                 try:
                     await executor.execute_job(job)
                     dispatched += 1
                 except Exception as e:
-                    print(f"❌ Local job execution failed: {e}")
+                    logger.error(f"❌ Local job execution failed: {e}")
         finally:
             await executor.close()
 
@@ -88,5 +90,3 @@ class LocalDispatcher(BaseDispatcher):
     async def close(self):
         """No persistent resources to close."""
         pass
-
-

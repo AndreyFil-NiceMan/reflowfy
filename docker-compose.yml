@@ -184,6 +184,51 @@ services:
     deploy:
       replicas: 1
 
+  # --- Observability ---------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: reflowfy-prometheus
+    volumes:
+      - ./deploy/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - '9090:9090'
+    networks:
+      - reflowfy-network
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: reflowfy-grafana
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: 'true'
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes:
+      - ./deploy/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - '3000:3000'
+    depends_on:
+      - prometheus
+    networks:
+      - reflowfy-network
+
+  # Traces backend. Off by default (needs the external Elasticsearch); start it with
+  #   docker compose --profile tracing up
+  # and set OTEL_EXPORTER_OTLP_ENDPOINT=http://apm-server:8200 on the app services.
+  apm-server:
+    profiles: [tracing]
+    image: docker.elastic.co/apm/apm-server:8.11.0
+    container_name: reflowfy-apm-server
+    command: >
+      apm-server -e
+      -E apm-server.host=0.0.0.0:8200
+      -E apm-server.kibana.enabled=true
+      -E output.elasticsearch.hosts=["reflofy-elasticsearch:9200"]
+    ports:
+      - '8200:8200'
+    networks:
+      - reflowfy-network
+      - reflofy-elastic-network
+
 networks:
   reflowfy-network:
     driver: bridge

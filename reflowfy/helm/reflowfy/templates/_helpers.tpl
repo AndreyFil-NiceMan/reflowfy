@@ -209,3 +209,46 @@ are plain config values.
       name: {{ include "reflowfy.kafka.secretName" . }}
       key: {{ include "reflowfy.kafka.passwordKey" . }}
 {{- end }}
+
+{{/*
+Observability env: environment tag, log destination/shipping (Elastic), and traces.
+Emitted into every service so production ships to Elastic and is filterable by
+service.environment in Kibana. The ES password comes from a Secret, never inline.
+*/}}
+{{- define "reflowfy.observability.env" -}}
+- name: ENVIRONMENT
+  value: {{ .Values.observability.environment | default "production" | quote }}
+- name: LOG_DESTINATION
+  value: {{ .Values.observability.logDestination | default "stdout" | quote }}
+- name: LOG_JSON
+  value: {{ .Values.observability.logJson | default true | quote }}
+{{- with .Values.observability.elasticLog }}
+{{- if .url }}
+- name: ELASTIC_LOG_URL
+  value: {{ .url | quote }}
+- name: ELASTIC_LOG_INDEX
+  value: {{ .index | default "reflowfy-logs" | quote }}
+{{- if .username }}
+- name: ELASTIC_LOG_USERNAME
+  value: {{ .username | quote }}
+{{- end }}
+{{- if or .password .existingSecret }}
+- name: ELASTIC_LOG_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ .existingSecret | default (printf "%s-elastic-log" $.Release.Name) }}
+      key: {{ .existingSecretPasswordKey | default "password" }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- with .Values.observability.otel }}
+{{- if .endpoint }}
+- name: OTEL_EXPORTER_OTLP_ENDPOINT
+  value: {{ .endpoint | quote }}
+- name: OTEL_TRACES_SAMPLER
+  value: "traceidratio"
+- name: OTEL_TRACES_SAMPLER_ARG
+  value: {{ .tracesSamplerArg | default "0.1" | quote }}
+{{- end }}
+{{- end }}
+{{- end -}}

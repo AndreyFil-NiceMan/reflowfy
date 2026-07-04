@@ -10,6 +10,8 @@ from sqlalchemy import func
 
 from reflowfy.core.serialization import to_json_safe
 from reflowfy.factories.source_factory import SourceFactory
+from reflowfy.observability import metrics
+from reflowfy.observability.tracing import inject_trace_context
 from reflowfy.reflow_manager.dispatcher import JobDispatcher
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
@@ -71,7 +73,13 @@ def build_job_payload(
     metadata: Dict[str, Any],
     dedup_check: bool = False,
 ) -> Dict[str, Any]:
-    """Assemble the v2 worker job message for one narrowed sub-source."""
+    """Assemble the v2 worker job message for one narrowed sub-source.
+
+    The current span's W3C traceparent is injected into metadata so the worker
+    can continue the trace across the Kafka hop (additive; no schema bump).
+    """
+    enriched_metadata = dict(metadata)
+    inject_trace_context(enriched_metadata)
     return {
         "schema_version": JOB_SCHEMA_VERSION,
         "execution_id": execution_id,
@@ -79,7 +87,7 @@ def build_job_payload(
         "pipeline_name": pipeline_name,
         "source": SourceFactory.serialize(sub_source),
         "dedup_check": dedup_check,
-        "metadata": metadata,
+        "metadata": enriched_metadata,
     }
 
 
@@ -367,6 +375,11 @@ class PipelineRunner:
         pipeline = pipeline_registry.get(pipeline_name)
         if not pipeline:
             raise ValueError(f"Pipeline '{pipeline_name}' not found in registry")
+
+        # Count the execution here (the convergence point for both the API /run
+        # path and run_pipeline / scheduler paths).
+        mode = "local" if isinstance(self.dispatcher, LocalDispatcher) else "distributed"
+        metrics.pipeline_executions_total.labels(pipeline=pipeline_name, mode=mode).inc()
 
         # Resolve effective duplicate setting: API override > pipeline default
         if enable_duplicate_jobs is None:
