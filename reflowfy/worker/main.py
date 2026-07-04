@@ -6,7 +6,12 @@ import sys
 from types import FrameType
 
 from reflowfy.core.pipeline_discovery import discover_and_load_pipelines
+from reflowfy.observability import metrics
+from reflowfy.observability.logging import setup_logging
+from reflowfy.observability.tracing import init_tracing
 from reflowfy.worker.consumer import KafkaJobConsumer
+
+from prometheus_client import start_http_server
 
 
 def handle_shutdown(signum: int, frame: FrameType):
@@ -35,6 +40,11 @@ def main():
     # Register signal handlers
     signal.signal(signal.SIGTERM, handle_shutdown)  # pyright: ignore[reportArgumentType]
     signal.signal(signal.SIGINT, handle_shutdown)  # pyright: ignore[reportArgumentType]
+
+    # Observability: structured logging, tracing, and a /metrics HTTP server.
+    setup_logging(service_name="worker")
+    init_tracing(service_name="worker")
+    start_http_server(int(os.getenv("METRICS_PORT", "9100")))
 
     # Auto-discover and load pipelines (registers transformations)
     pipeline_module = os.getenv("PIPELINE_MODULE", "pipelines")
@@ -81,6 +91,9 @@ def main():
 
     try:
         print("Worker ready, waiting for jobs...\n")
+        # This process is one active worker; Prometheus sums the gauge across
+        # all scraped worker replicas.
+        metrics.active_workers.set(1)
         # Run async consumer in event loop
         asyncio.run(consumer.start())
     except KeyboardInterrupt:
@@ -88,6 +101,8 @@ def main():
     except Exception as e:
         print(f"\nWorker crashed: {e}")
         sys.exit(1)
+    finally:
+        metrics.active_workers.set(0)
 
 
 if __name__ == "__main__":

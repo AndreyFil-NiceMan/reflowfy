@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: reflowfy
+    folder: Reflowfy
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards

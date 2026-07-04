@@ -34,3 +34,6 @@ ENV/
 *.swo
 *~
 .DS_Store
+
+# E2E test runner lock
+.e2e_workspace.lock

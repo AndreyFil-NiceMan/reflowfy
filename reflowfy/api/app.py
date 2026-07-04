@@ -4,12 +4,16 @@ import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from reflowfy import __version__
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from reflowfy.core.registry import pipeline_registry
 from reflowfy.core.pipeline_discovery import discover_and_load_pipelines
+from reflowfy.observability import metrics as _metrics  # noqa: F401  (register families)
+from reflowfy.observability.logging import setup_logging
+from reflowfy.observability.tracing import init_tracing, instrument_fastapi
 from reflowfy.api.routes import create_pipeline_routes
 from reflowfy.api.execution import execution_tracker
 from reflowfy.execution.distributed_executor import get_executor
@@ -26,6 +30,7 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         """Initialize pipelines on startup."""
+        setup_logging(service_name="api")
         print("=" * 60)
         print("🚀 Starting Reflowfy API (Startup)")
         print(f"📦 Version: {__version__}")
@@ -56,6 +61,14 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Observability: /metrics (direct route, no mount redirect) + tracing.
+    @app.get("/metrics")
+    def metrics_endpoint() -> Response:
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+    init_tracing(service_name="api")
+    instrument_fastapi(app)
 
     # Health check endpoint
     @app.get("/health")

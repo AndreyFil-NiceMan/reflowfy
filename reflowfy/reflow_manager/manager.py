@@ -9,6 +9,7 @@ This is a slim coordinator that composes the following modules:
 - PipelineRunner: Pipeline execution
 """
 
+import logging
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 
@@ -19,6 +20,8 @@ from reflowfy.reflow_manager.rate_limiter import RateLimiter
 from reflowfy.reflow_manager.dispatcher import KafkaDispatcher
 from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner
+
+logger = logging.getLogger(__name__)
 
 
 class ReflowManager:
@@ -69,10 +72,10 @@ class ReflowManager:
 
         # Select dispatcher based on mode
         if execution_mode == "local":
-            print("🔧 ReflowManager initialized in LOCAL mode (in-process dispatch)")
+            logger.info("🔧 ReflowManager initialized in LOCAL mode (in-process dispatch)")
             self.dispatcher = LocalDispatcher(self.rate_limiter, db_session)
         else:
-            print(
+            logger.info(
                 f"🔧 ReflowManager initialized in DISTRIBUTED mode (Kafka: {kafka_bootstrap_servers})"
             )
             self.dispatcher = KafkaDispatcher(

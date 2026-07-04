@@ -75,6 +75,7 @@ spec:
               containerPort: 8000
               protocol: TCP
           env:
+            {{- include "reflowfy.observability.env" . | nindent 12 }}
             - name: API_HOST
               value: "0.0.0.0"
             - name: API_PORT

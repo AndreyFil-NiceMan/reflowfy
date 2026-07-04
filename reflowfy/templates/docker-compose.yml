@@ -58,6 +58,17 @@ services:
       HOST: 0.0.0.0
       PORT: 8001
       EXECUTION_MODE: local
+      # Observability — configure where logs go via .env (LOG_DESTINATION=stdout|elastic|both)
+      ENVIRONMENT: ${ENVIRONMENT:-local}
+      LOG_DESTINATION: ${LOG_DESTINATION:-stdout}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_JSON: ${LOG_JSON:-true}
+      ELASTIC_LOG_URL: ${ELASTIC_LOG_URL:-}
+      ELASTIC_LOG_INDEX: ${ELASTIC_LOG_INDEX:-reflowfy-logs}
+      ELASTIC_LOG_USERNAME: ${ELASTIC_LOG_USERNAME:-}
+      ELASTIC_LOG_PASSWORD: ${ELASTIC_LOG_PASSWORD:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-0.1}
     networks:
       - reflowfy-network
     healthcheck:
@@ -91,6 +102,17 @@ services:
       API_PORT: 8000
       REFLOW_MANAGER_URL: http://reflow-manager:8001
       PIPELINE_MODULE: pipelines
+      # Observability — see .env (LOG_DESTINATION=stdout|elastic|both)
+      ENVIRONMENT: ${ENVIRONMENT:-local}
+      LOG_DESTINATION: ${LOG_DESTINATION:-stdout}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_JSON: ${LOG_JSON:-true}
+      ELASTIC_LOG_URL: ${ELASTIC_LOG_URL:-}
+      ELASTIC_LOG_INDEX: ${ELASTIC_LOG_INDEX:-reflowfy-logs}
+      ELASTIC_LOG_USERNAME: ${ELASTIC_LOG_USERNAME:-}
+      ELASTIC_LOG_PASSWORD: ${ELASTIC_LOG_PASSWORD:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-0.1}
     networks:
       - reflowfy-network
     healthcheck:

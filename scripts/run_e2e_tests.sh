@@ -115,6 +115,29 @@ cleanup() {
     log_success "Cleanup complete"
 }
 
+ensure_workspace() {
+    # Re-resolve CWD to the CURRENT inode of $WORKSPACE before any docker /
+    # reflowfy call. If the dir was deleted+recreated (e.g. by an overlapping
+    # run or an interrupted run's EXIT trap), the shell keeps pointing at the
+    # old unlinked inode and docker fails os.Getwd() -> "getwd: no such file or
+    # directory". Re-cd grabs the live inode; hard-fail if it is truly gone.
+    cd "$WORKSPACE" 2>/dev/null || {
+        log_error "Workspace $WORKSPACE is missing (concurrent/interrupted E2E run?). Aborting."
+        exit 1
+    }
+}
+
+# Prevent overlapping runs: a second invocation's startup `rm -rf $WORKSPACE`
+# would unlink the CWD of a run already in progress, which is exactly what
+# produces the getwd error. Acquire an exclusive lock BEFORE arming the EXIT
+# trap so a lock failure cannot trigger cleanup of the other run's workspace.
+LOCKFILE="$PROJECT_ROOT/.e2e_workspace.lock"
+exec 200>"$LOCKFILE"
+if ! flock -n 200; then
+    log_error "Another E2E run holds $LOCKFILE. Refusing to start (would corrupt its workspace)."
+    exit 1
+fi
+
 trap cleanup EXIT
 
 wait_for_service() {
@@ -276,6 +299,11 @@ sed -i "s/'5050:80'/'5051:80'/g" docker-compose.yml
 # Add environment variables for E2E test sources (elasticsearch, sql, mock servers)
 sed -i '/EXECUTION_MODE: local/a\      ELASTICSEARCH_URL: http://reflofy-e2e-elasticsearch:9200\n      SQL_CONNECTION_URL: postgresql://reflowfy:reflowfy@postgres:5432/reflowfy\n      MOCK_HTTP_URL: http://reflofy-e2e-mock-http:8091/webhook\n      MOCK_API_URL: http://reflofy-e2e-mock-api:8092\n      DLQ_POLL_INTERVAL_SECONDS: 5' docker-compose.yml
 
+# Ship logs to the e2e Elasticsearch so the observability suite can assert on them.
+# The generated docker-compose.yml forwards these from .env via ${VAR} interpolation,
+# so we set them in .env rather than as compose keys (avoids duplicate-key errors).
+printf '\nLOG_DESTINATION=elastic\nELASTIC_LOG_URL=http://reflofy-e2e-elasticsearch:9200\n' >> .env
+
 # Point Kafka to the internal e2e-kafka container
 sed -i "s|KAFKA_BOOTSTRAP_SERVERS: 'ignored:9092'|KAFKA_BOOTSTRAP_SERVERS: 'reflofy-e2e-kafka:29092'|g" docker-compose.yml
 
@@ -313,6 +341,7 @@ log_success "Workspace configured for E2E"
 # Step 3: Run Services
 if [ "$SKIP_DOCKER" = false ]; then
     log_info "Step 3: Starting Services..."
+    ensure_workspace
 
     # Clean up any leftover containers/networks from previous runs
     log_info "Cleaning up previous E2E state..."
@@ -323,6 +352,7 @@ if [ "$SKIP_DOCKER" = false ]; then
     # Build the local base image FIRST — every service AND the mock servers
     # (which build from Dockerfile.worker) build FROM it.
     log_info "Building local reflowfy base image (${REFLOWFY_BASE_IMAGE})..."
+    ensure_workspace
     docker build -f Dockerfile.base -t "${REFLOWFY_BASE_IMAGE}" . || {
         log_error "Base image build failed"
         exit 1
@@ -331,6 +361,7 @@ if [ "$SKIP_DOCKER" = false ]; then
 
     # Start E2E infrastructure FIRST (creates the shared network, starts Kafka, ES, mocks)
     log_info "Starting E2E test infrastructure..."
+    ensure_workspace
     docker compose -f docker-compose.e2e-infra.yml up -d --build || {
         log_error "E2E infrastructure startup failed"
         exit 1
@@ -355,12 +386,14 @@ if [ "$SKIP_DOCKER" = false ]; then
 
     # Start main services (they join the existing network)
     log_info "Building reflow-manager image (no-cache) to avoid stale transforms..."
+    ensure_workspace
     docker compose build --no-cache reflow-manager || {
         log_error "reflow-manager build failed"
         exit 1
     }
 
     log_info "Starting main Reflowfy services..."
+    ensure_workspace
     uv run python -m reflowfy.cli.main run --build --detach || {
         log_error "reflowfy run failed"
         exit 1

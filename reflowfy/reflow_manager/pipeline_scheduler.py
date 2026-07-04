@@ -4,9 +4,9 @@ Background scheduler that polls pipeline_schedules and fires executions
 when a pipeline's next_run_at has elapsed.
 """
 
+import logging
 import os
 import threading
-import traceback
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
@@ -17,10 +17,10 @@ from sqlalchemy.orm import Session
 from reflowfy.reflow_manager.models import PipelineSchedule
 from reflowfy.reflow_manager.database import SessionLocal
 
+logger = logging.getLogger(__name__)
 
-PIPELINE_SCHEDULER_POLL_INTERVAL = int(
-    os.getenv("PIPELINE_SCHEDULER_POLL_INTERVAL_SECONDS", "30")
-)
+
+PIPELINE_SCHEDULER_POLL_INTERVAL = int(os.getenv("PIPELINE_SCHEDULER_POLL_INTERVAL_SECONDS", "30"))
 
 
 class PipelineScheduler:
@@ -45,21 +45,21 @@ class PipelineScheduler:
     def start(self) -> None:
         """Start the background polling thread."""
         if self._running:
-            print("⚠️ Pipeline Scheduler already running")
+            logger.warning("⚠️ Pipeline Scheduler already running")
             return
 
         self._running = True
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
-        print(f"✅ Pipeline Scheduler started (polling every {self.poll_interval}s)")
+        logger.info(f"✅ Pipeline Scheduler started (polling every {self.poll_interval}s)")
 
     def stop(self) -> None:
         """Stop the scheduler gracefully."""
         if not self._running:
             return
 
-        print("🛑 Stopping Pipeline Scheduler...")
+        logger.info("🛑 Stopping Pipeline Scheduler...")
         self._running = False
         self._stop_event.set()
 
@@ -67,7 +67,7 @@ class PipelineScheduler:
             self._thread.join(timeout=10)
             self._thread = None
 
-        print("✅ Pipeline Scheduler stopped")
+        logger.info("✅ Pipeline Scheduler stopped")
 
     def _run_loop(self) -> None:
         """Main polling loop."""
@@ -75,7 +75,7 @@ class PipelineScheduler:
             try:
                 self._poll_and_trigger()
             except Exception as e:
-                print(f"❌ Pipeline Scheduler error: {e}")
+                logger.error(f"❌ Pipeline Scheduler error: {e}")
 
             self._stop_event.wait(timeout=self.poll_interval)
 
@@ -97,7 +97,7 @@ class PipelineScheduler:
             if not due:
                 return
 
-            print(f"⏰ Pipeline Scheduler found {len(due)} due pipeline(s)")
+            logger.info(f"⏰ Pipeline Scheduler found {len(due)} due pipeline(s)")
 
             for schedule in due:
                 self._trigger_pipeline(db, schedule, now)
@@ -106,7 +106,7 @@ class PipelineScheduler:
 
         except Exception as e:
             db.rollback()
-            print(f"❌ Pipeline Scheduler poll error: {e}")
+            logger.error(f"❌ Pipeline Scheduler poll error: {e}")
             raise
         finally:
             db.close()
@@ -124,7 +124,7 @@ class PipelineScheduler:
         pipeline_name = schedule.pipeline_name
         execution_id = f"sched-{uuid.uuid4().hex[:12]}"
 
-        print(f"🚀 Triggering scheduled pipeline: {pipeline_name} (execution={execution_id})")
+        logger.info(f"🚀 Triggering scheduled pipeline: {pipeline_name} (execution={execution_id})")
 
         try:
             if not self.pipeline_runner_factory:
@@ -134,11 +134,12 @@ class PipelineScheduler:
             self._dispatch_async(pipeline_name, execution_id)
 
             schedule.last_execution_id = execution_id
-            print(f"✅ Scheduled execution created and dispatched: {execution_id}")
+            logger.info(f"✅ Scheduled execution created and dispatched: {execution_id}")
 
         except Exception as e:
-            print(f"❌ Failed to trigger scheduled pipeline '{pipeline_name}': {e}")
-            traceback.print_exc()
+            logger.error(
+                f"❌ Failed to trigger scheduled pipeline '{pipeline_name}': {e}", exc_info=True
+            )
             # Still advance the schedule to avoid a tight retry loop on persistent errors
 
         finally:
@@ -182,8 +183,7 @@ class PipelineScheduler:
                     runtime_params={},
                 )
             except Exception as e:
-                print(f"❌ Scheduled dispatch failed for {execution_id}: {e}")
-                traceback.print_exc()
+                logger.error(f"❌ Scheduled dispatch failed for {execution_id}: {e}", exc_info=True)
                 try:
                     runner.execution_manager.update_execution_state(
                         execution_id, "failed", error_message=str(e)
@@ -229,9 +229,11 @@ class PipelineScheduler:
             expr = pipeline.schedule
             assert expr is not None  # guaranteed by is_scheduled guard above
 
-            existing = db.query(PipelineSchedule).filter(
-                PipelineSchedule.pipeline_name == pipeline.name
-            ).first()
+            existing = (
+                db.query(PipelineSchedule)
+                .filter(PipelineSchedule.pipeline_name == pipeline.name)
+                .first()
+            )
 
             if existing is None:
                 row = PipelineSchedule(
@@ -241,7 +243,7 @@ class PipelineScheduler:
                     enabled="true",
                 )
                 db.add(row)
-                print(f"  ✓ Registered schedule for '{pipeline.name}' ({expr})")
+                logger.info(f"  ✓ Registered schedule for '{pipeline.name}' ({expr})")
 
             else:
                 # Re-enable if it was previously disabled
@@ -251,18 +253,20 @@ class PipelineScheduler:
                     # Cron expression changed — recalculate next fire time
                     existing.cron_expression = expr
                     existing.next_run_at = self._compute_next_run(expr, now)
-                    print(f"  ✓ Updated schedule for '{pipeline.name}' ({expr})")
+                    logger.info(f"  ✓ Updated schedule for '{pipeline.name}' ({expr})")
                 # Else: leave next_run_at unchanged (mid-interval restart case)
 
         # Soft-disable schedules for pipelines that no longer have schedule set
-        all_schedule_rows = db.query(PipelineSchedule).filter(
-            PipelineSchedule.enabled == "true"
-        ).all()
+        all_schedule_rows = (
+            db.query(PipelineSchedule).filter(PipelineSchedule.enabled == "true").all()
+        )
 
         for row in all_schedule_rows:
             if row.pipeline_name not in scheduled_names:
                 row.enabled = "false"
-                print(f"  ✓ Disabled schedule for '{row.pipeline_name}' (no longer scheduled)")
+                logger.info(
+                    f"  ✓ Disabled schedule for '{row.pipeline_name}' (no longer scheduled)"
+                )
 
     def reset_schedule(self, db: Session, pipeline_name: str, triggered_at: datetime) -> None:
         """
@@ -272,9 +276,11 @@ class PipelineScheduler:
         was just triggered manually via the API.
         The caller is responsible for committing the session.
         """
-        schedule = db.query(PipelineSchedule).filter(
-            PipelineSchedule.pipeline_name == pipeline_name
-        ).first()
+        schedule = (
+            db.query(PipelineSchedule)
+            .filter(PipelineSchedule.pipeline_name == pipeline_name)
+            .first()
+        )
 
         if schedule and schedule.enabled == "true":
             schedule.last_triggered_at = triggered_at

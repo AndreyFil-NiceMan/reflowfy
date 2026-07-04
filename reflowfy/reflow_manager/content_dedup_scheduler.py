@@ -5,6 +5,7 @@ Retention defaults to 24h; the same window bounds the rare case of a
 worker that crashed between claiming a hash and finishing the send.
 """
 
+import logging
 import os
 import threading
 from datetime import datetime, timezone, timedelta
@@ -15,6 +16,8 @@ from sqlalchemy.orm import Session
 
 from reflowfy.reflow_manager.models import ProcessedContent
 from reflowfy.reflow_manager.database import SessionLocal
+
+logger = logging.getLogger(__name__)
 
 CONTENT_DEDUP_RETENTION_HOURS = int(os.getenv("CONTENT_DEDUP_RETENTION_HOURS", "24"))
 CONTENT_DEDUP_SWEEP_INTERVAL = int(os.getenv("CONTENT_DEDUP_SWEEP_INTERVAL_SECONDS", "3600"))
@@ -49,7 +52,7 @@ class ContentDedupScheduler:
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
-        print(
+        logger.info(
             f"Content Dedup Sweeper started"
             f" (every {self.sweep_interval}s, retain {self.retention_hours}h)"
         )
@@ -70,10 +73,10 @@ class ContentDedupScheduler:
                 deleted = purge_expired_content(db, self.retention_hours)
                 db.commit()
                 if deleted:
-                    print(f"Content Dedup Sweeper purged {deleted} expired hash(es)")
+                    logger.info(f"Content Dedup Sweeper purged {deleted} expired hash(es)")
             except Exception as e:  # pragma: no cover
                 db.rollback()
-                print(f"Content Dedup Sweeper error: {e}")
+                logger.info(f"Content Dedup Sweeper error: {e}")
             finally:
                 db.close()
             self._stop_event.wait(timeout=self.sweep_interval)
