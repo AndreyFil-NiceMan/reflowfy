@@ -228,6 +228,12 @@ service.environment in Kibana. The ES password comes from a Secret, never inline
   value: {{ .url | quote }}
 - name: ELASTIC_LOG_INDEX
   value: {{ .index | default "reflowfy-logs" | quote }}
+- name: ELASTIC_LOG_VERIFY_CERTS
+  value: {{ .verifyCerts | default false | quote }}
+{{- if .caCerts }}
+- name: ELASTIC_LOG_CA_CERTS
+  value: {{ .caCerts | quote }}
+{{- end }}
 {{- if .username }}
 - name: ELASTIC_LOG_USERNAME
   value: {{ .username | quote }}
