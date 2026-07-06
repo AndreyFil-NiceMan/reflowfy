@@ -87,6 +87,29 @@ def test_bulk_flush_ships_batched_docs(monkeypatch):
     assert len(shipped) == 3
 
 
+def test_doc_level_rejections_are_counted(monkeypatch):
+    """ES accepting the request but rejecting docs must NOT be silently lost."""
+    def fake_bulk(client, actions, **kw):
+        acts = list(actions)
+        # simulate ES rejecting every doc (e.g. data-stream template conflict)
+        return (0, [{"index": {"status": 400, "error": "boom"}} for _ in acts])
+
+    monkeypatch.setattr(
+        "reflowfy.observability.elastic_handler.helpers.bulk", fake_bulk
+    )
+    before = m.logs_dropped_total._value.get()
+    h = ElasticLogHandler(
+        service_name="worker", client=object(),
+        flush_docs=2, flush_seconds=0.2, queue_max=100,
+    )
+    h.setFormatter(ECSJSONFormatter("worker"))
+    for i in range(2):
+        h.emit(_record(f"m{i}"))
+    time.sleep(0.6)
+    h.close()
+    assert m.logs_dropped_total._value.get() - before >= 2
+
+
 def test_build_client_selects_auth(monkeypatch):
     """username/password -> basic_auth; nothing set -> no auth."""
     calls = {}
@@ -112,6 +135,29 @@ def test_build_client_selects_auth(monkeypatch):
     h = ElasticLogHandler(service_name="t")
     assert "basic_auth" not in calls
     h.close()
+
+
+def test_tls_verification_off_by_default(monkeypatch):
+    """TLS verification is disabled unless ELASTIC_LOG_VERIFY_CERTS=true."""
+    calls = {}
+
+    def fake_es(url, **kw):
+        calls.clear()
+        calls.update(kw)
+        return object()
+
+    monkeypatch.setattr("reflowfy.observability.elastic_handler.Elasticsearch", fake_es)
+    monkeypatch.setenv("ELASTIC_LOG_URL", "https://es:9200")
+
+    # default: verification off
+    monkeypatch.delenv("ELASTIC_LOG_VERIFY_CERTS", raising=False)
+    ElasticLogHandler(service_name="t").close()
+    assert calls.get("verify_certs") is False
+
+    # opt back in
+    monkeypatch.setenv("ELASTIC_LOG_VERIFY_CERTS", "true")
+    ElasticLogHandler(service_name="t").close()
+    assert "verify_certs" not in calls
 
 
 def test_queue_full_drops_oldest_and_counts(monkeypatch):

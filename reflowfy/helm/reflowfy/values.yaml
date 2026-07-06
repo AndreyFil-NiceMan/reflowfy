@@ -184,6 +184,8 @@ observability:
   elasticLog:
     url: ''                    # e.g. https://es:9200 — blank keeps logs on stdout only
     index: reflowfy-logs       # daily index reflowfy-logs-YYYY.MM.DD
+    verifyCerts: false         # TLS verify off by default (ES8 self-signed); true to enforce
+    caCerts: ''                # path to CA bundle when verifyCerts is true
     username: ''               # e.g. elastic
     password: ''               # stored in a chart-managed Secret (<release>-elastic-log)
     existingSecret: ''         # optional: reference a pre-created Secret instead of password
