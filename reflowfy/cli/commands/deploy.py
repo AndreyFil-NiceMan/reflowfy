@@ -37,6 +37,10 @@ def register(app: typer.Typer):
         kafka_group_id: Optional[str] = typer.Option(None, "--kafka-group-id", envvar="KAFKA_GROUP_ID", help="Kafka consumer group ID for workers (or set KAFKA_GROUP_ID in .env)"),
         workers: int = typer.Option(1, "--workers", envvar="WORKERS", help="Worker replicas when KEDA disabled (or set WORKERS in .env)"),
         tag: Optional[str] = typer.Option(None, "--tag", "-t", envvar="IMAGE_TAG", help="Specific tag for the Reflowfy images (overrides default version)"),
+        log_destination: Optional[str] = typer.Option(None, "--log-destination", envvar="LOG_DESTINATION", help="Where logs go: stdout|elastic|both (or set LOG_DESTINATION in .env)"),
+        elastic_log_url: Optional[str] = typer.Option(None, "--elastic-log-url", envvar="ELASTIC_LOG_URL", help="Elasticsearch URL for log shipping (or set ELASTIC_LOG_URL in .env)"),
+        elastic_log_username: Optional[str] = typer.Option(None, "--elastic-log-username", envvar="ELASTIC_LOG_USERNAME", help="Elasticsearch username (or set ELASTIC_LOG_USERNAME in .env)"),
+        elastic_log_password: Optional[str] = typer.Option(None, "--elastic-log-password", envvar="ELASTIC_LOG_PASSWORD", help="Elasticsearch password (or set ELASTIC_LOG_PASSWORD in .env)"),
     ):
         """
         Deploy Reflowfy to Kubernetes/OpenShift using Helm.
@@ -171,6 +175,17 @@ def register(app: typer.Typer):
                 "--set", "worker.keda.enabled=false",
                 "--set", f"worker.replicaCount={workers}",
             ])
+
+        # Observability — forward log-shipping config from .env so prod ships to
+        # Elasticsearch. Without these the chart falls back to values.yaml defaults.
+        if log_destination:
+            cmd.extend(["--set", f"observability.logDestination={log_destination}"])
+        if elastic_log_url:
+            cmd.extend(["--set", f"observability.elasticLog.url={elastic_log_url}"])
+        if elastic_log_username:
+            cmd.extend(["--set", f"observability.elasticLog.username={elastic_log_username}"])
+        if elastic_log_password:
+            cmd.extend(["--set", f"observability.elasticLog.password={elastic_log_password}"])
 
         console.print("\n📋 [bold]Helm Command:[/bold]")
         console.print(" \\\n  ".join(cmd), style="cyan")

@@ -179,7 +179,7 @@ busybox:
 # Observability
 observability:
   environment: production      # ECS service.environment tag on every log (filter in Kibana)
-  logDestination: stdout       # stdout | elastic | both
+  logDestination: both         # stdout | elastic | both
   logJson: true
   elasticLog:
     url: ''                    # e.g. https://es:9200 — blank keeps logs on stdout only
