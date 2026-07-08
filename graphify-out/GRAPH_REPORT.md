@@ -1,12 +1,12 @@
-# Graph Report - reflowfy  (2026-07-03)
+# Graph Report - reflowfy  (2026-07-08)
 
 ## Corpus Check
-- 202 files · ~119,799 words
+- 207 files · ~131,216 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 4446 nodes · 6322 edges · 228 communities detected
-- Extraction: 87% EXTRACTED · 13% INFERRED · 0% AMBIGUOUS · INFERRED: 816 edges (avg confidence: 0.69)
+- 4631 nodes · 6560 edges · 230 communities detected
+- Extraction: 87% EXTRACTED · 13% INFERRED · 0% AMBIGUOUS · INFERRED: 855 edges (avg confidence: 0.7)
 - Token cost: 0 input · 0 output
 
 ## Community Hubs (Navigation)
@@ -191,8 +191,8 @@
 - [[_COMMUNITY_Community 185|Community 185]]
 - [[_COMMUNITY_Community 186|Community 186]]
 - [[_COMMUNITY_Community 187|Community 187]]
-- [[_COMMUNITY_Community 195|Community 195]]
-- [[_COMMUNITY_Community 196|Community 196]]
+- [[_COMMUNITY_Community 189|Community 189]]
+- [[_COMMUNITY_Community 190|Community 190]]
 - [[_COMMUNITY_Community 197|Community 197]]
 - [[_COMMUNITY_Community 198|Community 198]]
 - [[_COMMUNITY_Community 199|Community 199]]
@@ -238,6 +238,8 @@
 - [[_COMMUNITY_Community 239|Community 239]]
 - [[_COMMUNITY_Community 240|Community 240]]
 - [[_COMMUNITY_Community 241|Community 241]]
+- [[_COMMUNITY_Community 242|Community 242]]
+- [[_COMMUNITY_Community 243|Community 243]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `PipelineParameter` - 52 edges
@@ -249,149 +251,149 @@
 7. `PipelineScheduler` - 37 edges
 8. `e2e_mock()` - 36 edges
 9. `S3Source` - 34 edges
-10. `PipelineRunner` - 32 edges
+10. `PipelineRunner` - 33 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `test_v2_payload_survives_kafka_json_wire()` --calls--> `build_job_payload()`  [INFERRED]
   tests/unit/test_executor_worker_sourcing.py → reflowfy/reflow_manager/pipeline_runner.py
+- `test_build_job_payload_v2_shape()` --calls--> `build_job_payload()`  [INFERRED]
+  tests/unit/test_pipeline_runner_payload.py → reflowfy/reflow_manager/pipeline_runner.py
+- `test_build_job_payload_sets_dedup_check()` --calls--> `build_job_payload()`  [INFERRED]
+  tests/unit/test_pipeline_runner_payload.py → reflowfy/reflow_manager/pipeline_runner.py
 - `TestWorkerErrorPropagation` --uses--> `PipelineScheduler`  [INFERRED]
   tests/e2e/test_dx_improvements.py → reflowfy/reflow_manager/pipeline_scheduler.py
 - `TestJobsEndpoint` --uses--> `PipelineScheduler`  [INFERRED]
-  tests/e2e/test_dx_improvements.py → reflowfy/reflow_manager/pipeline_scheduler.py
-- `TestCronValidation` --uses--> `PipelineScheduler`  [INFERRED]
-  tests/e2e/test_dx_improvements.py → reflowfy/reflow_manager/pipeline_scheduler.py
-- `TestDeduplicationAuditTrail` --uses--> `PipelineScheduler`  [INFERRED]
   tests/e2e/test_dx_improvements.py → reflowfy/reflow_manager/pipeline_scheduler.py
 
 ## Communities
 
 ### Community 0 - "Community 0"
 Cohesion: 0.01
-Nodes (169): BaseSource, IdBasedPipelineMeta, Metaclass for automatic ID-based pipeline registration.      When a class inheri, Metaclass for automatic ID-based pipeline registration.      When a class inheri, Factory for creating sources by type name.      Allows dynamic source creation b, SourceFactory, BaseSource, Base source interface for data fetching and job splitting. (+161 more)
+Nodes (95): AbstractPipeline, E2EBatchIdentityPipeline, E2EContextProbePipeline, E2EErrorTolerantPipeline, E2ERuntimeParamsPipeline, Advanced Transformation Test Pipelines.  Four pipelines for testing transformati, Stamps all 4 ExecutionContext keys onto records., Reads runtime_params; test sends env=staging and multiplier=3. (+87 more)
 
 ### Community 1 - "Community 1"
 Cohesion: 0.01
-Nodes (146): BaseTransformation, build_flat_runtime_params(), build_flat_runtime_params_from_metadata(), ParameterResolver, Execution context for passing runtime state through the pipeline., Extract all parameter names from Jinja2 templates.          Args:             ob, Build flat runtime_params from serialized job metadata.      Args:         metad, Build flat runtime_params from serialized job metadata.      Args:         metad (+138 more)
+Nodes (163): BaseSource, id_based_api_source(), IDBasedAPISource, paginated_api_source(), PaginatedAPISource, REST API sources with pagination support., True when the endpoint template contains ``{id}``., Get or create HTTP client. (+155 more)
 
 ### Community 2 - "Community 2"
-Cohesion: 0.01
-Nodes (162): id_based_api_source(), IDBasedAPISource, paginated_api_source(), PaginatedAPISource, REST API sources with pagination support., True when the endpoint template contains ``{id}``., Get or create HTTP client., Get or create HTTP client. (+154 more)
+Cohesion: 0.02
+Nodes (106): ABC, ExecutionTracker, Execution tracking and status management., Track or update an execution.          Args:             status: ExecutionStatus, Get execution status by ID.          Args:             execution_id: Execution I, Update job completion status.          Called by workers when a job completes., Thread-safe in-memory execution tracker.      In production, this should be back, Get all tracked executions. (+98 more)
 
 ### Community 3 - "Community 3"
 Cohesion: 0.02
-Nodes (144): ABCMeta, AbstractPipeline, define_destination(), define_source(), define_transformations(), PipelineMeta, Abstract base class for configurable pipelines.  This module provides the Abstra, Validate a value against this parameter's type and constraints.          Args: (+136 more)
+Nodes (141): ElasticSource, Split Elasticsearch data into jobs using scroll API.          Each scroll page b, Elasticsearch source connector.      Supports:     - Runtime parameter resolutio, Elasticsearch source connector.      Supports:     - Runtime parameter resolutio, Return how many documents the base query matches (metadata only)., Open a PIT and yield one source per sliced-scroll slice.          ``num_slices``, Return how many documents the base query matches (metadata only)., Return how many documents the base query matches (metadata only). (+133 more)
 
 ### Community 4 - "Community 4"
 Cohesion: 0.01
-Nodes (90): AbstractPipeline, E2EBatchIdentityPipeline, E2EContextProbePipeline, E2EErrorTolerantPipeline, E2ERuntimeParamsPipeline, Advanced Transformation Test Pipelines.  Four pipelines for testing transformati, Stamps all 4 ExecutionContext keys onto records., Reads runtime_params; test sends env=staging and multiplier=3. (+82 more)
+Nodes (86): e2e_console(), Pre-configured console destination for E2E tests., Pre-configured console destination for E2E tests., Pre-configured console destination for E2E tests., Pre-configured console destination for E2E tests., Pre-configured console destination for E2E tests., Pre-configured console destination for E2E tests., IdBasedPipeline (+78 more)
 
 ### Community 5 - "Community 5"
-Cohesion: 0.01
-Nodes (87): ExecutionTracker, Execution tracking and status management., Track or update an execution.          Args:             status: ExecutionStatus, Get execution status by ID.          Args:             execution_id: Execution I, Update job completion status.          Called by workers when a job completes., Thread-safe in-memory execution tracker.      In production, this should be back, Get all tracked executions., Clear all tracked executions (for testing). (+79 more)
+Cohesion: 0.02
+Nodes (130): AbstractPipeline, define_destination(), define_source(), define_transformations(), Abstract base class for configurable pipelines.  This module provides the Abstra, Validate a value against this parameter's type and constraints.          Args:, Validate a value against this parameter's type and constraints.          Args:, Validate a value against this parameter's type and constraints.          Args: (+122 more)
 
 ### Community 6 - "Community 6"
-Cohesion: 0.02
-Nodes (127): client(), E2E Tests for IdBasedPipeline Feature.  Tests the IdBasedPipeline by running a p, Test with an uneven number of IDs so the last batch is smaller.          25 IDs, Test with an uneven number of IDs so the last batch is smaller.          v2: one, Test that IdBasedPipeline runs to completion with all jobs passing., Test that IdBasedPipeline runs to completion with all jobs passing., Test IdBasedPipeline works with a single ID., Test IdBasedPipeline works with a single ID. (+119 more)
+Cohesion: 0.01
+Nodes (153): create_checkpoint(), _dispatch_pipeline_jobs(), get_checkpoints(), get_execution_errors(), get_jobs(), _get_kafka_config(), get_pipeline(), get_reflow_manager() (+145 more)
 
 ### Community 7 - "Community 7"
 Cohesion: 0.02
-Nodes (138): add_source_info(), api_add_dest_info(), api_add_source_info(), api_batch_add_metadata(), api_batch_filter_active(), api_id_add_source_info(), api_id_log_record_count(), api_log_record_count() (+130 more)
+Nodes (82): ApiDestination, e2e_http(), e2e_http_runtime_params(), e2e_kafka(), Reusable destination configurations for E2E test pipelines.  All destinations us, Pre-configured Kafka destination for E2E tests., Pre-configured Kafka destination for E2E tests., E2E HTTP destination that embeds runtime_params into the payload at send time. (+74 more)
 
 ### Community 8 - "Community 8"
 Cohesion: 0.02
-Nodes (77): ApiDestination, e2e_http(), e2e_http_runtime_params(), e2e_kafka(), Reusable destination configurations for E2E test pipelines.  All destinations us, Pre-configured Kafka destination for E2E tests., Pre-configured Kafka destination for E2E tests., E2E HTTP destination that embeds runtime_params into the payload at send time. (+69 more)
+Nodes (116): BaseTransformation, build_flat_runtime_params(), build_flat_runtime_params_from_metadata(), ParameterResolver, Execution context for passing runtime state through the pipeline., Extract all parameter names from Jinja2 templates.          Args:             ob, Build flat runtime_params from serialized job metadata.      Args:         metad, Build flat runtime_params from serialized job metadata.      Args:         metad (+108 more)
 
 ### Community 9 - "Community 9"
 Cohesion: 0.02
-Nodes (93): ABC, Base, BaseDispatcher, BaseExecutor, Base class for execution engines.      Executors are responsible for:     1. Exe, ContentDedupScheduler, init_content_dedup_scheduler(), purge_expired_content() (+85 more)
+Nodes (127): client(), E2E Tests for IdBasedPipeline Feature.  Tests the IdBasedPipeline by running a p, Test with an uneven number of IDs so the last batch is smaller.          25 IDs, Test with an uneven number of IDs so the last batch is smaller.          v2: one, Test that IdBasedPipeline runs to completion with all jobs passing., Test that IdBasedPipeline runs to completion with all jobs passing., Test IdBasedPipeline works with a single ID., Test IdBasedPipeline works with a single ID. (+119 more)
 
 ### Community 10 - "Community 10"
 Cohesion: 0.02
-Nodes (86): BaseDestination, api_destination(), ApiDestination, API destination for webhooks and REST endpoints., Merge static body fields with record data and runtime metadata., Merge static body fields with record data and runtime metadata., API destination for sending data to webhooks and REST endpoints.      Supports:, Send records to the API endpoint.          Args:             records: List of re (+78 more)
+Nodes (138): add_source_info(), api_add_dest_info(), api_add_source_info(), api_batch_add_metadata(), api_batch_filter_active(), api_id_add_source_info(), api_id_log_record_count(), api_log_record_count() (+130 more)
 
 ### Community 11 - "Community 11"
 Cohesion: 0.02
-Nodes (133): create_checkpoint(), _dispatch_pipeline_jobs(), get_checkpoints(), get_execution_errors(), get_execution_stats(), get_jobs(), _get_kafka_config(), get_pipeline() (+125 more)
+Nodes (98): Base, BaseDispatcher, ContentDedupScheduler, init_content_dedup_scheduler(), purge_expired_content(), Background sweeper that purges expired processed_content rows.  Mirrors pipeline, Delete processed_content rows older than retention_hours. Returns count., Delete processed_content rows older than retention_hours. Returns count. (+90 more)
 
 ### Community 12 - "Community 12"
 Cohesion: 0.02
-Nodes (125): BaseModel, BatchPayload, _check_auth(), get_records(), get_stats(), health_check(), Mock API Webhook Server for ApiDestination E2E Tests.  A minimal FastAPI server, Receive individual records from ApiDestination (batch_requests=False). (+117 more)
+Nodes (86): BaseDestination, api_destination(), ApiDestination, API destination for webhooks and REST endpoints., Merge static body fields with record data and runtime metadata., Merge static body fields with record data and runtime metadata., API destination for sending data to webhooks and REST endpoints.      Supports:, Send records to the API endpoint.          Args:             records: List of re (+78 more)
 
 ### Community 13 - "Community 13"
 Cohesion: 0.02
-Nodes (68): e2e_console(), Pre-configured console destination for E2E tests., Pre-configured console destination for E2E tests., Pre-configured console destination for E2E tests., Pre-configured console destination for E2E tests., Pre-configured console destination for E2E tests., Pre-configured console destination for E2E tests., e2e_elastic() (+60 more)
+Nodes (109): Initialize batch_id if not provided., Initialize batch_id if not provided., Initialize batch_id if not provided., JSON-safe normalization for records and payloads., Recursively convert an object to a JSON-serializable form.      Mirrors the norm, to_json_safe(), client(), E2E Tests for Execution Lifecycle.  Tests pause/resume functionality and stats p (+101 more)
 
 ### Community 14 - "Community 14"
 Cohesion: 0.02
-Nodes (100): build_job_payload(), _chunk(), _filter_volatile_keys(), _finished_count(), generate_job_id(), PipelineRunner, Pipeline execution runner for ReflowManager., Initialize pipeline runner.          Args:             execution_manager: Execut (+92 more)
+Nodes (125): BaseModel, BatchPayload, _check_auth(), get_records(), get_stats(), health_check(), Mock API Webhook Server for ApiDestination E2E Tests.  A minimal FastAPI server, Receive individual records from ApiDestination (batch_requests=False). (+117 more)
 
 ### Community 15 - "Community 15"
-Cohesion: 0.03
-Nodes (92): clean_pipeline_registry(), Advanced E2E Tests for CLI 'reflowfy test' command.  Covers parameter type coerc, Pipeline with a float param 'ratio' (default 1.0)., Pipeline with a float param 'ratio' (default 1.0)., Pipeline with a bool param 'enabled' (default False)., Pipeline with a bool param 'enabled' (default False)., Pipeline with an optional string param 'env' defaulting to 'hello'., Pipeline with an optional string param 'env' defaulting to 'hello'. (+84 more)
+Cohesion: 0.02
+Nodes (121): DLQJob, Dead Letter Queue job for scheduled reflow.      Stores jobs from external servi, Dead Letter Queue job for scheduled reflow.      Stores jobs from external servi, Convert to dictionary representation., Convert to dictionary representation., build_job_payload(), _chunk(), _filter_volatile_keys() (+113 more)
 
 ### Community 16 - "Community 16"
-Cohesion: 0.03
-Nodes (86): claim_content_hash(), compute_content_hash(), Worker-side content deduplication primitive.  `compute_content_hash` reproduces, Deterministic SHA256 over stable job content (v1 semantics)., Atomically claim a content hash. Returns True iff this caller inserted it., Release this caller's own claim so a retry can reprocess., release_content_hash(), session_factory() (+78 more)
+Cohesion: 0.02
+Nodes (91): console_destination(), Console destination for testing and debugging., Factory function for console destination.      Example:         >>> destination, AddProcessingInfo, FilterActiveUsers, Simple test pipeline that works without any external dependencies.  Auto-registe, Return mock data source., Return mock data source. (+83 more)
 
 ### Community 17 - "Community 17"
 Cohesion: 0.03
-Nodes (82): get_dockerfiles_path(), get_helm_chart_path(), get_package_path(), Shared utilities for CLI commands., Get the path to the installed reflowfy package., Get path to the bundled Helm chart. Falls back to local ./helm/reflowfy if avail, Get path to Dockerfiles (templates for init or dev source)., _build_images() (+74 more)
+Nodes (96): claim_content_hash(), compute_content_hash(), Worker-side content deduplication primitive.  `compute_content_hash` reproduces, Deterministic SHA256 over stable job content (v1 semantics)., Atomically claim a content hash. Returns True iff this caller inserted it., Release this caller's own claim so a retry can reprocess., release_content_hash(), session_factory() (+88 more)
 
 ### Community 18 - "Community 18"
-Cohesion: 0.05
-Nodes (53): PipelineSchedule, Persistent cron schedule state for a scheduled pipeline.      One row per pipeli, Convert to dictionary representation., Persistent cron schedule state for a scheduled pipeline.      One row per pipeli, Convert to dictionary representation., Convert to dictionary representation., _compute_next_run(), init_pipeline_scheduler() (+45 more)
+Cohesion: 0.03
+Nodes (61): ABCMeta, PipelineMeta, Metaclass for automatic pipeline registration.      When a class inherits from A, Metaclass for automatic pipeline registration.      When a class inherits from A, IdBasedPipelineMeta, Metaclass for automatic ID-based pipeline registration.      When a class inheri, Metaclass for automatic ID-based pipeline registration.      When a class inheri, Factory for creating source instances by type name. (+53 more)
 
 ### Community 19 - "Community 19"
 Cohesion: 0.03
-Nodes (61): AddProcessingInfo, FilterActiveUsers, Simple test pipeline that works without any external dependencies.  Auto-registe, Return mock data source., Return mock data source., Return console destination., Return console destination., Return transformation pipeline. (+53 more)
+Nodes (92): clean_pipeline_registry(), Advanced E2E Tests for CLI 'reflowfy test' command.  Covers parameter type coerc, Pipeline with a float param 'ratio' (default 1.0)., Pipeline with a float param 'ratio' (default 1.0)., Pipeline with a bool param 'enabled' (default False)., Pipeline with a bool param 'enabled' (default False)., Pipeline with an optional string param 'env' defaulting to 'hello'., Pipeline with an optional string param 'env' defaulting to 'hello'. (+84 more)
 
 ### Community 20 - "Community 20"
 Cohesion: 0.04
-Nodes (53): check_elasticsearch(), check_kafka(), check_mock_api(), check_mock_http(), check_postgres(), check_reflow_manager(), pytest_collection_modifyitems(), pytest_configure() (+45 more)
+Nodes (58): PipelineSchedule, Persistent cron schedule state for a scheduled pipeline.      One row per pipeli, Convert to dictionary representation., Persistent cron schedule state for a scheduled pipeline.      One row per pipeli, Convert to dictionary representation., Convert to dictionary representation., _compute_next_run(), init_pipeline_scheduler() (+50 more)
 
 ### Community 21 - "Community 21"
 Cohesion: 0.04
-Nodes (43): _get_schedule(), E2E Tests for Pipeline Schedule Feature.  Requires running services (ReflowManag, POST /run on a scheduled pipeline must advance next_run_at., POST /run on a scheduled pipeline must advance next_run_at., After a manual trigger, last_triggered_at must be set to a recent         timest, After a manual trigger, last_triggered_at must be set to a recent         timest, After a POST /run, last_triggered_at must be non-null., After a POST /run, last_triggered_at must be non-null. (+35 more)
+Nodes (53): check_elasticsearch(), check_kafka(), check_mock_api(), check_mock_http(), check_postgres(), check_reflow_manager(), pytest_collection_modifyitems(), pytest_configure() (+45 more)
 
 ### Community 22 - "Community 22"
-Cohesion: 0.03
-Nodes (43): example_kafka(), Example reusable destination configuration.  Use the @destination decorator to c, Example Kafka destination configuration.      Usage in a pipeline:         from, Example Kafka destination configuration.      Usage in a pipeline:         from, kafka_destination(), Kafka destination connector using aiokafka., Factory function for Kafka destination.      Example:         >>> destination =, Factory function for Kafka destination.      Example:         >>> destination = (+35 more)
+Cohesion: 0.04
+Nodes (43): _get_schedule(), E2E Tests for Pipeline Schedule Feature.  Requires running services (ReflowManag, POST /run on a scheduled pipeline must advance next_run_at., POST /run on a scheduled pipeline must advance next_run_at., After a manual trigger, last_triggered_at must be set to a recent         timest, After a manual trigger, last_triggered_at must be set to a recent         timest, After a POST /run, last_triggered_at must be non-null., After a POST /run, last_triggered_at must be non-null. (+35 more)
 
 ### Community 23 - "Community 23"
-Cohesion: 0.04
-Nodes (44): define_destination(), define_source(), define_transformations(), IdBasedPipeline, ID-based pipeline for dynamic per-ID execution.  This module provides the IdBase, Initialize the ID-based pipeline.          Args:             rate_limit: Rate li, Initialize the ID-based pipeline.          Args:             rate_limit: Rate li, Define additional parameters this pipeline accepts (beyond 'ids').          The (+36 more)
+Cohesion: 0.03
+Nodes (44): example_kafka(), Example reusable destination configuration.  Use the @destination decorator to c, Example Kafka destination configuration.      Usage in a pipeline:         from, Example Kafka destination configuration.      Usage in a pipeline:         from, kafka_destination(), Kafka destination connector using aiokafka., Factory function for Kafka destination.      Example:         >>> destination =, Factory function for Kafka destination.      Example:         >>> destination = (+36 more)
 
 ### Community 24 - "Community 24"
 Cohesion: 0.05
-Nodes (41): discover_and_load_pipelines(), Global pipeline discovery utility.  This module provides centralized pipeline au, Recursively scan and import all Python modules under a directory.      Walks the, Auto-discover and import all pipeline modules and reusable components.      Scan, Auto-discover and import all pipeline modules and reusable components.      Scan, _scan_directory(), _consumer(), Unit tests for KafkaJobConsumer per-message handling. (+33 more)
+Nodes (47): discover_and_load_pipelines(), Global pipeline discovery utility.  This module provides centralized pipeline au, Recursively scan and import all Python modules under a directory.      Walks the, Recursively scan and import all Python modules under a directory.      Walks the, Auto-discover and import all pipeline modules and reusable components.      Scan, Auto-discover and import all pipeline modules and reusable components.      Scan, Auto-discover and import all pipeline modules and reusable components.      Scan, _scan_directory() (+39 more)
 
 ### Community 25 - "Community 25"
+Cohesion: 0.05
+Nodes (42): install_context_filter(), log_context(), Bind per-job context onto every log record via a LogRecordFactory + contextvars., Install the context-injecting record factory. Idempotent., Bind fields (execution_id, job_id, pipeline_name, ...) for the enclosed scope., ElasticLogHandler, A logging.Handler that bulk-ships records to Elasticsearch off the hot path.  De, Print a shipping problem to stderr at most once per minute (bypasses         the (+34 more)
+
+### Community 26 - "Community 26"
 Cohesion: 0.06
 Nodes (32): _get_errors(), manager_client(), E2E Tests for API Destination.  Verifies that ApiDestination correctly routes ru, Verify unknown pipeline name returns 404 (proves registry validation works)., tenant_id is required — execution should fail when omitted., env has a default value — pipeline should succeed without it., env is constrained to ['staging', 'production'] — invalid value should fail., tenant_id from runtime_params must appear as a URL query param. (+24 more)
 
-### Community 26 - "Community 26"
+### Community 27 - "Community 27"
+Cohesion: 0.05
+Nodes (46): create_app(), main(), FastAPI application factory., Dynamically create routes for all registered pipelines.      Called at startup a, Application entry point., Application entry point., Application entry point., Create and configure FastAPI application.      Returns:         Configured FastA (+38 more)
+
+### Community 28 - "Community 28"
 Cohesion: 0.07
 Nodes (34): client(), _pipeline_info(), E2E Tests: enable_duplicate_jobs flag.  Verifies that: - enable_duplicate_jobs=F, Two consecutive dedup runs: after the first, the second must skip every job., enable_duplicate_jobs=True API override bypasses dedup even on a         pipelin, enable_duplicate_jobs=True API override bypasses dedup even on a         pipelin, Tests for enable_duplicate_jobs=True (allow duplicates, baseline)., UUID-based pipeline always creates jobs — no skipping ever occurs. (+26 more)
 
-### Community 27 - "Community 27"
+### Community 29 - "Community 29"
 Cohesion: 0.06
 Nodes (27): Advanced E2E Tests for CLI commands (new, init, deploy, build).  Covers gaps not, Creating the same transformation twice should fail with exit 1., Tests for the 'reflowfy init' project initialisation command., init --name billing_etl' should create pipelines/billing_etl.py with an Abstract, init must create all 5 standard directories., Running init twice should succeed (exit 0) without raising an exception., Tests for edge cases in the 'reflowfy deploy' Helm deployment command., --no-deploy-postgres without DATABASE_URL env var → exit 1. (+19 more)
 
-### Community 28 - "Community 28"
+### Community 30 - "Community 30"
 Cohesion: 0.09
 Nodes (28): clear_received_records(), get_received_records(), E2E tests for the unified runtime_params flow through transformations.  Tests ve, params_step1_enrich writes step1_count + step1_ran into runtime_params.     para, params_step1_enrich writes step1_count + step1_ran into runtime_params.     para, E2EParamsEnrichPipeline.define_source injects 'injected_by_source'.     params_s, A param set by the first transformation must cause define_transformations, E2EParamsEnrichPipeline.define_source injects 'injected_by_source'.     params_s (+20 more)
 
-### Community 29 - "Community 29"
-Cohesion: 0.07
-Nodes (33): create_app(), main(), FastAPI application factory., Application entry point., Application entry point., Create and configure FastAPI application.      Returns:         Configured FastA, Create and configure FastAPI application.      Returns:         Configured FastA, Dynamically create routes for all registered pipelines.      Called at startup a (+25 more)
-
-### Community 30 - "Community 30"
+### Community 31 - "Community 31"
 Cohesion: 0.09
 Nodes (26): client(), _get_records(), E2E Tests for Advanced Transformation Context Features.  Tests that ExecutionCon, All records from a single execution must carry the same execution_id         reg, E2EBatchIdentityPipeline sends 30 records in 3 batches of 10.         batch_id i, Verify that runtime_params passed in the run request reach transformations., Pipeline receives runtime_params={"env": "staging", "multiplier": 3}.         Ev, With multiplier=3, each record's _value should equal record.id * 3. (+18 more)
-
-### Community 31 - "Community 31"
-Cohesion: 0.1
-Nodes (21): client(), E2E Tests for Execution Lifecycle.  Tests pause/resume functionality and stats p, Pause an already completed execution.                  The API currently allows, Tests for POST /executions/{id}/resume endpoint., Pause then resume, and verify the pipeline eventually completes., Resume a non-existent execution returns 400/404., Resume a running (not paused) execution returns 400., Tests for stats progression during pipeline execution. (+13 more)
 
 ### Community 32 - "Community 32"
 Cohesion: 0.1
@@ -434,68 +436,68 @@ Cohesion: 0.12
 Nodes (12): check_elasticsearch(), client(), E2E Tests for Elasticsearch Source.  Tests the ElasticSource connector by runnin, Test that pipeline runs to completion., A query matching no documents must create 0 jobs (no no-op job).          Seeded, HTTP client for ReflowManager API., Verify Elasticsearch is available and has test data., Test Elasticsearch source pipeline. (+4 more)
 
 ### Community 42 - "Community 42"
-Cohesion: 0.15
-Nodes (14): E2E Tests for decorator components (@source, @destination, @transformation).  Ve, Verify shared sources are registered correctly., Verify shared destinations are registered correctly., Verify shared sources return valid configurations., Verify shared destinations return valid configurations., Verify we can create a transformation with a decorator dynamically., test_dynamic_transformation_decorator(), test_shared_destination_invocation() (+6 more)
+Cohesion: 0.13
+Nodes (15): get_dockerfiles_path(), get_helm_chart_path(), get_package_path(), Shared utilities for CLI commands., Get the path to the installed reflowfy package., Get path to the bundled Helm chart. Falls back to local ./helm/reflowfy if avail, Get path to Dockerfiles (templates for init or dev source)., _build_images() (+7 more)
 
 ### Community 43 - "Community 43"
 Cohesion: 0.15
-Nodes (12): client(), kafka_consumer(), E2E Tests for Kafka Destination.  Tests the KafkaDestination connector by runnin, Test that pipeline runs to completion., HTTP client for ReflowManager API., Create a Kafka consumer for verifying messages., Test Kafka destination pipeline., Verify ReflowManager is running. (+4 more)
+Nodes (14): E2E Tests for decorator components (@source, @destination, @transformation).  Ve, Verify shared sources are registered correctly., Verify shared destinations are registered correctly., Verify shared sources return valid configurations., Verify shared destinations return valid configurations., Verify we can create a transformation with a decorator dynamically., test_dynamic_transformation_decorator(), test_shared_destination_invocation() (+6 more)
 
 ### Community 44 - "Community 44"
+Cohesion: 0.15
+Nodes (12): client(), kafka_consumer(), E2E Tests for Kafka Destination.  Tests the KafkaDestination connector by runnin, Test that pipeline runs to completion., HTTP client for ReflowManager API., Create a Kafka consumer for verifying messages., Test Kafka destination pipeline., Verify ReflowManager is running. (+4 more)
+
+### Community 45 - "Community 45"
 Cohesion: 0.14
 Nodes (11): check_postgres(), client(), E2E Tests for SQL Source.  Tests the SqlSource connector by running a pipeline t, Test that pipeline runs to completion., HTTP client for ReflowManager API., Verify PostgreSQL is available and has test data., Test SQL source pipeline., Verify ReflowManager is running. (+3 more)
 
-### Community 45 - "Community 45"
+### Community 46 - "Community 46"
 Cohesion: 0.18
 Nodes (12): E2E Tests for CLI 'reflowfy build' command.  Tests the build command's argument, Create a temporary workspace for CLI tests., Tests for the 'reflowfy build' command., Build without --registry should fail with exit code 1., Build should warn when pipelines/ directory is missing., temp_workspace(), test_build_uses_custom_project(), test_build_with_no_cache_flag() (+4 more)
 
-### Community 46 - "Community 46"
+### Community 47 - "Community 47"
 Cohesion: 0.17
 Nodes (13): E2E Tests for pipeline auto-registration.  Verifies that the PipelineMeta metacl, Verify that E2E test pipelines are auto-registered., Verify that E2E test pipelines are auto-registered., Verify registry names match the name attribute., Verify registry names match the name attribute., Verify we can auto-register a pipeline dynamically., Verify we can auto-register a pipeline dynamically., Verify idempotent registration prevents duplicates. (+5 more)
 
-### Community 47 - "Community 47"
+### Community 48 - "Community 48"
 Cohesion: 0.19
 Nodes (11): client(), E2E Tests for Concurrent Pipeline Executions.  Tests that the system correctly h, Test running the same pipeline twice with different executions., Start the same pipeline twice — both should get unique execution IDs         and, HTTP client for ReflowManager API., Wait for a pipeline execution to complete., Test running two different pipelines simultaneously., Start HTTP-dest and Kafka-dest pipelines concurrently.         Both should compl (+3 more)
 
-### Community 48 - "Community 48"
+### Community 49 - "Community 49"
 Cohesion: 0.29
 Nodes (11): build_auth_headers(), Shared HTTP authentication header construction.  Used by both the API source (sy, Return a new headers dict with the auth header applied.      - ``bearer``  -> ``, Unit tests for the shared HTTP auth header helper., test_apikey_sets_x_api_key(), test_basic_base64_encodes_user_pass(), test_bearer_sets_authorization(), test_input_dict_not_mutated() (+3 more)
 
-### Community 49 - "Community 49"
+### Community 50 - "Community 50"
 Cohesion: 0.36
 Nodes (8): client(), E2E: worker-side content deduplication.  enable_duplicate_jobs=False now means t, Unlike the old manager-side dedup, jobs are now always created         and dispa, _records(), _reset(), _run(), TestWorkerContentDedup, _wait()
 
-### Community 50 - "Community 50"
+### Community 51 - "Community 51"
 Cohesion: 0.27
 Nodes (11): create_index(), get_elasticsearch_url(), insert_sample_data(), main(), Initialize Elasticsearch test data for E2E tests.  Creates a test index with sam, Verify inserted data., Initialize test data., Get Elasticsearch URL. (+3 more)
 
-### Community 51 - "Community 51"
+### Community 52 - "Community 52"
 Cohesion: 0.17
 Nodes (11): get_dlq_stats(), get_failure_stats(), get_overview_stats(), get_pipeline_detail(), get_pipeline_stats(), Statistics API routes for ReflowManager., Detailed statistics for a single pipeline, including recent executions.      Arg, Global dashboard statistics across all pipelines.      Returns total executions, (+3 more)
 
-### Community 52 - "Community 52"
+### Community 53 - "Community 53"
 Cohesion: 0.17
 Nodes (11): get_archived_job(), get_schedule(), get_schedule_stats(), list_archived_jobs(), list_schedules(), Schedule management routes for ReflowManager., Get a single archived (permanently failed) DLQ job by ID., List all pipeline schedule entries. (+3 more)
 
-### Community 53 - "Community 53"
+### Community 54 - "Community 54"
 Cohesion: 0.36
 Nodes (7): client(), _get_mock_records(), _get_mock_stats(), E2E test for elastic source routing into two destinations.  Verifies (v2 worker-, reset_mock_http(), _run_pipeline(), TestElasticRoutedDestinations
 
-### Community 54 - "Community 54"
+### Community 55 - "Community 55"
 Cohesion: 0.29
 Nodes (9): E2E Tests for CLI 'reflowfy run' command.  Tests the run command's Docker Compos, Create a temporary workspace for CLI tests., Tests for the 'reflowfy run' command., temp_workspace(), test_run_calls_docker_compose_up(), test_run_with_build_and_detach(), test_run_with_build_flag(), test_run_with_detach_flag() (+1 more)
 
-### Community 55 - "Community 55"
+### Community 56 - "Community 56"
 Cohesion: 0.2
 Nodes (5): destination(), DestinationRegistry, Decorator for registering reusable destination configurations.  Users define reu, Registry for reusable destination factory functions., Decorator to register a reusable destination configuration.      Args:         n
 
-### Community 56 - "Community 56"
+### Community 57 - "Community 57"
 Cohesion: 0.2
 Nodes (5): Decorator for registering reusable source configurations.  Users define reusable, Registry for reusable source factory functions., Decorator to register a reusable source configuration.      Args:         name:, source(), SourceRegistry
-
-### Community 57 - "Community 57"
-Cohesion: 0.22
-Nodes (5): Factory for creating source instances by type name., Register built-in source types by class name., Register built-in source types., register(), _register_builtin_sources()
 
 ### Community 58 - "Community 58"
 Cohesion: 0.27
@@ -510,8 +512,8 @@ Cohesion: 0.33
 Nodes (7): E2E Tests for CLI 'reflowfy check' command.  Tests the check command's kubectl i, Create a temporary workspace for CLI tests., Tests for the 'reflowfy check' command., temp_workspace(), test_check_calls_kubectl_get_pods(), test_check_outputs_status_message(), TestCheckCommand
 
 ### Community 61 - "Community 61"
-Cohesion: 0.29
-Nodes (6): JSONFormatter, Structured logging configuration., JSON log formatter for structured logging., Format log record as JSON., Setup logging configuration.      Args:         json_logs: Whether to use JSON f, setup_logging()
+Cohesion: 0.25
+Nodes (7): E2E: verify the observability signals actually flow.  In E2E the stack runs EXEC, The manager exposes Prometheus metrics with reflowfy_* families., After a run, execution + job counters advance., Manager logs are shipped to the e2e Elasticsearch as reflowfy-logs-*., test_logs_land_in_elastic(), test_metrics_endpoint_exposes_reflowfy_families(), test_pipeline_run_records_metrics()
 
 ### Community 62 - "Community 62"
 Cohesion: 0.33
@@ -989,196 +991,204 @@ Nodes (1): Verify Kafka topic exists (wait for it if necessary).
 Cohesion: 1.0
 Nodes (1): Test that messages are sent to Kafka topic.
 
-### Community 195 - "Community 195"
+### Community 189 - "Community 189"
 Cohesion: 1.0
-Nodes (1): Define the source to use based on runtime parameters.          Args:
+Nodes (1): Dispatch a single job.
 
-### Community 196 - "Community 196"
+### Community 190 - "Community 190"
 Cohesion: 1.0
-Nodes (1): Define the destination to use based on post-transformation records and runtime p
+Nodes (1): Dispatch a batch of jobs.
 
 ### Community 197 - "Community 197"
 Cohesion: 1.0
-Nodes (1): Define list of transformations to apply based on records and runtime parameters.
+Nodes (1): Define the source to use based on runtime parameters.          Args:
 
 ### Community 198 - "Community 198"
 Cohesion: 1.0
-Nodes (1): Get the resolved source. Call resolve() first.
+Nodes (1): Define the destination to use based on post-transformation records and runtime p
 
 ### Community 199 - "Community 199"
 Cohesion: 1.0
-Nodes (1): Get the resolved destination. Call resolve() first.
+Nodes (1): Define list of transformations to apply based on records and runtime parameters.
 
 ### Community 200 - "Community 200"
 Cohesion: 1.0
-Nodes (1): Get the resolved transformations. Call resolve() first.
+Nodes (1): Get the resolved source. Call resolve() first.
 
 ### Community 201 - "Community 201"
 Cohesion: 1.0
-Nodes (1): Return True if this pipeline has a cron schedule configured.
+Nodes (1): Get the resolved destination. Call resolve() first.
 
 ### Community 202 - "Community 202"
 Cohesion: 1.0
-Nodes (1): Return the next scheduled datetime after `after` for the given cron expression.
+Nodes (1): Get the resolved transformations. Call resolve() first.
 
 ### Community 203 - "Community 203"
 Cohesion: 1.0
-Nodes (1): Fetch data from source (used in local mode).          Args:             runtime_
+Nodes (1): Return True if this pipeline has a cron schedule configured.
 
 ### Community 204 - "Community 204"
 Cohesion: 1.0
-Nodes (1): Split source data into jobs for distributed processing.          This is a gener
+Nodes (1): Return the next scheduled datetime after `after` for the given cron expression.
 
 ### Community 205 - "Community 205"
 Cohesion: 1.0
-Nodes (1): Check if source is accessible and healthy.          Returns:             True if
+Nodes (1): Fetch data from source (used in local mode).          Args:             runtime_
 
 ### Community 206 - "Community 206"
 Cohesion: 1.0
-Nodes (1): Jobs should NOT be dispatched when consumer lag exceeds the threshold.
+Nodes (1): Split source data into jobs for distributed processing.          This is a gener
 
 ### Community 207 - "Community 207"
 Cohesion: 1.0
-Nodes (1): Jobs SHOULD be dispatched when consumer lag is below the threshold.          lag
+Nodes (1): Check if source is accessible and healthy.          Returns:             True if
 
 ### Community 208 - "Community 208"
 Cohesion: 1.0
-Nodes (1): Test bearer token authentication.
+Nodes (1): Jobs should NOT be dispatched when consumer lag exceeds the threshold.
 
 ### Community 209 - "Community 209"
 Cohesion: 1.0
-Nodes (1): Test API key authentication.
+Nodes (1): Jobs SHOULD be dispatched when consumer lag is below the threshold.          lag
 
 ### Community 210 - "Community 210"
 Cohesion: 1.0
-Nodes (1): Define the destination using post-transformation records and runtime params.
+Nodes (1): Test bearer token authentication.
 
 ### Community 211 - "Community 211"
 Cohesion: 1.0
-Nodes (1): Define list of transformations to apply for a batch of IDs.          Args:
+Nodes (1): Test API key authentication.
 
 ### Community 212 - "Community 212"
 Cohesion: 1.0
-Nodes (1): Test fetching with offset pagination.
+Nodes (1): Define the destination using post-transformation records and runtime params.
 
 ### Community 213 - "Community 213"
 Cohesion: 1.0
-Nodes (1): Test job splitting with offset pagination.
+Nodes (1): Define list of transformations to apply for a batch of IDs.          Args:
 
 ### Community 214 - "Community 214"
 Cohesion: 1.0
-Nodes (1): Health check can be disabled via config.
+Nodes (1): Test fetching with offset pagination.
 
 ### Community 215 - "Community 215"
 Cohesion: 1.0
-Nodes (1): Test fetching a single resource by ID.
+Nodes (1): Test job splitting with offset pagination.
 
 ### Community 216 - "Community 216"
 Cohesion: 1.0
-Nodes (1): Test handling 404 response.
+Nodes (1): Health check can be disabled via config.
 
 ### Community 217 - "Community 217"
 Cohesion: 1.0
-Nodes (1): Test bearer token authentication.
+Nodes (1): Test fetching a single resource by ID.
 
 ### Community 218 - "Community 218"
 Cohesion: 1.0
-Nodes (1): Test API key authentication.
+Nodes (1): Test handling 404 response.
 
 ### Community 219 - "Community 219"
 Cohesion: 1.0
-Nodes (1): Get the resolved source. Call resolve() first.
+Nodes (1): Test bearer token authentication.
 
 ### Community 220 - "Community 220"
 Cohesion: 1.0
-Nodes (1): Get the resolved destination. Call resolve() first.
+Nodes (1): Test API key authentication.
 
 ### Community 221 - "Community 221"
 Cohesion: 1.0
-Nodes (1): Get the resolved transformations. Call resolve() first.
+Nodes (1): Get the resolved source. Call resolve() first.
 
 ### Community 222 - "Community 222"
 Cohesion: 1.0
-Nodes (1): Return True if this pipeline has a cron schedule configured.
+Nodes (1): Get the resolved destination. Call resolve() first.
 
 ### Community 223 - "Community 223"
 Cohesion: 1.0
-Nodes (1): Create a mock S3 client.
+Nodes (1): Get the resolved transformations. Call resolve() first.
 
 ### Community 224 - "Community 224"
 Cohesion: 1.0
-Nodes (1): Sample S3 object listing response.
+Nodes (1): Return True if this pipeline has a cron schedule configured.
 
 ### Community 225 - "Community 225"
 Cohesion: 1.0
-Nodes (1): After waiting for one scheduler poll cycle (≤60s), the execution count         f
+Nodes (1): Create a mock S3 client.
 
 ### Community 226 - "Community 226"
 Cohesion: 1.0
-Nodes (1): After an auto-fire, next_run_at must advance to the next cron tick.
+Nodes (1): Sample S3 object listing response.
 
 ### Community 227 - "Community 227"
 Cohesion: 1.0
-Nodes (1): Test fetching with offset pagination.
+Nodes (1): After waiting for one scheduler poll cycle (≤60s), the execution count         f
 
 ### Community 228 - "Community 228"
 Cohesion: 1.0
-Nodes (1): Test job splitting with offset pagination.
+Nodes (1): After an auto-fire, next_run_at must advance to the next cron tick.
 
 ### Community 229 - "Community 229"
 Cohesion: 1.0
-Nodes (1): Test bearer token authentication.
+Nodes (1): Test fetching with offset pagination.
 
 ### Community 230 - "Community 230"
 Cohesion: 1.0
-Nodes (1): Test API key authentication.
+Nodes (1): Test job splitting with offset pagination.
 
 ### Community 231 - "Community 231"
 Cohesion: 1.0
-Nodes (1): Define the source to use based on runtime parameters.          Args:
+Nodes (1): Test bearer token authentication.
 
 ### Community 232 - "Community 232"
 Cohesion: 1.0
-Nodes (1): Define the destination to use based on runtime parameters.          Args:
+Nodes (1): Test API key authentication.
 
 ### Community 233 - "Community 233"
 Cohesion: 1.0
-Nodes (1): Define list of transformations to apply based on runtime parameters.          Ar
+Nodes (1): Define the source to use based on runtime parameters.          Args:
 
 ### Community 234 - "Community 234"
 Cohesion: 1.0
-Nodes (1): Get the resolved source. Call resolve() first.
+Nodes (1): Define the destination to use based on runtime parameters.          Args:
 
 ### Community 235 - "Community 235"
 Cohesion: 1.0
-Nodes (1): Get the resolved destination. Call resolve() first.
+Nodes (1): Define list of transformations to apply based on runtime parameters.          Ar
 
 ### Community 236 - "Community 236"
 Cohesion: 1.0
-Nodes (1): Get the resolved transformations. Call resolve() first.
+Nodes (1): Get the resolved source. Call resolve() first.
 
 ### Community 237 - "Community 237"
 Cohesion: 1.0
-Nodes (1): Return True if this pipeline has a cron schedule configured.
+Nodes (1): Get the resolved destination. Call resolve() first.
 
 ### Community 238 - "Community 238"
 Cohesion: 1.0
-Nodes (1): Define the source to use for a batch of IDs.          Called once per ID-batch.
+Nodes (1): Get the resolved transformations. Call resolve() first.
 
 ### Community 239 - "Community 239"
 Cohesion: 1.0
-Nodes (1): Define the destination (shared across all IDs).          Args:             runti
+Nodes (1): Return True if this pipeline has a cron schedule configured.
 
 ### Community 240 - "Community 240"
 Cohesion: 1.0
-Nodes (1): Define list of transformations to apply for a batch of IDs.          Args:
+Nodes (1): Define the source to use for a batch of IDs.          Called once per ID-batch.
 
 ### Community 241 - "Community 241"
+Cohesion: 1.0
+Nodes (1): Define the destination (shared across all IDs).          Args:             runti
+
+### Community 242 - "Community 242"
+Cohesion: 1.0
+Nodes (1): Define list of transformations to apply for a batch of IDs.          Args:
+
+### Community 243 - "Community 243"
 Cohesion: 1.0
 Nodes (1): Apply transformation to a batch of records.          Args:             records:
 
 ## Knowledge Gaps
-- **2110 isolated node(s):** `Reflowfy - A horizontally scalable data movement and transformation framework.`, `Centralized Kafka configuration with SASL support.`, `Get Kafka configuration for aiokafka.      Reads from environment variables with`, `Get all Kafka-related environment variables.`, `Shared HTTP authentication header construction.  Used by both the API source (sy` (+2105 more)
+- **2235 isolated node(s):** `Reflowfy - A horizontally scalable data movement and transformation framework.`, `Centralized Kafka configuration with SASL support.`, `Get Kafka configuration for aiokafka.      Reads from environment variables with`, `Get all Kafka-related environment variables.`, `Shared HTTP authentication header construction.  Used by both the API source (sy` (+2230 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **Thin community `Community 71`** (3 nodes): `shared_sources.py`, `Re-exports from sources/ for backward compatibility.`, `shared_sources.py`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
@@ -1400,114 +1410,118 @@ Nodes (1): Apply transformation to a batch of records.          Args:           
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 187`** (1 nodes): `Test that messages are sent to Kafka topic.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 195`** (1 nodes): `Define the source to use based on runtime parameters.          Args:`
+- **Thin community `Community 189`** (1 nodes): `Dispatch a single job.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 196`** (1 nodes): `Define the destination to use based on post-transformation records and runtime p`
+- **Thin community `Community 190`** (1 nodes): `Dispatch a batch of jobs.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 197`** (1 nodes): `Define list of transformations to apply based on records and runtime parameters.`
+- **Thin community `Community 197`** (1 nodes): `Define the source to use based on runtime parameters.          Args:`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 198`** (1 nodes): `Get the resolved source. Call resolve() first.`
+- **Thin community `Community 198`** (1 nodes): `Define the destination to use based on post-transformation records and runtime p`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 199`** (1 nodes): `Get the resolved destination. Call resolve() first.`
+- **Thin community `Community 199`** (1 nodes): `Define list of transformations to apply based on records and runtime parameters.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 200`** (1 nodes): `Get the resolved transformations. Call resolve() first.`
+- **Thin community `Community 200`** (1 nodes): `Get the resolved source. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 201`** (1 nodes): `Return True if this pipeline has a cron schedule configured.`
+- **Thin community `Community 201`** (1 nodes): `Get the resolved destination. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 202`** (1 nodes): `Return the next scheduled datetime after `after` for the given cron expression.`
+- **Thin community `Community 202`** (1 nodes): `Get the resolved transformations. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 203`** (1 nodes): `Fetch data from source (used in local mode).          Args:             runtime_`
+- **Thin community `Community 203`** (1 nodes): `Return True if this pipeline has a cron schedule configured.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 204`** (1 nodes): `Split source data into jobs for distributed processing.          This is a gener`
+- **Thin community `Community 204`** (1 nodes): `Return the next scheduled datetime after `after` for the given cron expression.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 205`** (1 nodes): `Check if source is accessible and healthy.          Returns:             True if`
+- **Thin community `Community 205`** (1 nodes): `Fetch data from source (used in local mode).          Args:             runtime_`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 206`** (1 nodes): `Jobs should NOT be dispatched when consumer lag exceeds the threshold.`
+- **Thin community `Community 206`** (1 nodes): `Split source data into jobs for distributed processing.          This is a gener`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 207`** (1 nodes): `Jobs SHOULD be dispatched when consumer lag is below the threshold.          lag`
+- **Thin community `Community 207`** (1 nodes): `Check if source is accessible and healthy.          Returns:             True if`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 208`** (1 nodes): `Test bearer token authentication.`
+- **Thin community `Community 208`** (1 nodes): `Jobs should NOT be dispatched when consumer lag exceeds the threshold.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 209`** (1 nodes): `Test API key authentication.`
+- **Thin community `Community 209`** (1 nodes): `Jobs SHOULD be dispatched when consumer lag is below the threshold.          lag`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 210`** (1 nodes): `Define the destination using post-transformation records and runtime params.`
+- **Thin community `Community 210`** (1 nodes): `Test bearer token authentication.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 211`** (1 nodes): `Define list of transformations to apply for a batch of IDs.          Args:`
+- **Thin community `Community 211`** (1 nodes): `Test API key authentication.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 212`** (1 nodes): `Test fetching with offset pagination.`
+- **Thin community `Community 212`** (1 nodes): `Define the destination using post-transformation records and runtime params.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 213`** (1 nodes): `Test job splitting with offset pagination.`
+- **Thin community `Community 213`** (1 nodes): `Define list of transformations to apply for a batch of IDs.          Args:`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 214`** (1 nodes): `Health check can be disabled via config.`
+- **Thin community `Community 214`** (1 nodes): `Test fetching with offset pagination.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 215`** (1 nodes): `Test fetching a single resource by ID.`
+- **Thin community `Community 215`** (1 nodes): `Test job splitting with offset pagination.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 216`** (1 nodes): `Test handling 404 response.`
+- **Thin community `Community 216`** (1 nodes): `Health check can be disabled via config.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 217`** (1 nodes): `Test bearer token authentication.`
+- **Thin community `Community 217`** (1 nodes): `Test fetching a single resource by ID.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 218`** (1 nodes): `Test API key authentication.`
+- **Thin community `Community 218`** (1 nodes): `Test handling 404 response.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 219`** (1 nodes): `Get the resolved source. Call resolve() first.`
+- **Thin community `Community 219`** (1 nodes): `Test bearer token authentication.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 220`** (1 nodes): `Get the resolved destination. Call resolve() first.`
+- **Thin community `Community 220`** (1 nodes): `Test API key authentication.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 221`** (1 nodes): `Get the resolved transformations. Call resolve() first.`
+- **Thin community `Community 221`** (1 nodes): `Get the resolved source. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 222`** (1 nodes): `Return True if this pipeline has a cron schedule configured.`
+- **Thin community `Community 222`** (1 nodes): `Get the resolved destination. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 223`** (1 nodes): `Create a mock S3 client.`
+- **Thin community `Community 223`** (1 nodes): `Get the resolved transformations. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 224`** (1 nodes): `Sample S3 object listing response.`
+- **Thin community `Community 224`** (1 nodes): `Return True if this pipeline has a cron schedule configured.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 225`** (1 nodes): `After waiting for one scheduler poll cycle (≤60s), the execution count         f`
+- **Thin community `Community 225`** (1 nodes): `Create a mock S3 client.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 226`** (1 nodes): `After an auto-fire, next_run_at must advance to the next cron tick.`
+- **Thin community `Community 226`** (1 nodes): `Sample S3 object listing response.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 227`** (1 nodes): `Test fetching with offset pagination.`
+- **Thin community `Community 227`** (1 nodes): `After waiting for one scheduler poll cycle (≤60s), the execution count         f`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 228`** (1 nodes): `Test job splitting with offset pagination.`
+- **Thin community `Community 228`** (1 nodes): `After an auto-fire, next_run_at must advance to the next cron tick.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 229`** (1 nodes): `Test bearer token authentication.`
+- **Thin community `Community 229`** (1 nodes): `Test fetching with offset pagination.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 230`** (1 nodes): `Test API key authentication.`
+- **Thin community `Community 230`** (1 nodes): `Test job splitting with offset pagination.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 231`** (1 nodes): `Define the source to use based on runtime parameters.          Args:`
+- **Thin community `Community 231`** (1 nodes): `Test bearer token authentication.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 232`** (1 nodes): `Define the destination to use based on runtime parameters.          Args:`
+- **Thin community `Community 232`** (1 nodes): `Test API key authentication.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 233`** (1 nodes): `Define list of transformations to apply based on runtime parameters.          Ar`
+- **Thin community `Community 233`** (1 nodes): `Define the source to use based on runtime parameters.          Args:`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 234`** (1 nodes): `Get the resolved source. Call resolve() first.`
+- **Thin community `Community 234`** (1 nodes): `Define the destination to use based on runtime parameters.          Args:`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 235`** (1 nodes): `Get the resolved destination. Call resolve() first.`
+- **Thin community `Community 235`** (1 nodes): `Define list of transformations to apply based on runtime parameters.          Ar`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 236`** (1 nodes): `Get the resolved transformations. Call resolve() first.`
+- **Thin community `Community 236`** (1 nodes): `Get the resolved source. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 237`** (1 nodes): `Return True if this pipeline has a cron schedule configured.`
+- **Thin community `Community 237`** (1 nodes): `Get the resolved destination. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 238`** (1 nodes): `Define the source to use for a batch of IDs.          Called once per ID-batch.`
+- **Thin community `Community 238`** (1 nodes): `Get the resolved transformations. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 239`** (1 nodes): `Define the destination (shared across all IDs).          Args:             runti`
+- **Thin community `Community 239`** (1 nodes): `Return True if this pipeline has a cron schedule configured.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 240`** (1 nodes): `Define list of transformations to apply for a batch of IDs.          Args:`
+- **Thin community `Community 240`** (1 nodes): `Define the source to use for a batch of IDs.          Called once per ID-batch.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 241`** (1 nodes): `Apply transformation to a batch of records.          Args:             records:`
+- **Thin community `Community 241`** (1 nodes): `Define the destination (shared across all IDs).          Args:             runti`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 242`** (1 nodes): `Define list of transformations to apply for a batch of IDs.          Args:`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 243`** (1 nodes): `Apply transformation to a batch of records.          Args:             records:`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `IdBasedPipeline` connect `Community 23` to `Community 0`, `Community 3`, `Community 5`, `Community 14`, `Community 29`?**
-  _High betweenness centrality (0.062) - this node is a cross-community bridge._
-- **Why does `TransformationError` connect `Community 1` to `Community 10`, `Community 5`, `Community 30`, `Community 7`?**
-  _High betweenness centrality (0.053) - this node is a cross-community bridge._
-- **Why does `PipelineRunner` connect `Community 14` to `Community 0`, `Community 3`, `Community 9`, `Community 10`, `Community 11`, `Community 23`?**
-  _High betweenness centrality (0.052) - this node is a cross-community bridge._
+- **Why does `IdBasedPipeline` connect `Community 2` to `Community 18`, `Community 27`, `Community 15`?**
+  _High betweenness centrality (0.078) - this node is a cross-community bridge._
+- **Why does `PipelineRunner` connect `Community 15` to `Community 2`, `Community 5`, `Community 6`, `Community 11`, `Community 12`, `Community 18`?**
+  _High betweenness centrality (0.072) - this node is a cross-community bridge._
+- **Why does `TransformationError` connect `Community 8` to `Community 10`, `Community 2`, `Community 12`, `Community 31`?**
+  _High betweenness centrality (0.060) - this node is a cross-community bridge._
 - **Are the 44 inferred relationships involving `PipelineParameter` (e.g. with `IdBasedPipelineMeta` and `IdBasedPipeline`) actually correct?**
   _`PipelineParameter` has 44 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 48 inferred relationships involving `str` (e.g. with `_build_images()` and `dispatch_dlq_job()`) actually correct?**
-  _`str` has 48 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 49 inferred relationships involving `str` (e.g. with `_build_images()` and `dispatch_dlq_job()`) actually correct?**
+  _`str` has 49 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 27 inferred relationships involving `IDBasedAPISource` (e.g. with `BaseSource` and `SourceError`) actually correct?**
   _`IDBasedAPISource` has 27 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 21 inferred relationships involving `AbstractPipeline` (e.g. with `PipelineRegistry` and `_ScheduledPipeline`) actually correct?**
