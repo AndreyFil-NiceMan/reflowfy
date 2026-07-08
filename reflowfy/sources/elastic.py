@@ -321,6 +321,17 @@ def elastic_source(
         ...     scroll="2m",
         ...     size=1000
         ... )
+
+        To split the query across the worker pool, set ``docs_per_job`` — the
+        manager counts matches and dispatches ``ceil(count / docs_per_job)``
+        parallel slice-jobs (capped by ``max_slices``, default 1024):
+
+        >>> source = elastic_source(
+        ...     url="https://elastic:9200",
+        ...     index="logs-*",
+        ...     base_query={"query": {"match_all": {}}},
+        ...     docs_per_job=1000,
+        ... )
     """
     return ElasticSource(
         url=url,
