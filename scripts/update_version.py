@@ -35,8 +35,8 @@ def update_version(new_version: str):
         # Let's check if the user wants to sync chart version too. 
         # Usually good practice to bump chart version on app change.
         content = re.sub(
-            r'^version:\s*[0-9.]+',
-            f'version: {new_version}',
+            r'^version:\s*"?[0-9.]+"?',
+            f'version: "{new_version}"',
             content,
             flags=re.MULTILINE
         )
