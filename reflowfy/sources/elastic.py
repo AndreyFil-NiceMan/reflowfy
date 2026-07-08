@@ -1,5 +1,6 @@
 """Elasticsearch source with scroll-based pagination."""
 
+from math import ceil
 from typing import Any, Dict, Iterator, List, Optional, Tuple, cast
 
 from elasticsearch import Elasticsearch
@@ -159,16 +160,25 @@ class ElasticSource(BaseSource):
     def split(self, runtime_params: Dict[str, Any]) -> Iterator["ElasticSource"]:
         """Open a PIT and yield one source per sliced-scroll slice.
 
-        ``num_slices`` (config, default 1) controls parallelism. With 1 slice
-        this is a single job. No documents are fetched here — but the query is
-        counted first, so a query matching no documents yields no jobs.
+        Job count is driven by ``docs_per_job`` (config) when set:
+        ``num_slices = min(ceil(count / docs_per_job), max_slices)`` (default
+        ``max_slices`` 1024). When ``docs_per_job`` is unset, ``num_slices``
+        (config, default 1) controls parallelism. With 1 slice this is a single
+        job. No documents are fetched here — the query is counted first, so a
+        query matching no documents yields no jobs.
         """
         resolved = self.resolve_parameters(runtime_params) or self.config
         client = self._get_client()
-        if self._count_documents(client, resolved) == 0:
+        count = self._count_documents(client, resolved)
+        if count == 0:
             return
 
-        num_slices = int(resolved.get("num_slices", 1))
+        docs_per_job = resolved.get("docs_per_job")
+        if docs_per_job:
+            max_slices = int(resolved.get("max_slices", 1024))
+            num_slices = min(ceil(count / int(docs_per_job)), max_slices)
+        else:
+            num_slices = int(resolved.get("num_slices", 1))
         if num_slices <= 1:
             yield self
             return
@@ -257,7 +267,9 @@ class ElasticSource(BaseSource):
                 if hasattr(response, "body"):
                     response = response.body
                 elif not isinstance(response, dict):
-                    response = dict(response)  # pyright: ignore[reportCallIssue, reportArgumentType]
+                    response = dict(
+                        response
+                    )  # pyright: ignore[reportCallIssue, reportArgumentType]
 
                 response = cast(Dict[str, Any], response)
                 scroll_id = response["_scroll_id"]
