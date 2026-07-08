@@ -160,6 +160,24 @@ def test_tls_verification_off_by_default(monkeypatch):
     assert "verify_certs" not in calls
 
 
+def test_http_url_omits_tls_kwargs(monkeypatch):
+    """TLS options on an http:// URL would crash the ES client, so skip them."""
+    calls = {}
+
+    def fake_es(url, **kw):
+        calls.clear()
+        calls.update(kw)
+        return object()
+
+    monkeypatch.setattr("reflowfy.observability.elastic_handler.Elasticsearch", fake_es)
+    monkeypatch.setenv("ELASTIC_LOG_URL", "http://es:9200")
+    monkeypatch.delenv("ELASTIC_LOG_VERIFY_CERTS", raising=False)
+
+    ElasticLogHandler(service_name="t").close()
+    assert "verify_certs" not in calls
+    assert "ssl_show_warn" not in calls
+
+
 def test_queue_full_drops_oldest_and_counts(monkeypatch):
     monkeypatch.setattr(
         "reflowfy.observability.elastic_handler.helpers.bulk",

@@ -83,15 +83,18 @@ class ElasticLogHandler(logging.Handler):
         }
         if username and password:
             kwargs["basic_auth"] = (username, password)
-        # TLS verification is OFF by default so it works out of the box with
-        # ES 8's self-signed cert. Set ELASTIC_LOG_VERIFY_CERTS=true to enforce
-        # it (optionally with ELASTIC_LOG_CA_CERTS pointing at a CA bundle).
-        ca_certs = os.getenv("ELASTIC_LOG_CA_CERTS")
-        if ca_certs:
-            kwargs["ca_certs"] = ca_certs
-        if os.getenv("ELASTIC_LOG_VERIFY_CERTS", "false").lower() != "true":
-            kwargs["verify_certs"] = False
-            kwargs["ssl_show_warn"] = False
+        # TLS options are only valid on https URLs — the ES client raises
+        # "TLS options require scheme to be 'https'" if passed on an http URL.
+        # Verification is OFF by default so it works out of the box with ES 8's
+        # self-signed cert. Set ELASTIC_LOG_VERIFY_CERTS=true to enforce it
+        # (optionally with ELASTIC_LOG_CA_CERTS pointing at a CA bundle).
+        if url.lower().startswith("https://"):
+            ca_certs = os.getenv("ELASTIC_LOG_CA_CERTS")
+            if ca_certs:
+                kwargs["ca_certs"] = ca_certs
+            if os.getenv("ELASTIC_LOG_VERIFY_CERTS", "false").lower() != "true":
+                kwargs["verify_certs"] = False
+                kwargs["ssl_show_warn"] = False
         return Elasticsearch(url, **kwargs)
 
     def _run(self) -> None:
