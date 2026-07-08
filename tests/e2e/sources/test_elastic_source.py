@@ -13,10 +13,13 @@ Run with:
     pytest tests/e2e/sources/test_elastic_source.py -v
 """
 
+import math
 import os
 import time
 import pytest
 import httpx
+
+from tests.e2e.test_pipelines.elastic_docs_per_job_pipeline import DOCS_PER_JOB
 
 # Configuration
 REFLOW_MANAGER_URL = os.getenv("E2E_REFLOW_MANAGER_URL", "http://localhost:8002")
@@ -186,6 +189,53 @@ class TestElasticSourcePipeline:
             f"empty Elastic query must create 0 jobs, got {stats.get('total_jobs')}"
         )
         print("✅ Empty Elastic query created 0 jobs")
+
+    def test_docs_per_job_splits_into_multiple_jobs(self, client, check_elasticsearch):
+        """docs_per_job must fan the query into ceil(count / docs_per_job) jobs.
+
+        The pipeline sets docs_per_job=DOCS_PER_JOB over a match_all query, so
+        the manager derives the slice count from the matched-document count.
+        Job count is deterministic (unlike per-slice doc counts), so we assert
+        it exactly against the live ES doc count.
+        """
+        from elasticsearch import Elasticsearch
+
+        es = Elasticsearch(hosts=[ELASTICSEARCH_URL])
+        try:
+            doc_count = es.count(index="e2e-test-events")["count"]
+        finally:
+            es.close()
+
+        expected_jobs = math.ceil(doc_count / DOCS_PER_JOB)
+        assert expected_jobs > 1, (
+            f"test needs >1 expected job to be meaningful; got {expected_jobs} "
+            f"from {doc_count} docs / {DOCS_PER_JOB}"
+        )
+
+        response = client.post("/run", json={
+            "pipeline_name": "e2e_elastic_docs_per_job_test",
+            "runtime_params": {},
+        })
+        assert response.status_code == 202
+        execution_id = response.json()["execution_id"]
+
+        max_wait = 120
+        start = time.time()
+        stats = {}
+        while time.time() - start < max_wait:
+            stats = client.get(f"/executions/{execution_id}/stats").json()
+            if stats.get("state") in ("completed", "failed"):
+                break
+            time.sleep(POLL_INTERVAL)
+
+        assert stats.get("state") == "completed", f"Expected completed, got {stats}"
+        assert stats.get("total_jobs") == expected_jobs, (
+            f"docs_per_job={DOCS_PER_JOB} over {doc_count} docs must create "
+            f"{expected_jobs} jobs, got {stats.get('total_jobs')}"
+        )
+        assert stats["jobs_completed"] == expected_jobs
+        assert stats["jobs_failed"] == 0
+        print(f"✅ docs_per_job created {expected_jobs} jobs from {doc_count} docs")
 
 
 if __name__ == "__main__":

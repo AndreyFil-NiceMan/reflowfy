@@ -329,3 +329,120 @@ def test_elastic_fetch_single_job_scrolls_all_pages(monkeypatch):
     monkeypatch.setattr(src, "_get_client", lambda: _Client())
 
     assert src.fetch({}) == [{"a": 1}, {"a": 2}, {"a": 3}]
+
+
+def test_elastic_split_docs_per_job_derives_slice_count(monkeypatch):
+    from reflowfy.sources.elastic import ElasticSource
+
+    src = ElasticSource(
+        url="http://es:9200",
+        index="logs-*",
+        base_query={"query": {"match_all": {}}},
+        size=1000,
+        docs_per_job=1,
+    )
+
+    class _Client:
+        def count(self, **k):
+            return {"count": 10}
+
+        def open_point_in_time(self, **k):
+            return {"id": "PIT123"}
+
+    monkeypatch.setattr(src, "_get_client", lambda: _Client())
+
+    subs = list(src.split({}))
+    assert len(subs) == 10
+    assert all(s.config["pit_id"] == "PIT123" for s in subs)
+    assert [s.config["slice"] for s in subs] == [{"id": i, "max": 10} for i in range(10)]
+
+
+def test_elastic_split_docs_per_job_rounds_up(monkeypatch):
+    from reflowfy.sources.elastic import ElasticSource
+
+    src = ElasticSource(
+        url="http://es:9200",
+        index="logs-*",
+        base_query={"query": {"match_all": {}}},
+        size=1000,
+        docs_per_job=100,
+    )
+
+    class _Client:
+        def count(self, **k):
+            return {"count": 950}  # ceil(950/100) == 10
+
+        def open_point_in_time(self, **k):
+            return {"id": "PIT"}
+
+    monkeypatch.setattr(src, "_get_client", lambda: _Client())
+    assert len(list(src.split({}))) == 10
+
+
+def test_elastic_split_docs_per_job_capped_by_max_slices(monkeypatch):
+    from reflowfy.sources.elastic import ElasticSource
+
+    src = ElasticSource(
+        url="http://es:9200",
+        index="logs-*",
+        base_query={"query": {"match_all": {}}},
+        size=1000,
+        docs_per_job=1,
+        max_slices=100,
+    )
+
+    class _Client:
+        def count(self, **k):
+            return {"count": 5000}
+
+        def open_point_in_time(self, **k):
+            return {"id": "PIT"}
+
+    monkeypatch.setattr(src, "_get_client", lambda: _Client())
+    assert len(list(src.split({}))) == 100
+
+
+def test_elastic_split_docs_per_job_single_slice_yields_self(monkeypatch):
+    from reflowfy.sources.elastic import ElasticSource
+
+    src = ElasticSource(
+        url="http://es:9200",
+        index="logs-*",
+        base_query={"query": {"match_all": {}}},
+        size=1000,
+        docs_per_job=1000,
+    )
+
+    class _Client:
+        def count(self, **k):
+            return {"count": 5}  # ceil(5/1000) == 1
+
+        def open_point_in_time(self, **k):
+            raise AssertionError("must not open a PIT for a single-slice split")
+
+    monkeypatch.setattr(src, "_get_client", lambda: _Client())
+    subs = list(src.split({}))
+    assert len(subs) == 1
+    assert subs[0] is src
+
+
+def test_elastic_split_docs_per_job_empty_yields_nothing(monkeypatch):
+    from reflowfy.sources.elastic import ElasticSource
+
+    src = ElasticSource(
+        url="http://es:9200",
+        index="logs-*",
+        base_query={"query": {"match_all": {}}},
+        size=1000,
+        docs_per_job=1,
+    )
+
+    class _Client:
+        def count(self, **k):
+            return {"count": 0}
+
+        def open_point_in_time(self, **k):
+            raise AssertionError("must not open a PIT when the query matches no documents")
+
+    monkeypatch.setattr(src, "_get_client", lambda: _Client())
+    assert list(src.split({})) == []

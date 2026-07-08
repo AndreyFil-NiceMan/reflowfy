@@ -19,6 +19,7 @@ def e2e_elastic(
     size: int = 50,
     base_query: Optional[dict] = None,
     num_slices: int = 1,
+    docs_per_job: Optional[int] = None,
 ):
     """Pre-configured Elasticsearch source for E2E tests.
 
@@ -26,6 +27,11 @@ def e2e_elastic(
     to ``elastic_source``/``ElasticSource.split()``. Pass > 1 only where a
     test specifically needs multiple parallel sliced-scroll jobs (v2
     worker-side sourcing produces one job per slice, not per scroll page).
+
+    ``docs_per_job`` (default None) lets the manager derive the slice count
+    from the matched-document count: ``num_slices = ceil(count / docs_per_job)``
+    (capped at ``max_slices``, default 1024). When set it takes precedence over
+    ``num_slices``.
     """
     from reflowfy import elastic_source
 
@@ -36,6 +42,7 @@ def e2e_elastic(
         scroll=scroll,
         size=size,
         num_slices=num_slices,
+        docs_per_job=docs_per_job,
     )
 
 
