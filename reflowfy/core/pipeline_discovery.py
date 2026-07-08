@@ -15,6 +15,7 @@ import importlib
 import os
 import sys
 from pathlib import Path
+from typing import Optional
 
 
 def _scan_directory(module_name: str, label: str) -> int:
@@ -67,7 +68,7 @@ def _scan_directory(module_name: str, label: str) -> int:
     return loaded_count
 
 
-def discover_and_load_pipelines(module_name: str = "pipelines") -> int:
+def discover_and_load_pipelines(module_name: Optional[str] = None) -> int:
     """
     Auto-discover and import all pipeline modules and reusable components.
 
@@ -83,11 +84,17 @@ def discover_and_load_pipelines(module_name: str = "pipelines") -> int:
     Transformations are registered via metaclass or @transformation decorator.
 
     Args:
-        module_name: Name of the module/directory containing pipelines
+        module_name: Name of the module/directory containing pipelines.
+            When ``None`` (the default), reads the ``PIPELINE_MODULE`` env var,
+            falling back to ``"pipelines"``. This is the single place the
+            env var is resolved for all three services.
 
     Returns:
         Number of pipeline files loaded
     """
+    if module_name is None:
+        module_name = os.getenv("PIPELINE_MODULE", "pipelines")
+
     # Ensure current directory is in sys.path
     cwd = os.getcwd()
     if cwd not in sys.path:

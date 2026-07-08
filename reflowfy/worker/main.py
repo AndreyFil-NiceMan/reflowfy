@@ -46,9 +46,8 @@ def main():
     init_tracing(service_name="worker")
     start_http_server(int(os.getenv("METRICS_PORT", "9100")))
 
-    # Auto-discover and load pipelines (registers transformations)
-    pipeline_module = os.getenv("PIPELINE_MODULE", "pipelines")
-    discover_and_load_pipelines(pipeline_module)
+    # Auto-discover and load pipelines (module from PIPELINE_MODULE env)
+    discover_and_load_pipelines()
     print()
 
     # Get configuration from environment

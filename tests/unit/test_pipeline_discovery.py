@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from reflowfy.core.pipeline_discovery import _scan_directory
+from reflowfy.core.pipeline_discovery import _scan_directory, discover_and_load_pipelines
 
 
 def _write(path: Path, body: str) -> None:
@@ -95,3 +95,14 @@ def test_one_broken_module_does_not_abort_others(project_on_path):
 
 def test_missing_package_returns_zero(project_on_path):
     assert _scan_directory("does_not_exist", "pipeline") == 0
+
+
+def test_module_name_defaults_to_env(project_on_path, monkeypatch):
+    """discover_and_load_pipelines() with no arg resolves PIPELINE_MODULE."""
+    pkg = project_on_path / "my_pipes"
+    _write(pkg / "__init__.py", "")
+    _write(pkg / "p.py", "LOADED = True\n")
+
+    monkeypatch.setenv("PIPELINE_MODULE", "my_pipes")
+    assert discover_and_load_pipelines() >= 1
+    assert sys.modules["my_pipes.p"].LOADED is True

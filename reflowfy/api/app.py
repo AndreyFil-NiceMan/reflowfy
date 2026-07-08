@@ -36,10 +36,8 @@ def create_app() -> FastAPI:
         print(f"📦 Version: {__version__}")
         print("=" * 60)
 
-        # Load pipelines using global discovery
-        pipeline_module = os.getenv("PIPELINE_MODULE", "pipelines")
-        print(f"\n📂 Loading pipelines from '{pipeline_module}'...")
-        discover_and_load_pipelines(pipeline_module)
+        # Load pipelines using global discovery (module from PIPELINE_MODULE env)
+        discover_and_load_pipelines()
 
         # Setup routes after pipelines are registered
         setup_pipeline_routes(app)
@@ -168,8 +166,7 @@ def main():
     print("=" * 60)
 
     # Auto-discover and load pipelines
-    pipeline_module = os.getenv("PIPELINE_MODULE", "pipelines")
-    discover_and_load_pipelines(pipeline_module)
+    discover_and_load_pipelines()
 
     # Setup routes after pipelines are registered
     setup_pipeline_routes(app)

@@ -458,12 +458,10 @@ async def _startup() -> None:
     _db_ready = True
     logger.info("Database initialized")
 
-    # Load pipelines using global discovery
+    # Load pipelines using global discovery (module from PIPELINE_MODULE env)
     from reflowfy.core.pipeline_discovery import discover_and_load_pipelines
 
-    pipeline_module = os.getenv("PIPELINE_MODULE", "pipelines")
-    logger.info("Loading pipelines from '%s'...", pipeline_module)
-    discover_and_load_pipelines(pipeline_module)
+    discover_and_load_pipelines()
 
     logger.info("Kafka: %s", os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"))
     logger.info("Topic: %s", os.getenv("KAFKA_TOPIC", "reflow.jobs"))
