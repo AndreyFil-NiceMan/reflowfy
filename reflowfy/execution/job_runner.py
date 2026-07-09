@@ -62,6 +62,11 @@ def run_job_records(
     records = to_json_safe(source.fetch(runtime_params))
     if limit is not None:
         records = records[:limit]
+    if not records:
+        # Empty slice (e.g. Elastic sliced-scroll hash-partitions unevenly, so a
+        # slice can match zero docs). Nothing to transform; skip so transformations
+        # aren't invoked on []. Every caller already treats empty records as a no-op.
+        return records, [], [], None
     transformed_records, applied = apply_transformations_iteratively(
         pipeline, records, runtime_params
     )

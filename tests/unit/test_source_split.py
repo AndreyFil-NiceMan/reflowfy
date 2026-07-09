@@ -331,7 +331,34 @@ def test_elastic_fetch_single_job_scrolls_all_pages(monkeypatch):
     assert src.fetch({}) == [{"a": 1}, {"a": 2}, {"a": 3}]
 
 
-def test_elastic_split_docs_per_job_derives_slice_count(monkeypatch):
+class _ScanES:
+    """Fake ES that counts, opens a PIT, and pages sort keys [0], [1], ... up to n.
+
+    Serves both the split() pre-scan and a window fetch: each hit carries a
+    ``sort`` value and a ``_source`` so callers can assert exact documents.
+    """
+
+    def __init__(self, n):
+        self._n = n
+        self.searches = 0
+
+    def count(self, **k):
+        return {"count": self._n}
+
+    def open_point_in_time(self, **k):
+        return {"id": "PIT"}
+
+    def search(self, body=None, size=None):
+        self.searches += 1
+        after = body.get("search_after") if body else None
+        start = 0 if after is None else after[0] + 1
+        hits = [
+            {"sort": [i], "_source": {"i": i}} for i in range(start, min(start + size, self._n))
+        ]
+        return {"hits": {"hits": hits}}
+
+
+def test_elastic_split_docs_per_job_one_doc_per_window(monkeypatch):
     from reflowfy.sources.elastic import ElasticSource
 
     src = ElasticSource(
@@ -341,20 +368,38 @@ def test_elastic_split_docs_per_job_derives_slice_count(monkeypatch):
         size=1000,
         docs_per_job=1,
     )
-
-    class _Client:
-        def count(self, **k):
-            return {"count": 10}
-
-        def open_point_in_time(self, **k):
-            return {"id": "PIT123"}
-
-    monkeypatch.setattr(src, "_get_client", lambda: _Client())
+    monkeypatch.setattr(src, "_get_client", lambda: _ScanES(10))
 
     subs = list(src.split({}))
-    assert len(subs) == 10
-    assert all(s.config["pit_id"] == "PIT123" for s in subs)
-    assert [s.config["slice"] for s in subs] == [{"id": i, "max": 10} for i in range(10)]
+    assert len(subs) == 10  # one job per doc, no empties
+    assert all(s.config["pit_id"] == "PIT" for s in subs)
+    # window 0 starts at the beginning; window k resumes after doc k-1.
+    assert [s.config["window"] for s in subs] == [
+        {"search_after": None if i == 0 else [i - 1], "size": 1} for i in range(10)
+    ]
+
+
+def test_elastic_split_docs_per_job_windows_partition_all_docs(monkeypatch):
+    # Every doc lands in exactly one window (no overlap, no gap) when fetched.
+    from reflowfy.sources.elastic import ElasticSource
+
+    src = ElasticSource(
+        url="http://es:9200",
+        index="logs-*",
+        base_query={"query": {"match_all": {}}},
+        size=1000,
+        docs_per_job=3,
+    )
+    es = _ScanES(10)  # ceil(10/3) == 4 windows of ceil(10/4)==3 (last shorter)
+    monkeypatch.setattr(src, "_get_client", lambda: es)
+
+    subs = list(src.split({}))
+    assert len(subs) == 4
+    fetched = []
+    for sub in subs:
+        monkeypatch.setattr(sub, "_get_client", lambda: es)
+        fetched.extend(d["i"] for d in sub.fetch({}))
+    assert fetched == list(range(10))  # exact cover, in order
 
 
 def test_elastic_split_docs_per_job_rounds_up(monkeypatch):
@@ -367,15 +412,7 @@ def test_elastic_split_docs_per_job_rounds_up(monkeypatch):
         size=1000,
         docs_per_job=100,
     )
-
-    class _Client:
-        def count(self, **k):
-            return {"count": 950}  # ceil(950/100) == 10
-
-        def open_point_in_time(self, **k):
-            return {"id": "PIT"}
-
-    monkeypatch.setattr(src, "_get_client", lambda: _Client())
+    monkeypatch.setattr(src, "_get_client", lambda: _ScanES(950))  # ceil(950/100) == 10
     assert len(list(src.split({}))) == 10
 
 
@@ -390,16 +427,21 @@ def test_elastic_split_docs_per_job_capped_by_max_slices(monkeypatch):
         docs_per_job=1,
         max_slices=100,
     )
-
-    class _Client:
-        def count(self, **k):
-            return {"count": 5000}
-
-        def open_point_in_time(self, **k):
-            return {"id": "PIT"}
-
-    monkeypatch.setattr(src, "_get_client", lambda: _Client())
+    monkeypatch.setattr(src, "_get_client", lambda: _ScanES(5000))
     assert len(list(src.split({}))) == 100
+
+
+def test_elastic_fetch_window_pulls_exact_size(monkeypatch):
+    from reflowfy.sources.elastic import ElasticSource
+
+    src = ElasticSource(url="http://es", index="i", base_query={"query": {"match_all": {}}}, size=2)
+    src.config["pit_id"] = "PIT"
+    src.config["window"] = {"search_after": [4], "size": 3}
+    es = _ScanES(100)
+    monkeypatch.setattr(src, "_get_client", lambda: es)
+
+    # Resumes after sort [4] and pulls exactly 3 docs, paging by size=2.
+    assert src.fetch({}) == [{"i": 5}, {"i": 6}, {"i": 7}]
 
 
 def test_elastic_split_docs_per_job_single_slice_yields_self(monkeypatch):

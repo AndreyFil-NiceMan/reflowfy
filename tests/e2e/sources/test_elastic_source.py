@@ -20,10 +20,12 @@ import pytest
 import httpx
 
 from tests.e2e.test_pipelines.elastic_docs_per_job_pipeline import DOCS_PER_JOB
+from tests.e2e.test_pipelines.elastic_one_doc_per_job_pipeline import SUBSET_QUERY
 
 # Configuration
 REFLOW_MANAGER_URL = os.getenv("E2E_REFLOW_MANAGER_URL", "http://localhost:8002")
 ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://localhost:9201")
+MOCK_HTTP_URL = os.getenv("MOCK_HTTP_URL", "http://localhost:8091").replace("/webhook", "")
 TIMEOUT = 60.0
 POLL_INTERVAL = 2
 
@@ -236,6 +238,89 @@ class TestElasticSourcePipeline:
         assert stats["jobs_completed"] == expected_jobs
         assert stats["jobs_failed"] == 0
         print(f"✅ docs_per_job created {expected_jobs} jobs from {doc_count} docs")
+
+
+class TestElasticOneDocPerJob:
+    """docs_per_job=1: exactly one job per doc, no empty jobs, exact record cover.
+
+    This is the regression suite for count-derived positional windowing. The old
+    sliced-scroll path hash-partitioned docs, so ``docs_per_job=1`` produced
+    uneven slices with empty jobs (which then failed in the transformation).
+    Windowing must instead yield exactly one non-empty job per matched doc and
+    deliver every doc to the destination exactly once.
+    """
+
+    def _mock_up(self):
+        try:
+            r = httpx.get(f"{MOCK_HTTP_URL}/health", timeout=5.0)
+            return r.status_code == 200
+        except httpx.RequestError:
+            return False
+
+    def _subset_count(self):
+        from elasticsearch import Elasticsearch
+
+        es = Elasticsearch(hosts=[ELASTICSEARCH_URL])
+        try:
+            return es.count(index="e2e-test-events", body=SUBSET_QUERY)["count"]
+        finally:
+            es.close()
+
+    def test_one_job_per_doc_no_empties_exact_cover(self, client, check_elasticsearch):
+        if not self._mock_up():
+            pytest.skip(f"Mock HTTP server not available at {MOCK_HTTP_URL}")
+
+        expected = self._subset_count()
+        assert 1 < expected <= 200, (
+            f"subset must be a bounded, splittable set for this test; got {expected}"
+        )
+
+        httpx.delete(f"{MOCK_HTTP_URL}/reset", timeout=5.0)
+
+        response = client.post("/run", json={
+            "pipeline_name": "e2e_elastic_one_doc_per_job_test",
+            "runtime_params": {},
+        })
+        assert response.status_code == 202
+        execution_id = response.json()["execution_id"]
+
+        max_wait = 180
+        start = time.time()
+        stats = {}
+        while time.time() - start < max_wait:
+            stats = client.get(f"/executions/{execution_id}/stats").json()
+            if stats.get("state") in ("completed", "failed"):
+                break
+            time.sleep(POLL_INTERVAL)
+
+        assert stats.get("state") == "completed", f"Expected completed, got {stats}"
+        # Exactly one job per matched doc — deterministic, unlike hash slicing.
+        assert stats.get("total_jobs") == expected, (
+            f"docs_per_job=1 must create one job per doc ({expected}), "
+            f"got {stats.get('total_jobs')}"
+        )
+        # No empty-slice jobs failing in the transformation (the bug this fixes).
+        assert stats["jobs_completed"] == expected
+        assert stats["jobs_failed"] == 0
+
+        # Exact cover on the destination: every doc delivered exactly once. One
+        # record per job means batch and record totals both equal the doc count
+        # — proving no loss, no duplication, and no empty jobs.
+        mock = {}
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            mock = httpx.get(f"{MOCK_HTTP_URL}/stats", timeout=10.0).json()
+            if mock.get("total_records", 0) >= expected:
+                break
+            time.sleep(1)
+
+        assert mock["total_records"] == expected, (
+            f"expected {expected} records delivered exactly once, got {mock['total_records']}"
+        )
+        assert mock["total_batches"] == expected, (
+            f"one doc per job -> {expected} single-record batches, got {mock['total_batches']}"
+        )
+        print(f"✅ one-doc-per-job: {expected} jobs, exact cover, no empties/loss/dup")
 
 
 if __name__ == "__main__":

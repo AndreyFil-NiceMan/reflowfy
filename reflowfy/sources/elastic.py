@@ -88,6 +88,38 @@ class ElasticSource(BaseSource):
         client = self._get_client()
 
         pit_id = resolved_config.get("pit_id")
+        window = resolved_config.get("window")
+        if pit_id and window is not None:
+            # Deterministic positional window (docs_per_job path): resume from this
+            # job's ``search_after`` cursor and pull exactly ``size`` docs. Adjacent
+            # windows share boundary cursors, so there is no overlap or gap.
+            try:
+                body = dict(resolved_config["base_query"])
+                body["pit"] = {"id": pit_id, "keep_alive": resolved_config["scroll"]}
+                body.setdefault("sort", ["_shard_doc"])
+                target = int(window["size"])
+                search_after = window.get("search_after")
+                out: List[Any] = []
+                while len(out) < target:
+                    page_body = dict(body)
+                    if search_after is not None:
+                        page_body["search_after"] = search_after
+                    remaining = target - len(out)
+                    raw = client.search(
+                        body=page_body, size=min(resolved_config["size"], remaining)
+                    )
+                    page = cast(Dict[str, Any], raw.body if hasattr(raw, "body") else raw)
+                    hits = page["hits"]["hits"]
+                    if not hits:
+                        break
+                    out.extend(h["_source"] for h in hits)
+                    search_after = hits[-1]["sort"]
+                    if limit and len(out) >= limit:
+                        return out[:limit]
+                return out[:target]
+            except ApiError as e:
+                raise SourceError("elasticsearch", f"Failed to fetch data: {e}", e)
+
         slice_spec = resolved_config.get("slice")
         if pit_id and slice_spec is not None:
             try:
@@ -158,14 +190,22 @@ class ElasticSource(BaseSource):
         return int(resp.get("count", 0))
 
     def split(self, runtime_params: Dict[str, Any]) -> Iterator["ElasticSource"]:
-        """Open a PIT and yield one source per sliced-scroll slice.
+        """Open a PIT and yield one narrowed source per job.
 
-        Job count is driven by ``docs_per_job`` (config) when set:
-        ``num_slices = min(ceil(count / docs_per_job), max_slices)`` (default
-        ``max_slices`` 1024). When ``docs_per_job`` is unset, ``num_slices``
-        (config, default 1) controls parallelism. With 1 slice this is a single
-        job. No documents are fetched here — the query is counted first, so a
-        query matching no documents yields no jobs.
+        Two planning strategies:
+
+        - ``docs_per_job`` set → **deterministic positional windows**. Job count
+          is ``num_windows = min(ceil(count / docs_per_job), max_slices)`` and
+          each job holds ~``ceil(count / num_windows)`` *consecutive* docs (so
+          ``docs_per_job=1`` gives exactly one doc per job, no empty jobs). The
+          windows are cut by one ``search_after`` pre-scan of the sort keys, so
+          this scales past ``index.max_result_window`` unlike ``from``/``size``.
+        - ``docs_per_job`` unset → legacy **sliced scroll** with ``num_slices``
+          (config, default 1). Elastic hash-partitions docs across slices, so
+          slice sizes are uneven — fine for parallelism, not for exact sizing.
+
+        No documents are fetched here — the query is counted first, so a query
+        matching no documents yields no jobs. A single job yields ``self``.
         """
         resolved = self.resolve_parameters(runtime_params) or self.config
         client = self._get_client()
@@ -176,9 +216,23 @@ class ElasticSource(BaseSource):
         docs_per_job = resolved.get("docs_per_job")
         if docs_per_job:
             max_slices = int(resolved.get("max_slices", 1024))
-            num_slices = min(ceil(count / int(docs_per_job)), max_slices)
-        else:
-            num_slices = int(resolved.get("num_slices", 1))
+            num_windows = min(ceil(count / int(docs_per_job)), max_slices)
+            if num_windows <= 1:
+                yield self
+                return
+            window_size = ceil(count / num_windows)
+            pit = client.open_point_in_time(index=resolved["index"], keep_alive=resolved["scroll"])
+            pit_id = pit["id"]
+            for start in self._scan_window_cursors(
+                client, resolved, pit_id, window_size, num_windows
+            ):
+                sub = self._sub_source(resolved)
+                sub.config["pit_id"] = pit_id
+                sub.config["window"] = {"search_after": start, "size": window_size}
+                yield sub
+            return
+
+        num_slices = int(resolved.get("num_slices", 1))
         if num_slices <= 1:
             yield self
             return
@@ -186,18 +240,63 @@ class ElasticSource(BaseSource):
         pit = client.open_point_in_time(index=resolved["index"], keep_alive=resolved["scroll"])
         pit_id = pit["id"]
         for i in range(num_slices):
-            sub = ElasticSource(
-                url=resolved["url"],
-                index=resolved["index"],
-                base_query=resolved["base_query"],
-                scroll=resolved["scroll"],
-                size=resolved["size"],
-                auth=resolved.get("auth"),
-                verify_certs=resolved["verify_certs"],
-            )
+            sub = self._sub_source(resolved)
             sub.config["pit_id"] = pit_id
             sub.config["slice"] = {"id": i, "max": num_slices}
             yield sub
+
+    def _sub_source(self, resolved: Dict[str, Any]) -> "ElasticSource":
+        """Build a narrowed child source carrying the parent's connection config."""
+        return ElasticSource(
+            url=resolved["url"],
+            index=resolved["index"],
+            base_query=resolved["base_query"],
+            scroll=resolved["scroll"],
+            size=resolved["size"],
+            auth=resolved.get("auth"),
+            verify_certs=resolved["verify_certs"],
+        )
+
+    def _scan_window_cursors(
+        self,
+        client: Any,
+        resolved: Dict[str, Any],
+        pit_id: str,
+        window_size: int,
+        num_windows: int,
+    ) -> List[Any]:
+        """Return the ``search_after`` start cursor for each of ``num_windows`` windows.
+
+        One O(count) pass over the sort keys (``_source: false``), recording the
+        cursor at every ``window_size``-th doc. Window 0 starts at the beginning
+        (``None``); window k starts after the last doc of window k-1.
+
+        ponytail: single pre-scan is O(count); the alternative (each job doing
+        ``from = k*window_size``) hits ``index.max_result_window`` past ~10k docs.
+        """
+        base = dict(resolved["base_query"])
+        base["pit"] = {"id": pit_id, "keep_alive": resolved["scroll"]}
+        base.setdefault("sort", ["_shard_doc"])
+        base["_source"] = False
+        page_size = int(resolved["size"])
+        cursors: List[Any] = [None]  # window 0 starts at the beginning
+        seen = 0
+        search_after = None
+        while len(cursors) < num_windows:
+            page = dict(base)
+            if search_after is not None:
+                page["search_after"] = search_after
+            raw = client.search(body=page, size=page_size)
+            page_resp = cast(Dict[str, Any], raw.body if hasattr(raw, "body") else raw)
+            hits = page_resp["hits"]["hits"]
+            if not hits:
+                break
+            for h in hits:
+                seen += 1
+                search_after = h["sort"]
+                if seen % window_size == 0 and len(cursors) < num_windows:
+                    cursors.append(h["sort"])
+        return cursors
 
     def split_jobs(
         self, runtime_params: Dict[str, Any], batch_size: int = 1000
@@ -299,6 +398,8 @@ def elastic_source(
     size: int = 1000,
     auth: Optional[Tuple[str, str]] = None,
     verify_certs: bool = True,
+    docs_per_job: Optional[int] = None,
+    max_slices: int = 1024,
     **kwargs: Any,
 ) -> ElasticSource:
     """
@@ -322,9 +423,13 @@ def elastic_source(
         ...     size=1000
         ... )
 
-        To split the query across the worker pool, set ``docs_per_job`` — the
+        To split the query across the worker pool, pass ``docs_per_job`` — the
         manager counts matches and dispatches ``ceil(count / docs_per_job)``
-        parallel slice-jobs (capped by ``max_slices``, default 1024):
+        jobs (capped by ``max_slices``, default 1024). Each job holds a
+        *deterministic, consecutive* window of that many docs, so
+        ``docs_per_job=1`` gives exactly one doc per job with no empty jobs.
+        Windows are cut by a single ``search_after`` pre-scan of the sort keys,
+        so this scales past ``index.max_result_window``:
 
         >>> source = elastic_source(
         ...     url="https://elastic:9200",
@@ -332,6 +437,12 @@ def elastic_source(
         ...     base_query={"query": {"match_all": {}}},
         ...     docs_per_job=1000,
         ... )
+
+    Note:
+        ``docs_per_job=1`` produces one job per matched document. On large
+        result sets that is a very large number of jobs (each its own Kafka
+        message, DB row, and ES query) — use a larger ``docs_per_job`` unless
+        per-document isolation is truly required.
     """
     return ElasticSource(
         url=url,
@@ -341,5 +452,7 @@ def elastic_source(
         size=size,
         auth=auth,
         verify_certs=verify_certs,
+        docs_per_job=docs_per_job,
+        max_slices=max_slices,
         **kwargs,
     )
