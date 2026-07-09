@@ -12,10 +12,13 @@ subdirectories, with or without ``__init__.py``):
 """
 
 import importlib
+import logging
 import os
 import sys
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 def _scan_directory(module_name: str, label: str) -> int:
@@ -60,10 +63,10 @@ def _scan_directory(module_name: str, label: str) -> int:
                 display = rel_dir / filename
                 try:
                     importlib.import_module(full_module)
-                    print(f"  Loaded {label}: {display}")
+                    logger.debug("Loaded %s: %s", label, display)
                     loaded_count += 1
-                except Exception as e:
-                    print(f"  Failed to load {label} {display}: {e}")
+                except Exception:
+                    logger.warning("Failed to load %s %s", label, display, exc_info=True)
 
     return loaded_count
 
@@ -102,7 +105,7 @@ def discover_and_load_pipelines(module_name: Optional[str] = None) -> int:
 
     total_loaded = 0
 
-    print("Discovering components...")
+    logger.info("Discovering components...")
 
     # Scan reusable components first (so pipelines can reference them)
     total_loaded += _scan_directory("sources", "source")
@@ -113,8 +116,8 @@ def discover_and_load_pipelines(module_name: Optional[str] = None) -> int:
     total_loaded += _scan_directory(module_name, "pipeline")
 
     if total_loaded == 0:
-        print("  No component files found")
+        logger.warning("No component files found")
     else:
-        print(f"  Loaded {total_loaded} component file(s) total")
+        logger.info("Loaded %d component file(s) total", total_loaded)
 
     return total_loaded

@@ -1,7 +1,10 @@
 """Registry for transformation lookup by name."""
 
+import logging
 import threading
 from typing import Any, Dict, List, Optional, Type
+
+logger = logging.getLogger(__name__)
 
 
 class TransformationRegistry:
@@ -55,7 +58,7 @@ class TransformationRegistry:
                 )
 
             self._transformations[name] = transformation_class
-            print(f"✓ Registered transformation: {name}")
+            logger.debug("Registered transformation: %s", name)
 
     def get(self, name: str) -> Optional[Type[Any]]:
         """

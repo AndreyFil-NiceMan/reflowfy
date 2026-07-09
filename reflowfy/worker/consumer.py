@@ -2,12 +2,15 @@
 
 import asyncio
 import json
+import logging
 from typing import Any, List, Optional, Union
 
 from aiokafka import AIOKafkaConsumer
 from aiokafka.errors import KafkaError
 
 from reflowfy.worker.executor import WorkerExecutor
+
+logger = logging.getLogger(__name__)
 
 
 class KafkaJobConsumer:
@@ -95,18 +98,21 @@ class KafkaJobConsumer:
         for attempt in range(max_retries):
             try:
                 await self.consumer.start()
-                print("✓ Kafka consumer connected successfully")
+                logger.info("Kafka consumer connected")
                 break
             except KafkaError as e:
                 if attempt < max_retries - 1:
                     wait_time = 2**attempt  # Exponential backoff
-                    print(
-                        f"⚠️  Failed to start consumer (attempt {attempt + 1}/{max_retries}): {e}"
+                    logger.warning(
+                        "Failed to start consumer (attempt %d/%d): %s; retrying in %ds",
+                        attempt + 1,
+                        max_retries,
+                        e,
+                        wait_time,
                     )
-                    print(f"   Retrying in {wait_time}s...")
                     await asyncio.sleep(wait_time)
                 else:
-                    print(f"❌ Failed to start consumer after {max_retries} attempts")
+                    logger.error("Failed to start consumer after %d attempts", max_retries)
                     raise
 
         self._running = True
@@ -127,19 +133,28 @@ class KafkaJobConsumer:
         try:
             if msg.value is None:
                 # Null-value record (e.g. tombstone) carries no job; skip it.
-                print("⚠️  Received message with empty value, skipping")
+                logger.warning("Received message with empty value, skipping")
                 await self.consumer.commit()
                 return
 
             job_payload = json.loads(msg.value.decode("utf-8"))
 
+            job_id = job_payload.get("job_id", "unknown")
+            log_ctx = {
+                "job_id": job_id,
+                "execution_id": job_payload.get("execution_id"),
+                "pipeline_name": job_payload.get("pipeline_name"),
+            }
+
             version = job_payload.get("schema_version")
             if version != 2:
-                print(f"❌ Unsupported job schema_version={version!r}; skipping")
+                logger.error(
+                    "Unsupported job schema_version=%r; skipping", version, extra=log_ctx
+                )
                 await self.consumer.commit()
                 return
 
-            print(f"📦 Received job: {job_payload.get('job_id', 'unknown')}")
+            logger.info("Received job %s", job_id, extra=log_ctx)
 
             # Execute job asynchronously. execute_job durably records the outcome
             # (completed/failed/deduplicated) in Postgres before returning.
@@ -154,16 +169,16 @@ class KafkaJobConsumer:
             # restart. A crash *before* this line leaves the offset uncommitted,
             # preserving at-least-once reprocessing.
             if not success:
-                print(f"⚠️  Job {job_payload.get('job_id', 'unknown')} failed; recorded to DB")
+                logger.warning("Job %s failed; recorded to DB", job_id, extra=log_ctx)
             await self.consumer.commit()
 
         except json.JSONDecodeError as e:
-            print(f"❌ Invalid job payload: {e}")
+            logger.error("Invalid job payload: %s", e)
             # Commit anyway to skip bad message
             await self.consumer.commit()
 
-        except Exception as e:
-            print(f"❌ Job processing error: {e}")
+        except Exception:
+            logger.exception("Job processing error")
             # Don't commit - will retry
 
     async def stop(self):

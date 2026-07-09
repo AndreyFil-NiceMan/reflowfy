@@ -41,15 +41,15 @@ class LocalDispatcher(BaseDispatcher):
         if rate_limit is not None:
             acquired = self.rate_limiter.acquire_token(pipeline_name, rate_limit, max_wait=60.0)
             if not acquired:
-                logger.warning("⚠️ Rate limit timeout, skipping job")
+                logger.warning("Rate limit timeout, skipping job")
                 return False
 
         executor = self._create_executor()
         try:
             await executor.execute_job(job_payload)
             return True
-        except Exception as e:
-            logger.error(f"❌ Local dispatch failed: {e}")
+        except Exception:
+            logger.error("Local dispatch failed", exc_info=True)
             return False
         finally:
             await executor.close()
@@ -73,15 +73,16 @@ class LocalDispatcher(BaseDispatcher):
                     )
                     if not acquired:
                         logger.warning(
-                            f"⚠️ Rate limit timeout after 60s, stopping dispatch after {dispatched} jobs"
+                            "Rate limit timeout after 60s, stopping dispatch after %d jobs",
+                            dispatched,
                         )
                         break
 
                 try:
                     await executor.execute_job(job)
                     dispatched += 1
-                except Exception as e:
-                    logger.error(f"❌ Local job execution failed: {e}")
+                except Exception:
+                    logger.error("Local job execution failed", exc_info=True)
         finally:
             await executor.close()
 

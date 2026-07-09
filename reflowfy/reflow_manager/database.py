@@ -45,8 +45,12 @@ def init_db(max_retries: int = 10, retry_delay: float = 2.0) -> None:
         except Exception as exc:
             last_err = exc
             if attempt < max_retries:
-                logger.info(
-                    f"  DB init attempt {attempt}/{max_retries} failed ({exc}), retrying in {retry_delay}s..."
+                logger.warning(
+                    "DB init attempt %d/%d failed (%s), retrying in %ss",
+                    attempt,
+                    max_retries,
+                    exc,
+                    retry_delay,
                 )
                 time.sleep(retry_delay)
     raise RuntimeError(

@@ -93,7 +93,7 @@ class KafkaDispatcher(BaseDispatcher):
             or self._producer_loop != loop
             or self._producer_loop.is_closed()
         ):
-            logger.info("🔄 Detected event loop change, resetting Kafka producer")
+            logger.info("Detected event loop change, resetting Kafka producer")
             # We cannot strictly close() the old producer if its loop is closed, just discard it
             self._producer = None
             self._producer_loop = None
@@ -147,7 +147,7 @@ class KafkaDispatcher(BaseDispatcher):
             return True
 
         except KafkaError as e:
-            logger.error(f"❌ Kafka error: {e}")
+            logger.error("Kafka error: %s", e)
             return False
 
     async def dispatch_jobs_batch(
@@ -164,7 +164,7 @@ class KafkaDispatcher(BaseDispatcher):
             # Atomic token acquisition with rate limiting
             if not self.rate_limiter.acquire_token(pipeline_name, rate_limit, max_wait=60.0):
                 logger.warning(
-                    f"⚠️ Rate limit timeout after 60s, stopping dispatch after {dispatched} jobs"
+                    "Rate limit timeout after 60s, stopping dispatch after %d jobs", dispatched
                 )
                 break
 
@@ -177,7 +177,7 @@ class KafkaDispatcher(BaseDispatcher):
                 dispatched += 1
 
             except KafkaError as e:
-                logger.error(f"❌ Kafka error: {e}")
+                logger.error("Kafka error: %s", e)
                 break
 
         return dispatched

@@ -72,11 +72,12 @@ class ReflowManager:
 
         # Select dispatcher based on mode
         if execution_mode == "local":
-            logger.info("🔧 ReflowManager initialized in LOCAL mode (in-process dispatch)")
+            logger.info("ReflowManager initialized in LOCAL mode (in-process dispatch)")
             self.dispatcher = LocalDispatcher(self.rate_limiter, db_session)
         else:
             logger.info(
-                f"🔧 ReflowManager initialized in DISTRIBUTED mode (Kafka: {kafka_bootstrap_servers})"
+                "ReflowManager initialized in DISTRIBUTED mode (Kafka: %s)",
+                kafka_bootstrap_servers,
             )
             self.dispatcher = KafkaDispatcher(
                 kafka_bootstrap_servers,

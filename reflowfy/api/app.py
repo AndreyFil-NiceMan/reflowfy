@@ -1,5 +1,6 @@
 """FastAPI application factory."""
 
+import logging
 import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
@@ -18,6 +19,8 @@ from reflowfy.api.routes import create_pipeline_routes
 from reflowfy.api.execution import execution_tracker
 from reflowfy.execution.distributed_executor import get_executor
 
+logger = logging.getLogger(__name__)
+
 
 def create_app() -> FastAPI:
     """
@@ -31,10 +34,7 @@ def create_app() -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         """Initialize pipelines on startup."""
         setup_logging(service_name="api")
-        print("=" * 60)
-        print("🚀 Starting Reflowfy API (Startup)")
-        print(f"📦 Version: {__version__}")
-        print("=" * 60)
+        logger.info("Starting Reflowfy API (version %s)", __version__)
 
         # Load pipelines using global discovery (module from PIPELINE_MODULE env)
         discover_and_load_pipelines()
@@ -117,10 +117,10 @@ def setup_pipeline_routes(app: FastAPI) -> None:
     pipelines = pipeline_registry.list_all()
 
     if not pipelines:
-        print("⚠️  No pipelines registered")
+        logger.warning("No pipelines registered")
         return
 
-    print(f"\n🔧 Setting up routes for {len(pipelines)} pipeline(s)...")
+    logger.info("Setting up routes for %d pipeline(s)", len(pipelines))
 
     # Get ReflowManager URL from environment
     reflow_manager_url = os.getenv("REFLOW_MANAGER_URL", "http://localhost:8001")
@@ -148,22 +148,21 @@ def setup_pipeline_routes(app: FastAPI) -> None:
             distributed_executor=distributed_executor,
         )
 
-    print("✓ Routes configured\n")
+    logger.info("Routes configured")
 
 
 def main():
     """Application entry point."""
     import uvicorn
 
+    setup_logging(service_name="api")
+
     # Create app
     app = create_app()
 
     # Note: User must import their pipeline definitions before starting the server
     # This triggers registration via metaclass
-    print("=" * 60)
-    print("🚀 Starting Reflowfy API")
-    print(f"📦 Version: {__version__}")
-    print("=" * 60)
+    logger.info("Starting Reflowfy API (version %s)", __version__)
 
     # Auto-discover and load pipelines
     discover_and_load_pipelines()
@@ -175,8 +174,7 @@ def main():
     host = os.getenv("API_HOST", "0.0.0.0")
     port = int(os.getenv("API_PORT", "8000"))
 
-    print(f"🌐 Server starting on http://{host}:{port}")
-    print("📖 API docs at http://localhost:8000/docs\n")
+    logger.info("Server starting on http://%s:%d (docs at /docs)", host, port)
 
     # Start server
     uvicorn.run(app, host=host, port=port)

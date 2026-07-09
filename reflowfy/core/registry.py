@@ -1,7 +1,10 @@
 """Pipeline registry for dynamic registration and lookup."""
 
+import logging
 import threading
 from typing import TYPE_CHECKING, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from reflowfy.core.abstract_pipeline import AbstractPipeline
@@ -53,7 +56,7 @@ class PipelineRegistry:
                 return
 
             self._pipelines[pipeline.name] = pipeline
-            print(f"✓ Registered pipeline: {pipeline.name}")
+            logger.debug("Registered pipeline: %s", pipeline.name)
 
     def get(self, name: str) -> Optional["AbstractPipeline"]:
         """

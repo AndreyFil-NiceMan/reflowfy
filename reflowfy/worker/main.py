@@ -1,5 +1,6 @@
 """Worker entrypoint."""
 
+import logging
 import os
 import signal
 import sys
@@ -13,10 +14,12 @@ from reflowfy.worker.consumer import KafkaJobConsumer
 
 from prometheus_client import start_http_server
 
+logger = logging.getLogger(__name__)
+
 
 def handle_shutdown(signum: int, frame: FrameType):
     """Handle graceful shutdown."""
-    print("\nShutdown signal received, stopping worker...")
+    logger.info("Shutdown signal received, stopping worker")
     sys.exit(0)
 
 
@@ -29,14 +32,6 @@ def main():
 
     build_version = os.getenv("REFLOWFY_BUILD_VERSION") or os.getenv("GIT_SHA")
 
-    print("=" * 60)
-    print("🚀 Starting Reflowfy Worker (Async)")
-    print(f"📦 Version: {__version__}")
-    if build_version:
-        print(f"🔖 Build: {build_version}")
-    print(f"📂 Package path: {reflowfy_pkg.__file__}")
-    print("=" * 60)
-
     # Register signal handlers
     signal.signal(signal.SIGTERM, handle_shutdown)  # pyright: ignore[reportArgumentType]
     signal.signal(signal.SIGINT, handle_shutdown)  # pyright: ignore[reportArgumentType]
@@ -46,9 +41,15 @@ def main():
     init_tracing(service_name="worker")
     start_http_server(int(os.getenv("METRICS_PORT", "9100")))
 
+    logger.info(
+        "Starting Reflowfy worker (version %s, build %s, package %s)",
+        __version__,
+        build_version or "unknown",
+        reflowfy_pkg.__file__,
+    )
+
     # Auto-discover and load pipelines (module from PIPELINE_MODULE env)
     discover_and_load_pipelines()
-    print()
 
     # Get configuration from environment
     kafka_bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
@@ -64,17 +65,21 @@ def main():
     sasl_username = os.getenv("KAFKA_SASL_USERNAME")
     sasl_password = os.getenv("KAFKA_SASL_PASSWORD")
 
-    print(f"Kafka brokers: {kafka_bootstrap_servers}")
-    print(f"Topic: {kafka_topic}")
-    print(f"Consumer group: {kafka_group_id}")
+    # Database host only — never log credentials.
+    db_target = database_url.split("@")[-1] if "@" in database_url else database_url
+    logger.info(
+        "Kafka brokers=%s topic=%s consumer_group=%s database=%s",
+        kafka_bootstrap_servers,
+        kafka_topic,
+        kafka_group_id,
+        db_target,
+    )
     if sasl_username:
-        print(
-            f"SASL: {security_protocol or 'SASL_PLAINTEXT'} / {sasl_mechanism or 'SCRAM-SHA-256'}"
+        logger.info(
+            "SASL enabled: %s / %s",
+            security_protocol or "SASL_PLAINTEXT",
+            sasl_mechanism or "SCRAM-SHA-256",
         )
-    print(
-        f"Database: {database_url.split('@')[-1] if '@' in database_url else database_url}"
-    )  # Hide credentials
-    print()
 
     # Create consumer
     consumer = KafkaJobConsumer(
@@ -89,16 +94,16 @@ def main():
     )
 
     try:
-        print("Worker ready, waiting for jobs...\n")
+        logger.info("Worker ready, waiting for jobs")
         # This process is one active worker; Prometheus sums the gauge across
         # all scraped worker replicas.
         metrics.active_workers.set(1)
         # Run async consumer in event loop
         asyncio.run(consumer.start())
     except KeyboardInterrupt:
-        print("\nWorker stopped by user")
-    except Exception as e:
-        print(f"\nWorker crashed: {e}")
+        logger.info("Worker stopped by user")
+    except Exception:
+        logger.exception("Worker crashed")
         sys.exit(1)
     finally:
         metrics.active_workers.set(0)

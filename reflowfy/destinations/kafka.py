@@ -2,10 +2,13 @@
 
 import asyncio
 import json
+import logging
 from typing import Any, Dict, List, Optional, Union
 from aiokafka import AIOKafkaProducer
 from aiokafka.errors import KafkaError
 from reflowfy.destinations.base import BaseDestination, DestinationError, RetryConfig
+
+logger = logging.getLogger(__name__)
 
 
 class KafkaDestination(BaseDestination):
@@ -242,11 +245,16 @@ class KafkaDestination(BaseDestination):
             )
         except Exception as e:
             # Fail open — a broken lag check must not block the pipeline
-            print(f"⚠️ Kafka lag check failed (fail open): {e}")
+            logger.warning("Kafka lag check failed (fail open): %s", e)
             return True
 
         if lag > threshold:
-            print(f"⚠️ Kafka lag {lag} exceeds threshold {threshold} for group '{consumer_group_id}'")
+            logger.warning(
+                "Kafka lag %d exceeds threshold %d for group '%s'",
+                lag,
+                threshold,
+                consumer_group_id,
+            )
             return False
 
         return True

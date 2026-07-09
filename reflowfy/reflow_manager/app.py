@@ -463,9 +463,12 @@ async def _startup() -> None:
 
     discover_and_load_pipelines()
 
-    logger.info("Kafka: %s", os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"))
-    logger.info("Topic: %s", os.getenv("KAFKA_TOPIC", "reflow.jobs"))
-    logger.info("Rate limit: %s jobs/sec", os.getenv("MAX_JOBS_PER_SECOND", "100"))
+    logger.info(
+        "Kafka=%s topic=%s rate_limit=%s jobs/sec",
+        os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
+        os.getenv("KAFKA_TOPIC", "reflow.jobs"),
+        os.getenv("MAX_JOBS_PER_SECOND", "100"),
+    )
 
     # Check for interrupted executions and recover
     logger.info("Checking for interrupted executions...")

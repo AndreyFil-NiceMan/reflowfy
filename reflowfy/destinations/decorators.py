@@ -16,7 +16,10 @@ Example:
         return production_kafka(topic="my-output")
 """
 
+import logging
 from typing import Any, Callable, Dict, List, Optional, TypeVar
+
+logger = logging.getLogger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -30,7 +33,7 @@ class DestinationRegistry:
     def register(cls, name: str, factory: Callable[..., Any]) -> None:
         """Register a destination factory function."""
         cls._destinations[name] = factory
-        print(f"✓ Registered reusable destination: {name}")
+        logger.debug("Registered reusable destination: %s", name)
 
     @classmethod
     def get(cls, name: str) -> Optional[Callable[..., Any]]:

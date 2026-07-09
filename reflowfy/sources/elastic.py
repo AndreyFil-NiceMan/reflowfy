@@ -62,11 +62,19 @@ class ElasticSource(BaseSource):
             auth = self.config.get("auth")
             if isinstance(auth, list):
                 auth = tuple(auth)
-            self._client = Elasticsearch(
-                hosts=[self.config["url"]],
-                basic_auth=auth,
-                verify_certs=self.config["verify_certs"],
-            )
+            url = self.config["url"]
+            verify_certs = self.config["verify_certs"]
+            kwargs: Dict[str, Any] = {
+                "hosts": [url],
+                "basic_auth": auth,
+                "verify_certs": verify_certs,
+            }
+            # Silence elastic_transport's "verify_certs=False is insecure"
+            # SecurityWarning when cert verification is deliberately disabled on
+            # an https cluster (ssl_show_warn is only valid on https URLs).
+            if url.lower().startswith("https://") and not verify_certs:
+                kwargs["ssl_show_warn"] = False
+            self._client = Elasticsearch(**kwargs)
         return self._client
 
     def fetch(self, runtime_params: Dict[str, Any], limit: Optional[int] = None) -> List[Any]:

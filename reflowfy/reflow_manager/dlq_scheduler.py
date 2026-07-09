@@ -54,21 +54,21 @@ class DLQScheduler:
     def start(self):
         """Start the background polling thread."""
         if self._running:
-            logger.warning("⚠️ DLQ Scheduler already running")
+            logger.warning("DLQ Scheduler already running")
             return
 
         self._running = True
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
-        logger.info(f"✅ DLQ Scheduler started (polling every {self.poll_interval}s)")
+        logger.info("DLQ Scheduler started (polling every %ss)", self.poll_interval)
 
     def stop(self):
         """Stop the scheduler gracefully."""
         if not self._running:
             return
 
-        logger.info("🛑 Stopping DLQ Scheduler...")
+        logger.info("Stopping DLQ Scheduler")
         self._running = False
         self._stop_event.set()
 
@@ -76,15 +76,15 @@ class DLQScheduler:
             self._thread.join(timeout=10)
             self._thread = None
 
-        logger.info("✅ DLQ Scheduler stopped")
+        logger.info("DLQ Scheduler stopped")
 
     def _run_loop(self):
         """Main polling loop."""
         while self._running:
             try:
                 self._poll_and_process()
-            except Exception as e:
-                logger.error(f"❌ DLQ Scheduler error: {e}")
+            except Exception:
+                logger.error("DLQ Scheduler error", exc_info=True)
 
             # Wait for poll interval or stop event
             self._stop_event.wait(timeout=self.poll_interval)
@@ -108,10 +108,14 @@ class DLQScheduler:
             if not due_jobs:
                 return
 
-            logger.info(f"📋 DLQ Scheduler found {len(due_jobs)} due jobs")
+            logger.info("DLQ Scheduler found %d due jobs", len(due_jobs))
             for j in due_jobs:
                 logger.debug(
-                    f"   Job {j.id}: pipeline={j.pipeline_name}, scheduled_at={j.scheduled_at}, retry={j.retry_count}"
+                    "Job %s: pipeline=%s, scheduled_at=%s, retry=%s",
+                    j.id,
+                    j.pipeline_name,
+                    j.scheduled_at,
+                    j.retry_count,
                 )
 
             # Group jobs by pipeline
@@ -125,9 +129,9 @@ class DLQScheduler:
 
             db.commit()
 
-        except Exception as e:
+        except Exception:
             db.rollback()
-            logger.error(f"❌ DLQ poll error: {e}")
+            logger.error("DLQ poll error", exc_info=True)
             raise
         finally:
             db.close()
@@ -138,7 +142,12 @@ class DLQScheduler:
 
         Creates a new execution and dispatches all jobs.
         """
-        logger.info(f"🚀 Processing {len(jobs)} DLQ jobs for pipeline: {pipeline_name}")
+        logger.info(
+            "Processing %d DLQ jobs for pipeline: %s",
+            len(jobs),
+            pipeline_name,
+            extra={"pipeline_name": pipeline_name},
+        )
 
         # Mark jobs as processing
         for job in jobs:
@@ -156,12 +165,20 @@ class DLQScheduler:
                 job.processed_at = now
                 job.execution_id = execution_id
 
-            logger.info(f"✅ DLQ jobs dispatched to execution: {execution_id}")
+            logger.info(
+                "DLQ jobs dispatched to execution: %s",
+                execution_id,
+                extra={"execution_id": execution_id, "pipeline_name": pipeline_name},
+            )
 
         except Exception as e:
             error_msg = str(e)
             logger.error(
-                f"❌ Failed to dispatch DLQ jobs for {pipeline_name}: {error_msg}", exc_info=True
+                "Failed to dispatch DLQ jobs for %s: %s",
+                pipeline_name,
+                error_msg,
+                exc_info=True,
+                extra={"pipeline_name": pipeline_name},
             )
 
             # Handle retries
@@ -211,7 +228,7 @@ class DLQScheduler:
         if job.retry_count >= job.max_retries:
             # Move to archive
             self._archive_job(db, job)
-            logger.info(f"📦 DLQ job {job.id} archived after {job.retry_count} retries")
+            logger.info("DLQ job %s archived after %d retries", job.id, job.retry_count)
         else:
             # Reschedule with exponential backoff
             backoff_minutes = self._calculate_backoff(job.retry_count)
@@ -220,7 +237,10 @@ class DLQScheduler:
             )
             job.status = "pending"
             logger.info(
-                f"🔄 DLQ job {job.id} rescheduled (retry {job.retry_count}/{job.max_retries})"
+                "DLQ job %s rescheduled (retry %d/%d)",
+                job.id,
+                job.retry_count,
+                job.max_retries,
             )
 
     def _calculate_backoff(self, retry_count: int) -> int:

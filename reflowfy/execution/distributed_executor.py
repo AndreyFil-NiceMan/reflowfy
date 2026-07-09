@@ -1,9 +1,12 @@
 """Distributed executor with ReflowManager."""
 
+import logging
 import uuid
 from typing import Any, Dict, Optional
 import httpx
 from reflowfy.execution.base import BaseExecutor, ExecutionStatus, ExecutionState
+
+logger = logging.getLogger(__name__)
 
 
 class DistributedExecutor(BaseExecutor):
@@ -82,16 +85,18 @@ class DistributedExecutor(BaseExecutor):
         )
 
         try:
-            print(f"🚀 Starting distributed execution: {execution_id}")
-            print(f"📊 Pipeline: {pipeline.name}")
-            print(f"🔗 ReflowManager: {self.reflow_manager_url}")
+            logger.info(
+                "Starting distributed execution %s (pipeline=%s, manager=%s)",
+                execution_id,
+                pipeline.name,
+                self.reflow_manager_url,
+            )
 
             client = self._get_client()
 
             rate_limit = rate_limit_override
 
             # Call ReflowManager's /run endpoint - it handles everything
-            print("📝 Sending run request to ReflowManager...")
             run_response = client.post(
                 f"{self.reflow_manager_url}/run",
                 json={
@@ -105,15 +110,21 @@ class DistributedExecutor(BaseExecutor):
 
             # Handle errors
             if run_response.status_code >= 400:
-                print(f"DEBUG: Run failed with status {run_response.status_code}")
-                print(f"DEBUG: Response body: {run_response.text}")
+                logger.error(
+                    "Run failed for %s with status %d: %s",
+                    execution_id,
+                    run_response.status_code,
+                    run_response.text,
+                )
                 run_response.raise_for_status()
 
             result = run_response.json()
 
             total_jobs = result.get("jobs_dispatched", 0)
 
-            print(f"✓ Dispatched {total_jobs} jobs via ReflowManager")
+            logger.info(
+                "Dispatched %d jobs via ReflowManager (execution %s)", total_jobs, execution_id
+            )
 
             # Update status
             status.total_jobs = total_jobs
@@ -124,7 +135,7 @@ class DistributedExecutor(BaseExecutor):
 
         except httpx.HTTPError as e:
             error_msg = f"ReflowManager HTTP error: {e}"
-            print(f"❌ {error_msg}")
+            logger.error("Execution %s: %s", execution_id, error_msg)
 
             status.state = ExecutionState.FAILED
             status.error_message = error_msg
@@ -132,10 +143,8 @@ class DistributedExecutor(BaseExecutor):
             return status
 
         except Exception as e:
-            import traceback
             error_msg = f"Failed to run pipeline: {e}"
-            print(f"❌ {error_msg}")
-            traceback.print_exc()
+            logger.exception("Execution %s: failed to run pipeline", execution_id)
 
             status.state = ExecutionState.FAILED
             status.error_message = error_msg

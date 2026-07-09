@@ -53,8 +53,9 @@ class ContentDedupScheduler:
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
         logger.info(
-            f"Content Dedup Sweeper started"
-            f" (every {self.sweep_interval}s, retain {self.retention_hours}h)"
+            "Content Dedup Sweeper started (every %ss, retain %sh)",
+            self.sweep_interval,
+            self.retention_hours,
         )
 
     def stop(self) -> None:
@@ -73,10 +74,10 @@ class ContentDedupScheduler:
                 deleted = purge_expired_content(db, self.retention_hours)
                 db.commit()
                 if deleted:
-                    logger.info(f"Content Dedup Sweeper purged {deleted} expired hash(es)")
-            except Exception as e:  # pragma: no cover
+                    logger.info("Content Dedup Sweeper purged %d expired hash(es)", deleted)
+            except Exception:  # pragma: no cover
                 db.rollback()
-                logger.info(f"Content Dedup Sweeper error: {e}")
+                logger.error("Content Dedup Sweeper error", exc_info=True)
             finally:
                 db.close()
             self._stop_event.wait(timeout=self.sweep_interval)

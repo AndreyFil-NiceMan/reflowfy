@@ -1,5 +1,6 @@
 """Local executor for testing and debugging."""
 
+import logging
 import uuid
 from typing import Any, Dict, Optional
 
@@ -9,6 +10,8 @@ from reflowfy.core.execution_context import (
 )
 from reflowfy.execution.base import BaseExecutor, ExecutionState, ExecutionStatus
 from reflowfy.execution.job_runner import plan_slices, run_job_records
+
+logger = logging.getLogger(__name__)
 
 
 class LocalExecutor(BaseExecutor):
@@ -105,7 +108,7 @@ class LocalExecutor(BaseExecutor):
                 remaining = self.max_records - total_fetched
                 if remaining <= 0:
                     break
-                print(f"🔍 Fetching data from source (limit: {remaining})...")
+                logger.debug("Fetching data from source (limit: %d)", remaining)
                 records, transformed_records, applied, destination = run_job_records(
                     sub, pipeline, flat_runtime_params, limit=remaining
                 )
@@ -113,11 +116,11 @@ class LocalExecutor(BaseExecutor):
                 if not records:
                     continue
 
-                print(f"✓ Fetched {len(records)} records")
+                logger.debug("Fetched %d records", len(records))
                 for name, _duration in applied:
-                    print(f"✓ Applied transformation: {name}")
+                    logger.debug("Applied transformation: %s", name)
 
-                print(f"📤 Sending {len(transformed_records)} records to destination...")
+                logger.debug("Sending %d records to destination", len(transformed_records))
                 destination.send_with_retry(
                     transformed_records,
                     metadata=flat_runtime_params,
@@ -126,13 +129,18 @@ class LocalExecutor(BaseExecutor):
                 total_sent += len(transformed_records)
 
             if total_fetched == 0:
-                print("⚠️  No records fetched")
+                logger.info("Execution %s: no records fetched", execution_id)
                 status.state = ExecutionState.COMPLETED
                 status.completed_jobs = 1
                 status.metadata["records_count"] = 0
                 return status
 
-            print("✓ Records sent successfully")
+            logger.info(
+                "Execution %s completed: %d fetched, %d sent",
+                execution_id,
+                total_fetched,
+                total_sent,
+            )
             status.state = ExecutionState.COMPLETED
             status.completed_jobs = 1
             status.metadata["records_fetched"] = total_fetched
@@ -141,7 +149,7 @@ class LocalExecutor(BaseExecutor):
             return status
 
         except Exception as e:
-            print(f"❌ Execution failed: {e}")
+            logger.error("Execution %s failed: %s", execution_id, e, exc_info=True)
 
             status.state = ExecutionState.FAILED
             status.failed_jobs = 1
@@ -188,14 +196,14 @@ class LocalExecutor(BaseExecutor):
             total_jobs=len(ids),
         )
 
-        print(f"🔍 IdBasedPipeline local execution: {len(ids)} IDs")
+        logger.info("IdBasedPipeline %s local execution: %d IDs", execution_id, len(ids))
 
         total_records_fetched = 0
         total_records_sent = 0
 
         try:
             for current_id in ids:
-                print(f"\n  Processing ID: {current_id}")
+                logger.debug("Processing ID: %s", current_id)
 
                 # Resolve source for this ID.
                 # batch_params is a per-ID copy enriched by define_source.
@@ -232,7 +240,7 @@ class LocalExecutor(BaseExecutor):
                     if not records:
                         continue
                     for name, _duration in applied:
-                        print(f"  ✓ Applied: {name}")
+                        logger.debug("Applied: %s", name)
                     destination.send_with_retry(
                         transformed_records,
                         metadata=flat_id_params,
@@ -241,26 +249,32 @@ class LocalExecutor(BaseExecutor):
                     id_sent += len(transformed_records)
 
                 if id_fetched == 0:
-                    print(f"  ⚠️ No records for ID: {current_id}")
+                    logger.debug("No records for ID: %s", current_id)
                     status.completed_jobs += 1
                     continue
 
-                print(f"  ✓ Fetched {id_fetched} records for {current_id}")
                 total_records_fetched += id_fetched
                 total_records_sent += id_sent
                 status.completed_jobs += 1
-                print(f"  ✓ Sent {id_sent} records for {current_id}")
+                logger.debug("ID %s: fetched %d, sent %d", current_id, id_fetched, id_sent)
 
             status.state = ExecutionState.COMPLETED
             status.metadata["ids_processed"] = len(ids)
             status.metadata["records_fetched"] = total_records_fetched
             status.metadata["records_sent"] = total_records_sent
 
-            print(f"\n✓ IdBasedPipeline complete: {len(ids)} IDs, {total_records_sent} records")
+            logger.info(
+                "IdBasedPipeline %s complete: %d IDs, %d records",
+                execution_id,
+                len(ids),
+                total_records_sent,
+            )
             return status
 
         except Exception as e:
-            print(f"❌ IdBasedPipeline execution failed: {e}")
+            logger.error(
+                "IdBasedPipeline %s execution failed: %s", execution_id, e, exc_info=True
+            )
             status.state = ExecutionState.FAILED
             status.failed_jobs = len(ids) - status.completed_jobs
             status.error_message = str(e)

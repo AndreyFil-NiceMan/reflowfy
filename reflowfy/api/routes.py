@@ -1,5 +1,6 @@
 """Dynamic route generation for pipelines."""
 
+import logging
 from typing import Any, Dict, Literal, Optional
 from inspect import Parameter, Signature
 
@@ -9,6 +10,8 @@ from pydantic import BaseModel
 
 from reflowfy.api.execution import execution_tracker
 from reflowfy.execution.base import ExecutionState
+
+logger = logging.getLogger(__name__)
 
 
 class PipelineRunResponse(BaseModel):
@@ -49,12 +52,14 @@ def _run_body(
 
     rate_limit_override = rate_limit
 
-    print(f"\n{'=' * 60}")
-    print(f"Running pipeline: {pipeline_name} (mode: {mode_label})")
-    print(f"{'=' * 60}")
-    print(f"Runtime params: {runtime_params_dict}")
-    if rate_limit:
-        print(f"Rate limit override: {rate_limit} jobs/sec")
+    logger.info(
+        "Running pipeline %s (mode=%s, rate_limit=%s, params=%s)",
+        pipeline_name,
+        mode_label,
+        rate_limit if rate_limit else "default",
+        runtime_params_dict,
+        extra={"pipeline_name": pipeline_name},
+    )
 
     try:
         status = executor.execute(
@@ -63,13 +68,21 @@ def _run_body(
             rate_limit_override=rate_limit_override,
         )
     except Exception as e:
-        print(f"Execution raised: {e}\n")
+        logger.exception(
+            "Execution raised for pipeline %s", pipeline_name,
+            extra={"pipeline_name": pipeline_name},
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
     execution_tracker.track(status)
     _check_status(status)
 
-    print(f"Execution completed: {status.execution_id} state={status.state}\n")
+    logger.info(
+        "Execution %s completed (state=%s)",
+        status.execution_id,
+        status.state,
+        extra={"execution_id": status.execution_id, "pipeline_name": pipeline_name},
+    )
 
     return PipelineRunResponse(
         execution_id=status.execution_id,
@@ -198,7 +211,7 @@ def _create_run_route(
     body_str = ("body: " + ", ".join(p.name for p in body_params)) if body_params else "no body"
     query_str = "&".join(p.name + "=..." for p in query_params)
     full_query = "?mode=distributed&rate_limit=..." + (f"&{query_str}" if query_str else "")
-    print(f"  ✓ POST /pipelines/{pipeline_name}/run{full_query}  [{body_str}]")
+    logger.debug("Registered POST /pipelines/%s/run%s [%s]", pipeline_name, full_query, body_str)
 
 
 def create_pipeline_routes(
@@ -242,4 +255,4 @@ def create_pipeline_routes(
             "config": pipeline.config,
         }
 
-    print(f"  ✓ GET  /pipelines/{pipeline_name}/status")
+    logger.debug("Registered GET /pipelines/%s/status", pipeline_name)

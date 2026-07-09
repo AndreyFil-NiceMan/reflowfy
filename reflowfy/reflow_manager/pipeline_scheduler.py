@@ -45,21 +45,21 @@ class PipelineScheduler:
     def start(self) -> None:
         """Start the background polling thread."""
         if self._running:
-            logger.warning("⚠️ Pipeline Scheduler already running")
+            logger.warning("Pipeline Scheduler already running")
             return
 
         self._running = True
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
-        logger.info(f"✅ Pipeline Scheduler started (polling every {self.poll_interval}s)")
+        logger.info("Pipeline Scheduler started (polling every %ss)", self.poll_interval)
 
     def stop(self) -> None:
         """Stop the scheduler gracefully."""
         if not self._running:
             return
 
-        logger.info("🛑 Stopping Pipeline Scheduler...")
+        logger.info("Stopping Pipeline Scheduler")
         self._running = False
         self._stop_event.set()
 
@@ -67,15 +67,15 @@ class PipelineScheduler:
             self._thread.join(timeout=10)
             self._thread = None
 
-        logger.info("✅ Pipeline Scheduler stopped")
+        logger.info("Pipeline Scheduler stopped")
 
     def _run_loop(self) -> None:
         """Main polling loop."""
         while self._running:
             try:
                 self._poll_and_trigger()
-            except Exception as e:
-                logger.error(f"❌ Pipeline Scheduler error: {e}")
+            except Exception:
+                logger.error("Pipeline Scheduler error", exc_info=True)
 
             self._stop_event.wait(timeout=self.poll_interval)
 
@@ -97,16 +97,16 @@ class PipelineScheduler:
             if not due:
                 return
 
-            logger.info(f"⏰ Pipeline Scheduler found {len(due)} due pipeline(s)")
+            logger.info("Pipeline Scheduler found %d due pipeline(s)", len(due))
 
             for schedule in due:
                 self._trigger_pipeline(db, schedule, now)
 
             db.commit()
 
-        except Exception as e:
+        except Exception:
             db.rollback()
-            logger.error(f"❌ Pipeline Scheduler poll error: {e}")
+            logger.error("Pipeline Scheduler poll error", exc_info=True)
             raise
         finally:
             db.close()
@@ -124,7 +124,13 @@ class PipelineScheduler:
         pipeline_name = schedule.pipeline_name
         execution_id = f"sched-{uuid.uuid4().hex[:12]}"
 
-        logger.info(f"🚀 Triggering scheduled pipeline: {pipeline_name} (execution={execution_id})")
+        log_ctx = {"execution_id": execution_id, "pipeline_name": pipeline_name}
+        logger.info(
+            "Triggering scheduled pipeline: %s (execution=%s)",
+            pipeline_name,
+            execution_id,
+            extra=log_ctx,
+        )
 
         try:
             if not self.pipeline_runner_factory:
@@ -134,11 +140,16 @@ class PipelineScheduler:
             self._dispatch_async(pipeline_name, execution_id)
 
             schedule.last_execution_id = execution_id
-            logger.info(f"✅ Scheduled execution created and dispatched: {execution_id}")
+            logger.info(
+                "Scheduled execution created and dispatched: %s", execution_id, extra=log_ctx
+            )
 
-        except Exception as e:
+        except Exception:
             logger.error(
-                f"❌ Failed to trigger scheduled pipeline '{pipeline_name}': {e}", exc_info=True
+                "Failed to trigger scheduled pipeline '%s'",
+                pipeline_name,
+                exc_info=True,
+                extra=log_ctx,
             )
             # Still advance the schedule to avoid a tight retry loop on persistent errors
 
@@ -183,7 +194,12 @@ class PipelineScheduler:
                     runtime_params={},
                 )
             except Exception as e:
-                logger.error(f"❌ Scheduled dispatch failed for {execution_id}: {e}", exc_info=True)
+                logger.error(
+                    "Scheduled dispatch failed for %s",
+                    execution_id,
+                    exc_info=True,
+                    extra={"execution_id": execution_id, "pipeline_name": pipeline_name},
+                )
                 try:
                     runner.execution_manager.update_execution_state(
                         execution_id, "failed", error_message=str(e)
@@ -243,7 +259,7 @@ class PipelineScheduler:
                     enabled="true",
                 )
                 db.add(row)
-                logger.info(f"  ✓ Registered schedule for '{pipeline.name}' ({expr})")
+                logger.info("Registered schedule for '%s' (%s)", pipeline.name, expr)
 
             else:
                 # Re-enable if it was previously disabled
@@ -253,7 +269,7 @@ class PipelineScheduler:
                     # Cron expression changed — recalculate next fire time
                     existing.cron_expression = expr
                     existing.next_run_at = self._compute_next_run(expr, now)
-                    logger.info(f"  ✓ Updated schedule for '{pipeline.name}' ({expr})")
+                    logger.info("Updated schedule for '%s' (%s)", pipeline.name, expr)
                 # Else: leave next_run_at unchanged (mid-interval restart case)
 
         # Soft-disable schedules for pipelines that no longer have schedule set
@@ -265,7 +281,7 @@ class PipelineScheduler:
             if row.pipeline_name not in scheduled_names:
                 row.enabled = "false"
                 logger.info(
-                    f"  ✓ Disabled schedule for '{row.pipeline_name}' (no longer scheduled)"
+                    "Disabled schedule for '%s' (no longer scheduled)", row.pipeline_name
                 )
 
     def reset_schedule(self, db: Session, pipeline_name: str, triggered_at: datetime) -> None:

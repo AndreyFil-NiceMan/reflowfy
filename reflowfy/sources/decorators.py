@@ -17,7 +17,10 @@ Example:
         return production_elastic(index="my-specific-index")
 """
 
+import logging
 from typing import Any, Callable, Dict, List, Optional, TypeVar
+
+logger = logging.getLogger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -31,7 +34,7 @@ class SourceRegistry:
     def register(cls, name: str, factory: Callable[..., Any]) -> None:
         """Register a source factory function."""
         cls._sources[name] = factory
-        print(f"✓ Registered reusable source: {name}")
+        logger.debug("Registered reusable source: %s", name)
 
     @classmethod
     def get(cls, name: str) -> Optional[Callable[..., Any]]:

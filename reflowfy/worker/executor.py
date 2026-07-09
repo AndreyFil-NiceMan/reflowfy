@@ -171,6 +171,8 @@ class WorkerExecutor:
         _pipeline_name: str,
     ) -> bool:
         """Fetch the slice, transform, write to destination, report to Postgres."""
+        # job_id/execution_id/pipeline_name are bound onto every record here by the
+        # log_context() the caller entered — no need to pass them per call.
         claimed_content_hash = None
         destination = None
 
