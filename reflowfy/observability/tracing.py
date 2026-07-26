@@ -17,7 +17,7 @@ def init_tracing(service_name: str = "reflowfy") -> None:
     global _initialized
     if _initialized or not os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT"):
         return
-    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
