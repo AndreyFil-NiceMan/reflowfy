@@ -488,3 +488,123 @@ def test_elastic_split_docs_per_job_empty_yields_nothing(monkeypatch):
 
     monkeypatch.setattr(src, "_get_client", lambda: _Client())
     assert list(src.split({})) == []
+
+
+# --- PIT keep_alive is independent of `scroll` -------------------------------
+# The manager opens the PIT at plan time; workers search it one checkpoint
+# batch later. Tying its lifetime to `scroll` (a 2m per-page timeout) expired
+# it mid-execution -> ApiError(503, 'search_phase_execution_exception').
+
+
+class _PitSpyES:
+    """Records the keep_alive of every open_point_in_time / search call."""
+
+    def __init__(self, n=10):
+        self._n = n
+        self.opened = []
+        self.searched = []
+
+    def count(self, **k):
+        return {"count": self._n}
+
+    def open_point_in_time(self, **k):
+        self.opened.append(k.get("keep_alive"))
+        return {"id": "PIT"}
+
+    def search(self, body=None, size=None):
+        if body and "pit" in body:
+            self.searched.append(body["pit"]["keep_alive"])
+        after = body.get("search_after") if body else None
+        start = 0 if after is None else after[0] + 1
+        hits = [
+            {"sort": [i], "_source": {"i": i}}
+            for i in range(start, min(start + (size or 0), self._n))
+        ]
+        return {"hits": {"hits": hits}}
+
+
+def test_elastic_split_pit_uses_pit_keep_alive_not_scroll(monkeypatch):
+    from reflowfy.sources.elastic import ElasticSource
+
+    src = ElasticSource(
+        url="http://es:9200",
+        index="logs-*",
+        base_query={"query": {"match_all": {}}},
+        scroll="2m",
+        size=1000,
+        docs_per_job=3,
+        pit_keep_alive="45m",
+    )
+    es = _PitSpyES(10)
+    monkeypatch.setattr(src, "_get_client", lambda: es)
+
+    subs = list(src.split({}))
+
+    assert es.opened == ["45m"]
+    # the window pre-scan searches the PIT too
+    assert es.searched and set(es.searched) == {"45m"}
+    # every child job carries it, so the worker sends the same keep_alive
+    assert all(s.config["pit_keep_alive"] == "45m" for s in subs)
+
+
+def test_elastic_split_sliced_pit_uses_pit_keep_alive(monkeypatch):
+    from reflowfy.sources.elastic import ElasticSource
+
+    src = ElasticSource(
+        url="http://es:9200",
+        index="logs-*",
+        base_query={"query": {"match_all": {}}},
+        scroll="2m",
+        size=1000,
+        pit_keep_alive="45m",
+    )
+    src.config["num_slices"] = 2
+    es = _PitSpyES(10)
+    monkeypatch.setattr(src, "_get_client", lambda: es)
+
+    subs = list(src.split({}))
+    assert es.opened == ["45m"]
+    assert all(s.config["pit_keep_alive"] == "45m" for s in subs)
+
+
+def test_elastic_fetch_sends_pit_keep_alive_on_both_pit_paths(monkeypatch):
+    from reflowfy.sources.elastic import ElasticSource
+
+    for narrowing in (
+        {"window": {"search_after": None, "size": 2}},
+        {"slice": {"id": 0, "max": 2}},
+    ):
+        src = ElasticSource(
+            url="http://es",
+            index="i",
+            base_query={"query": {"match_all": {}}},
+            scroll="2m",
+            size=2,
+            pit_keep_alive="45m",
+        )
+        src.config["pit_id"] = "PIT"
+        src.config.update(narrowing)
+        es = _PitSpyES(2)
+        monkeypatch.setattr(src, "_get_client", lambda: es)
+
+        src.fetch({})
+        assert es.searched, f"no PIT search recorded for {narrowing}"
+        assert set(es.searched) == {"45m"}, f"{narrowing} sent {es.searched}"
+
+
+def test_elastic_fetch_legacy_payload_without_pit_keep_alive_uses_default(monkeypatch):
+    # Jobs serialized before pit_keep_alive existed must not fall back to `scroll`.
+    from reflowfy.sources.elastic import DEFAULT_PIT_KEEP_ALIVE, ElasticSource
+
+    src = ElasticSource(
+        url="http://es", index="i", base_query={"query": {"match_all": {}}}, scroll="2m", size=2
+    )
+    src.config.pop("pit_keep_alive")
+    src.config["pit_id"] = "PIT"
+    src.config["window"] = {"search_after": None, "size": 2}
+    es = _PitSpyES(2)
+    monkeypatch.setattr(src, "_get_client", lambda: es)
+
+    src.fetch({})
+    assert set(es.searched) == {DEFAULT_PIT_KEEP_ALIVE}
+    assert DEFAULT_PIT_KEEP_ALIVE != "2m"
