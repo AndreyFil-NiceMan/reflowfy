@@ -22,7 +22,7 @@ class E2EElasticDocsPerJobPipeline(AbstractPipeline):
     """E2E test pipeline exercising count-derived slicing (docs_per_job)."""
 
     name = "e2e_elastic_docs_per_job_test"
-    rate_limit = 10
+    rate_limit = 600  # jobs per minute
 
     def define_source(self, runtime_params):
         return e2e_elastic(

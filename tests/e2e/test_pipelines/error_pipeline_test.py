@@ -24,7 +24,7 @@ class ErrorPipelineTest(AbstractPipeline):
     """Pipeline whose transformation always raises — used to test error reporting."""
 
     name = "error_pipeline_test"
-    rate_limit = 10
+    rate_limit = 600  # jobs per minute
     enable_duplicate_jobs = True
 
     def define_source(self, runtime_params):

@@ -31,7 +31,7 @@ class E2EElasticOneDocPerJobPipeline(AbstractPipeline):
     """E2E pipeline exercising docs_per_job=1 (exactly one doc per job)."""
 
     name = "e2e_elastic_one_doc_per_job_test"
-    rate_limit = 100
+    rate_limit = 6000  # jobs per minute
 
     def define_source(self, runtime_params):
         return e2e_elastic(

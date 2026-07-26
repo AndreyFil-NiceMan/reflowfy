@@ -48,8 +48,8 @@ spec:
               value: {{ .Values.kafka.bootstrapServers | quote }}
             - name: KAFKA_TOPIC
               value: {{ .Values.kafka.topic | quote }}
-            - name: MAX_JOBS_PER_SECOND
-              value: {{ .Values.maxJobsPerSecond | quote }}
+            - name: MAX_JOBS_PER_MINUTE
+              value: {{ .Values.maxJobsPerMinute | quote }}
             - name: PIPELINE_MODULE
               value: {{ .Values.pipelineModule | quote }}
             - name: LOG_LEVEL

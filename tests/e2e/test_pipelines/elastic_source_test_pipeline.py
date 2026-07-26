@@ -17,7 +17,7 @@ class E2EElasticSourceTestPipeline(AbstractPipeline):
     """E2E test pipeline for Elasticsearch source."""
 
     name = "e2e_elastic_source_test"
-    rate_limit = 10
+    rate_limit = 600  # jobs per minute
 
     def define_parameters(self):
         return [

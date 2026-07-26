@@ -114,7 +114,7 @@ services:
     environment:
       DATABASE_URL: postgresql://reflowfy:reflowfy@postgres:5432/reflowfy
       EXECUTION_MODE: local
-      MAX_JOBS_PER_SECOND: 100
+      MAX_JOBS_PER_MINUTE: 6000
       PIPELINE_MODULE: pipelines
       HOST: 0.0.0.0
       PORT: 8001

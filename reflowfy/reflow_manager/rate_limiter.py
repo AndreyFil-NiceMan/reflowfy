@@ -6,6 +6,8 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from reflowfy.reflow_manager.models import RateLimitState
 
+SECONDS_PER_MINUTE = 60.0
+
 
 class RateLimiter:
     """
@@ -13,21 +15,36 @@ class RateLimiter:
 
     Provides per-pipeline rate limiting with persistent state
     that survives restarts and works across multiple instances.
+
+    All rate limits in the public API are expressed in **jobs per minute**;
+    they are converted to tokens per second for the bucket, which is what
+    `rate_limit_state.refill_rate` stores.
     """
 
-    def __init__(self, db_session: Session, default_rate: float = 100.0):
+    def __init__(self, db_session: Session, default_rate: float = 6000.0):
         """
         Initialize rate limiter.
 
         Args:
             db_session: SQLAlchemy database session
-            default_rate: Default rate limit (tokens per second)
+            default_rate: Default rate limit (jobs per minute)
         """
         self.db = db_session
         self.default_rate = default_rate
 
+    def _tokens_per_second(self, rate_per_minute: float) -> float:
+        """Convert a jobs-per-minute rate limit into the bucket's tokens/second."""
+        return rate_per_minute / SECONDS_PER_MINUTE
+
     def _get_or_create_state(self, pipeline_name: str, rate_limit: float) -> RateLimitState:
-        """Get or create rate limit state for a pipeline, updating rate if different."""
+        """
+        Get or create rate limit state for a pipeline, updating rate if different.
+
+        Args:
+            pipeline_name: Pipeline name
+            rate_limit: Rate limit in jobs per minute
+        """
+        refill_rate = self._tokens_per_second(rate_limit)
         state = self.db.query(RateLimitState).filter(
             RateLimitState.pipeline_name == pipeline_name
         ).first()
@@ -38,18 +55,18 @@ class RateLimiter:
             state = RateLimitState(
                 pipeline_name=pipeline_name,
                 tokens=1.0,  # Start with minimal tokens - no burst allowed
-                max_tokens=max(1.0, rate_limit),
-                refill_rate=rate_limit,
+                max_tokens=max(1.0, refill_rate),
+                refill_rate=refill_rate,
                 last_update=datetime.now(timezone.utc).replace(tzinfo=None),
             )
             self.db.add(state)
             self.db.commit()
             self.db.refresh(state)
-        elif state.refill_rate != rate_limit:
+        elif state.refill_rate != refill_rate:
             # Update the rate limit if it's different from what's stored
             # This handles rate_limit overrides from API calls
-            state.refill_rate = rate_limit
-            state.max_tokens = max(1.0, rate_limit)
+            state.refill_rate = refill_rate
+            state.max_tokens = max(1.0, refill_rate)
             self.db.commit()
 
         return state
@@ -78,7 +95,7 @@ class RateLimiter:
         Args:
             pipeline_name: Pipeline name
             count: Number of jobs to dispatch
-            rate_limit: Optional override rate limit
+            rate_limit: Optional override rate limit (jobs per minute)
 
         Returns:
             True if dispatch is allowed, False otherwise
@@ -104,7 +121,7 @@ class RateLimiter:
 
         Args:
             pipeline_name: Pipeline name
-            rate_limit: The rate limit to use
+            rate_limit: The rate limit to use (jobs per minute)
 
         Returns:
             Locked RateLimitState object
@@ -134,7 +151,7 @@ class RateLimiter:
         Args:
             pipeline_name: Pipeline name
             count: Number of tokens to consume
-            rate_limit: Optional override rate limit
+            rate_limit: Optional override rate limit (jobs per minute)
 
         Returns:
             True if tokens were consumed, False if not enough tokens
@@ -165,18 +182,19 @@ class RateLimiter:
         self,
         pipeline_name: str,
         rate_limit: Optional[float] = None,
-        max_wait: float = 60.0,
+        max_wait: float = 300.0,
     ) -> bool:
         """
         Atomically acquire a token, waiting if necessary.
 
         This method will wait until a token becomes available or max_wait expires.
-        With proper rate limiting, it will block for 1/rate_limit seconds between tokens.
+        With proper rate limiting, it will block for 60/rate_limit seconds between tokens.
 
         Args:
             pipeline_name: Pipeline name
-            rate_limit: Optional override rate limit
-            max_wait: Maximum time to wait for a token (seconds). Default 60s.
+            rate_limit: Optional override rate limit (jobs per minute)
+            max_wait: Maximum time to wait for a token (seconds). Default 300s,
+                which covers the slowest useful rate of 1 job/minute.
 
         Returns:
             True if token was acquired, False if timed out
@@ -185,7 +203,7 @@ class RateLimiter:
         effective_rate = rate_limit if rate_limit is not None else self.default_rate
 
         # Calculate how long to wait between tokens
-        wait_per_token = 1.0 / effective_rate
+        wait_per_token = 1.0 / self._tokens_per_second(effective_rate)
 
         while True:
             # Try to consume a token

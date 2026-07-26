@@ -59,7 +59,7 @@ class TestRateLimiting:
             json={
                 "pipeline_name": "e2e_api_dest_test",
                 "runtime_params": {"tenant_id": "rate-limit-test", "env": "staging"},
-                "rate_limit": 5,  # 5 jobs per second
+                "rate_limit": 300,  # 5 jobs per second
             },
         )
 
@@ -125,12 +125,12 @@ class TestCrashRecovery:
 
         # 1. Start pipeline with slow rate limit to allow time for restart
         # crash_recovery_test pipeline has 500 items / 10 batch_size = 50 jobs.
-        # Using 0.5 jobs/sec = ~100 seconds total execution time
+        # Using 30 jobs/min (0.5/sec) = ~100 seconds total execution time
         response = client.post(
             "/run",
             json={
                 "pipeline_name": "crash_recovery_test",
-                "rate_limit": 0.5,  # Slow - 1 job every 2 seconds
+                "rate_limit": 30,  # Slow - 1 job every 2 seconds
             },
         )
 
