@@ -31,6 +31,16 @@ postgresql:
     persistence:
       enabled: true
       size: 1Gi
+    # Connecting from outside the cluster (pgAdmin, psql):
+    # An OpenShift Route cannot be used - Routes only carry HTTP/TLS-SNI traffic,
+    # and the Postgres wire protocol is neither. Use NodePort (like api/reflowManager)
+    # or LoadBalancer instead:
+    #   --set postgresql.primary.service.type=NodePort
+    #   --set postgresql.primary.service.nodePorts.postgresql=30432
+    service:
+      type: ClusterIP
+      nodePorts:
+        postgresql: ''
     # OpenShift compatible
     podSecurityContext:
       enabled: false

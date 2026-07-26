@@ -3,6 +3,14 @@ Reflowfy installed.
 
 {{- if .Values.postgresql.enabled }}
 PostgreSQL: internal ({{ .Release.Name }}-postgresql:5432)
+{{- if eq (.Values.postgresql.primary.service.type | default "ClusterIP") "ClusterIP" }}
+  pgAdmin:  kubectl port-forward svc/{{ .Release.Name }}-postgresql 5432:5432
+            then connect to localhost:5432 as {{ .Values.postgresql.auth.username }}/{{ .Values.postgresql.auth.database }}
+            (no Route possible - Postgres is not HTTP; set postgresql.primary.service.type=NodePort for direct access)
+{{- else }}
+  pgAdmin:  kubectl get svc {{ .Release.Name }}-postgresql -o jsonpath='{.spec.ports[0].nodePort}'
+            connect to <node-ip>:<nodePort> as {{ .Values.postgresql.auth.username }}/{{ .Values.postgresql.auth.database }}
+{{- end }}
 {{- else }}
 PostgreSQL: external ({{ .Values.postgresql.external.host }}:{{ .Values.postgresql.external.port }})
 {{- end }}
