@@ -102,7 +102,7 @@ pipeline = build_pipeline(
     source=source,
     transformations=[XmlToJson()],
     destination=destination,
-    rate_limit=50,
+    rate_limit=3000,  # jobs per minute
 )
 
 pipeline_registry.register(pipeline)

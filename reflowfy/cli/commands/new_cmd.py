@@ -44,7 +44,7 @@ class {class_name}(AbstractPipeline):
     """{class_name} pipeline."""
 
     name = "{name}"
-    rate_limit = 50
+    rate_limit = 3000  # jobs per minute
 
     def define_parameters(self):
         return [

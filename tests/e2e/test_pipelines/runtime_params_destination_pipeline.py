@@ -16,7 +16,7 @@ class E2ERuntimeParamsDestinationPipeline(AbstractPipeline):
     """
 
     name = "e2e_runtime_params_destination"
-    rate_limit = 50
+    rate_limit = 3000  # jobs per minute
 
     def define_source(self, runtime_params):
         runtime_params["source_marker"] = "mock_source"

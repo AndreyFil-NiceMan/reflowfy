@@ -39,7 +39,7 @@ class E2ERawListSearchPipeline(IdBasedPipeline):
     """
 
     name = "e2e_raw_list_search_pipeline"
-    rate_limit = 20
+    rate_limit = 1200  # jobs per minute
     ids_batch_size = 5
 
     def define_parameters(self):
@@ -91,7 +91,7 @@ class E2EPatchBulkPipeline(IdBasedPipeline):
     """
 
     name = "e2e_patch_bulk_pipeline"
-    rate_limit = 20
+    rate_limit = 1200  # jobs per minute
     ids_batch_size = 8
 
     def define_parameters(self):
@@ -148,7 +148,7 @@ class E2EPerIdPostPipeline(IdBasedPipeline):
     """
 
     name = "e2e_per_id_post_pipeline"
-    rate_limit = 20
+    rate_limit = 1200  # jobs per minute
     ids_batch_size = 5
 
     def define_parameters(self):
@@ -196,7 +196,7 @@ class E2EProductsBatchPipeline(IdBasedPipeline):
     """
 
     name = "e2e_products_batch_pipeline"
-    rate_limit = 20
+    rate_limit = 1200  # jobs per minute
     ids_batch_size = 10
 
     def define_parameters(self):

@@ -53,7 +53,7 @@ services:
       # Kafka settings are ignored in local mode
       KAFKA_BOOTSTRAP_SERVERS: 'ignored:9092'
       KAFKA_TOPIC: reflow.jobs
-      MAX_JOBS_PER_SECOND: 100
+      MAX_JOBS_PER_MINUTE: 6000
       PIPELINE_MODULE: pipelines
       HOST: 0.0.0.0
       PORT: 8001

@@ -26,7 +26,7 @@ class E2EApiDestTestPipeline(AbstractPipeline):
     """
 
     name = "e2e_api_dest_test"
-    rate_limit = 50
+    rate_limit = 3000  # jobs per minute
 
     def define_parameters(self):
         return [

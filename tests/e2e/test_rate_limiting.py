@@ -85,48 +85,48 @@ class TestRateLimiting:
     @pytest.mark.slow
     def test_slow_rate_throttles_jobs(self, client, check_mock_http):
         """
-        Pipeline with rate=1 job/s and 5 single-record batches should take
+        Pipeline with rate=60 jobs/min (1/s) and 5 single-record batches should take
         at least 3 seconds (4 waits of ~1 s each, with 50 % tolerance).
         """
         _, stats, elapsed = _run_pipeline(client, "e2e_slow_rate")
 
         assert stats["state"] == "completed", f"Pipeline failed: {stats}"
         assert elapsed >= 3.0, (
-            f"Expected ≥ 3 s for rate=1, 5 batches but finished in {elapsed:.2f} s"
+            f"Expected ≥ 3 s for rate=60/min, 5 batches but finished in {elapsed:.2f} s"
         )
 
     def test_fast_rate_no_throttle(self, client, check_mock_http):
         """
-        Pipeline with rate=500 job/s and 50 records across 5 batches should
+        Pipeline with rate=30000 jobs/min (500/s) and 50 records across 5 batches should
         complete in under 10 s (no meaningful throttling delay).
         """
         _, stats, elapsed = _run_pipeline(client, "e2e_fast_rate")
 
         assert stats["state"] == "completed", f"Pipeline failed: {stats}"
         assert elapsed < 10.0, (
-            f"rate=500 pipeline took {elapsed:.2f} s — unexpectedly slow"
+            f"rate=30000/min pipeline took {elapsed:.2f} s — unexpectedly slow"
         )
 
     @pytest.mark.slow
     def test_runtime_rate_override(self, client, check_mock_http):
         """
-        E2ERateLimitOverridePipeline has class default=500 jobs/s but the test
-        passes rate_limit=1 in the request body, overriding it.
+        E2ERateLimitOverridePipeline has class default=30000 jobs/min but the test
+        passes rate_limit=60 (1 job/s) in the request body, overriding it.
         With 5 batches at 1/s the run should still take ≥ 3 s.
         """
         _, stats, elapsed = _run_pipeline(
-            client, "e2e_rate_override", rate_limit=1.0
+            client, "e2e_rate_override", rate_limit=60.0
         )
 
         assert stats["state"] == "completed", f"Pipeline failed: {stats}"
         assert elapsed >= 3.0, (
-            f"Override to rate=1 should throttle but finished in {elapsed:.2f} s"
+            f"Override to rate=60/min should throttle but finished in {elapsed:.2f} s"
         )
 
     @pytest.mark.slow
     def test_concurrent_pipelines_isolated(self, client, check_mock_http):
         """
-        Run slow (rate=1) and fast (rate=500) pipelines concurrently in threads.
+        Run slow (60/min) and fast (30000/min) pipelines concurrently in threads.
         The fast pipeline must complete strictly before the slow one.
         """
         results = {}

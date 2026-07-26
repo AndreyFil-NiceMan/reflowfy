@@ -27,6 +27,7 @@ PostgreSQL (state + checkpoints)
 - **Token Bucket Algorithm**: Smooth and efficient rate limiting
 - **Global Rate Limiting**: Works across all API instances
 - **Per-Pipeline Limits**: Override global rate limit per pipeline
+- **Units**: all rate limits are expressed in **jobs per minute**
 - **Database-Backed**: Tokens stored in PostgreSQL for consistency
 
 ### 2. Pipeline State Management
@@ -136,7 +137,7 @@ POST /dispatch
   "execution_id": "abc-123",
   "pipeline_name": "my_pipeline",
   "jobs": [...],
-  "rate_limit": 50
+  "rate_limit": 3000
 }
 ```
 
@@ -191,7 +192,7 @@ GET /health
 | `DATABASE_URL`            | `postgresql://reflowfy:reflowfy@localhost:5432/reflowfy` | PostgreSQL connection string    |
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092`                                         | Kafka broker addresses          |
 | `KAFKA_TOPIC`             | `reflow.jobs`                                            | Kafka topic for job dispatch    |
-| `MAX_JOBS_PER_SECOND`     | `100`                                                    | Global rate limit (jobs/second) |
+| `MAX_JOBS_PER_MINUTE`     | `6000`                                                   | Global rate limit (jobs/minute) |
 | `HOST`                    | `0.0.0.0`                                                | Server host                     |
 | `PORT`                    | `8001`                                                   | Server port                     |
 | `LOG_LEVEL`               | `INFO`                                                   | Logging level                   |
@@ -215,7 +216,7 @@ curl http://localhost:8001/health
 # Set environment variables
 export DATABASE_URL=postgresql://user:pass@host:5432/db
 export KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-export MAX_JOBS_PER_SECOND=100
+export MAX_JOBS_PER_MINUTE=6000
 
 # Run the service
 python -m reflowfy.reflow_manager.app
@@ -265,7 +266,7 @@ CREATE TABLE rate_limit_state (
     pipeline_name VARCHAR(255) PRIMARY KEY,
     tokens FLOAT NOT NULL,
     max_tokens FLOAT NOT NULL,
-    refill_rate FLOAT NOT NULL,
+    refill_rate FLOAT NOT NULL,  -- tokens per second (jobs_per_minute / 60)
     last_update TIMESTAMP NOT NULL
 );
 ```
@@ -378,7 +379,7 @@ SELECT * FROM rate_limit_state;
 3. Increase rate limit:
    ```bash
    # Update docker-compose.yml
-   MAX_JOBS_PER_SECOND: 200
+   MAX_JOBS_PER_MINUTE: 12000
    docker-compose restart reflow-manager
    ```
 
@@ -400,7 +401,7 @@ SELECT * FROM rate_limit_state;
 - **Rate Limiting Overhead**: < 1ms per job dispatch (token bucket check)
 - **Database Operations**: Batched for efficiency
 - **Kafka Dispatch**: Async with batching support
-- **Recommended Rate Limit**: 50-500 jobs/second depending on job size
+- **Recommended Rate Limit**: 3000-30000 jobs/minute depending on job size
 
 ## Security
 

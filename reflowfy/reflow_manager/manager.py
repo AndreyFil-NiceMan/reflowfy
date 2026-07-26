@@ -37,7 +37,7 @@ class ReflowManager:
         db_session: Session,
         kafka_bootstrap_servers: str = "localhost:9092",
         kafka_topic: str = "reflow.jobs",
-        max_jobs_per_second: float = 100.0,
+        max_jobs_per_minute: float = 6000.0,
         execution_mode: str = "distributed",  # "distributed" or "local"
         # SASL Authentication
         kafka_security_protocol: Optional[str] = None,
@@ -52,7 +52,7 @@ class ReflowManager:
             db_session: SQLAlchemy database session
             kafka_bootstrap_servers: Kafka broker addresses
             kafka_topic: Topic for job dispatch
-            max_jobs_per_second: Default global rate limit
+            max_jobs_per_minute: Default global rate limit (jobs per minute)
             execution_mode: "distributed" (Kafka) or "local" (In-process)
             kafka_security_protocol: SASL security protocol (e.g., "SASL_PLAINTEXT")
             kafka_sasl_mechanism: SASL mechanism (e.g., "SCRAM-SHA-256")
@@ -62,13 +62,13 @@ class ReflowManager:
         self.db = db_session
         self.kafka_bootstrap_servers = kafka_bootstrap_servers
         self.kafka_topic = kafka_topic
-        self.max_jobs_per_second = max_jobs_per_second
+        self.max_jobs_per_minute = max_jobs_per_minute
         self.execution_mode = execution_mode
 
         # Initialize component managers
         self.execution_manager = ExecutionManager(db_session)
         self.job_manager = JobManager(db_session)
-        self.rate_limiter = RateLimiter(db_session, max_jobs_per_second)
+        self.rate_limiter = RateLimiter(db_session, max_jobs_per_minute)
 
         # Select dispatcher based on mode
         if execution_mode == "local":

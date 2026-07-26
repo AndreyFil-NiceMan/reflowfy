@@ -98,7 +98,7 @@ class IdBasedPipeline(metaclass=IdBasedPipelineMeta):
 
     Attributes:
         name: Unique pipeline identifier (must be set by subclass)
-        rate_limit: Optional rate limiting config (e.g., 50)
+        rate_limit: Optional rate limit in jobs per minute (e.g., 50)
         config: Additional pipeline-specific configuration
     """
 
@@ -125,7 +125,7 @@ class IdBasedPipeline(metaclass=IdBasedPipelineMeta):
         Initialize the ID-based pipeline.
 
         Args:
-            rate_limit: Rate limiting configuration
+            rate_limit: Rate limit in jobs per minute
             config: Additional configuration options
         """
         if rate_limit is not None:
@@ -260,7 +260,7 @@ class IdBasedPipeline(metaclass=IdBasedPipelineMeta):
             runtime_params: Parameters provided by the user at runtime
 
         Returns:
-            Jobs per second (float) or None
+            Jobs per minute (float) or None
         """
         return self.rate_limit
 

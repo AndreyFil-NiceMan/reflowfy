@@ -39,7 +39,7 @@ def _start_slow_pipeline(client):
     """
     response = client.post("/run", json={
         "pipeline_name": "crash_recovery_test",
-        "rate_limit": 1.0,  # 1 job per second — slow enough to pause mid-flight
+        "rate_limit": 60.0,  # 1 job per second — slow enough to pause mid-flight
     })
     assert response.status_code == 202
     return response.json()["execution_id"]
@@ -185,13 +185,13 @@ class TestExecutionStatsProgress:
         """
         Verify that jobs_completed increases over time while pipeline runs.
         
-        Uses crash_recovery_test at very slow rate (0.3 jobs/sec) so we 
+        Uses crash_recovery_test at very slow rate (18 jobs/min = 0.3/sec) so we 
         can observe incremental progress over polling.
         """
         # Start with very slow rate: 500 items / 10 batch = 50 jobs at 0.3/sec = ~170s
         response = client.post("/run", json={
             "pipeline_name": "crash_recovery_test",
-            "rate_limit": 0.3,
+            "rate_limit": 18.0,
         })
         assert response.status_code == 202
         execution_id = response.json()["execution_id"]

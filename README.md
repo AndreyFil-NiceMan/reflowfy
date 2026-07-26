@@ -169,7 +169,7 @@ from transformations.clean_names import clean_names
 class UserSyncPipeline(AbstractPipeline):
     # The auto-registration system uses this exact name:
     name = "user_sync_pipeline"
-    rate_limit = {"jobs_per_second": 50}
+    rate_limit = 3000  # jobs per minute
 
     def define_parameters(self):
         # Define allowed runtime overrides

@@ -69,7 +69,7 @@ class DistributedExecutor(BaseExecutor):
             pipeline: Pipeline instance
             runtime_params: Runtime parameters
             execution_id: Optional execution ID
-            rate_limit_override: Optional jobs-per-second override (e.g., 10)
+            rate_limit_override: Optional jobs-per-minute override (e.g., 600)
 
         Returns:
             ExecutionStatus (initial - jobs dispatched but processing async)

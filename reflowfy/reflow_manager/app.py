@@ -95,7 +95,7 @@ def _get_kafka_config() -> Dict[str, Any]:
     return {
         "kafka_bootstrap_servers": os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
         "kafka_topic": os.getenv("KAFKA_TOPIC", "reflow.jobs"),
-        "max_jobs_per_second": float(os.getenv("MAX_JOBS_PER_SECOND", "100")),
+        "max_jobs_per_minute": float(os.getenv("MAX_JOBS_PER_MINUTE", "6000")),
         # Execution mode: "distributed" (Kafka) or "local" (in-process)
         "execution_mode": os.getenv("EXECUTION_MODE", "distributed"),
         # SASL Authentication (set by Helm chart)
@@ -464,10 +464,10 @@ async def _startup() -> None:
     discover_and_load_pipelines()
 
     logger.info(
-        "Kafka=%s topic=%s rate_limit=%s jobs/sec",
+        "Kafka=%s topic=%s rate_limit=%s jobs/min",
         os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
         os.getenv("KAFKA_TOPIC", "reflow.jobs"),
-        os.getenv("MAX_JOBS_PER_SECOND", "100"),
+        os.getenv("MAX_JOBS_PER_MINUTE", "6000"),
     )
 
     # Check for interrupted executions and recover

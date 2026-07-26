@@ -135,7 +135,7 @@ class PipelineRunner:
             pipeline_name: Name of the registered pipeline
             runtime_params: Runtime parameters for the pipeline
             execution_id: Unique execution identifier
-            rate_limit_override: Optional override for jobs per second
+            rate_limit_override: Optional override for jobs per minute
 
         Returns:
             Dictionary with execution details and job counts
@@ -198,7 +198,7 @@ class PipelineRunner:
 
         Args:
             execution_id: Execution identifier to resume
-            rate_limit_override: Optional override for jobs per second
+            rate_limit_override: Optional override for jobs per minute
         """
         from reflowfy.core.registry import pipeline_registry
 
@@ -362,7 +362,7 @@ class PipelineRunner:
             execution_id: Existing execution identifier
             pipeline_name: Name of the registered pipeline
             runtime_params: Runtime parameters for the pipeline
-            rate_limit_override: Optional override for jobs per second
+            rate_limit_override: Optional override for jobs per minute
             enable_duplicate_jobs: True = jobs may run multiple times (default);
                 False = each unique job (by content hash) runs at most once.
                 None falls back to the pipeline's own enable_duplicate_jobs setting.
@@ -423,7 +423,7 @@ class PipelineRunner:
         if effective_rate_limit is None and pipeline.rate_limit:
             effective_rate_limit = pipeline.rate_limit
 
-        logger.info("Splitting source data into jobs (rate: %s/sec)...", effective_rate_limit)
+        logger.info("Splitting source data into jobs (rate: %s/min)...", effective_rate_limit)
 
         # Phase 1: Stream all jobs to database (not RAM)
         logger.info("Phase 1: Saving jobs to database...")
@@ -496,7 +496,7 @@ class PipelineRunner:
             pipeline: IdBasedPipeline instance
             pipeline_name: Name of the pipeline
             runtime_params: Runtime parameters (must include 'ids')
-            rate_limit_override: Optional override for jobs per second
+            rate_limit_override: Optional override for jobs per minute
             enable_duplicate_jobs: True = jobs may run multiple times (default);
                 False = each unique job (by content hash) runs at most once.
         """

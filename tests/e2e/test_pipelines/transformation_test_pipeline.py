@@ -18,7 +18,7 @@ class E2ETransformationTestPipeline(AbstractPipeline):
     """E2E test pipeline for verifying transformation chains."""
 
     name = "e2e_transformation_test"
-    rate_limit = 50
+    rate_limit = 3000  # jobs per minute
 
     def define_source(self, runtime_params):
         return e2e_mock(count=50, batch_size=10)

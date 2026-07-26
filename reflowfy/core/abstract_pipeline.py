@@ -253,14 +253,14 @@ class AbstractPipeline(metaclass=PipelineMeta):
 
     Attributes:
         name: Unique pipeline identifier (must be set by subclass)
-        rate_limit: Optional rate limiting config (e.g., 50)
+        rate_limit: Optional rate limit in jobs per minute (e.g., 50)
         config: Additional pipeline-specific configuration
     """
 
     # Must be set by concrete subclass
     name: str = ""
 
-    # Optional rate limit (can be overridden per-request via define_rate_limit)
+    # Optional rate limit in jobs per minute (overridable per-request via define_rate_limit)
     rate_limit: Optional[float] = None
 
     # Additional configuration
@@ -285,7 +285,7 @@ class AbstractPipeline(metaclass=PipelineMeta):
         Initialize the abstract pipeline.
 
         Args:
-            rate_limit: Rate limiting configuration
+            rate_limit: Rate limit in jobs per minute
             config: Additional configuration options
             enable_duplicate_jobs: True = jobs may run multiple times (default);
                 False = each unique job (by content hash) runs at most once
@@ -435,13 +435,13 @@ class AbstractPipeline(metaclass=PipelineMeta):
             runtime_params: Parameters provided by the user at runtime
 
         Returns:
-            Jobs per second (float) or None
+            Jobs per minute (float) or None
 
         Example:
             >>> def define_rate_limit(self, params):
             ...     if params.get("env") == "production":
-            ...         return 10  # Slower for prod
-            ...     return 100  # Faster for dev
+            ...         return 600  # 10 jobs/s for prod
+            ...     return 6000  # 100 jobs/s for dev
         """
         return self.rate_limit
 

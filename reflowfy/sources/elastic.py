@@ -8,6 +8,20 @@ from elasticsearch.exceptions import ApiError
 
 from reflowfy.sources.base import BaseSource, SourceError, SourceJob
 
+# The manager opens a PIT while planning; workers search it later, one
+# checkpoint batch at a time (25 jobs, up to 300s per batch). Each search
+# extends the keep_alive, so this only has to cover the gap between two
+# consecutive fetches — not the whole execution. It is deliberately NOT the
+# ``scroll`` value: that is a per-page scroll timeout (default 2m), and reusing
+# it here expired the PIT before the later batches ran, surfacing as
+# ApiError(503, 'search_phase_execution_exception') in the worker.
+DEFAULT_PIT_KEEP_ALIVE = "30m"
+
+
+def _pit_keep_alive(config: Dict[str, Any]) -> str:
+    """Read the PIT keep_alive, tolerating job payloads serialized before it existed."""
+    return str(config.get("pit_keep_alive") or DEFAULT_PIT_KEEP_ALIVE)
+
 
 class ElasticSource(BaseSource):
     """
@@ -28,6 +42,7 @@ class ElasticSource(BaseSource):
         size: int = 1000,
         auth: Optional[Tuple[str, str]] = None,
         verify_certs: bool = True,
+        pit_keep_alive: str = DEFAULT_PIT_KEEP_ALIVE,
         **kwargs: Any,
     ):
         """
@@ -41,6 +56,10 @@ class ElasticSource(BaseSource):
             size: Documents per scroll page
             auth: Optional (username, password) tuple
             verify_certs: Whether to verify SSL certificates
+            pit_keep_alive: Lifetime of the point-in-time opened by ``split()``.
+                Must outlive the gap between two consecutive worker fetches
+                against it, not the whole execution — every search on a PIT
+                extends its keep_alive. See :data:`DEFAULT_PIT_KEEP_ALIVE`.
             **kwargs: Additional Elasticsearch client params
         """
         config = {
@@ -49,6 +68,7 @@ class ElasticSource(BaseSource):
             "base_query": base_query,
             "scroll": scroll,
             "size": size,
+            "pit_keep_alive": pit_keep_alive,
             "auth": auth,
             "verify_certs": verify_certs,
             **kwargs,
@@ -103,7 +123,7 @@ class ElasticSource(BaseSource):
             # windows share boundary cursors, so there is no overlap or gap.
             try:
                 body = dict(resolved_config["base_query"])
-                body["pit"] = {"id": pit_id, "keep_alive": resolved_config["scroll"]}
+                body["pit"] = {"id": pit_id, "keep_alive": _pit_keep_alive(resolved_config)}
                 body.setdefault("sort", ["_shard_doc"])
                 target = int(window["size"])
                 search_after = window.get("search_after")
@@ -133,7 +153,7 @@ class ElasticSource(BaseSource):
             try:
                 body = dict(resolved_config["base_query"])
                 body["slice"] = slice_spec
-                body["pit"] = {"id": pit_id, "keep_alive": resolved_config["scroll"]}
+                body["pit"] = {"id": pit_id, "keep_alive": _pit_keep_alive(resolved_config)}
                 records: List[Any] = []
                 search_after = None
                 while True:
@@ -229,7 +249,9 @@ class ElasticSource(BaseSource):
                 yield self
                 return
             window_size = ceil(count / num_windows)
-            pit = client.open_point_in_time(index=resolved["index"], keep_alive=resolved["scroll"])
+            pit = client.open_point_in_time(
+                index=resolved["index"], keep_alive=_pit_keep_alive(resolved)
+            )
             pit_id = pit["id"]
             for start in self._scan_window_cursors(
                 client, resolved, pit_id, window_size, num_windows
@@ -245,7 +267,9 @@ class ElasticSource(BaseSource):
             yield self
             return
 
-        pit = client.open_point_in_time(index=resolved["index"], keep_alive=resolved["scroll"])
+        pit = client.open_point_in_time(
+            index=resolved["index"], keep_alive=_pit_keep_alive(resolved)
+        )
         pit_id = pit["id"]
         for i in range(num_slices):
             sub = self._sub_source(resolved)
@@ -263,6 +287,7 @@ class ElasticSource(BaseSource):
             size=resolved["size"],
             auth=resolved.get("auth"),
             verify_certs=resolved["verify_certs"],
+            pit_keep_alive=_pit_keep_alive(resolved),
         )
 
     def _scan_window_cursors(
@@ -283,7 +308,7 @@ class ElasticSource(BaseSource):
         ``from = k*window_size``) hits ``index.max_result_window`` past ~10k docs.
         """
         base = dict(resolved["base_query"])
-        base["pit"] = {"id": pit_id, "keep_alive": resolved["scroll"]}
+        base["pit"] = {"id": pit_id, "keep_alive": _pit_keep_alive(resolved)}
         base.setdefault("sort", ["_shard_doc"])
         base["_source"] = False
         page_size = int(resolved["size"])
@@ -408,6 +433,7 @@ def elastic_source(
     verify_certs: bool = True,
     docs_per_job: Optional[int] = None,
     max_slices: int = 1024,
+    pit_keep_alive: str = DEFAULT_PIT_KEEP_ALIVE,
     **kwargs: Any,
 ) -> ElasticSource:
     """
@@ -447,6 +473,14 @@ def elastic_source(
         ... )
 
     Note:
+        The PIT that ``split()`` opens lives for ``pit_keep_alive`` (default
+        ``"30m"``), independent of ``scroll``. Workers search that PIT one
+        checkpoint batch at a time, so a value shorter than the gap between
+        two consecutive batches expires it mid-execution and the remaining
+        jobs fail with ``ApiError(503, 'search_phase_execution_exception')``.
+        Raise it for executions whose batches are slow; every search on the
+        PIT extends the window, so it need not span the whole run.
+
         ``docs_per_job=1`` produces one job per matched document. On large
         result sets that is a very large number of jobs (each its own Kafka
         message, DB row, and ES query) — use a larger ``docs_per_job`` unless
@@ -462,5 +496,6 @@ def elastic_source(
         verify_certs=verify_certs,
         docs_per_job=docs_per_job,
         max_slices=max_slices,
+        pit_keep_alive=pit_keep_alive,
         **kwargs,
     )

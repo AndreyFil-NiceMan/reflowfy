@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS rate_limit_state (
     pipeline_name VARCHAR(255) PRIMARY KEY,
     tokens FLOAT NOT NULL,
     max_tokens FLOAT NOT NULL,
-    refill_rate FLOAT NOT NULL,  -- tokens per second
+    refill_rate FLOAT NOT NULL,  -- tokens per second (jobs_per_minute / 60)
     last_update TIMESTAMP NOT NULL
 );
 
