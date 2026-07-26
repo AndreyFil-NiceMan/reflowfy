@@ -162,9 +162,9 @@ class KafkaDispatcher(BaseDispatcher):
 
         for job in jobs:
             # Atomic token acquisition with rate limiting
-            if not self.rate_limiter.acquire_token(pipeline_name, rate_limit, max_wait=60.0):
+            if not self.rate_limiter.acquire_token(pipeline_name, rate_limit, max_wait=300.0):
                 logger.warning(
-                    "Rate limit timeout after 60s, stopping dispatch after %d jobs", dispatched
+                    "Rate limit timeout after 300s, stopping dispatch after %d jobs", dispatched
                 )
                 break
 

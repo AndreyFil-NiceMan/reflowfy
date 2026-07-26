@@ -146,7 +146,7 @@ def _create_run_route(
     rate_limit_param = Parameter(
         "rate_limit",
         Parameter.KEYWORD_ONLY,
-        default=Query(None, description="Override rate limit (jobs per second)"),
+        default=Query(None, description="Override rate limit (jobs per minute)"),
         annotation=float,
     )
     sig_params = [mode_param, rate_limit_param]

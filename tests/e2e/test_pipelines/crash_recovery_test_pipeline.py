@@ -17,10 +17,10 @@ class CrashRecoveryTestPipeline(AbstractPipeline):
 
     name = "crash_recovery_test"
     # High default rate — crash recovery test overrides to slow via RunPipelineRequest
-    rate_limit = 50
+    rate_limit = 3000  # jobs per minute
 
     def define_source(self, runtime_params):
-        # 500 items / 10 batch_size = 50 jobs. At 0.5 jobs/sec override ≈ 100 seconds
+        # 500 items / 10 batch_size = 50 jobs. At 30 jobs/min override ≈ 100 seconds
         return e2e_mock(count=500, batch_size=10)
 
     def define_destination(self, records, runtime_params):

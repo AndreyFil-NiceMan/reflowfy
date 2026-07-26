@@ -23,7 +23,7 @@ class E2EApiIdSourceTestPipeline(AbstractPipeline):
     """E2E test pipeline for ID-based API source."""
 
     name = "e2e_api_id_source_test"
-    rate_limit = 10
+    rate_limit = 600  # jobs per minute
 
     def define_parameters(self):
         return [

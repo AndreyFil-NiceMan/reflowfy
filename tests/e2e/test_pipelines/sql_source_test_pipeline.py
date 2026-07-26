@@ -18,7 +18,7 @@ class E2ESqlSourceTestPipeline(AbstractPipeline):
     """E2E test pipeline for SQL source."""
 
     name = "e2e_sql_source_test"
-    rate_limit = 10
+    rate_limit = 600  # jobs per minute
 
     def define_parameters(self):
         return [

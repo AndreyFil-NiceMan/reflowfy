@@ -24,7 +24,7 @@ class E2EIdBasedPipelineTest(IdBasedPipeline):
     """
 
     name = "e2e_id_based_pipeline_test"
-    rate_limit = 50
+    rate_limit = 3000  # jobs per minute
 
     def define_parameters(self):
         return [
@@ -70,7 +70,7 @@ class E2EIdBasedBatchPipelineTest(IdBasedPipeline):
     """
 
     name = "e2e_id_based_batch_pipeline_test"
-    rate_limit = 50
+    rate_limit = 3000  # jobs per minute
     ids_batch_size = 2
 
     def define_parameters(self):

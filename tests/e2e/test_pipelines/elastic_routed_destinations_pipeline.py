@@ -29,7 +29,7 @@ class E2EElasticRoutedDestinationsPipeline(AbstractPipeline):
     """E2E pipeline that routes each elastic slice-job to one of two destinations."""
 
     name = "e2e_elastic_routed_destinations"
-    rate_limit = 20
+    rate_limit = 1200  # jobs per minute
 
     def define_parameters(self):
         return [

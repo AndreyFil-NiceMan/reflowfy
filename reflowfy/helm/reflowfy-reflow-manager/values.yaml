@@ -34,7 +34,7 @@ kafka:
   topic: 'reflow.jobs'
 
 # Rate limiting
-maxJobsPerSecond: 100
+maxJobsPerMinute: 6000
 
 # Pipeline module to import
 pipelineModule: 'pipelines'

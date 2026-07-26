@@ -29,7 +29,7 @@ class E2EParamsEnrichPipeline(AbstractPipeline):
     """
 
     name = "e2e_params_enrich"
-    rate_limit = 50
+    rate_limit = 3000  # jobs per minute
 
     def define_source(self, runtime_params):
         runtime_params["injected_by_source"] = "hello_from_source"
@@ -53,7 +53,7 @@ class E2ERevealMidChainPipeline(AbstractPipeline):
     """
 
     name = "e2e_reveal_midchain"
-    rate_limit = 50
+    rate_limit = 3000  # jobs per minute
 
     def define_source(self, runtime_params):
         return e2e_mock(count=10, batch_size=10)
@@ -78,7 +78,7 @@ class E2EIdBasedParamsEnrichPipeline(IdBasedPipeline):
     """
 
     name = "e2e_id_based_params_enrich"
-    rate_limit = 50
+    rate_limit = 3000  # jobs per minute
 
     def define_source(self, runtime_params):
         current_ids = runtime_params.get("current_ids", [])

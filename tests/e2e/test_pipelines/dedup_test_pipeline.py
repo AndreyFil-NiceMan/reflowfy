@@ -31,7 +31,7 @@ class E2EDedupOffPipeline(AbstractPipeline):
 
     name = "e2e_dedup_off"
     enable_duplicate_jobs = False
-    rate_limit = 50
+    rate_limit = 3000  # jobs per minute
 
     def define_source(self, runtime_params):
         return e2e_mock(count=5, batch_size=5, data=_FIXED_DATA)
@@ -51,7 +51,7 @@ class E2EDedupOnPipeline(AbstractPipeline):
 
     name = "e2e_dedup_on"
     enable_duplicate_jobs = True
-    rate_limit = 50
+    rate_limit = 3000  # jobs per minute
 
     def define_source(self, runtime_params):
         return e2e_mock(count=5, batch_size=5, data=_FIXED_DATA)

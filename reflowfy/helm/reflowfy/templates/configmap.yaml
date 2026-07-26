@@ -18,6 +18,6 @@ data:
 
   # ReflowManager settings
   REFLOW_MANAGER_URL: "http://{{ .Release.Name }}-reflow-manager:{{ .Values.reflowManager.service.port }}"
-  MAX_JOBS_PER_SECOND: {{ .Values.reflowManager.maxJobsPerSecond | quote }}
+  MAX_JOBS_PER_MINUTE: {{ .Values.reflowManager.maxJobsPerMinute | quote }}
   PIPELINE_MODULE: {{ .Values.reflowManager.pipelineModule | quote }}
   LOG_LEVEL: {{ .Values.reflowManager.logLevel | quote }}

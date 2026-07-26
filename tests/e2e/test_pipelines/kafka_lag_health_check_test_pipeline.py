@@ -24,7 +24,7 @@ class E2EKafkaLagHealthCheckPipeline(AbstractPipeline):
     """E2E test pipeline for Kafka destination lag health check."""
 
     name = "e2e_kafka_lag_health_check"
-    rate_limit = 10
+    rate_limit = 600  # jobs per minute
 
     def define_source(self, runtime_params):
         return e2e_mock(count=10, batch_size=10)

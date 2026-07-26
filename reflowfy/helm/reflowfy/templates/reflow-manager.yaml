@@ -95,8 +95,8 @@ spec:
             {{- if .Values.kafka.sasl.enabled }}
             {{- include "reflowfy.kafka.saslEnv" . | nindent 12 }}
             {{- end }}
-            - name: MAX_JOBS_PER_SECOND
-              value: {{ .Values.reflowManager.maxJobsPerSecond | quote }}
+            - name: MAX_JOBS_PER_MINUTE
+              value: {{ .Values.reflowManager.maxJobsPerMinute | quote }}
             - name: PIPELINE_MODULE
               value: {{ .Values.reflowManager.pipelineModule | quote }}
             - name: LOG_LEVEL

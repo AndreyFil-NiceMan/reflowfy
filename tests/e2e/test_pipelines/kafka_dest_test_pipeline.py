@@ -15,7 +15,7 @@ class E2EKafkaDestTestPipeline(AbstractPipeline):
     """E2E test pipeline for Kafka destination."""
 
     name = "e2e_kafka_dest_test"
-    rate_limit = 10
+    rate_limit = 600  # jobs per minute
 
     def define_source(self, runtime_params):
         return e2e_mock(count=100, batch_size=10)

@@ -155,7 +155,7 @@ curl http://localhost:8001/pipelines/my_pipeline
 {
   "name": "my_pipeline",
   "enable_duplicate_jobs": false,
-  "rate_limit": {"jobs_per_second": 50},
+  "rate_limit": 3000,
   "parameters": [...],
   "transformations": [...]
 }

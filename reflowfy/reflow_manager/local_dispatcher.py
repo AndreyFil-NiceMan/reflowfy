@@ -39,7 +39,7 @@ class LocalDispatcher(BaseDispatcher):
         """Dispatch single job locally with rate limiting."""
         # Rate limit: acquire a token before executing
         if rate_limit is not None:
-            acquired = self.rate_limiter.acquire_token(pipeline_name, rate_limit, max_wait=60.0)
+            acquired = self.rate_limiter.acquire_token(pipeline_name, rate_limit, max_wait=300.0)
             if not acquired:
                 logger.warning("Rate limit timeout, skipping job")
                 return False
@@ -69,11 +69,11 @@ class LocalDispatcher(BaseDispatcher):
                 # Rate limit: acquire a token before each job (same as KafkaDispatcher)
                 if rate_limit is not None:
                     acquired = self.rate_limiter.acquire_token(
-                        pipeline_name, rate_limit, max_wait=60.0
+                        pipeline_name, rate_limit, max_wait=300.0
                     )
                     if not acquired:
                         logger.warning(
-                            "Rate limit timeout after 60s, stopping dispatch after %d jobs",
+                            "Rate limit timeout after 300s, stopping dispatch after %d jobs",
                             dispatched,
                         )
                         break

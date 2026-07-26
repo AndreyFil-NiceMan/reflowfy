@@ -25,7 +25,7 @@ class DispatchJobsRequest(BaseModel):
     execution_id: str
     pipeline_name: str
     jobs: List[Dict[str, Any]]
-    rate_limit: Optional[float] = None
+    rate_limit: Optional[float] = None  # jobs per minute
 
 
 class RunPipelineRequest(BaseModel):
@@ -33,7 +33,7 @@ class RunPipelineRequest(BaseModel):
 
     pipeline_name: str
     runtime_params: Optional[Dict[str, Any]] = None
-    rate_limit: Optional[float] = None
+    rate_limit: Optional[float] = None  # jobs per minute
     execution_id: Optional[str] = None
     mode: Optional[str] = None  # "local" or "distributed" (defaults to EXECUTION_MODE env var)
     enable_duplicate_jobs: Optional[bool] = (
