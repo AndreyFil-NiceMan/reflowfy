@@ -3,17 +3,6 @@ Reflowfy installed.
 
 {{- if .Values.postgresql.enabled }}
 PostgreSQL: internal ({{ .Release.Name }}-postgresql:5432)
-{{- if .Values.postgresql.route.enabled }}
-  Route:    oc get route {{ .Release.Name }}-postgresql -o jsonpath='{.spec.host}'
-  pgAdmin:  host=<that host>  port=443  db={{ .Values.postgresql.auth.database }}  user={{ .Values.postgresql.auth.username }}
-            Parameters tab: sslmode=require, sslnegotiation=direct
-            (passthrough Route matches on TLS SNI, so the client must open with a
-             TLS ClientHello - needs libpq 17+; plain psql/pgAdmin defaults will hang)
-{{- else }}
-  pgAdmin:  kubectl port-forward svc/{{ .Release.Name }}-postgresql 5432:5432
-            then connect to localhost:5432 as {{ .Values.postgresql.auth.username }}/{{ .Values.postgresql.auth.database }}
-            (set postgresql.route.enabled=true for a Route)
-{{- end }}
 {{- else }}
 PostgreSQL: external ({{ .Values.postgresql.external.host }}:{{ .Values.postgresql.external.port }})
 {{- end }}
@@ -30,6 +19,20 @@ API:    kubectl port-forward svc/{{ .Release.Name }}-api {{ .Values.api.service.
 {{- end }}
 {{- if .Values.reflowManager.enabled }}
 Manager: kubectl port-forward svc/{{ .Release.Name }}-reflow-manager {{ .Values.reflowManager.service.port }}:{{ .Values.reflowManager.service.port }}  (docs at /docs)
+{{- end }}
+{{- if .Values.pgadmin.enabled }}
+
+pgAdmin: kubectl port-forward svc/{{ .Release.Name }}-pgadmin {{ .Values.pgadmin.service.port }}:{{ .Values.pgadmin.service.port }}
+         then open http://localhost:{{ .Values.pgadmin.service.port }} and log in as
+         {{ .Values.pgadmin.auth.email }} / (see secret {{ .Release.Name }}-pgadmin)
+{{- if .Values.pgadmin.route.enabled }}
+         Route:  oc get route {{ .Release.Name }}-pgadmin -o jsonpath='{.spec.host}'
+                 (pgAdmin speaks HTTP, so an edge-terminated Route works normally)
+{{- end }}
+{{- if .Values.postgresql.enabled }}
+         The "{{ .Values.pgadmin.serverName }}" server is preconfigured; it connects to
+         {{ .Release.Name }}-postgresql:5432 over the cluster network.
+{{- end }}
 {{- end }}
 
 See GETTING_STARTED.md for more.
