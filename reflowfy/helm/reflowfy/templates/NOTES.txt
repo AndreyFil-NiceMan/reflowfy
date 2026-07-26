@@ -3,13 +3,16 @@ Reflowfy installed.
 
 {{- if .Values.postgresql.enabled }}
 PostgreSQL: internal ({{ .Release.Name }}-postgresql:5432)
-{{- if eq (.Values.postgresql.primary.service.type | default "ClusterIP") "ClusterIP" }}
+{{- if .Values.postgresql.route.enabled }}
+  Route:    oc get route {{ .Release.Name }}-postgresql -o jsonpath='{.spec.host}'
+  pgAdmin:  host=<that host>  port=443  db={{ .Values.postgresql.auth.database }}  user={{ .Values.postgresql.auth.username }}
+            Parameters tab: sslmode=require, sslnegotiation=direct
+            (passthrough Route matches on TLS SNI, so the client must open with a
+             TLS ClientHello - needs libpq 17+; plain psql/pgAdmin defaults will hang)
+{{- else }}
   pgAdmin:  kubectl port-forward svc/{{ .Release.Name }}-postgresql 5432:5432
             then connect to localhost:5432 as {{ .Values.postgresql.auth.username }}/{{ .Values.postgresql.auth.database }}
-            (no Route possible - Postgres is not HTTP; set postgresql.primary.service.type=NodePort for direct access)
-{{- else }}
-  pgAdmin:  kubectl get svc {{ .Release.Name }}-postgresql -o jsonpath='{.spec.ports[0].nodePort}'
-            connect to <node-ip>:<nodePort> as {{ .Values.postgresql.auth.username }}/{{ .Values.postgresql.auth.database }}
+            (set postgresql.route.enabled=true for a Route)
 {{- end }}
 {{- else }}
 PostgreSQL: external ({{ .Values.postgresql.external.host }}:{{ .Values.postgresql.external.port }})
@@ -30,5 +33,3 @@ Manager: kubectl port-forward svc/{{ .Release.Name }}-reflow-manager {{ .Values.
 {{- end }}
 
 See GETTING_STARTED.md for more.
-</content>
-</invoke>
