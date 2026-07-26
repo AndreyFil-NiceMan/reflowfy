@@ -868,6 +868,14 @@ class PipelineRunner:
             if pending == 0:
                 return (completed, failed)
 
+            # Release the pooled DB connection before sleeping. The poll query
+            # above opens a read transaction, and holding it across the sleep
+            # pins one connection per in-flight execution for up to `timeout`
+            # seconds. Scheduled pipelines are allowed to overlap and each runs
+            # on its own session, so without this the QueuePool (10 + 20
+            # overflow) is exhausted and every caller times out.
+            self.job_manager.db.commit()
+
             # Wait before polling again
             time.sleep(poll_interval)
 
