@@ -29,6 +29,11 @@ def register(app: typer.Typer):
         image_pull_secret: Optional[str] = typer.Option(None, envvar="IMAGE_PULL_SECRET", help="Name of imagePullSecret for private registry"),
         deploy_postgres: bool = typer.Option(True, envvar="DEPLOY_POSTGRES", help="Deploy PostgreSQL (set to False to use external DB)"),
         postgres_image: Optional[str] = typer.Option(None, envvar="POSTGRES_IMAGE", help="Custom PostgreSQL image (e.g. myrepo/postgres:14)"),
+        pgadmin: bool = typer.Option(False, "--pgadmin/--no-pgadmin", envvar="PGADMIN_ENABLED", help="Deploy pgAdmin in-cluster to browse PostgreSQL (or set PGADMIN_ENABLED in .env)"),
+        pgadmin_image: Optional[str] = typer.Option(None, "--pgadmin-image", envvar="PGADMIN_IMAGE", help="pgAdmin image (or set PGADMIN_IMAGE in .env)"),
+        pgadmin_email: Optional[str] = typer.Option(None, "--pgadmin-email", envvar="PGADMIN_DEFAULT_EMAIL", help="pgAdmin login email (or set PGADMIN_DEFAULT_EMAIL in .env)"),
+        pgadmin_password: Optional[str] = typer.Option(None, "--pgadmin-password", envvar="PGADMIN_DEFAULT_PASSWORD", help="pgAdmin login password; generated if omitted (or set PGADMIN_DEFAULT_PASSWORD in .env)"),
+        pgadmin_route: bool = typer.Option(False, "--pgadmin-route/--no-pgadmin-route", envvar="PGADMIN_ROUTE_ENABLED", help="Expose pgAdmin via an OpenShift Route (HTTP, edge-terminated)"),
         keda: bool = typer.Option(False, "--keda/--no-keda", envvar="KEDA_ENABLED", help="Enable KEDA autoscaling for workers (or set KEDA_ENABLED in .env)"),
         keda_min: int = typer.Option(0, "--keda-min", envvar="KEDA_MIN_REPLICAS", help="KEDA minimum replicas (or set KEDA_MIN_REPLICAS in .env)"),
         keda_max: int = typer.Option(100, "--keda-max", envvar="KEDA_MAX_REPLICAS", help="KEDA maximum replicas (or set KEDA_MAX_REPLICAS in .env)"),
@@ -161,6 +166,22 @@ def register(app: typer.Typer):
             except Exception as e:
                 console.print(f"❌ Failed to parse DATABASE_URL: {e}", style="red")
                 raise typer.Exit(code=1)
+
+        # pgAdmin: runs in-cluster and reaches PostgreSQL over the cluster
+        # network, so PostgreSQL needs no external exposure of its own.
+        if pgadmin:
+            console.print("🐘 Deploying pgAdmin in-cluster", style="blue")
+            cmd.extend(["--set", "pgadmin.enabled=true"])
+            if pgadmin_image:
+                cmd.extend(["--set", f"pgadmin.image={pgadmin_image}"])
+            if pgadmin_email:
+                cmd.extend(["--set", f"pgadmin.auth.email={pgadmin_email}"])
+            if pgadmin_password:
+                cmd.extend(["--set", f"pgadmin.auth.password={pgadmin_password}"])
+            if pgadmin_route:
+                cmd.extend(["--set", "pgadmin.route.enabled=true"])
+        else:
+            cmd.extend(["--set", "pgadmin.enabled=false"])
 
         # KEDA configuration
         if keda:
