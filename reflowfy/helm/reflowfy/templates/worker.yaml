@@ -41,6 +41,13 @@ spec:
             - sh
             - -c
             - |
+              echo "Waiting for PostgreSQL at $DATABASE_HOST:$DATABASE_PORT..."
+              until nc -w 1 $DATABASE_HOST $DATABASE_PORT </dev/null; do
+                echo "PostgreSQL not ready, sleeping 2s..."
+                sleep 2
+              done
+              echo "PostgreSQL is ready!"
+
               echo "Waiting for Kafka at $KAFKA_BOOTSTRAP_SERVERS..."
               # Extract host and port from the first broker in the list
               first_broker=$(echo $KAFKA_BOOTSTRAP_SERVERS | cut -d, -f1)
@@ -52,6 +59,10 @@ spec:
               done
               echo "Kafka is ready!"
           env:
+            - name: DATABASE_HOST
+              value: {{ include "reflowfy.postgresql.host" . | quote }}
+            - name: DATABASE_PORT
+              value: {{ include "reflowfy.postgresql.port" . | quote }}
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: {{ include "reflowfy.kafka.bootstrapServers" . | quote }}
       containers:
