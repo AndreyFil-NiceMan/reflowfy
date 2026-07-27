@@ -29,7 +29,8 @@ def register(app: typer.Typer):
         image_pull_secret: Optional[str] = typer.Option(None, envvar="IMAGE_PULL_SECRET", help="Name of imagePullSecret for private registry"),
         deploy_postgres: bool = typer.Option(True, envvar="DEPLOY_POSTGRES", help="Deploy PostgreSQL (set to False to use external DB)"),
         postgres_image: Optional[str] = typer.Option(None, envvar="POSTGRES_IMAGE", help="Custom PostgreSQL image (e.g. myrepo/postgres:14)"),
-        pg_route: bool = typer.Option(False, "--pg-route/--no-pg-route", envvar="POSTGRES_ROUTE_ENABLED", help="Expose PostgreSQL via an OpenShift passthrough Route for external clients like desktop pgAdmin; needs a non-default postgresql.auth.password (or set POSTGRES_ROUTE_ENABLED in .env)"),
+        pg_route: bool = typer.Option(False, "--pg-route/--no-pg-route", envvar="POSTGRES_ROUTE_ENABLED", help="Expose PostgreSQL via an OpenShift passthrough Route for external clients like desktop pgAdmin; requires --postgres-password (or set POSTGRES_ROUTE_ENABLED in .env)"),
+        postgres_password: Optional[str] = typer.Option(None, "--postgres-password", envvar="POSTGRES_PASSWORD", help="PostgreSQL password for the reflowfy user and superuser; required with --pg-route since the chart default is public (or set POSTGRES_PASSWORD in .env)"),
         keda: bool = typer.Option(False, "--keda/--no-keda", envvar="KEDA_ENABLED", help="Enable KEDA autoscaling for workers (or set KEDA_ENABLED in .env)"),
         keda_min: int = typer.Option(0, "--keda-min", envvar="KEDA_MIN_REPLICAS", help="KEDA minimum replicas (or set KEDA_MIN_REPLICAS in .env)"),
         keda_max: int = typer.Option(100, "--keda-max", envvar="KEDA_MAX_REPLICAS", help="KEDA maximum replicas (or set KEDA_MAX_REPLICAS in .env)"),
@@ -143,10 +144,25 @@ def register(app: typer.Typer):
                 # Enable insecure images to bypass Bitnami's check for unrecognized images
                 cmd.extend(["--set", "global.security.allowInsecureImages=true"])
 
+            # Both the reflowfy user and the postgres superuser default to
+            # 'reflowfy' in values.yaml. A Route exposes the whole server, so
+            # set them together - otherwise closing one leaves the other open.
+            if postgres_password:
+                cmd.extend(["--set", f"postgresql.auth.password={postgres_password}"])
+                cmd.extend(["--set", f"postgresql.auth.postgresPassword={postgres_password}"])
+
             # Passthrough Route so external clients (desktop pgAdmin, psql) can
             # reach Postgres. The chart refuses to render this with the default
             # password - it would publish the DB on the public apps domain.
             if pg_route:
+                if not postgres_password:
+                    console.print(
+                        "❌ --pg-route requires --postgres-password (or POSTGRES_PASSWORD in .env): "
+                        "the Route publishes PostgreSQL on the cluster's public apps domain, and the "
+                        "chart default password is committed to the repo.",
+                        style="red",
+                    )
+                    raise typer.Exit(code=1)
                 console.print("🐘 Exposing PostgreSQL via a passthrough Route", style="blue")
                 cmd.extend(["--set", "postgresql.route.enabled=true"])
         else:
