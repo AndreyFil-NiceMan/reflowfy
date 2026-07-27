@@ -1,5 +1,6 @@
 """Initialize a new Reflowfy project."""
 
+import secrets
 import shutil
 from pathlib import Path
 
@@ -150,7 +151,14 @@ class {class_name}(AbstractPipeline):
 
             env_dest = target_dir / ".env"
             if env_template_path.exists() and not env_dest.exists():
-                shutil.copy(env_template_path, env_dest)
+                # Fill POSTGRES_PASSWORD per project. A literal in the committed
+                # template would be public knowledge - the same thing the chart's
+                # default-password guard rejects.
+                content = env_template_path.read_text().replace(
+                    "POSTGRES_PASSWORD=", f"POSTGRES_PASSWORD={secrets.token_urlsafe(18)}", 1
+                )
+                env_dest.write_text(content)
+                env_dest.chmod(0o600)
                 console.print("  ✅ Created .env (configure your settings here)", style="green")
             elif env_dest.exists():
                 console.print("  ⚠️ .env already exists, skipping", style="yellow")
