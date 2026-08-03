@@ -57,6 +57,14 @@ class {class_name}(AbstractPipeline):
         # return elastic_source(url="http://elasticsearch:9200", index="my-index")
         pass
 
+    # Or, to split the work into jobs yourself, implement define_jobs INSTEAD
+    # of define_source — each element of the returned list is one job:
+    #
+    # def define_jobs(self, runtime_params):
+    #     from reflowfy import chunk
+    #     rows = httpx.get(runtime_params["url"]).json()["items"]
+    #     return chunk(rows, size=10)   # 10 records per job
+
     def define_destination(self, records, runtime_params):
         # Return a configured destination
         # from reflowfy import kafka_destination

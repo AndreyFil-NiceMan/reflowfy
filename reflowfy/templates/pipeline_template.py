@@ -110,6 +110,14 @@ class SimpleTestPipeline(AbstractPipeline):
             batch_size=10,
         )
 
+    # To split the work into jobs yourself, implement define_jobs INSTEAD of
+    # define_source — each element of the returned list is one job:
+    #
+    #   def define_jobs(self, runtime_params):
+    #       from reflowfy import chunk
+    #       rows = httpx.get(runtime_params["url"]).json()["items"]
+    #       return chunk(rows, size=10)   # 10 records per job
+
     def define_destination(self, records: List[Any], runtime_params: Dict[str, Any]) -> Any:
         """Return console destination."""
         return console_destination(

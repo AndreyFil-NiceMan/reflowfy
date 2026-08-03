@@ -12,6 +12,7 @@ It is Kafka-based, Kubernetes-native, and order-independent for maximum parallel
 from reflowfy.core.abstract_pipeline import AbstractPipeline, PipelineParameter
 from reflowfy.core.id_based_pipeline import IdBasedPipeline
 from reflowfy.core.registry import pipeline_registry
+from reflowfy.execution.job_runner import chunk
 from reflowfy.transformations.base import BaseTransformation
 from reflowfy.sources.elastic import elastic_source
 from reflowfy.sources.sql import sql_source
@@ -31,6 +32,7 @@ __all__ = [
     "IdBasedPipeline",
     "PipelineParameter",
     "pipeline_registry",
+    "chunk",
     "BaseTransformation",
     "elastic_source",
     "sql_source",

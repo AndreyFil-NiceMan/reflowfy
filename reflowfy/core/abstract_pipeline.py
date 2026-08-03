@@ -242,11 +242,13 @@ class AbstractPipeline(metaclass=PipelineMeta):
 
     Subclasses MUST:
     - Set the `name` class attribute
-    - Implement `define_source()`
+    - Implement `define_source()` OR `define_jobs()` (see below)
     - Implement `define_destination()`
     - Implement `define_transformations()`
 
     Subclasses MAY:
+    - Override `define_jobs()` instead of `define_source()` to own how the work
+      is split into jobs (e.g. call an API and chunk the response yourself)
     - Override `define_parameters()` to expose required runtime parameters
     - Override `define_rate_limit()` for dynamic rate limiting
     - Override `should_apply_transformation()` for runtime condition checks
@@ -319,10 +321,13 @@ class AbstractPipeline(metaclass=PipelineMeta):
             except ImportError:
                 pass  # croniter not installed; validated at runtime by scheduler
 
-    @abstractmethod
     def define_source(self, runtime_params: Dict[str, Any]) -> Any:
         """
         Define the source to use based on runtime parameters.
+
+        The source's ``split()`` decides how the work is divided into jobs.
+        To own that splitting yourself, override :meth:`define_jobs` instead —
+        implement one or the other, not both.
 
         Args:
             runtime_params: Parameters provided by the user at runtime
@@ -336,7 +341,36 @@ class AbstractPipeline(metaclass=PipelineMeta):
             ...         return elastic_source(url="http://prod:9200", ...)
             ...     return mock_source(data=[...])
         """
-        pass
+        raise NotImplementedError(
+            f"Pipeline '{self.name}' must implement define_source() or define_jobs()"
+        )
+
+    def define_jobs(self, runtime_params: Dict[str, Any]) -> Any:
+        """
+        Define how this pipeline's work is split into jobs.
+
+        By default this delegates to :meth:`define_source` and lets the source's
+        ``split()`` decide. Override it to own the splitting: return a list where
+        each element is exactly one job — either a list of records (use
+        :func:`reflowfy.chunk` to size them) or a ``BaseSource`` that splits
+        itself. The two shapes can be mixed in one list.
+
+        Runs on the manager, so keep it cheap. Records returned here travel
+        inside the job message; for payloads near Kafka's 1MB limit, return
+        sources that re-fetch worker-side instead.
+
+        Args:
+            runtime_params: Parameters provided by the user at runtime
+
+        Returns:
+            A BaseSource, or a list of jobs.
+
+        Example:
+            >>> def define_jobs(self, params):
+            ...     rows = httpx.get(params["url"]).json()["items"]
+            ...     return chunk(rows, size=params["job_size"])
+        """
+        return self.define_source(runtime_params)
 
     @abstractmethod
     def define_destination(self, records: List[Any], runtime_params: Dict[str, Any]) -> Any:
@@ -641,7 +675,7 @@ class AbstractPipeline(metaclass=PipelineMeta):
             raise ValueError(f"Invalid parameters: {'; '.join(errors)}")
 
         self._resolved_params = params
-        self._source = self.define_source(params)
+        self._source = self.define_jobs(params)
         # destination and transformations are resolved per-job/per-batch,
         # once records are available.
         self._destination = None
