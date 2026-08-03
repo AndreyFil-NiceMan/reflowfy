@@ -26,8 +26,14 @@ postgresql:
   # Route on port 443 and the server must speak TLS - hence tls.enabled below.
   # The client must also open with a TLS ClientHello rather than the usual
   # plaintext SSLRequest, i.e. libpq 17+ with `sslnegotiation=direct`.
+  #
+  # Off by default: enabling it publishes the database on the cluster's public
+  # apps domain, with only the Postgres password in front of it. Turn it on per
+  # deploy (`reflowfy deploy --pg-route`) and turn it back off afterwards.
+  # Restrict it further with route.annotations, e.g.
+  #   haproxy.router.openshift.io/ip_whitelist: "203.0.113.5 198.51.100.0/24"
   route:
-    enabled: true
+    enabled: false
     host: '' # blank -> OpenShift generates <name>-<namespace>.<apps-domain>
     annotations: {}
 
