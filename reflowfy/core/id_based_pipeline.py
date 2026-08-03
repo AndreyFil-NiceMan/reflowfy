@@ -38,6 +38,7 @@ from abc import ABCMeta, abstractmethod
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from reflowfy.core.abstract_pipeline import PipelineParameter
+from reflowfy.core.query_loader import QueryLoaderMixin
 
 
 class IdBasedPipelineMeta(ABCMeta):
@@ -74,7 +75,7 @@ _IDS_PARAMETER = PipelineParameter(
 )
 
 
-class IdBasedPipeline(metaclass=IdBasedPipelineMeta):
+class IdBasedPipeline(QueryLoaderMixin, metaclass=IdBasedPipelineMeta):
     """
     Pipeline that executes dynamically for each ID in a user-provided list.
 
@@ -92,6 +93,8 @@ class IdBasedPipeline(metaclass=IdBasedPipelineMeta):
     Subclasses MAY:
     - Override `define_parameters()` to add extra parameters (beyond `ids`)
     - Override `define_rate_limit()` for dynamic rate limiting
+    - Call `load_query("name.sql")` to read a template from the project's
+      `queries/` folder (see QueryLoaderMixin)
 
     The 'ids' parameter is automatically injected — users do NOT need to
     define it in `define_parameters()`.
