@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 from sqlalchemy import func
 
 from reflowfy.core.serialization import to_json_safe
+from reflowfy.execution.job_runner import plan_slices
 from reflowfy.factories.source_factory import SourceFactory
 from reflowfy.observability import metrics
 from reflowfy.observability.tracing import inject_trace_context
@@ -432,7 +433,7 @@ class PipelineRunner:
         current_job_ids: List[str] = []
 
         base_source = pipeline.source
-        for sub_source in base_source.split(enriched_params):
+        for sub_source in plan_slices(base_source, enriched_params):
             context.batch_number = batch_number
             context_dict = context.to_dict()
             context_dict["runtime_params"] = dict(enriched_params)

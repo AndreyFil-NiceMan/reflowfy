@@ -19,6 +19,29 @@ from reflowfy.core.serialization import to_json_safe
 from reflowfy.execution.transformation_runner import apply_transformations_iteratively
 
 
+def chunk(records: List[Any], size: int = 1) -> List[List[Any]]:
+    """Split ``records`` into per-job chunks of at most ``size`` items.
+
+    Intended for :meth:`AbstractPipeline.define_jobs`, whose return value is the
+    job plan — one job per element. ``chunk(rows, size=1)`` gives one job per
+    record; the last chunk holds the remainder.
+
+    Args:
+        records: The records to split.
+        size: Maximum number of records per job. Must be >= 1.
+
+    Returns:
+        A list of record chunks, one per job.
+
+    Example:
+        >>> chunk([1, 2, 3], size=2)
+        [[1, 2], [3]]
+    """
+    if size < 1:
+        raise ValueError(f"chunk size must be >= 1, got {size}")
+    return [records[i : i + size] for i in range(0, len(records), size)]
+
+
 def plan_slices(source: Any, runtime_params: Dict[str, Any]) -> Iterator[Any]:
     """Yield the per-job narrowed sources for ``source``.
 
@@ -26,7 +49,34 @@ def plan_slices(source: Any, runtime_params: Dict[str, Any]) -> Iterator[Any]:
     planning hook). Falls back to a single job — the source itself — for
     duck-typed or custom sources that don't implement ``split``, so local
     preview/test runs work with any source shape.
+
+    A ``list`` is the job plan itself (what ``define_jobs`` returns): each
+    element is one job, either a list of records — wrapped in a
+    :class:`StaticSource` so it travels in the job payload — or a source that
+    splits itself.
     """
+    if isinstance(source, list):
+        from reflowfy.sources.base import BaseSource
+        from reflowfy.sources.static import StaticSource
+
+        for item in source:
+            if isinstance(item, BaseSource):
+                yield from plan_slices(item, runtime_params)
+            elif isinstance(item, list):
+                # Empty chunk = no job, consistent with StaticSource.split().
+                if item:
+                    # ponytail: records ride in the job payload; chunks approaching
+                    # Kafka's 1MB limit need a custom BaseSource that re-fetches.
+                    yield StaticSource(item)
+            else:
+                raise TypeError(
+                    "define_jobs returned a list, so each element must be one job: "
+                    f"a list of records or a BaseSource, got {type(item).__name__}. "
+                    "Wrap records with chunk(records, size=N), or return [records] "
+                    "for a single job."
+                )
+        return
+
     split = getattr(source, "split", None)
     if split is None:
         yield source

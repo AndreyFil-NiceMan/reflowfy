@@ -299,9 +299,9 @@ def register(app: typer.Typer):
         # Use a per-test copy so define_source enrichments are captured.
         test_params = dict(params)
 
-        # Initialize source
+        # Initialize source (or the job plan, if the pipeline overrides define_jobs)
         try:
-            source = pipeline.define_source(test_params)
+            source = pipeline.define_jobs(test_params)
         except Exception as e:
             console.print(f"[red]❌ Pipeline setup failed: {e}[/red]")
             traceback.print_exc()

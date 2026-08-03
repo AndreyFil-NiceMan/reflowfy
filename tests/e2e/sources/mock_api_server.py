@@ -8,6 +8,7 @@ Usage:
     python -m tests.e2e.sources.mock_api_server
 
 Endpoints:
+    GET /objects - Fixed {"obj1": 1, "obj2": 2, "obj3": 3} for define_jobs tests
     GET /users/{id} - Get user by ID
     POST /users/batch - Batch fetch users by IDs (body: {"ids": [...]})
     POST /users/search - Batch fetch users by raw list body ([1,2,3])
@@ -72,6 +73,12 @@ async def health_check():
         "users_count": len(USERS),
         "products_count": len(PRODUCTS),
     }
+
+
+@app.get("/objects")
+async def list_objects():
+    """Fixed 3-key object, for define_jobs custom-splitting tests."""
+    return {"obj1": 1, "obj2": 2, "obj3": 3}
 
 
 @app.get("/users")

@@ -26,13 +26,12 @@ Example:
     ...         return [MyTransformation()]
 """
 
-import json
 import re
-import sys
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
+
+from reflowfy.core.query_loader import QueryLoaderMixin
 
 
 class PipelineMeta(ABCMeta):
@@ -233,7 +232,7 @@ class PipelineParameter:
         return result
 
 
-class AbstractPipeline(metaclass=PipelineMeta):
+class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
     """
     Abstract base class for configurable pipelines.
 
@@ -242,11 +241,13 @@ class AbstractPipeline(metaclass=PipelineMeta):
 
     Subclasses MUST:
     - Set the `name` class attribute
-    - Implement `define_source()`
+    - Implement `define_source()` OR `define_jobs()` (see below)
     - Implement `define_destination()`
     - Implement `define_transformations()`
 
     Subclasses MAY:
+    - Override `define_jobs()` instead of `define_source()` to own how the work
+      is split into jobs (e.g. call an API and chunk the response yourself)
     - Override `define_parameters()` to expose required runtime parameters
     - Override `define_rate_limit()` for dynamic rate limiting
     - Override `should_apply_transformation()` for runtime condition checks
@@ -319,10 +320,13 @@ class AbstractPipeline(metaclass=PipelineMeta):
             except ImportError:
                 pass  # croniter not installed; validated at runtime by scheduler
 
-    @abstractmethod
     def define_source(self, runtime_params: Dict[str, Any]) -> Any:
         """
         Define the source to use based on runtime parameters.
+
+        The source's ``split()`` decides how the work is divided into jobs.
+        To own that splitting yourself, override :meth:`define_jobs` instead —
+        implement one or the other, not both.
 
         Args:
             runtime_params: Parameters provided by the user at runtime
@@ -336,7 +340,36 @@ class AbstractPipeline(metaclass=PipelineMeta):
             ...         return elastic_source(url="http://prod:9200", ...)
             ...     return mock_source(data=[...])
         """
-        pass
+        raise NotImplementedError(
+            f"Pipeline '{self.name}' must implement define_source() or define_jobs()"
+        )
+
+    def define_jobs(self, runtime_params: Dict[str, Any]) -> Any:
+        """
+        Define how this pipeline's work is split into jobs.
+
+        By default this delegates to :meth:`define_source` and lets the source's
+        ``split()`` decide. Override it to own the splitting: return a list where
+        each element is exactly one job — either a list of records (use
+        :func:`reflowfy.chunk` to size them) or a ``BaseSource`` that splits
+        itself. The two shapes can be mixed in one list.
+
+        Runs on the manager, so keep it cheap. Records returned here travel
+        inside the job message; for payloads near Kafka's 1MB limit, return
+        sources that re-fetch worker-side instead.
+
+        Args:
+            runtime_params: Parameters provided by the user at runtime
+
+        Returns:
+            A BaseSource, or a list of jobs.
+
+        Example:
+            >>> def define_jobs(self, params):
+            ...     rows = httpx.get(params["url"]).json()["items"]
+            ...     return chunk(rows, size=params["job_size"])
+        """
+        return self.define_source(runtime_params)
 
     @abstractmethod
     def define_destination(self, records: List[Any], runtime_params: Dict[str, Any]) -> Any:
@@ -530,92 +563,10 @@ class AbstractPipeline(metaclass=PipelineMeta):
         return [p.name for p in self.define_parameters()]
 
     # =========================================================================
-    # Query loading - read query templates from the project's queries/ folder
-    # =========================================================================
-
-    def load_query(self, filename: str) -> Any:
-        """Load a query template from the project's ``queries/`` folder.
-
-        ``.json`` files are parsed to a dict/list; every other extension is
-        returned as raw text. The ``queries/`` folder is discovered
-        automatically (searched upward from this pipeline's module file) and
-        searched recursively by filename, so subfolders are supported::
-
-            def define_source(self, runtime_params):
-                return sql_source(query=self.load_query("events_by_date.sql"))
-
-        Args:
-            filename: The query file's name, e.g. ``"events_by_date.sql"``.
-                Only the filename is used; the folder is located automatically.
-
-        Raises:
-            FileNotFoundError: No file with that name exists under ``queries/``.
-            ValueError: The name matches files in more than one subfolder.
-        """
-        path = self._resolve_query_path(filename)
-        text = self._read_query_file(path)
-        if path.suffix.lower() == ".json":
-            return json.loads(text)
-        return text
-
-    def load_query_text(self, filename: str) -> str:
-        """Load a query template as raw text, without extension-based parsing.
-
-        Use this when a ``.json`` file should be returned verbatim instead of
-        being parsed into a dict. See :meth:`load_query` for lookup semantics.
-        """
-        return self._read_query_file(self._resolve_query_path(filename))
-
-    def _read_query_file(self, path: Path) -> str:
-        """Read a resolved query file, caching text by absolute path."""
-        if self._query_text_cache is None:
-            self._query_text_cache = {}
-        key = str(path)
-        if key not in self._query_text_cache:
-            self._query_text_cache[key] = path.read_text()
-        return self._query_text_cache[key]
-
-    def _resolve_query_path(self, filename: str) -> Path:
-        """Find ``filename`` under the project's ``queries/`` folder.
-
-        The folder is located by walking upward from this pipeline's defining
-        module file and is searched recursively by filename.
-        """
-        queries_dir = self._resolve_queries_dir()
-        matches = sorted(queries_dir.rglob(filename))
-        if not matches:
-            raise FileNotFoundError(f"Query '{filename}' not found under {queries_dir}")
-        if len(matches) > 1:
-            relative = ", ".join(str(m.relative_to(queries_dir)) for m in matches)
-            raise ValueError(
-                f"Query '{filename}' is ambiguous: found {len(matches)} matches "
-                f"under {queries_dir} ({relative}). Make query filenames unique "
-                "across subfolders."
-            )
-        return matches[0]
-
-    def _resolve_queries_dir(self) -> Path:
-        """Locate the ``queries/`` directory for this pipeline.
-
-        Walks upward from the pipeline's module file looking for a ``queries/``
-        subdirectory (covers both the file-adjacent and project-root layouts).
-        Falls back to ``<cwd>/queries`` when the module file is unavailable.
-        """
-        module = sys.modules.get(type(self).__module__)
-        module_file = getattr(module, "__file__", None)
-        if module_file:
-            for parent in Path(module_file).resolve().parents:
-                candidate = parent / "queries"
-                if candidate.is_dir():
-                    return candidate
-        return Path.cwd() / "queries"
-
-    # =========================================================================
     # Execution Support - Properties for compatibility with execution engine
     # =========================================================================
 
     _resolved_params: Optional[Dict[str, Any]] = None
-    _query_text_cache: Optional[Dict[str, str]] = None
     _source: Any = None
     _destination: Any = None
     _transformations: List[Any] | None = None
@@ -641,7 +592,7 @@ class AbstractPipeline(metaclass=PipelineMeta):
             raise ValueError(f"Invalid parameters: {'; '.join(errors)}")
 
         self._resolved_params = params
-        self._source = self.define_source(params)
+        self._source = self.define_jobs(params)
         # destination and transformations are resolved per-job/per-batch,
         # once records are available.
         self._destination = None

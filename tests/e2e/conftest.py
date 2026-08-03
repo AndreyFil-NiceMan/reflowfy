@@ -17,7 +17,7 @@ API_URL = os.getenv("E2E_API_URL", "http://localhost:8003")
 ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://localhost:9201")
 SQL_CONNECTION_URL = os.getenv("SQL_CONNECTION_URL", "postgresql://reflowfy:reflowfy@localhost:5433/reflowfy_e2e")
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("E2E_KAFKA_SERVERS", "localhost:9094")
-MOCK_API_URL = os.getenv("MOCK_API_URL", "http://localhost:8090")
+MOCK_API_URL = os.getenv("MOCK_API_URL", "http://localhost:8092")
 MOCK_HTTP_URL = os.getenv("MOCK_HTTP_URL", "http://localhost:8091")
 
 

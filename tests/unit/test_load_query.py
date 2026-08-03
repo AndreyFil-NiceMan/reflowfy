@@ -1,4 +1,4 @@
-"""Unit tests for AbstractPipeline.load_query / load_query_text.
+"""Unit tests for load_query / load_query_text on both pipeline base classes.
 
 These exercise the queries/ folder resolution (upward search), recursive
 by-filename lookup with subfolders, extension-based parsing, and caching.
@@ -7,13 +7,15 @@ by-filename lookup with subfolders, extension-based parsing, and caching.
 import sys
 import types
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from reflowfy.core.abstract_pipeline import AbstractPipeline
+from reflowfy.core.id_based_pipeline import IdBasedPipeline
 
 
-def _make_pipeline(pipeline_file: Path, name: str) -> AbstractPipeline:
+def _make_pipeline(pipeline_file: Path, name: str, base: type = AbstractPipeline) -> Any:
     """Build a concrete pipeline instance whose defining module lives at
     ``pipeline_file`` (so queries/ resolution walks up from there)."""
     module_name = f"faux_pipeline_{name}"
@@ -21,7 +23,7 @@ def _make_pipeline(pipeline_file: Path, name: str) -> AbstractPipeline:
     module.__file__ = str(pipeline_file)
     sys.modules[module_name] = module
 
-    class _Pipeline(AbstractPipeline):
+    class _Pipeline(base):  # type: ignore[misc,valid-type]
         pass
 
     _Pipeline.name = name
@@ -145,3 +147,42 @@ def test_result_is_cached_and_file_read_once(tmp_path: Path) -> None:
 
     assert first == "SELECT original"
     assert second == "SELECT original"
+
+
+# ============================================================================
+# IdBasedPipeline gets the same loader (shared QueryLoaderMixin)
+# ============================================================================
+
+
+def test_id_based_pipeline_loads_query_from_queries_folder(tmp_path: Path) -> None:
+    (tmp_path / "queries").mkdir()
+    (tmp_path / "queries" / "by_id.sql").write_text("SELECT * FROM t WHERE id = {{ current_id }}")
+
+    pipeline = _make_pipeline(
+        tmp_path / "pipelines" / "p.py", "id_based_sql", base=IdBasedPipeline
+    )
+
+    assert pipeline.load_query("by_id.sql") == "SELECT * FROM t WHERE id = {{ current_id }}"
+
+
+def test_id_based_pipeline_parses_json_and_raw_text(tmp_path: Path) -> None:
+    (tmp_path / "queries").mkdir()
+    (tmp_path / "queries" / "q.json").write_text('{"term": {"id": 1}}')
+
+    pipeline = _make_pipeline(
+        tmp_path / "pipelines" / "p.py", "id_based_json", base=IdBasedPipeline
+    )
+
+    assert pipeline.load_query("q.json") == {"term": {"id": 1}}
+    assert pipeline.load_query_text("q.json") == '{"term": {"id": 1}}'
+
+
+def test_id_based_pipeline_missing_query_raises(tmp_path: Path) -> None:
+    (tmp_path / "queries").mkdir()
+
+    pipeline = _make_pipeline(
+        tmp_path / "pipelines" / "p.py", "id_based_missing", base=IdBasedPipeline
+    )
+
+    with pytest.raises(FileNotFoundError):
+        pipeline.load_query("nope.sql")
