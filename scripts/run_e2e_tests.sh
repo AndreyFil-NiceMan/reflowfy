@@ -96,6 +96,7 @@ cleanup() {
         log_info "  And: cd $WORKSPACE && docker compose -f docker-compose.e2e-infra.yml down --remove-orphans"
         log_info "Removing dist folder only (keeping workspace)..."
         rm -rf "$DIST_DIR"
+        restore_dev_env
         log_success "Cleanup complete (Docker left running)"
         return
     fi
@@ -112,7 +113,19 @@ cleanup() {
     rm -rf "$WORKSPACE"
     rm -rf "$DIST_DIR"
 
+    restore_dev_env
+
     log_success "Cleanup complete"
+}
+
+# The run installs the built wheel into this project's venv with
+# --force-reinstall, which resolves only the wheel's runtime dependencies and
+# so drops dev-only ones (opentelemetry-sdk, for instance). Without this, a
+# perfectly good `uv run pytest tests/unit/` fails with ModuleNotFoundError
+# right after an E2E run, and the cause is nowhere near the symptom.
+restore_dev_env() {
+    log_info "Restoring dev dependencies (the wheel install replaced them)..."
+    uv sync --all-extras --quiet 2>/dev/null || log_warning "uv sync failed; run 'uv sync --all-extras' by hand"
 }
 
 ensure_workspace() {

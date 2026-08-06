@@ -37,3 +37,9 @@ ENV/
 
 # E2E test runner lock
 .e2e_workspace.lock
+
+# E2E test workspace (rebuilt by scripts/run_e2e_tests.sh on every run)
+e2e_workspace/
+
+# Local git worktrees created by the agent harness
+.claude/worktrees/

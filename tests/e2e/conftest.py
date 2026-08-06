@@ -25,6 +25,32 @@ MOCK_HTTP_URL = os.getenv("MOCK_HTTP_URL", "http://localhost:8091")
 # Pytest Configuration
 # ============================================================================
 
+
+@pytest.fixture(autouse=True)
+def plain_cli_output(monkeypatch):
+    """Render CLI output without ANSI codes, so substring assertions hold.
+
+    The CLI tests assert on `result.stdout` from Typer's CliRunner. Rich forces
+    colour whenever FORCE_COLOR is set in the environment — some terminals and
+    CI runners set it — and its highlighter colours numbers and quoted strings,
+    so an assertion for "3 batches" meets "3\x1b[0m\x1b[1;32m batches" and an
+    assertion for "minReplicaCount=2" meets "minReplicaCount=\x1b[1;36m2\x1b[0m".
+    Whether these tests pass then depends on who is running them.
+
+    reflowfy.cli.utils builds its Console at import time, and Rich resolves the
+    colour system once in the constructor — so clearing the environment only
+    affects Consoles built later (commands that make their own). The already-built
+    one needs its cached colour system cleared: with no colour system, Rich's
+    Style.render returns the text untouched, which is exactly plain output.
+    """
+    from reflowfy.cli.utils import console
+
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setattr(console, "_force_terminal", False, raising=False)
+    monkeypatch.setattr(console, "_color_system", None, raising=False)
+
+
 def pytest_configure(config):
     """Add custom markers."""
     config.addinivalue_line(

@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from reflowfy import chunk
+from reflowfy.core.id_based_pipeline import IdBasedPipeline
 from reflowfy.execution.job_runner import plan_slices
 from reflowfy.factories.source_factory import SourceFactory
 from reflowfy.reflow_manager.pipeline_runner import build_job_payload
@@ -135,3 +136,107 @@ async def test_consumer_processes_wire_payload_end_to_end(monkeypatch, job_size,
     # Every record arrives exactly once, and every offset is committed.
     assert sink == RECORDS
     assert len(committed) == expected_jobs
+
+
+# ---------------------------------------------------------------------------
+# IdBasedPipeline over the same wire
+#
+# IdBasedPipeline plans through AbstractPipeline.define_jobs, and each planned
+# source carries `job_params` so a job gets only the IDs it handles. That
+# attribute lives on the source object and must NOT reach the worker — what
+# must reach it is the narrowed params, inside the payload metadata.
+# ---------------------------------------------------------------------------
+
+_SEEN_PARAMS: list = []
+
+
+class _IdSyncPipeline(IdBasedPipeline):
+    name = "worker_path_id_sync"
+    ids_batch_size = 2
+    sink: list = []
+
+    def define_source(self, runtime_params):
+        # An enrichment: a key define_source adds must reach the worker, and
+        # must be this batch's value rather than a later batch's.
+        runtime_params["batch_tag"] = f"tag-{runtime_params['current_ids'][0]}"
+        return [{"id": i} for i in runtime_params["current_ids"]]
+
+    def define_transformations(self, records, runtime_params):
+        return []
+
+    def define_destination(self, records, runtime_params):
+        _SEEN_PARAMS.append(dict(runtime_params))
+        return _FakeDest(type(self).sink)
+
+
+def _id_based_payloads_over_the_wire(ids):
+    """Real manager Phase 1 for an IdBasedPipeline, then the Kafka encode/decode."""
+    from unittest.mock import MagicMock, patch
+
+    from reflowfy.reflow_manager.pipeline_runner import PipelineRunner
+
+    runner = PipelineRunner(
+        execution_manager=MagicMock(), job_manager=MagicMock(), dispatcher=MagicMock()
+    )
+    with patch.object(PipelineRunner, "_dispatch_and_wait_batches", return_value=(0, 0, 0)):
+        runner.run_pipeline_jobs(
+            execution_id="e",
+            pipeline_name=_IdSyncPipeline.name,
+            runtime_params={"ids": list(ids), "env": "prod"},
+        )
+
+    rows = [r for call in runner.job_manager.create_jobs.call_args_list for r in call.args[0]]
+    for row in rows:
+        wire = json.dumps(row["job_payload"]).encode("utf-8")
+        yield json.loads(wire.decode("utf-8"))
+
+
+def test_id_based_plan_survives_the_wire_with_only_its_own_ids():
+    payloads = list(_id_based_payloads_over_the_wire(range(6)))
+
+    assert len(payloads) == 3  # 6 ids, ids_batch_size=2
+    for payload, expected_ids in zip(payloads, ([0, 1], [2, 3], [4, 5])):
+        assert payload["schema_version"] == 2
+        rebuilt = SourceFactory.create(payload["source"]["type"], payload["source"]["config"])
+        assert rebuilt.fetch({}) == [{"id": i} for i in expected_ids]
+
+        params = payload["metadata"]["runtime_params"]
+        assert payload["metadata"]["current_ids"] == expected_ids
+        assert params["current_ids"] == expected_ids
+        assert params["batch_tag"] == f"tag-{expected_ids[0]}"   # this batch's enrichment
+        assert params["env"] == "prod"                           # other params still travel
+        assert "ids" not in params                               # not all 6
+
+    # job_params is a planning-time attribute; it must not ride on the wire.
+    assert all("job_params" not in p["source"]["config"] for p in payloads)
+
+
+async def test_worker_processes_an_id_based_job_end_to_end(monkeypatch):
+    """Manager plan -> Kafka bytes -> KafkaJobConsumer -> WorkerExecutor -> destination."""
+    _IdSyncPipeline.sink = []
+    _SEEN_PARAMS.clear()
+
+    executor = WorkerExecutor(database_url="postgresql://x/y")
+    monkeypatch.setattr(executor, "_update_job_in_db", _async_noop)
+
+    consumer = KafkaJobConsumer.__new__(KafkaJobConsumer)
+    consumer.executor = executor
+
+    class _StubKafka:
+        async def commit(self):
+            pass
+
+    consumer.consumer = _StubKafka()
+
+    for payload in _id_based_payloads_over_the_wire(range(6)):
+        await consumer._process_message(
+            SimpleNamespace(value=json.dumps(payload).encode("utf-8"))
+        )
+
+    # Every ID delivered exactly once, in order.
+    assert _IdSyncPipeline.sink == [{"id": i} for i in range(6)]
+
+    # The worker resolved the destination with this job's IDs, not the whole run.
+    assert [p["current_ids"] for p in _SEEN_PARAMS] == [[0, 1], [2, 3], [4, 5]]
+    assert [p["batch_tag"] for p in _SEEN_PARAMS] == ["tag-0", "tag-2", "tag-4"]
+    assert all("ids" not in p for p in _SEEN_PARAMS)

@@ -227,16 +227,11 @@ def create_pipeline_routes(
     - POST /pipelines/{name}/run
     - GET  /pipelines/{name}/status
     """
-    from reflowfy.core.id_based_pipeline import IdBasedPipeline
-
-    # IdBasedPipeline exposes the auto-injected 'ids' param via get_all_parameters();
-    # AbstractPipeline exposes only its declared params.
-    if isinstance(pipeline, IdBasedPipeline):
-        params = pipeline.get_all_parameters()
-    else:
-        params = pipeline.define_parameters()
-
-    _create_run_route(app, pipeline, local_executor, distributed_executor, params)
+    # get_all_parameters() is the declared params plus any the pipeline injects
+    # (IdBasedPipeline adds the built-in 'ids').
+    _create_run_route(
+        app, pipeline, local_executor, distributed_executor, pipeline.get_all_parameters()
+    )
 
     pipeline_name = pipeline.name
 

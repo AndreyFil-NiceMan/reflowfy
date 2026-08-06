@@ -17,9 +17,14 @@ from typing import Any, Dict, List
 from reflowfy import (
     AbstractPipeline,
     BaseTransformation,
+    get_logger,
 )
 from reflowfy.destinations.console import console_destination
 from reflowfy.sources.mock import generate_sample_data, mock_source
+
+# Logging: works from anywhere — transformations, @source functions, plain helpers.
+# No `self` needed. execution_id / job_id / pipeline_name are attached automatically.
+logger = get_logger(__name__)
 
 # ============================================================================
 # Transformations
@@ -67,6 +72,7 @@ class AddProcessingInfo(BaseTransformation):
     def apply(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
         """Add processing information from context."""
         execution_id = runtime_params.get("execution_id", "unknown")
+        logger.info("Tagging %d records for execution %s", len(records), execution_id)
 
         for record in records:
             record["_processed_by"] = "reflowfy"
@@ -120,6 +126,10 @@ class SimpleTestPipeline(AbstractPipeline):
 
     def define_destination(self, records: List[Any], runtime_params: Dict[str, Any]) -> Any:
         """Return console destination."""
+        # Raise PipelineError from any define_* hook to fail the job deliberately —
+        # see transformations/example_transformation.py. The message, type and
+        # traceback land on the job record, and the error names the failing step.
+        logger.debug("Resolving destination for %d records", len(records))
         return console_destination(
             pretty_print=True,
             max_records_display=10,

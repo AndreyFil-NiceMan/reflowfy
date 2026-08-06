@@ -2,12 +2,14 @@
 
 import asyncio
 import logging
+import os
 import time
 import uuid
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from sqlalchemy import func
 
+from reflowfy.core.exceptions import pipeline_step
 from reflowfy.core.serialization import to_json_safe
 from reflowfy.execution.job_runner import plan_slices
 from reflowfy.factories.source_factory import SourceFactory
@@ -19,23 +21,61 @@ from reflowfy.reflow_manager.job_manager import JobManager
 from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
 from reflowfy.reflow_manager.models import Job
 
-if TYPE_CHECKING:
-    from reflowfy.core.id_based_pipeline import IdBasedPipeline
-
 logger = logging.getLogger(__name__)
 
-# Checkpoint batch configuration
-CHECKPOINT_BATCH_SIZE = 25  # Jobs per checkpoint batch
-CHECKPOINT_BATCH_TIMEOUT = 300  # 5 minutes timeout per batch
+# Checkpoint batch configuration.
+#
+# Phase 2 dispatches one batch, then blocks until every job in it reports, so
+# the batch size is also the maximum number of jobs in flight — and the poll
+# below adds a fixed cost per batch no matter how few jobs it holds. Small
+# batches make that cost dominate (25 jobs per ~2s poll caps throughput near
+# 750/min however high the rate limit is) and keep Kafka lag too low for KEDA
+# to scale workers up. Size it so the batch takes much longer to dispatch than
+# one poll interval.
+CHECKPOINT_BATCH_SIZE = int(os.getenv("CHECKPOINT_BATCH_SIZE", "1000"))
+CHECKPOINT_BATCH_TIMEOUT = 300  # Floor for the per-batch wait; scaled up by _batch_timeout()
 CHECKPOINT_POLL_INTERVAL = 2.0  # Poll every 2 seconds
+
+
+def _iter_plan(pipeline_name: str, slices: Iterator[Any]) -> Iterator[Any]:
+    """Yield planned jobs, naming ``define_jobs`` when the plan itself raises.
+
+    A ``define_jobs`` that ``yield``s runs its body here, during Phase 1, not at
+    ``resolve()`` time — so the ``pipeline_step`` wrapper around the call in
+    :meth:`AbstractPipeline.resolve` never sees the user's code fail. Only the
+    step that advances the plan is wrapped: the caller's loop body writes to the
+    database, and those errors are not the user's planning code.
+    """
+    iterator = iter(slices)
+    while True:
+        with pipeline_step("define_jobs", pipeline_name):
+            try:
+                item = next(iterator)
+            except StopIteration:
+                return
+        yield item
+
+
+def _batch_timeout(job_count: int, rate_limit: Optional[float]) -> float:
+    """How long to wait for one batch to finish, as a function of its size.
+
+    A rate-limited batch cannot finish faster than it can be dispatched, so a
+    fixed deadline that suited 25 jobs will expire mid-flight on a batch of
+    1000 — and a batch that times out is reported as unfinished, which
+    :meth:`_finalize_execution_state` turns into a failed execution even
+    though every job was healthy.
+
+    # ponytail: 3x the dispatch window assumes workers keep up with the
+    # dispatch rate. If they can't, the backlog outlives the deadline —
+    # raise CHECKPOINT_BATCH_TIMEOUT or add workers.
+    """
+    if not rate_limit or rate_limit <= 0:
+        return float(CHECKPOINT_BATCH_TIMEOUT)
+    dispatch_seconds = job_count / (rate_limit / 60.0)
+    return max(float(CHECKPOINT_BATCH_TIMEOUT), dispatch_seconds * 3)
 
 # Worker job message schema version
 JOB_SCHEMA_VERSION = 2
-
-
-def _chunk(lst: List[Any], size: int) -> List[List[Any]]:
-    """Split a list into consecutive chunks of at most `size` elements."""
-    return [lst[i : i + size] for i in range(0, len(lst), size)]
 
 
 def _finished_count(completed: int, failed: int, deduplicated: int) -> int:
@@ -146,7 +186,10 @@ class PipelineRunner:
         # Load pipeline from registry
         pipeline = pipeline_registry.get(pipeline_name)
         if not pipeline:
-            raise ValueError(f"Pipeline '{pipeline_name}' not found in registry")
+            raise ValueError(
+                f"Pipeline '{pipeline_name}' not found in registry"
+                f"{pipeline_registry.describe_missing(pipeline_name)}"
+            )
 
         logger.info("Running pipeline: %s (execution %s)", pipeline_name, execution_id)
 
@@ -222,7 +265,10 @@ class PipelineRunner:
             self.execution_manager.update_execution_state(
                 execution_id,
                 "failed",
-                error_message=f"Pipeline '{pipeline_name}' not found in registry during recovery",
+                error_message=(
+                    f"Pipeline '{pipeline_name}' not found in registry during recovery"
+                    f"{pipeline_registry.describe_missing(pipeline_name)}"
+                ),
             )
             return
 
@@ -306,7 +352,7 @@ class PipelineRunner:
                     )
                     completed, failed = self._wait_for_batch_completion(
                         job_ids=job_ids,
-                        timeout=CHECKPOINT_BATCH_TIMEOUT,
+                        timeout=_batch_timeout(len(job_ids), effective_rate_limit),
                         poll_interval=CHECKPOINT_POLL_INTERVAL,
                     )
                     total_completed += completed
@@ -369,13 +415,15 @@ class PipelineRunner:
                 None falls back to the pipeline's own enable_duplicate_jobs setting.
         """
         from reflowfy.core.execution_context import ExecutionContext
-        from reflowfy.core.id_based_pipeline import IdBasedPipeline
         from reflowfy.core.registry import pipeline_registry
 
         # Load pipeline from registry
         pipeline = pipeline_registry.get(pipeline_name)
         if not pipeline:
-            raise ValueError(f"Pipeline '{pipeline_name}' not found in registry")
+            raise ValueError(
+                f"Pipeline '{pipeline_name}' not found in registry"
+                f"{pipeline_registry.describe_missing(pipeline_name)}"
+            )
 
         # Count the execution here (the convergence point for both the API /run
         # path and run_pipeline / scheduler paths).
@@ -386,19 +434,7 @@ class PipelineRunner:
         if enable_duplicate_jobs is None:
             enable_duplicate_jobs = getattr(pipeline, "enable_duplicate_jobs", True)
 
-        # Check if this is an IdBasedPipeline — use per-ID execution flow
-        if isinstance(pipeline, IdBasedPipeline):
-            self._run_id_based_pipeline_jobs(
-                execution_id=execution_id,
-                pipeline=pipeline,
-                pipeline_name=pipeline_name,
-                runtime_params=runtime_params,
-                rate_limit_override=rate_limit_override,
-                enable_duplicate_jobs=enable_duplicate_jobs,
-            )
-            return
-
-        # Resolve pipeline with runtime params (for AbstractPipeline).
+        # Resolve pipeline with runtime params.
         # _resolved_params includes defaults + any keys added by define_source.
         if hasattr(pipeline, "resolve"):
             pipeline.resolve(runtime_params)
@@ -431,13 +467,24 @@ class PipelineRunner:
         batch_number = 1
         job_count = 0
         current_job_ids: List[str] = []
+        job_rows: List[Dict[str, Any]] = []
 
         base_source = pipeline.source
-        for sub_source in plan_slices(base_source, enriched_params):
+        plan = _iter_plan(pipeline_name, plan_slices(base_source, enriched_params))
+        for sub_source in plan:
             context.batch_number = batch_number
             context_dict = context.to_dict()
-            context_dict["runtime_params"] = dict(enriched_params)
+            # A planned source may narrow the params its own job receives — an
+            # IdBasedPipeline gives each job only the IDs that job handles,
+            # instead of every ID in the execution. Everyone else gets the
+            # execution's params unchanged.
+            job_params = getattr(sub_source, "job_params", None)
+            if job_params is None:
+                job_params = enriched_params
+            context_dict["runtime_params"] = dict(job_params)
             metadata = {**context_dict, "source_metadata": None}
+            if "current_ids" in job_params:
+                metadata["current_ids"] = job_params["current_ids"]
 
             dedup_check = not enable_duplicate_jobs
             job_id = str(uuid.uuid4())
@@ -447,17 +494,25 @@ class PipelineRunner:
             )
             job_payload = self._serialize_for_json(job_payload)
 
-            self.job_manager.create_job(
-                execution_id=execution_id,
-                job_id=job_id,
-                job_payload=job_payload,
-                batch_number=batch_number,
+            job_rows.append(
+                {
+                    "execution_id": execution_id,
+                    "job_id": job_id,
+                    "job_payload": job_payload,
+                    "batch_number": batch_number,
+                }
             )
             current_job_ids.append(job_id)
             job_count += 1
             if len(current_job_ids) >= CHECKPOINT_BATCH_SIZE:
+                # Flush per checkpoint batch so planning stays streaming: the
+                # buffer never holds more than one batch of job payloads.
+                self.job_manager.create_jobs(job_rows)
+                job_rows = []
                 batch_number += 1
                 current_job_ids = []
+
+        self.job_manager.create_jobs(job_rows)
 
         # Set total_jobs correctly (once, after all jobs saved)
         self._set_total_jobs(execution_id, job_count)
@@ -474,136 +529,6 @@ class PipelineRunner:
             dispatched,
             completed,
             failed,
-        )
-
-    def _run_id_based_pipeline_jobs(
-        self,
-        execution_id: str,
-        pipeline: "IdBasedPipeline",
-        pipeline_name: str,
-        runtime_params: Dict[str, Any],
-        rate_limit_override: Optional[float] = None,
-        enable_duplicate_jobs: Optional[bool] = None,
-    ) -> None:
-        """
-        Dispatch jobs for an IdBasedPipeline.
-
-        Iterates over each ID in runtime_params['ids'], resolves the source
-        per-ID, and creates jobs from each ID's source. All jobs belong to
-        the same execution.
-
-        Args:
-            execution_id: Existing execution identifier
-            pipeline: IdBasedPipeline instance
-            pipeline_name: Name of the pipeline
-            runtime_params: Runtime parameters (must include 'ids')
-            rate_limit_override: Optional override for jobs per minute
-            enable_duplicate_jobs: True = jobs may run multiple times (default);
-                False = each unique job (by content hash) runs at most once.
-        """
-        from reflowfy.core.execution_context import ExecutionContext
-
-        # Resolve effective duplicate setting: caller override > pipeline default
-        if enable_duplicate_jobs is None:
-            enable_duplicate_jobs = getattr(pipeline, "enable_duplicate_jobs", True)
-
-        # Validate parameters
-        pipeline.resolve(runtime_params)
-        params = pipeline.apply_defaults(runtime_params)
-
-        ids = params.get("ids", [])
-        ids_batch_size = getattr(pipeline, "ids_batch_size", 1)
-
-        logger.info(
-            "IdBasedPipeline dispatch starting: %s (execution %s)", pipeline_name, execution_id
-        )
-        logger.info("Processing %d IDs (batch_size=%d): %s", len(ids), ids_batch_size, ids)
-
-        # Update state to running
-        self.execution_manager.update_execution_state(execution_id, "running")
-
-        # Create execution context
-        context = ExecutionContext(
-            execution_id=execution_id,
-            pipeline_name=pipeline_name,
-            runtime_params=params,
-        )
-
-        # Determine effective rate limit
-        effective_rate_limit = rate_limit_override
-        if effective_rate_limit is None and pipeline.rate_limit:
-            effective_rate_limit = pipeline.rate_limit
-
-        # Phase 1: For each ID-batch, resolve source and save jobs to database
-        id_batches = _chunk(ids, ids_batch_size)
-        logger.info(
-            "Phase 1: Saving jobs to database for %d IDs in %d batches...",
-            len(ids),
-            len(id_batches),
-        )
-        batch_number = 1
-        job_count = 0
-        current_job_ids: List[str] = []
-
-        for ids_batch in id_batches:
-            logger.info("Processing ID batch: %s", ids_batch)
-
-            resolved = pipeline.resolve_for_ids(params, ids_batch)
-            source = resolved["source"]
-            batch_params = resolved.get("batch_params", params)
-
-            for sub_source in source.split(batch_params):
-                context.batch_number = batch_number
-                context_dict = context.to_dict()
-                context_dict["runtime_params"] = dict(batch_params)
-                metadata = {**context_dict, "current_ids": ids_batch, "source_metadata": None}
-
-                dedup_check = not enable_duplicate_jobs
-                job_id = str(uuid.uuid4())
-
-                job_payload = build_job_payload(
-                    execution_id,
-                    job_id,
-                    pipeline_name,
-                    sub_source,
-                    metadata,
-                    dedup_check=dedup_check,
-                )
-                job_payload = self._serialize_for_json(job_payload)
-
-                self.job_manager.create_job(
-                    execution_id=execution_id,
-                    job_id=job_id,
-                    job_payload=job_payload,
-                    batch_number=batch_number,
-                )
-                current_job_ids.append(job_id)
-                job_count += 1
-                if len(current_job_ids) >= CHECKPOINT_BATCH_SIZE:
-                    batch_number += 1
-                    current_job_ids = []
-
-        # Set total_jobs correctly (once, after all jobs saved)
-        self._set_total_jobs(execution_id, job_count)
-        self._backfill_total_batches(execution_id, batch_number)
-        logger.info(
-            "Saved %d jobs to database in %d batches (from %d IDs)",
-            job_count,
-            batch_number,
-            len(ids),
-        )
-
-        # Phase 2: dispatch and wait for each batch
-        dispatched, completed, failed = self._dispatch_and_wait_batches(
-            execution_id, pipeline_name, batch_number, job_count, effective_rate_limit
-        )
-        logger.info(
-            "IdBasedPipeline %s: %d dispatched, %d completed, %d failed (%d IDs)",
-            execution_id,
-            dispatched,
-            completed,
-            failed,
-            len(ids),
         )
 
     def _backfill_total_batches(self, execution_id: str, total_batches: int) -> None:
@@ -661,7 +586,7 @@ class PipelineRunner:
             logger.info("Waiting for batch completion...")
             completed, failed = self._wait_for_batch_completion(
                 job_ids=job_ids,
-                timeout=CHECKPOINT_BATCH_TIMEOUT,
+                timeout=_batch_timeout(len(jobs), effective_rate_limit),
                 poll_interval=CHECKPOINT_POLL_INTERVAL,
             )
 

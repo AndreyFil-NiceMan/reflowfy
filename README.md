@@ -191,7 +191,61 @@ class UserSyncPipeline(AbstractPipeline):
 # ✅ That's it! The pipeline is automatically discovered.
 ```
 
-### 4. Execute Pipelines
+### 4. Logging and Errors
+
+**Logging.** Get a logger at module level with `get_logger(__name__)`. There is no `self` to reach for — it works the same in a transformation, a `@source` function, or a plain helper:
+
+```python
+# transformations/clean_names.py
+from reflowfy import transformation, get_logger
+
+logger = get_logger(__name__)
+
+@transformation("clean_names")
+def clean_names(records, context):
+    logger.info("Normalizing %d names", len(records))
+    return records
+```
+
+Every line is automatically stamped with `execution_id`, `job_id` and `pipeline_name` — you never pass them yourself:
+
+```json
+{"@timestamp": "2026-08-05T09:12:44Z", "log.level": "info",
+ "logger": "reflowfy.transformations.clean_names",
+ "message": "Normalizing 250 names",
+ "execution_id": "exec-7f3a", "job_id": "job-0012", "pipeline_name": "user_sync_pipeline"}
+```
+
+Control it with env vars: `LOG_LEVEL` (default `INFO`), `LOG_JSON` (default `true`; `reflowfy test` defaults to `false` for readable terminal output), and `LOG_DESTINATION` (`stdout` | `elastic` | `both`).
+
+**Errors.** Raise from any `define_*` hook or transformation to fail the job. Use `PipelineError` to mark a deliberate failure:
+
+```python
+from reflowfy import PipelineError, get_logger
+
+logger = get_logger(__name__)
+
+class UserSyncPipeline(AbstractPipeline):
+    name = "user_sync_pipeline"
+
+    def define_destination(self, records, params):
+        if not records:
+            raise PipelineError("nothing survived transformation")
+        return prod_kafka()
+```
+
+The job is marked `failed` and the message, exception type and full traceback are stored on the job record. Unexpected errors are wrapped so the message names the step that failed:
+
+```
+PipelineError: define_destination of pipeline 'user_sync_pipeline' raised KeyError: 'KAFKA_URL'
+```
+
+The original exception stays reachable as `err.original_error`. Also available: `SourceError`, `DestinationError`, `TransformationError`.
+
+> **A pipeline that fails to construct is not registered.** If your `__init__` raises, the pipeline can't be built, so it won't appear — but the traceback is logged at ERROR on startup, and the later lookup tells you why:
+> `Pipeline 'user_sync' not found in registry (it failed to register: KeyError: 'ELASTIC_URL')`
+
+### 5. Execute Pipelines
 
 Trigger pipelines locally or in production via HTTP:
 

@@ -67,6 +67,50 @@ class TestPlanSlicesJobPlan:
 
         assert len(slices) == 1
 
+    def test_source_without_split_is_a_single_job(self):
+        class _DuckSource:
+            def fetch(self, runtime_params, limit=None):
+                return [{"id": 1}]
+
+        source = _DuckSource()
+
+        assert list(plan_slices(source, {})) == [source]
+
+
+class TestPlanSlicesStreaming:
+    """define_jobs may yield: the plan is consumed lazily, never materialized."""
+
+    def test_generator_plan_becomes_one_job_per_yield(self):
+        def plan():
+            for i in range(3):
+                yield [{"id": i}]
+
+        slices = list(plan_slices(plan(), {}))
+
+        assert [s.fetch({}) for s in slices] == [[{"id": 0}], [{"id": 1}], [{"id": 2}]]
+
+    def test_generator_plan_is_not_materialized(self):
+        """An unbounded plan must be safe to consume one job at a time."""
+        planned = 0
+
+        def endless_plan():
+            nonlocal planned
+            while True:
+                planned += 1
+                yield [{"id": planned}]
+
+        slices = plan_slices(endless_plan(), {})
+        first = next(slices)
+
+        assert first.fetch({}) == [{"id": 1}]
+        assert planned == 1, "planning ran ahead of consumption"
+
+    def test_generator_of_sources_still_splits_each_one(self):
+        def plan():
+            yield MockSource(data=[{"id": 1}, {"id": 2}], batch_size=1)
+
+        assert len(list(plan_slices(plan(), {}))) == 2
+
 
 class _DefineJobsPipeline(AbstractPipeline):
     name = "unit_define_jobs_pipeline"
@@ -129,3 +173,50 @@ class TestDefineJobsHook:
     def test_neither_hook_implemented_raises(self):
         with pytest.raises(NotImplementedError, match="define_source\\(\\) or define_jobs\\(\\)"):
             _NoHookPipeline().resolve({})
+
+
+class TestPlanSlicesCarriesJobParams:
+    """Params the planner attaches to a source must reach that source's jobs."""
+
+    def test_job_params_survive_a_source_that_splits_itself(self):
+        source = MockSource(data=[{"id": 1}, {"id": 2}], batch_size=1)
+        source.job_params = {"current_ids": [7]}
+
+        slices = list(plan_slices(source, {}))
+
+        assert len(slices) == 2
+        assert all(s.job_params == {"current_ids": [7]} for s in slices)
+
+    def test_a_narrowed_source_keeps_its_own_job_params(self):
+        parent = MockSource(data=[{"id": 1}], batch_size=1)
+        parent.job_params = {"current_ids": ["parent"]}
+        child = next(iter(parent.split({})))
+        child.job_params = {"current_ids": ["child"]}
+
+        assert child.job_params == {"current_ids": ["child"]}
+
+
+class _RaisingPlanPipeline(AbstractPipeline):
+    name = "unit_raising_define_jobs_pipeline"
+
+    def define_jobs(self, runtime_params):
+        yield [{"n": 1}]
+        raise RuntimeError("parent lookup failed")
+
+    def define_destination(self, records, runtime_params):
+        return None
+
+    def define_transformations(self, records, runtime_params):
+        return []
+
+
+def test_generator_define_jobs_errors_name_the_hook():
+    """A yielding define_jobs runs during planning, not resolve() — still labelled."""
+    from reflowfy.core.exceptions import PipelineError
+    from reflowfy.reflow_manager.pipeline_runner import _iter_plan
+
+    pipeline = _RaisingPlanPipeline()
+    pipeline.resolve({})
+
+    with pytest.raises(PipelineError, match="define_jobs"):
+        list(_iter_plan(pipeline.name, plan_slices(pipeline.source, {})))

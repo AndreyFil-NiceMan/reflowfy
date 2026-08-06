@@ -26,12 +26,16 @@ Example:
     ...         return [MyTransformation()]
 """
 
+import logging
 import re
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from reflowfy.core.exceptions import pipeline_step
 from reflowfy.core.query_loader import QueryLoaderMixin
+
+logger = logging.getLogger(__name__)
 
 
 class PipelineMeta(ABCMeta):
@@ -69,13 +73,21 @@ class PipelineMeta(ABCMeta):
                 # Import here to avoid circular dependency
                 from reflowfy.core.registry import pipeline_registry
 
+                pipeline_name = namespace["name"]
                 try:
                     instance = cls()
                     pipeline_registry.register(instance)
-                except Exception:
-                    # Skip auto-registration if instantiation fails
-                    # (e.g., missing required config)
-                    pass
+                except Exception as exc:
+                    # Don't raise: one misconfigured pipeline must not take down a
+                    # whole service (e.g. a worker without ES creds). Log loudly and
+                    # remember why, so the later "not found in registry" says the cause.
+                    logger.error(
+                        "Pipeline '%s' failed to register and will not be available: %s",
+                        pipeline_name,
+                        exc,
+                        exc_info=True,
+                    )
+                    pipeline_registry.record_failure(pipeline_name, exc)
 
         return cls
 
@@ -349,25 +361,34 @@ class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
         Define how this pipeline's work is split into jobs.
 
         By default this delegates to :meth:`define_source` and lets the source's
-        ``split()`` decide. Override it to own the splitting: return a list where
-        each element is exactly one job — either a list of records (use
+        ``split()`` decide. Override it to own the splitting: return an iterable
+        where each element is exactly one job — either a list of records (use
         :func:`reflowfy.chunk` to size them) or a ``BaseSource`` that splits
-        itself. The two shapes can be mixed in one list.
+        itself. The two shapes can be mixed in one iterable.
 
         Runs on the manager, so keep it cheap. Records returned here travel
         inside the job message; for payloads near Kafka's 1MB limit, return
         sources that re-fetch worker-side instead.
 
+        Jobs are consumed lazily, so ``yield`` instead of building a list when
+        the plan is large: the manager writes each job to the database as it
+        arrives and never holds the whole plan in memory.
+
         Args:
             runtime_params: Parameters provided by the user at runtime
 
         Returns:
-            A BaseSource, or a list of jobs.
+            A BaseSource, or an iterable of jobs.
 
         Example:
             >>> def define_jobs(self, params):
             ...     rows = httpx.get(params["url"]).json()["items"]
             ...     return chunk(rows, size=params["job_size"])
+
+        Example (streaming — millions of jobs, constant memory):
+            >>> def define_jobs(self, params):
+            ...     for row in stream_ids(params["query"]):
+            ...         yield user_source(id=row.id)
         """
         return self.define_source(runtime_params)
 
@@ -501,9 +522,21 @@ class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
     # Utility Methods (not meant to be overridden)
     # =========================================================================
 
+    def get_all_parameters(self) -> List[PipelineParameter]:
+        """
+        Every parameter this pipeline accepts.
+
+        Defaults to :meth:`define_parameters`. Subclasses override this to add
+        parameters the framework injects rather than the user declaring them —
+        see :class:`~reflowfy.core.id_based_pipeline.IdBasedPipeline`, which
+        prepends the built-in ``ids``. Validation, defaults and API metadata all
+        read this, so an injected parameter behaves like a declared one.
+        """
+        return self.define_parameters()
+
     def get_required_parameters(self) -> Set[str]:
         """Get names of required parameters."""
-        return {p.name for p in self.define_parameters() if p.required}
+        return {p.name for p in self.get_all_parameters() if p.required}
 
     def validate_parameters(self, runtime_params: Dict[str, Any]) -> List[str]:
         """
@@ -517,7 +550,7 @@ class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
         """
         errors = []
 
-        for param in self.define_parameters():
+        for param in self.get_all_parameters():
             value = runtime_params.get(param.name)
             error = param.validate(value)
             if error:
@@ -537,7 +570,7 @@ class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
         """
         result = dict(runtime_params)
 
-        for param in self.define_parameters():
+        for param in self.get_all_parameters():
             if param.name not in result and param.default is not None:
                 result[param.name] = param.default
 
@@ -560,7 +593,7 @@ class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
 
         Used by sources that have Jinja templates (e.g., Elasticsearch queries).
         """
-        return [p.name for p in self.define_parameters()]
+        return [p.name for p in self.get_all_parameters()]
 
     # =========================================================================
     # Execution Support - Properties for compatibility with execution engine
@@ -592,7 +625,8 @@ class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
             raise ValueError(f"Invalid parameters: {'; '.join(errors)}")
 
         self._resolved_params = params
-        self._source = self.define_jobs(params)
+        with pipeline_step("define_jobs", self.name):
+            self._source = self.define_jobs(params)
         # destination and transformations are resolved per-job/per-batch,
         # once records are available.
         self._destination = None
@@ -636,7 +670,7 @@ class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
         """Serialize pipeline metadata for API responses."""
         return {
             "name": self.name,
-            "parameters": [p.to_dict() for p in self.define_parameters()],
+            "parameters": [p.to_dict() for p in self.get_all_parameters()],
             "rate_limit": self.rate_limit,
             "config": self.config,
             "transformations": self.get_transformation_names(),

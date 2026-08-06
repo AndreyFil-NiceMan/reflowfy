@@ -189,7 +189,8 @@ class WorkerExecutor:
             pipeline = pipeline_registry.get(_pipeline_name)
             if pipeline is None:
                 raise RuntimeError(
-                    f"Pipeline '{_pipeline_name}' not found in worker registry; "
+                    f"Pipeline '{_pipeline_name}' not found in worker registry"
+                    f"{pipeline_registry.describe_missing(_pipeline_name)}; "
                     "worker-side sourcing requires the pipeline to be discoverable."
                 )
 

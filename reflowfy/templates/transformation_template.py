@@ -6,7 +6,11 @@ Just define the class and import it in any pipeline.
 """
 
 from typing import Any, Dict, List
-from reflowfy import BaseTransformation
+from reflowfy import BaseTransformation, PipelineError, get_logger
+
+# There is no `self` here — get_logger works from any module, function or class.
+# The worker attaches execution_id / job_id / pipeline_name to every record.
+logger = get_logger(__name__)
 
 
 class ExampleTransform(BaseTransformation):
@@ -28,6 +32,13 @@ class ExampleTransform(BaseTransformation):
             Transformed list of records
         """
         execution_id = runtime_params.get("execution_id", "unknown")
+
+        # Raise to fail the job deliberately. The message, type and traceback are
+        # stored on the job record, and the error names the step that failed.
+        if runtime_params.get("strict") and not records:
+            raise PipelineError("strict mode: expected at least one record")
+
+        logger.info("Tagging %d records for execution %s", len(records), execution_id)
         for record in records:
             record["_processed_by"] = "reflowfy"
             record["_execution_id"] = execution_id

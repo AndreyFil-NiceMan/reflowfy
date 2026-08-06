@@ -74,6 +74,9 @@ class TestDeployCommand:
                 "deploy",
                 "--registry", "registry.test.local",
                 "--kafka", "kafka.test:9092",
+                # SASL is on by default and refuses to deploy without a password;
+                # don't depend on KAFKA_SASL_PASSWORD being in the environment.
+                "--no-kafka-sasl",
                 "--namespace", "test-ns",
             ],
         )
@@ -113,6 +116,9 @@ class TestDeployCommand:
                 "deploy",
                 "--registry", "registry.test.local",
                 "--kafka", "kafka.test:9092",
+                # SASL is on by default and refuses to deploy without a password;
+                # don't depend on KAFKA_SASL_PASSWORD being in the environment.
+                "--no-kafka-sasl",
                 "--keda",
                 "--keda-min", "2",
                 "--keda-max", "50",
@@ -145,6 +151,9 @@ class TestDeployCommand:
                 "deploy",
                 "--registry", "registry.test.local",
                 "--kafka", "kafka.test:9092",
+                # SASL is on by default and refuses to deploy without a password;
+                # don't depend on KAFKA_SASL_PASSWORD being in the environment.
+                "--no-kafka-sasl",
                 "--no-keda",
                 "--workers", "3",
             ],
@@ -180,6 +189,9 @@ class TestDeployCommand:
                 "deploy",
                 "--registry", "registry.test.local",
                 "--kafka", "kafka.test:9092",
+                # SASL is on by default and refuses to deploy without a password;
+                # don't depend on KAFKA_SASL_PASSWORD being in the environment.
+                "--no-kafka-sasl",
                 "--no-deploy-postgres",
             ],
             env=env,
@@ -212,6 +224,9 @@ class TestDeployCommand:
                 "deploy",
                 "--registry", "registry.test.local",
                 "--kafka", "kafka.test:9092",
+                # SASL is on by default and refuses to deploy without a password;
+                # don't depend on KAFKA_SASL_PASSWORD being in the environment.
+                "--no-kafka-sasl",
                 "--postgres-image", "myrepo/postgres:14",
             ],
         )
@@ -233,6 +248,9 @@ class TestDeployCommand:
                 "deploy",
                 "--registry", "registry.test.local",
                 "--kafka", "kafka.test:9092",
+                # SASL is on by default and refuses to deploy without a password;
+                # don't depend on KAFKA_SASL_PASSWORD being in the environment.
+                "--no-kafka-sasl",
                 "--no-deploy-postgres",
             ],
             env=env,
@@ -258,6 +276,9 @@ class TestDeployCommand:
                 "deploy",
                 "--registry", "registry.test.local",
                 "--kafka", "kafka.test:9092",
+                # SASL is on by default and refuses to deploy without a password;
+                # don't depend on KAFKA_SASL_PASSWORD being in the environment.
+                "--no-kafka-sasl",
                 "--image-pull-secret", "my-secret",
             ],
         )
