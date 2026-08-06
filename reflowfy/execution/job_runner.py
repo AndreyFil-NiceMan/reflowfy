@@ -13,10 +13,14 @@ normalize → transform → resolve-destination sequence lives here so the
 test/preview paths cannot drift from what the worker actually runs.
 """
 
+import json
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from reflowfy.core.serialization import to_json_safe
-from reflowfy.execution.transformation_runner import apply_transformations_iteratively
+from reflowfy.execution.transformation_runner import (
+    StepObserver,
+    apply_transformations_iteratively,
+)
 
 
 def chunk(records: List[Any], size: int = 1) -> List[List[Any]]:
@@ -84,11 +88,63 @@ def plan_slices(source: Any, runtime_params: Dict[str, Any]) -> Iterator[Any]:
     yield from split(runtime_params)
 
 
+class JobNotSerializableError(Exception):
+    """A planned job cannot survive the trip to a worker.
+
+    Raised by :func:`plan_slices_over_wire` so ``reflowfy test`` fails locally,
+    with an actionable message, on the exact conditions that would otherwise
+    only break at dispatch time or on the worker.
+    """
+
+
+def plan_slices_over_wire(source: Any, runtime_params: Dict[str, Any]) -> Iterator[Tuple[Any, int]]:
+    """Yield ``(reconstructed_source, payload_bytes)`` for each planned job.
+
+    The same slices :func:`plan_slices` yields, but each one is put through the
+    exact hop the manager and worker perform — ``SourceFactory.serialize`` →
+    ``json.dumps`` → ``SourceFactory.create`` — so a local test fails on a
+    source that cannot travel instead of passing and failing after deploy.
+
+    Only ``reflowfy test`` uses this. The worker and ``local_executor`` call
+    :func:`plan_slices` directly: the worker has already come through the wire,
+    and neither should pay for a round-trip they don't need.
+    """
+    from reflowfy.factories.source_factory import SourceFactory
+
+    for sub in plan_slices(source, runtime_params):
+        descriptor = SourceFactory.serialize(sub)
+        try:
+            payload = json.dumps(descriptor)
+        except TypeError as exc:
+            raise JobNotSerializableError(
+                f"{descriptor['type']} config is not JSON-serializable ({exc}); it cannot "
+                "travel to a worker. If this is a StaticSource from define_jobs, your "
+                "records contain non-JSON values (datetime, Decimal, custom objects) — "
+                "convert them before returning the job plan, e.g. "
+                "`chunk(to_json_safe(rows), size=N)`."
+            ) from exc
+
+        d = json.loads(payload)
+        try:
+            reconstructed = SourceFactory.create(d["type"], d["config"])
+        except TypeError as exc:
+            raise JobNotSerializableError(
+                f"{d['type']}.config must be exactly its constructor kwargs — the worker "
+                f"rebuilds the source with {d['type']}(**config), which failed: {exc}. "
+                f"Got config keys: {sorted(d['config'])}."
+            ) from exc
+        # ValueError from create() ("Unknown source type: …") already names the
+        # problem and lists the registered types; let it through untouched.
+
+        yield reconstructed, len(payload.encode("utf-8"))
+
+
 def run_job_records(
     source: Any,
     pipeline: Any,
     runtime_params: Dict[str, Any],
     limit: Optional[int] = None,
+    on_step: Optional[StepObserver] = None,
 ) -> Tuple[List[Any], List[Any], List[Tuple[str, float]], Any]:
     """Run the v2 per-job core for one (already-narrowed) source.
 
@@ -105,6 +161,10 @@ def run_job_records(
 
     Does NOT send — the caller owns sending, stats, and presentation.
 
+    ``on_step`` is passed straight to the transformation runner: an optional
+    observer called with ``(name, records_before, records_after)`` after each
+    transformation, so a caller can show or record what every step did.
+
     Returns ``(records, transformed_records, applied, destination)`` where
     ``applied`` is the list of ``(name, duration)`` pairs from the
     transformation runner.
@@ -118,7 +178,7 @@ def run_job_records(
         # aren't invoked on []. Every caller already treats empty records as a no-op.
         return records, [], [], None
     transformed_records, applied = apply_transformations_iteratively(
-        pipeline, records, runtime_params
+        pipeline, records, runtime_params, on_step=on_step
     )
     destination = pipeline.define_destination(transformed_records, runtime_params)
     return records, transformed_records, applied, destination

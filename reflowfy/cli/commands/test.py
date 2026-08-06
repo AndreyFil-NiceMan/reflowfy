@@ -1,7 +1,8 @@
 """Test a pipeline locally without Docker."""
 
-from typing import Any
+from typing import Any, Dict, List, Optional, Tuple
 import asyncio
+import datetime
 import importlib.util
 import json
 import os
@@ -14,8 +15,130 @@ import typer
 
 from reflowfy.cli.utils import console
 from reflowfy.core.execution_context import ExecutionContext
-from reflowfy.execution.job_runner import plan_slices, run_job_records
+from reflowfy.execution.job_runner import (
+    JobNotSerializableError,
+    plan_slices_over_wire,
+    run_job_records,
+)
+from reflowfy.factories.source_factory import SourceFactory
 from reflowfy.transformations.base import TransformationError
+
+# Kafka's default max message size. Records ride inside the job payload (see the
+# ponytail note in job_runner.plan_slices), so a too-large chunk() only fails at
+# dispatch — warn well before the cliff.
+KAFKA_DEFAULT_MAX_BYTES = 1_048_576
+PAYLOAD_WARN_BYTES = 900_000
+
+
+def _fmt_size(n: int) -> str:
+    """Human-readable byte count."""
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f} KB"
+    return f"{n / (1024 * 1024):.1f} MB"
+
+
+def _dump(record: Any) -> str:
+    """Pretty JSON for one record, tolerating non-JSON values."""
+    return json.dumps(record, default=str, indent=2)
+
+
+def _print_records(indent: str, records: List[Any], verbose: bool, sample: int) -> None:
+    """Print records: all of them in full when verbose, else a truncated sample."""
+    shown = records if verbose else records[:sample]
+    for i, record in enumerate(shown):
+        text = _dump(record) if verbose else _dump(record)[:400]
+        console.print(f"{indent}[dim][{i}][/dim] {text}")
+    if not verbose and len(records) > sample:
+        console.print(f"{indent}[dim]… {len(records) - sample} more (-v to see all)[/dim]")
+
+
+def _run_plan(
+    source: Any,
+    pipeline: Any,
+    meta: Dict[str, Any],
+    limit: int,
+    verbose: bool,
+    indent: str,
+    jobs_log: List[Dict[str, Any]],
+) -> Tuple[List[Any], int]:
+    """Plan the jobs and run each through the shared v2 core.
+
+    Slices are planned with :func:`plan_slices_over_wire`, so every job makes the
+    same serialize → JSON → reconstruct hop the manager and worker perform; a
+    source that cannot travel fails here rather than after deploy.
+
+    Prints the records entering and leaving every step, and appends one entry per
+    job to ``jobs_log`` for ``--out``. Returns ``(transformed_records, fetched)``.
+    """
+    transformed_all: List[Any] = []
+    fetched = 0
+
+    for idx, (sub, payload_bytes) in enumerate(plan_slices_over_wire(source, meta), 1):
+        remaining = limit - fetched
+        if remaining <= 0:
+            break
+
+        job: Dict[str, Any] = {
+            "index": idx,
+            "source": SourceFactory.serialize(sub),
+            "payload_bytes": payload_bytes,
+            "steps": [],
+        }
+        jobs_log.append(job)
+
+        console.print(
+            f"\n{indent}[bold cyan]━━━ Job {idx} · {type(sub).__name__} · "
+            f"payload {_fmt_size(payload_bytes)} ━━━[/bold cyan]"
+        )
+        if payload_bytes > PAYLOAD_WARN_BYTES:
+            console.print(
+                f"{indent}[yellow]⚠️  payload {_fmt_size(payload_bytes)} is near or over "
+                f"Kafka's {_fmt_size(KAFKA_DEFAULT_MAX_BYTES)} default — "
+                f"use a smaller chunk() size.[/yellow]"
+            )
+
+        # The first step's `before` IS the source output, so print it from there
+        # and fall back to `records` when a pipeline has no transformations.
+        source_shown = [False]
+
+        def show_source(records: List[Any]) -> None:
+            if source_shown[0]:
+                return
+            source_shown[0] = True
+            console.print(f"{indent}[green]📥 SOURCE → {len(records)} records[/green]")
+            _print_records(indent + "  ", records, verbose, 2)
+
+        def on_step(
+            name: str, before: List[Any], after: List[Any], _job: Dict[str, Any] = job
+        ) -> None:
+            show_source(before)
+            _job["steps"].append(
+                {"name": name, "in": len(before), "out": len(after), "records": after}
+            )
+            dropped = len(before) - len(after)
+            note = f" [yellow]({dropped} dropped)[/yellow]" if dropped > 0 else ""
+            console.print(
+                f"{indent}[green]🔄 {name}: {len(before)} → {len(after)} records[/green]{note}"
+            )
+            _print_records(indent + "  ", after, verbose, 2)
+
+        records, t_records, t_applied, dest = run_job_records(
+            sub, pipeline, meta, limit=remaining, on_step=on_step
+        )
+        show_source(records)
+
+        # `applied` and the observed steps are the same steps in the same order.
+        for step, (_name, duration) in zip(job["steps"], t_applied):
+            step["duration_ms"] = round(duration * 1000, 3)
+        job["records"] = records
+        job["destination"] = repr(dest) if dest is not None else None
+
+        fetched += len(records)
+        transformed_all.extend(t_records)
+
+    return transformed_all, fetched
 
 
 def register(app: typer.Typer):
@@ -32,12 +155,35 @@ def register(app: typer.Typer):
         dry_run: bool = typer.Option(
             False, "--dry-run", help="Print records instead of sending to destination"
         ),
+        verbose: bool = typer.Option(
+            False,
+            "--verbose",
+            "-v",
+            help=(
+                "Print every record in full at every step (source and after each "
+                "transformation) instead of a truncated sample. Bounded by --limit; "
+                "pipe to a pager for large runs."
+            ),
+        ),
+        out: Optional[Path] = typer.Option(
+            None,
+            "--out",
+            help=(
+                "Write the whole run to a JSON file: params, per-job source "
+                "descriptor and payload size, records at every step, and errors. "
+                "Written even if the run fails."
+            ),
+        ),
     ):
         """
         Test a pipeline locally without Docker.
 
         Loads the pipeline file, prompts for parameters, and runs
         with a record limit (default 100).
+
+        Every planned job is serialized and reconstructed exactly as the manager
+        and worker do it, so a source that cannot survive the trip fails here
+        rather than after deploy.
         """
         from rich.panel import Panel
         from rich.prompt import Confirm, Prompt
@@ -122,7 +268,9 @@ def register(app: typer.Typer):
                     label += f" [dim]({param.description})[/dim]"
 
                 # Show type info
-                type_name = param._TYPE_NAMES.get(param.param_type, str(param.param_type))  # pyright: ignore[reportPrivateUsage]
+                type_name = param._TYPE_NAMES.get(  # pyright: ignore[reportPrivateUsage]
+                    param.param_type, str(param.param_type)
+                )
                 hints = [type_name]
                 if param.choices:
                     hints.append(f"choices: {param.choices}")
@@ -165,6 +313,57 @@ def register(app: typer.Typer):
         console.print(f"\n[bold]⚙️  Running with params:[/bold] {params}")
         console.print(f"[bold]📊 Record limit:[/bold] {limit}")
 
+        # Everything the run saw, exported by --out. Populated as the run
+        # proceeds and written in a finally block, so a crashed run still
+        # leaves a log — which is exactly when it is wanted.
+        run_log: Dict[str, Any] = {
+            "pipeline": pipeline.name,
+            "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "params": params,
+            "limit": limit,
+            "dry_run": dry_run,
+            "jobs": [],
+            "batches": [],
+            "errors": [],
+        }
+
+        def write_out() -> None:
+            """Write the run log to --out, if one was requested."""
+            if out is None:
+                return
+            run_log["finished_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            try:
+                out.parent.mkdir(parents=True, exist_ok=True)
+                with out.open("w", encoding="utf-8") as fh:
+                    json.dump(run_log, fh, default=str, indent=2)
+                console.print(f"\n[bold]📝 Run log:[/bold] {out}")
+            except OSError as e:
+                # Never let logging failure mask the run's own result.
+                console.print(f"[yellow]⚠️  Could not write run log to {out}: {e}[/yellow]")
+
+        try:
+            _run(
+                pipeline=pipeline,
+                is_id_based=is_id_based,
+                params=params,
+                limit=limit,
+                dry_run=dry_run,
+                verbose=verbose,
+                run_log=run_log,
+            )
+        finally:
+            write_out()
+
+    def _run(
+        pipeline: Any,
+        is_id_based: bool,
+        params: Dict[str, Any],
+        limit: int,
+        dry_run: bool,
+        verbose: bool,
+        run_log: Dict[str, Any],
+    ) -> None:
+        """Execute the pipeline and fill ``run_log``. Raises typer.Exit on failure."""
         # ================================================================
         # IdBasedPipeline: per-ID execution
         # ================================================================
@@ -223,31 +422,30 @@ def register(app: typer.Typer):
                     }
                 )
 
-                # Plan slices and run each through the shared v2 core, capped at
-                # `limit` across slices.
+                # Plan slices over the wire and run each through the shared v2
+                # core, capped at `limit` across slices.
                 console.print(f"  [cyan]Fetching records (limit={limit})...[/cyan]")
-                transformed = []
-                applied = []
-                batch_fetched = 0
+                batch_log: List[Dict[str, Any]] = []
+                run_log["batches"].append({"ids": list(ids_batch), "jobs": batch_log})
                 try:
-                    for sub in plan_slices(source, meta):
-                        remaining = limit - batch_fetched
-                        if remaining <= 0:
-                            break
-                        records, t_records, t_applied, _dest = run_job_records(
-                            sub, pipeline, meta, limit=remaining
-                        )
-                        batch_fetched += len(records)
-                        transformed.extend(t_records)
-                        applied.extend(t_applied)
+                    transformed, batch_fetched = _run_plan(
+                        source, pipeline, meta, limit, verbose, "  ", batch_log
+                    )
                 except TransformationError as e:
                     console.print(f"    [red]❌ {e.transformation_name} failed: {e}[/red]")
+                    run_log["errors"].append(f"batch {ids_batch}: {e.transformation_name}: {e}")
                     traceback.print_exc()
+                    continue
+                except JobNotSerializableError as e:
+                    # The message names the cause and the fix; a traceback would bury it.
+                    console.print(f"  [red]❌ This job cannot reach a worker:[/red] {e}")
+                    run_log["errors"].append(f"batch {ids_batch}: {e}")
                     continue
                 except Exception as e:
                     console.print(
                         f"  [red]❌ Source fetch/transform failed for batch {ids_batch}: {e}[/red]"
                     )
+                    run_log["errors"].append(f"batch {ids_batch}: {e}")
                     traceback.print_exc()
                     continue
 
@@ -256,31 +454,23 @@ def register(app: typer.Typer):
                     console.print(f"  [yellow]⚠️ No records for batch: {ids_batch}[/yellow]")
                     continue
 
-                for name, _duration in applied:
-                    console.print(f"    [green]✓ {name}: {len(transformed)} records[/green]")
-
-                # Show sample output
-                console.print(
-                    f"  [bold]📋 Sample ({min(2, len(transformed))} of {len(transformed)}):[/bold]"
-                )
-                for i, record in enumerate(transformed[:2]):
-                    console.print(
-                        f"    [dim]Record {i + 1}:[/dim] {json.dumps(record, default=str, indent=2)[:400]}"
-                    )
-
                 # Send to destination or dry-run
                 if not dry_run:
                     try:
                         destination = pipeline.define_destination(transformed, meta)
                         console.print(f"  [bold]📤 Destination:[/bold] {destination}")
 
-                        async def _send_batch(recs: Any = transformed, m: Any = meta, dest: Any = destination):
+                        async def _send_batch(
+                            recs: Any = transformed, m: Any = meta, dest: Any = destination
+                        ):
                             await dest.send_with_retry(recs, m)
 
                         asyncio.run(_send_batch())
+                        run_log["sent"] = run_log.get("sent", 0) + len(transformed)
                         console.print(f"  [green]✓ Sent {len(transformed)} records[/green]")
                     except Exception as e:
                         console.print(f"  [red]❌ Send failed for batch {ids_batch}: {e}[/red]")
+                        run_log["errors"].append(f"batch {ids_batch} send: {e}")
 
                 total_records += len(transformed)
 
@@ -327,49 +517,35 @@ def register(app: typer.Typer):
             }
         )
 
-        # Plan slices and run each through the same v2 core the worker runs
-        # (fetch → normalize → transform → resolve destination), capped at
-        # `limit` across slices. The wire round-trip exercises serialization.
+        # Plan the jobs the way the manager does — serialized and reconstructed
+        # through the wire — and run each through the same v2 core the worker
+        # runs (fetch → normalize → transform → resolve destination), capped at
+        # `limit` across jobs.
         console.print(f"\n[cyan]Fetching records (limit={limit})...[/cyan]")
-        transformed = []
-        applied = []
-        total_fetched = 0
         try:
-            for sub in plan_slices(source, flat_test_params):
-                remaining = limit - total_fetched
-                if remaining <= 0:
-                    break
-                records, t_records, t_applied, _dest = run_job_records(
-                    sub, pipeline, flat_test_params, limit=remaining
-                )
-                total_fetched += len(records)
-                transformed.extend(t_records)
-                applied.extend(t_applied)
+            transformed, total_fetched = _run_plan(
+                source, pipeline, flat_test_params, limit, verbose, "", run_log["jobs"]
+            )
         except TransformationError as e:
             console.print(f"  [red]❌ {e.transformation_name} failed: {e}[/red]")
+            run_log["errors"].append(f"{e.transformation_name}: {e}")
             traceback.print_exc()
+            raise typer.Exit(1)
+        except JobNotSerializableError as e:
+            # The message names the cause and the fix; a traceback would bury it.
+            console.print(f"\n[red]❌ This job cannot reach a worker:[/red] {e}")
+            run_log["errors"].append(str(e))
             raise typer.Exit(1)
         except Exception as e:
             console.print(f"[red]❌ Source fetch/transform failed: {e}[/red]")
+            run_log["errors"].append(str(e))
             traceback.print_exc()
             raise typer.Exit(1)
 
-        console.print(f"[green]✓ Fetched {total_fetched} records[/green]")
+        console.print(f"\n[green]✓ Fetched {total_fetched} records[/green]")
         if total_fetched == 0:
             console.print("[yellow]⚠️  No records returned from source[/yellow]")
             raise typer.Exit(0)
-
-        for name, _duration in applied:
-            console.print(f"  [green]✓ {name}: {len(transformed)} records[/green]")
-
-        # Show sample output
-        console.print(
-            f"\n[bold]📋 Sample output ({min(3, len(transformed))} of {len(transformed)} records):[/bold]"
-        )
-        for i, record in enumerate(transformed[:3]):
-            console.print(
-                f"  [dim]Record {i + 1}:[/dim] {json.dumps(record, default=str, indent=2)[:500]}"
-            )
 
         # Send to destination or dry-run
         if dry_run:
@@ -390,10 +566,12 @@ def register(app: typer.Typer):
                     await destination.send_with_retry(transformed, flat_test_params)
 
                 asyncio.run(_send())
+                run_log["sent"] = len(transformed)
                 console.print(
                     f"[bold green]✅ Test complete: {len(transformed)} records sent successfully[/bold green]"
                 )
             except Exception as e:
                 console.print(f"[red]❌ Destination send failed: {e}[/red]")
+                run_log["errors"].append(f"destination send: {e}")
                 traceback.print_exc()
                 raise typer.Exit(1)

@@ -7,11 +7,14 @@ docs/superpowers/specs/2026-06-09-dynamic-transformation-resolution-design.md.
 """
 
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from reflowfy.transformations.base import TransformationError
 
 DEFAULT_MAX_STEPS = 1000
+
+StepObserver = Callable[[str, List[Any], List[Any]], None]
+"""``(transformation_name, records_before, records_after)``, called per step."""
 
 
 def apply_transformations_iteratively(
@@ -19,6 +22,7 @@ def apply_transformations_iteratively(
     original_records: List[Any],
     runtime_params: Dict[str, Any],
     max_steps: int = DEFAULT_MAX_STEPS,
+    on_step: Optional[StepObserver] = None,
 ) -> Tuple[List[Any], List[Tuple[str, float]]]:
     """Apply a pipeline's transformations, re-resolving the list after each step.
 
@@ -34,6 +38,10 @@ def apply_transformations_iteratively(
             transformation's ``apply`` are visible to the next re-resolution.
         max_steps: Safety cap on how many transformations may be applied; protects
             against a ``define_transformations`` that appends without bound.
+        on_step: Optional observer called after each successful transformation with
+            ``(name, records_before, records_after)``. Lets a caller see what each
+            step consumed and produced — used by ``reflowfy test`` for its
+            per-step preview and run export. Default ``None`` = no observation.
 
     Returns:
         ``(transformed_records, applied)`` where ``applied`` is a list of
@@ -62,6 +70,11 @@ def apply_transformations_iteratively(
             )
 
         transformation = current[applied_count]
+        # Snapshot the input only when someone is watching: a transformation that
+        # mutates its list in place would otherwise leave `before` and `after`
+        # pointing at the same object. Copy is shallow — records themselves are
+        # still shared, so an in-place edit of a record shows in both.
+        before = list(transformed) if on_step else transformed
         start = time.time()
         try:
             # validate_input/validate_output are optional hooks; duck-typed
@@ -83,5 +96,7 @@ def apply_transformations_iteratively(
             )
         applied.append((transformation.name, time.time() - start))
         applied_count += 1
+        if on_step:
+            on_step(transformation.name, before, transformed)
 
     return transformed, applied

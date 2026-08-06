@@ -139,7 +139,7 @@ async def test_worker_applies_transformations(monkeypatch):
     # The shared core (reflowfy.execution.job_runner) binds the symbol, so patch it there.
     from reflowfy.execution import job_runner
 
-    def _fake_iter(pipeline, records, runtime_params):
+    def _fake_iter(pipeline, records, runtime_params, on_step=None):
         out = [{**r, "v": r["v"].upper()} for r in records]
         return out, [("upper", 0.0)]
 

@@ -30,7 +30,12 @@ uv run pyright              # config in [tool.pyright]; scoped to reflowfy/
 
 # Run the full local stack via the CLI (Docker Compose under the hood)
 uv run python -m reflowfy.cli.main run --build        # add -d/--detach to background
-uv run python -m reflowfy.cli.main check              # validate pipelines/config
+uv run python -m reflowfy.cli.main check              # kubectl pod status of a deployed release
+
+# Debug one pipeline locally before deploying (no Docker, no Kafka, no Postgres)
+uv run python -m reflowfy.cli.main test pipelines/my_pipeline.py --dry-run
+uv run python -m reflowfy.cli.main test pipelines/my_pipeline.py -v --limit 5   # every record at every step
+uv run python -m reflowfy.cli.main test pipelines/my_pipeline.py --out run.json # export the whole run
 
 # Build the wheel
 uv run python -m build
@@ -68,6 +73,8 @@ HTTP POST /run → API (FastAPI) ──┐
 ### Worker job message (v2 schema)
 
 The manager dispatches a JSON message per planned slice on Kafka topic `reflow.jobs` (or in-process via `LocalDispatcher`). It carries `schema_version` (currently `2`), `execution_id`, `job_id`, `pipeline_name`, a self-contained `source: {type, config}` descriptor (the narrowed slice from `BaseSource.split()`, reconstructible via `SourceFactory.create`), and `metadata` (execution context: runtime params, batch/retry info) — **no records, transformations, or destination travel on the wire**. The worker rebuilds the source from the descriptor, calls `source.fetch()` to pull just that slice, then resolves transformations and the destination dynamically by looking up `pipeline_name` in the (auto-discovered) `pipeline_registry` and calling `pipeline.define_transformations`/`define_destination` against the real fetched records. `KafkaJobConsumer` rejects messages where `schema_version != 2`. Full design: `docs/superpowers/specs/2026-06-24-worker-side-sourcing-design.md`.
+
+Because that descriptor is JSON-encoded at dispatch, a source whose `config` isn't JSON-serializable or isn't exactly its constructor kwargs breaks *in production*, not locally. `reflowfy test` therefore plans jobs with `plan_slices_over_wire` (`execution/job_runner.py`), which performs the same serialize → `json.dumps` → `SourceFactory.create` hop and raises `JobNotSerializableError` locally instead. The worker and `local_executor` keep using plain `plan_slices` — they don't need the round-trip.
 
 ### Auto-registration (important)
 
