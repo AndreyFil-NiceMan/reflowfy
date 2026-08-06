@@ -38,6 +38,12 @@ Auto-registered — no need to call pipeline_registry.register().
 """
 
 from reflowfy import AbstractPipeline, PipelineParameter, BaseTransformation
+from reflowfy import PipelineError, get_logger
+
+# Works from anywhere — no `self` needed, so transformations, @source functions
+# and plain helpers can log too. execution_id / job_id / pipeline_name are
+# attached to every record automatically.
+logger = get_logger(__name__)
 
 
 class {class_name}(AbstractPipeline):
@@ -52,10 +58,15 @@ class {class_name}(AbstractPipeline):
         ]
 
     def define_source(self, runtime_params):
+        logger.info("Resolving source for {name}")
+        # Raise from any define_* hook to fail deliberately; the message, type and
+        # traceback land on the job record, and the error names the failing step.
+        #   raise PipelineError("missing required config")
+        #
         # Return a configured source
         # from reflowfy import elastic_source
         # return elastic_source(url="http://elasticsearch:9200", index="my-index")
-        pass
+        raise PipelineError("define_source is not implemented for {name}")
 
     # Or, to split the work into jobs yourself, implement define_jobs INSTEAD
     # of define_source — each element of the returned list is one job:
@@ -66,10 +77,11 @@ class {class_name}(AbstractPipeline):
     #     return chunk(rows, size=10)   # 10 records per job
 
     def define_destination(self, records, runtime_params):
+        logger.info("Resolving destination for %d records", len(records))
         # Return a configured destination
         # from reflowfy import kafka_destination
         # return kafka_destination(bootstrap_servers="kafka:9092", topic="output")
-        pass
+        raise PipelineError("define_destination is not implemented for {name}")
 
     def define_transformations(self, records, runtime_params):
         return []

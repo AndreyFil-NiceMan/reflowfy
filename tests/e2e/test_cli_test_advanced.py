@@ -309,11 +309,11 @@ class CliTestIdBasedPipeline(IdBasedPipeline):
     ids_batch_size = {ids_batch_size}
 
     def define_source(self, runtime_params):
-        current_ids = runtime_params.get("current_ids", [])
-        class _Src:
-            def fetch(self, p, limit=None):
-                return [{{"id": cid}} for cid in current_ids]
-        return _Src()
+        # Returning the records directly is a supported shape (IdBasedPipeline
+        # wraps them in a StaticSource). A duck-typed source object is NOT:
+        # resolve_source rejects it, because a job payload is built with
+        # SourceFactory.serialize, which needs registry_type and config.
+        return [{{"id": cid}} for cid in runtime_params.get("current_ids", [])]
 
     def define_destination(self, records, runtime_params):
         class _Dest:
@@ -621,6 +621,15 @@ class TestCliTestIdBased:
 
         assert result.exit_code == 0, result.stdout
         assert "3 batch" in result.stdout, f"Expected '3 batch(es)' in output:\n{result.stdout}"
+        # A batch count alone passes even when every batch failed to resolve its
+        # source and nothing was processed, which is how this test sat green
+        # while reporting "0 records processed".
+        assert "Setup failed" not in result.stdout, (
+            f"A batch failed to set up:\n{result.stdout}"
+        )
+        assert "6 records processed" in result.stdout, (
+            f"Expected all 6 IDs to yield a record:\n{result.stdout}"
+        )
 
     def test_id_based_no_ids_exits(self, temp_workspace):
         """Empty ids list exits with code 1 and a clear error message."""

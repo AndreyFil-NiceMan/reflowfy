@@ -4,6 +4,10 @@ This module provides the IdBasedPipeline base class that allows users to create
 pipelines which iterate over a list of user-provided IDs, dynamically resolving
 the source for each ID (or each batch of IDs when ids_batch_size > 1).
 
+It is an :class:`~reflowfy.core.abstract_pipeline.AbstractPipeline` whose
+:meth:`~reflowfy.core.abstract_pipeline.AbstractPipeline.define_jobs` is already
+written for you: one job per ID (or per ``ids_batch_size`` IDs).
+
 Example (single-ID mode, default):
     >>> class UserSyncPipeline(IdBasedPipeline):
     ...     name = "user_sync"
@@ -28,42 +32,30 @@ Example (batch mode):
     ...     name = "bulk_sync"
     ...     ids_batch_size = 10   # 10 IDs per source resolution
     ...
-    ...     def define_source(self, params):
+    ...     def define_source(self, runtime_params):
     ...         # current_ids is a list of up to 10 IDs in runtime params
-    ...         return api_source(ids=params["current_ids"])
+    ...         return api_source(ids=runtime_params["current_ids"])
+
+Example (one input ID fans out into many jobs) — override ``define_jobs`` to own
+the splitting. Each yielded element is one job, so each child ID gets its own
+transformations, its own destination write, and its own retry:
+    >>> class ChildSyncPipeline(IdBasedPipeline):
+    ...     name = "child_sync"
+    ...
+    ...     def define_jobs(self, runtime_params):
+    ...         for parent_id in runtime_params["ids"]:
+    ...             for child_id in fetch_child_ids(parent_id):
+    ...                 yield [{"parent_id": parent_id, "child_id": child_id}]
 """
 
-import re
-from abc import ABCMeta, abstractmethod
-from typing import Any, Dict, List, Optional, Set, Tuple
+import logging
+from abc import abstractmethod
+from typing import Any, Dict, Iterator, List
 
-from reflowfy.core.abstract_pipeline import PipelineParameter
-from reflowfy.core.query_loader import QueryLoaderMixin
+from reflowfy.core.abstract_pipeline import AbstractPipeline, PipelineParameter
+from reflowfy.execution.job_runner import chunk
 
-
-class IdBasedPipelineMeta(ABCMeta):
-    """
-    Metaclass for automatic ID-based pipeline registration.
-
-    When a class inherits from IdBasedPipeline and defines a 'name' attribute,
-    it is automatically instantiated and registered in the pipeline registry.
-    """
-
-    def __new__(mcs, name: str, bases: Tuple[type, ...], namespace: Dict[str, Any]):
-        cls = super().__new__(mcs, name, bases, namespace)
-
-        # Only register concrete pipelines (not the base class)
-        if name != "IdBasedPipeline" and bases:
-            if "name" in namespace and namespace["name"]:
-                from reflowfy.core.registry import pipeline_registry
-
-                try:
-                    instance = cls()
-                    pipeline_registry.register(instance)
-                except Exception:
-                    pass
-
-        return cls
+logger = logging.getLogger(__name__)
 
 
 # Built-in 'ids' parameter — automatically injected
@@ -75,14 +67,14 @@ _IDS_PARAMETER = PipelineParameter(
 )
 
 
-class IdBasedPipeline(QueryLoaderMixin, metaclass=IdBasedPipelineMeta):
+class IdBasedPipeline(AbstractPipeline):
     """
     Pipeline that executes dynamically for each ID in a user-provided list.
 
-    Unlike AbstractPipeline (which has a single source), IdBasedPipeline
-    calls `define_source(runtime_params)` for **each ID/batch**, with current
-    IDs injected into runtime_params, allowing fully dynamic source configuration
-    per entity.
+    Where a plain AbstractPipeline has one source that splits itself, an
+    IdBasedPipeline calls `define_source(runtime_params)` for **each ID/batch**,
+    with the current IDs injected into runtime_params, allowing fully dynamic
+    source configuration per entity.
 
     Subclasses MUST:
     - Set the `name` class attribute
@@ -93,6 +85,8 @@ class IdBasedPipeline(QueryLoaderMixin, metaclass=IdBasedPipelineMeta):
     Subclasses MAY:
     - Override `define_parameters()` to add extra parameters (beyond `ids`)
     - Override `define_rate_limit()` for dynamic rate limiting
+    - Override `define_jobs()` to own the splitting entirely — e.g. to expand
+      each input ID into several jobs (see the module docstring)
     - Call `load_query("name.sql")` to read a template from the project's
       `queries/` folder (see QueryLoaderMixin)
 
@@ -102,49 +96,14 @@ class IdBasedPipeline(QueryLoaderMixin, metaclass=IdBasedPipelineMeta):
     Attributes:
         name: Unique pipeline identifier (must be set by subclass)
         rate_limit: Optional rate limit in jobs per minute (e.g., 50)
+        ids_batch_size: Number of IDs grouped per source resolution
         config: Additional pipeline-specific configuration
     """
-
-    # Must be set by concrete subclass
-    name: str = ""
-
-    # Optional rate limit
-    rate_limit: Optional[float] = None
 
     # Number of IDs to group per source resolution.
     # Default 1 = one source call per ID (original behaviour).
     # Set > 1 to process a list of IDs per source/transform/destination resolution.
     ids_batch_size: int = 1
-
-    # Additional configuration
-    config: Dict[str, Any] = {}
-
-    def __init__(
-        self,
-        rate_limit: Optional[float] = None,
-        config: Optional[Dict[str, Any]] = None,
-    ):
-        """
-        Initialize the ID-based pipeline.
-
-        Args:
-            rate_limit: Rate limit in jobs per minute
-            config: Additional configuration options
-        """
-        if rate_limit is not None:
-            self.rate_limit = rate_limit
-        if config is not None:
-            self.config = config
-
-        # Validate pipeline name
-        if not self.name:
-            raise ValueError(f"{self.__class__.__name__} must define a 'name' attribute")
-
-        if not re.match(r"^[a-zA-Z0-9_-]+$", self.name):
-            raise ValueError(
-                f"Pipeline name '{self.name}' must contain only alphanumeric "
-                "characters, underscores, or hyphens"
-            )
 
     # =========================================================================
     # Abstract Methods — Must be implemented by subclasses
@@ -186,86 +145,29 @@ class IdBasedPipeline(QueryLoaderMixin, metaclass=IdBasedPipelineMeta):
         """
         pass
 
-    @abstractmethod
-    def define_destination(self, records: List[Any], runtime_params: Dict[str, Any]) -> Any:
-        """
-        Define the destination using post-transformation records and runtime params.
-
-        Args:
-            records: Post-transformation records for this ID batch/job
-            runtime_params: Parameters provided by the user at runtime
-
-        Returns:
-            A configured BaseDestination instance
-
-        Example:
-            >>> def define_destination(self, records, params):
-            ...     return kafka_destination(topic="output")
-        """
-        pass
-
-    @abstractmethod
-    def define_transformations(
-        self, records: List[Any], runtime_params: Dict[str, Any]
-    ) -> List[Any]:
-        """
-        Define list of transformations to apply for a batch of IDs.
-
-        Args:
-            records: Current records for this batch (before transformations)
-            runtime_params: Parameters provided by the user at runtime
-
-        Returns:
-            List of BaseTransformation instances to apply in order
-
-        Example:
-            >>> def define_transformations(self, records, params):
-            ...     return [
-            ...         AddIdMetadata(),
-            ...         FilterActive(),
-            ...     ]
-        """
-        pass
-
     # =========================================================================
-    # Optional Overrides
+    # Job planning — one job per ID batch
     # =========================================================================
 
-    def define_parameters(self) -> List[PipelineParameter]:
+    def define_jobs(self, runtime_params: Dict[str, Any]) -> Iterator[Any]:
         """
-        Define additional parameters this pipeline accepts (beyond 'ids').
+        Plan one job per ``ids_batch_size`` IDs.
 
-        The 'ids' parameter is automatically injected.
-        Do NOT include 'ids' here — it will be added automatically.
+        Override this to own the splitting yourself — the ``ids`` parameter is
+        still validated and injected, so you keep passing IDs in the request
+        body while deciding what a job is (see the module docstring for the
+        one-ID-fans-out-to-many case).
 
-        Returns:
-            List of PipelineParameter instances
-
-        Example:
-            >>> def define_parameters(self):
-            ...     return [
-            ...         PipelineParameter(
-            ...             name="env",
-            ...             required=True,
-            ...             choices=["dev", "prod"],
-            ...         ),
-            ...     ]
+        Each planned source carries its own ``job_params``: the batch's params
+        without the full ``ids`` list, since a job that handles two IDs has no
+        use for the other 999,998. ``current_ids``, ``current_id`` and any keys
+        ``define_source`` added stay, so workers still see them.
         """
-        return []
-
-    def define_rate_limit(self, runtime_params: Dict[str, Any]) -> Optional[float]:
-        """
-        Define rate limit configuration based on runtime parameters.
-
-        Default implementation returns the static rate_limit attribute.
-
-        Args:
-            runtime_params: Parameters provided by the user at runtime
-
-        Returns:
-            Jobs per minute (float) or None
-        """
-        return self.rate_limit
+        for ids_batch in chunk(runtime_params.get("ids", []), self.ids_batch_size):
+            resolved = self.resolve_for_ids(runtime_params, ids_batch)
+            source = resolved["source"]
+            source.job_params = {k: v for k, v in resolved["batch_params"].items() if k != "ids"}
+            yield source
 
     # =========================================================================
     # Built-in Logic — Parameters with auto-injected 'ids'
@@ -290,29 +192,10 @@ class IdBasedPipeline(QueryLoaderMixin, metaclass=IdBasedPipelineMeta):
 
         return [_IDS_PARAMETER] + user_params
 
-    def get_required_parameters(self) -> Set[str]:
-        """Get names of required parameters (always includes 'ids')."""
-        return {p.name for p in self.get_all_parameters() if p.required}
-
     def validate_parameters(self, runtime_params: Dict[str, Any]) -> List[str]:
-        """
-        Validate runtime parameters against defined parameters.
+        """Validate the shared parameter rules, plus the ones specific to `ids`."""
+        errors = super().validate_parameters(runtime_params)
 
-        Args:
-            runtime_params: Parameters to validate
-
-        Returns:
-            List of validation error messages (empty if valid)
-        """
-        errors = []
-
-        for param in self.get_all_parameters():
-            value = runtime_params.get(param.name)
-            error = param.validate(value)
-            if error:
-                errors.append(error)
-
-        # Additional validation for ids
         ids = runtime_params.get("ids")
         if ids is not None:
             if not isinstance(ids, list):
@@ -321,24 +204,6 @@ class IdBasedPipeline(QueryLoaderMixin, metaclass=IdBasedPipelineMeta):
                 errors.append("Parameter 'ids' must not be empty")
 
         return errors
-
-    def apply_defaults(self, runtime_params: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Apply default values to runtime parameters.
-
-        Args:
-            runtime_params: User-provided parameters
-
-        Returns:
-            Parameters with defaults applied
-        """
-        result = dict(runtime_params)
-
-        for param in self.get_all_parameters():
-            if param.name not in result and param.default is not None:
-                result[param.name] = param.default
-
-        return result
 
     # =========================================================================
     # Utility Methods — Compatibility with execution engine
@@ -360,25 +225,9 @@ class IdBasedPipeline(QueryLoaderMixin, metaclass=IdBasedPipelineMeta):
         except Exception:
             return []
 
-    def get_runtime_parameters(self) -> List[str]:
-        """
-        Return list of runtime parameter names (includes 'ids').
-
-        Used by sources that have Jinja templates.
-        """
-        return [p.name for p in self.get_all_parameters()]
-
     def to_dict(self) -> Dict[str, Any]:
         """Serialize pipeline metadata for API responses."""
-        return {
-            "name": self.name,
-            "type": "id_based",
-            "parameters": [p.to_dict() for p in self.get_all_parameters()],
-            "rate_limit": self.rate_limit,
-            "ids_batch_size": self.ids_batch_size,
-            "config": self.config,
-            "transformations": self.get_transformation_names(),
-        }
+        return {**super().to_dict(), "type": "id_based", "ids_batch_size": self.ids_batch_size}
 
     # =========================================================================
     # Resolution — Per-ID source/transformation resolution
@@ -417,11 +266,13 @@ class IdBasedPipeline(QueryLoaderMixin, metaclass=IdBasedPipelineMeta):
             f"list of records, got {type(returned).__name__}"
         )
 
-    def resolve_for_ids(self, runtime_params: Dict[str, Any], ids_batch: List[Any]) -> Dict[str, Any]:
+    def resolve_for_ids(
+        self, runtime_params: Dict[str, Any], ids_batch: List[Any]
+    ) -> Dict[str, Any]:
         """
         Resolve source for a batch of IDs and prepare per-batch params.
 
-        Called by the PipelineRunner once per ID-batch (batch size is
+        Called by :meth:`define_jobs` once per ID-batch (batch size is
         determined by the pipeline's ``ids_batch_size`` attribute).
 
         Uses a per-batch copy of runtime_params so that any keys added by
@@ -457,27 +308,6 @@ class IdBasedPipeline(QueryLoaderMixin, metaclass=IdBasedPipelineMeta):
     def resolve_for_id(self, runtime_params: Dict[str, Any], current_id: Any) -> Dict[str, Any]:
         """Backward-compat shim: wraps single ID in a list and calls resolve_for_ids."""
         return self.resolve_for_ids(runtime_params, [current_id])
-
-    def resolve(self, runtime_params: Dict[str, Any]) -> "IdBasedPipeline":
-        """
-        Validate and prepare runtime parameters (without resolving per-ID).
-
-        This is called once before execution to validate parameters.
-        Per-ID resolution happens in the runner via resolve_for_id().
-
-        Args:
-            runtime_params: Runtime parameters for this execution
-
-        Returns:
-            self (for chaining)
-        """
-        params = self.apply_defaults(runtime_params)
-        errors = self.validate_parameters(params)
-        if errors:
-            raise ValueError(f"Invalid parameters: {'; '.join(errors)}")
-
-        self._resolved_params = params
-        return self
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(name='{self.name}', type='id_based')"

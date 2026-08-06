@@ -105,10 +105,15 @@ async def receive_batch(
 
 @app.get("/stats")
 async def get_stats():
+    # Tests attribute batches to their own run by filtering this window on
+    # execution_id, so it has to be deep enough to still hold every batch of
+    # that run after other tests have sent theirs. At 10 — one full run's worth
+    # — a single interleaved batch evicted one of the caller's own, and the
+    # filter could not tell "evicted" from "never delivered".
     return {
         "total_records": len(received_records),
         "total_batches": len(received_batches),
-        "batches": [b.model_dump() for b in received_batches[-10:]],
+        "batches": [b.model_dump() for b in received_batches[-200:]],
     }
 
 

@@ -7,7 +7,9 @@ that can be reused across multiple pipelines.
 
 from typing import Any
 import os
-from reflowfy import destination, kafka_destination
+from reflowfy import destination, kafka_destination, get_logger
+
+logger = get_logger(__name__)
 
 
 @destination("example_kafka")
@@ -21,6 +23,9 @@ def example_kafka(**overrides: Any):
         def define_destination(self, records, runtime_params):
             return example_kafka(topic="my-output-topic")
     """
+    logger.debug(
+        "Building kafka destination for topic %s", overrides.get("topic", "default-output")
+    )
     return kafka_destination(
         bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092"),
         topic=overrides.get("topic", "default-output"),

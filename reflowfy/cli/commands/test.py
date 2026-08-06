@@ -15,6 +15,7 @@ import typer
 from reflowfy.cli.utils import console
 from reflowfy.core.execution_context import ExecutionContext
 from reflowfy.execution.job_runner import plan_slices, run_job_records
+from reflowfy.observability.logging import setup_logging
 from reflowfy.transformations.base import TransformationError
 
 
@@ -46,6 +47,13 @@ def register(app: typer.Typer):
         if not pipeline_path.exists():
             console.print(f"[red]❌ File not found: {pipeline_file}[/red]")
             raise typer.Exit(1)
+
+        # Wire up logging BEFORE importing the pipeline file, so the user sees both
+        # their own get_logger() output and any pipeline that fails to register.
+        # Plain text, not JSON — JSON lines are unreadable in a terminal preview.
+        # Both knobs are still overridable: LOG_JSON=true / LOG_LEVEL=DEBUG.
+        os.environ.setdefault("LOG_JSON", "false")
+        setup_logging(service_name="cli")
 
         # Load the pipeline file
         console.print(
@@ -108,10 +116,10 @@ def register(app: typer.Typer):
                 f"[bold cyan]🔑 Pipeline type: IdBasedPipeline (ids_batch_size={batch_size})[/bold cyan]"
             )
 
-        # Prompt for parameters
-        # IdBasedPipeline uses get_all_parameters() which includes built-in 'ids'
-        params = {}
-        parameters = pipeline.get_all_parameters() if is_id_based else pipeline.define_parameters()
+        # Prompt for parameters. get_all_parameters() is the declared params plus
+        # any the pipeline injects (IdBasedPipeline adds the built-in 'ids').
+        params: dict[str, Any] = {}
+        parameters = pipeline.get_all_parameters()
 
         if parameters:
             console.print("\n[bold]📝 Pipeline parameters:[/bold]")

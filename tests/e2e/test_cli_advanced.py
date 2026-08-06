@@ -175,6 +175,9 @@ class TestCliDeployAdvanced:
                         "deploy",
                         "--registry", "registry.test.local",
                         "--kafka", "kafka.test:9092",
+                        # SASL is on by default and refuses to deploy without a
+                        # password; these tests are about other flags entirely.
+                        "--no-kafka-sasl",
                         "--no-deploy-postgres",
                     ],
                     env=env,
@@ -204,6 +207,9 @@ class TestCliDeployAdvanced:
                         "deploy",
                         "--registry", "registry.test.local",
                         "--kafka", "kafka.test:9092",
+                        # SASL is on by default and refuses to deploy without a
+                        # password; these tests are about other flags entirely.
+                        "--no-kafka-sasl",
                         "--no-deploy-postgres",
                     ],
                     env=env,
@@ -231,6 +237,9 @@ class TestCliDeployAdvanced:
                         "deploy",
                         "--registry", "registry.test.local",
                         "--kafka", "kafka.test:9092",
+                        # SASL is on by default and refuses to deploy without a
+                        # password; these tests are about other flags entirely.
+                        "--no-kafka-sasl",
                         "--keda",
                         "--keda-min", "2",
                         "--keda-max", "20",
@@ -259,6 +268,9 @@ class TestCliDeployAdvanced:
                         "deploy",
                         "--registry", "registry.test.local",
                         "--kafka", "kafka.test:9092",
+                        # SASL is on by default and refuses to deploy without a
+                        # password; these tests are about other flags entirely.
+                        "--no-kafka-sasl",
                         "--no-keda",
                         "--workers", "4",
                     ],

@@ -87,7 +87,25 @@ def _run_pipeline(client: httpx.Client, runtime_params: dict | None = None) -> s
 def _run_and_wait(client: httpx.Client, runtime_params: dict | None = None) -> dict:
     """Run the pipeline and block until completion. Returns final stats."""
     execution_id = _run_pipeline(client, runtime_params or DEFAULT_RUNTIME_PARAMS)
-    return _wait_for_pipeline(client, execution_id)
+    stats = _wait_for_pipeline(client, execution_id)
+    stats.setdefault("execution_id", execution_id)
+    return stats
+
+
+def _batches_for(mock_stats: dict, execution_id: str) -> list:
+    """Only the batches this execution delivered.
+
+    The mock server's batch window is shared by the whole module. reset_mock()
+    clears it before each test, but a delivery still in flight from an earlier
+    test lands *after* that reset — so "every batch in the window" is not the
+    same as "every batch we sent". Scope by execution_id, which the pipeline
+    puts in every request body, and strays cannot fail an assertion about us.
+    """
+    return [
+        b
+        for b in mock_stats["batches"]
+        if b.get("extra_body_fields", {}).get("execution_id") == execution_id
+    ]
 
 
 def _get_errors(client: httpx.Client, execution_id: str) -> list:
@@ -190,7 +208,7 @@ class TestQueryParams:
         mock_stats = httpx.get(f"{MOCK_API_URL}/stats", timeout=10.0).json()
         assert mock_stats["total_batches"] > 0
 
-        for batch in mock_stats["batches"]:
+        for batch in _batches_for(mock_stats, stats["execution_id"]):
             assert batch["query_params"].get("tenant_id") == "tenant-xyz", (
                 f"Expected tenant_id='tenant-xyz' in query params, got: {batch['query_params']}"
             )
@@ -205,7 +223,7 @@ class TestQueryParams:
         assert stats["state"] == "completed"
 
         mock_stats = httpx.get(f"{MOCK_API_URL}/stats", timeout=10.0).json()
-        for batch in mock_stats["batches"]:
+        for batch in _batches_for(mock_stats, stats["execution_id"]):
             assert batch["query_params"].get("env") == "production"
 
     def test_different_tenants_produce_different_query_params(self, manager_client):
@@ -215,7 +233,10 @@ class TestQueryParams:
         })
         assert stats_a["state"] == "completed"
         mock_a = httpx.get(f"{MOCK_API_URL}/stats", timeout=10.0).json()
-        tenant_a_values = {b["query_params"].get("tenant_id") for b in mock_a["batches"]}
+        tenant_a_values = {
+            b["query_params"].get("tenant_id")
+            for b in _batches_for(mock_a, stats_a["execution_id"])
+        }
 
         httpx.delete(f"{MOCK_API_URL}/reset", timeout=5.0)
 
@@ -224,7 +245,10 @@ class TestQueryParams:
         })
         assert stats_b["state"] == "completed"
         mock_b = httpx.get(f"{MOCK_API_URL}/stats", timeout=10.0).json()
-        tenant_b_values = {b["query_params"].get("tenant_id") for b in mock_b["batches"]}
+        tenant_b_values = {
+            b["query_params"].get("tenant_id")
+            for b in _batches_for(mock_b, stats_b["execution_id"])
+        }
 
         assert tenant_a_values == {"tenant-a"}
         assert tenant_b_values == {"tenant-b"}
@@ -241,7 +265,7 @@ class TestBodyFields:
         assert stats["state"] == "completed"
 
         mock_stats = httpx.get(f"{MOCK_API_URL}/stats", timeout=10.0).json()
-        for batch in mock_stats["batches"]:
+        for batch in _batches_for(mock_stats, stats["execution_id"]):
             assert batch["extra_body_fields"].get("source") == "reflowfy", (
                 f"Missing source field in body: {batch['extra_body_fields']}"
             )
@@ -256,7 +280,7 @@ class TestBodyFields:
         assert stats["state"] == "completed"
 
         mock_stats = httpx.get(f"{MOCK_API_URL}/stats", timeout=10.0).json()
-        for batch in mock_stats["batches"]:
+        for batch in _batches_for(mock_stats, stats["execution_id"]):
             assert batch["extra_body_fields"].get("app_name") == "my-custom-app", (
                 f"Expected app_name='my-custom-app', got: {batch['extra_body_fields']}"
             )
@@ -268,7 +292,10 @@ class TestBodyFields:
         })
         assert stats["state"] == "completed"
         mock = httpx.get(f"{MOCK_API_URL}/stats", timeout=10.0).json()
-        assert all(b["extra_body_fields"].get("app_name") == "app-v1" for b in mock["batches"])
+        assert all(
+            b["extra_body_fields"].get("app_name") == "app-v1"
+            for b in _batches_for(mock, stats["execution_id"])
+        )
 
 
 # ============================================================================
@@ -303,11 +330,7 @@ class TestRecordDelivery:
         assert stats["state"] == "completed"
 
         mock_stats = httpx.get(f"{MOCK_API_URL}/stats", timeout=10.0).json()
-        our_batches = [
-            b
-            for b in mock_stats["batches"]
-            if b.get("extra_body_fields", {}).get("execution_id") == execution_id
-        ]
+        our_batches = _batches_for(mock_stats, execution_id)
         assert len(our_batches) == 10, (
             f"Expected 10 batches attributable to execution {execution_id}, "
             f"got {len(our_batches)}: {our_batches}"

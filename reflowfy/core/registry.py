@@ -27,6 +27,7 @@ class PipelineRegistry:
     _lock = threading.Lock()
 
     _pipelines: Dict[str, "AbstractPipeline"]
+    _failures: Dict[str, str]
     _registry_lock: threading.RLock
 
     def __new__(cls) -> "PipelineRegistry":
@@ -36,8 +37,30 @@ class PipelineRegistry:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
                     cls._instance._pipelines = {}
+                    cls._instance._failures = {}
                     cls._instance._registry_lock = threading.RLock()
         return cls._instance
+
+    def record_failure(self, name: str, error: Exception) -> None:
+        """Record why a pipeline could not be registered, for later lookups.
+
+        Args:
+            name: Pipeline name that failed to register
+            error: The exception raised during instantiation/registration
+        """
+        with self._registry_lock:
+            self._failures[name] = f"{type(error).__name__}: {error}"
+
+    def describe_missing(self, name: str) -> str:
+        """Explain why a pipeline is absent, as a message suffix.
+
+        Returns:
+            e.g. " (it failed to register: KeyError: 'ES_URL')", or "" if the
+            name was never attempted — then it's a typo or an undiscovered module.
+        """
+        with self._registry_lock:
+            reason = self._failures.get(name)
+        return f" (it failed to register: {reason})" if reason else ""
 
     def register(self, pipeline: "AbstractPipeline") -> None:
         """
@@ -47,7 +70,7 @@ class PipelineRegistry:
             pipeline: AbstractPipeline instance to register
 
         Note:
-            If a pipeline with the same name is already registered, 
+            If a pipeline with the same name is already registered,
             registration is silently skipped (idempotent).
         """
         with self._registry_lock:
@@ -124,6 +147,7 @@ class PipelineRegistry:
         """Clear all registered pipelines (mainly for testing)."""
         with self._registry_lock:
             self._pipelines.clear()
+            self._failures.clear()
 
 
 # Global singleton instance

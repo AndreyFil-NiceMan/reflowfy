@@ -157,7 +157,10 @@ async def get_pipeline(pipeline_name: str) -> Dict[str, Any]:
     if not pipeline:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Pipeline '{pipeline_name}' not found in registry",
+            detail=(
+                f"Pipeline '{pipeline_name}' not found in registry"
+                f"{pipeline_registry.describe_missing(pipeline_name)}"
+            ),
         )
     return pipeline.to_dict()
 
@@ -315,7 +318,10 @@ async def run_pipeline(
         if not pipeline:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Pipeline '{request.pipeline_name}' not found in registry",
+                detail=(
+                    f"Pipeline '{request.pipeline_name}' not found in registry"
+                    f"{pipeline_registry.describe_missing(request.pipeline_name)}"
+                ),
             )
 
         # Create initial execution record (pending state)

@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, insert
 from reflowfy.reflow_manager.models import Job
 
 
@@ -13,38 +13,28 @@ class JobManager:
     def __init__(self, db_session: Session):
         self.db = db_session
 
-    def create_job(
-        self,
-        execution_id: str,
-        job_id: str,
-        job_payload: Dict[str, Any],
-        batch_number: Optional[int] = None,
-    ) -> Job:
+    def create_jobs(self, rows: List[Dict[str, Any]]) -> None:
         """
-        Create a new job record.
+        Insert pending job records in one statement.
 
         Args:
-            execution_id: Execution identifier
-            job_id: Unique job identifier
-            job_payload: Full job data
-            batch_number: Batch number for grouping
+            rows: One dict per job with keys ``execution_id``, ``job_id``,
+                ``job_payload`` and ``batch_number``. ``state`` and the
+                timestamps are filled in here.
 
-        Returns:
-            Created Job object
+        # ponytail: one INSERT + one commit per call. Inserting jobs one at a
+        # time cost a round trip each, which dominated planning time once an
+        # execution had more jobs than the network could commit per second.
         """
-        job = Job(
-            execution_id=execution_id,
-            job_id=job_id,
-            job_payload=job_payload,
-            state="pending",
-            batch_number=batch_number,
+        if not rows:
+            return
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        self.db.execute(
+            insert(Job),
+            [{**row, "state": "pending", "created_at": now, "updated_at": now} for row in rows],
         )
-
-        self.db.add(job)
         self.db.commit()
-        self.db.refresh(job)
-
-        return job
 
     def get_job(self, job_id: str) -> Optional[Job]:
         """Get job by job_id."""

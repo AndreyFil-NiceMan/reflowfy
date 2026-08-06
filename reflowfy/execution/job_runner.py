@@ -15,6 +15,7 @@ test/preview paths cannot drift from what the worker actually runs.
 
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
+from reflowfy.core.exceptions import pipeline_step
 from reflowfy.core.serialization import to_json_safe
 from reflowfy.execution.transformation_runner import apply_transformations_iteratively
 
@@ -50,38 +51,49 @@ def plan_slices(source: Any, runtime_params: Dict[str, Any]) -> Iterator[Any]:
     duck-typed or custom sources that don't implement ``split``, so local
     preview/test runs work with any source shape.
 
-    A ``list`` is the job plan itself (what ``define_jobs`` returns): each
-    element is one job, either a list of records — wrapped in a
+    Any other iterable is the job plan itself (what ``define_jobs`` returns):
+    each element is one job, either a list of records — wrapped in a
     :class:`StaticSource` so it travels in the job payload — or a source that
-    splits itself.
+    splits itself. A generator works and is consumed lazily, so a
+    ``define_jobs`` that ``yield``\\ s plans an unbounded number of jobs in
+    constant memory; the caller writes each job out as it arrives.
     """
-    if isinstance(source, list):
-        from reflowfy.sources.base import BaseSource
-        from reflowfy.sources.static import StaticSource
-
-        for item in source:
-            if isinstance(item, BaseSource):
-                yield from plan_slices(item, runtime_params)
-            elif isinstance(item, list):
-                # Empty chunk = no job, consistent with StaticSource.split().
-                if item:
-                    # ponytail: records ride in the job payload; chunks approaching
-                    # Kafka's 1MB limit need a custom BaseSource that re-fetches.
-                    yield StaticSource(item)
-            else:
-                raise TypeError(
-                    "define_jobs returned a list, so each element must be one job: "
-                    f"a list of records or a BaseSource, got {type(item).__name__}. "
-                    "Wrap records with chunk(records, size=N), or return [records] "
-                    "for a single job."
-                )
+    split = getattr(source, "split", None)
+    if split is not None:
+        # split() builds new narrowed sources, so anything the planner attached
+        # to the parent (job_params — the params this job's records belong to)
+        # has to be carried onto each child, or it is lost before dispatch.
+        parent_job_params = getattr(source, "job_params", None)
+        for narrowed in split(runtime_params):
+            if parent_job_params is not None and getattr(narrowed, "job_params", None) is None:
+                narrowed.job_params = parent_job_params
+            yield narrowed
         return
 
-    split = getattr(source, "split", None)
-    if split is None:
+    if isinstance(source, (str, bytes, dict)) or not hasattr(source, "__iter__"):
+        # Duck-typed or custom source with no split() — one job, the source itself.
         yield source
         return
-    yield from split(runtime_params)
+
+    from reflowfy.sources.base import BaseSource
+    from reflowfy.sources.static import StaticSource
+
+    for item in source:
+        if isinstance(item, BaseSource):
+            yield from plan_slices(item, runtime_params)
+        elif isinstance(item, list):
+            # Empty chunk = no job, consistent with StaticSource.split().
+            if item:
+                # ponytail: records ride in the job payload; chunks approaching
+                # Kafka's 1MB limit need a custom BaseSource that re-fetches.
+                yield StaticSource(item)
+        else:
+            raise TypeError(
+                "define_jobs returned an iterable, so each element must be one job: "
+                f"a list of records or a BaseSource, got {type(item).__name__}. "
+                "Wrap records with chunk(records, size=N), or return [records] "
+                "for a single job."
+            )
 
 
 def run_job_records(
@@ -109,7 +121,9 @@ def run_job_records(
     ``applied`` is the list of ``(name, duration)`` pairs from the
     transformation runner.
     """
-    records = to_json_safe(source.fetch(runtime_params))
+    name = getattr(pipeline, "name", "<unknown>")
+    with pipeline_step("source fetch", name):
+        records = to_json_safe(source.fetch(runtime_params))
     if limit is not None:
         records = records[:limit]
     if not records:
@@ -120,5 +134,6 @@ def run_job_records(
     transformed_records, applied = apply_transformations_iteratively(
         pipeline, records, runtime_params
     )
-    destination = pipeline.define_destination(transformed_records, runtime_params)
+    with pipeline_step("define_destination", name):
+        destination = pipeline.define_destination(transformed_records, runtime_params)
     return records, transformed_records, applied, destination

@@ -7,7 +7,9 @@ that can be reused across multiple pipelines.
 
 from typing import Any
 import os
-from reflowfy import source, elastic_source
+from reflowfy import source, elastic_source, get_logger
+
+logger = get_logger(__name__)
 
 
 @source("example_elastic")
@@ -21,6 +23,7 @@ def example_elastic(**overrides: Any):
         def define_source(self, runtime_params):
             return example_elastic(index="my-specific-index")
     """
+    logger.debug("Building elastic source for index %s", overrides.get("index", "logs-*"))
     return elastic_source(
         url=os.getenv("ELASTICSEARCH_URL", "http://elasticsearch:9200"),
         index=overrides.get("index", "logs-*"),
