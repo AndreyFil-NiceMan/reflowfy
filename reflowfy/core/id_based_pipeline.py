@@ -49,7 +49,6 @@ transformations, its own destination write, and its own retry:
 """
 
 import logging
-from abc import abstractmethod
 from typing import Any, Dict, Iterator, List
 
 from reflowfy.core.abstract_pipeline import AbstractPipeline, PipelineParameter
@@ -78,7 +77,7 @@ class IdBasedPipeline(AbstractPipeline):
 
     Subclasses MUST:
     - Set the `name` class attribute
-    - Implement `define_source(runtime_params)`
+    - Implement `define_source(runtime_params)` OR `define_jobs(runtime_params)`
     - Implement `define_destination(records, runtime_params)`
     - Implement `define_transformations(records, runtime_params)`
 
@@ -86,7 +85,8 @@ class IdBasedPipeline(AbstractPipeline):
     - Override `define_parameters()` to add extra parameters (beyond `ids`)
     - Override `define_rate_limit()` for dynamic rate limiting
     - Override `define_jobs()` to own the splitting entirely — e.g. to expand
-      each input ID into several jobs (see the module docstring)
+      each input ID into several jobs (see the module docstring). Then
+      `define_source` is never called and does not need to be implemented.
     - Call `load_query("name.sql")` to read a template from the project's
       `queries/` folder (see QueryLoaderMixin)
 
@@ -109,10 +109,13 @@ class IdBasedPipeline(AbstractPipeline):
     # Abstract Methods — Must be implemented by subclasses
     # =========================================================================
 
-    @abstractmethod
     def define_source(self, runtime_params: Dict[str, Any]) -> Any:
         """
         Define the source to use for a batch of IDs.
+
+        Optional: implement this **or** :meth:`define_jobs`, not both. The
+        default job plan calls this once per ID-batch, so overriding
+        ``define_jobs`` to own the splitting means you never need it.
 
         Called once per ID-batch. Current IDs are injected into runtime_params:
         - runtime_params["current_ids"]: list of IDs for this batch
@@ -143,7 +146,9 @@ class IdBasedPipeline(AbstractPipeline):
             >>> def define_source(self, params):
             ...     return params["current_ids"]
         """
-        pass
+        raise NotImplementedError(
+            f"Pipeline '{self.name}' must implement define_source() or define_jobs()"
+        )
 
     # =========================================================================
     # Job planning — one job per ID batch
