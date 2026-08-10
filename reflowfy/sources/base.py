@@ -32,6 +32,12 @@ class BaseSource(ABC):
     4. Health checks
     """
 
+    # Params the planner attached to this one job, merged into its
+    # runtime_params before it runs. None = the job just gets the execution's
+    # params. Set by the ID-based plan and by reflowfy.job(); never serialized
+    # onto the wire, since it travels in the job message's metadata instead.
+    job_params: Optional[Dict[str, Any]] = None
+
     def __init__(self, config: Dict[str, Any]):
         """
         Initialize source with configuration.

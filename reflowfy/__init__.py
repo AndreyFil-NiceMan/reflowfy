@@ -13,7 +13,7 @@ from reflowfy.core.abstract_pipeline import AbstractPipeline, PipelineParameter
 from reflowfy.core.exceptions import PipelineError
 from reflowfy.core.id_based_pipeline import IdBasedPipeline
 from reflowfy.core.registry import pipeline_registry
-from reflowfy.execution.job_runner import chunk
+from reflowfy.execution.job_runner import chunk, job
 from reflowfy.observability.logging import get_logger
 from reflowfy.transformations.base import BaseTransformation, TransformationError
 from reflowfy.sources.base import SourceError
@@ -29,7 +29,7 @@ from reflowfy.sources.decorators import source, source_registry
 from reflowfy.destinations.decorators import destination, destination_registry
 from reflowfy.transformations.decorators import transformation
 
-__version__ = "1.0.29"
+__version__ = "1.0.30"
 
 __all__ = [
     "AbstractPipeline",
@@ -37,6 +37,7 @@ __all__ = [
     "PipelineParameter",
     "pipeline_registry",
     "chunk",
+    "job",
     "BaseTransformation",
     # Logging — module-level, works anywhere (no `self` needed):
     #   logger = get_logger(__name__)

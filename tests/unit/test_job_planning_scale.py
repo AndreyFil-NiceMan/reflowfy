@@ -195,6 +195,70 @@ class TestIdBasedOnUnifiedPlanner:
         assert pipeline.validate_parameters({}) == ["Missing required parameter: ids"]
 
 
+class _JobParamsIdPipeline(IdBasedPipeline):
+    """One ID fans out into two jobs, each tagged with the ID it belongs to."""
+
+    name = "job_params_id_sync_for_planning_test"
+
+    def define_jobs(self, runtime_params):
+        from reflowfy import job
+
+        for parent_id in runtime_params["ids"]:
+            for child in range(2):
+                yield job(
+                    [{"child_id": f"{parent_id}-{child}"}],
+                    current_id=parent_id,
+                    current_ids=[parent_id],
+                )
+
+    def define_transformations(self, records, runtime_params):
+        return []
+
+    def define_destination(self, records, runtime_params):
+        return None
+
+
+class TestPerJobParamsFromCustomPlan:
+    """A custom plan can give each job its own runtime_params via reflowfy.job()."""
+
+    def test_each_job_carries_the_id_it_belongs_to(self):
+        rows, _ = _plan([101, 102], pipeline_name=_JobParamsIdPipeline.name)
+
+        assert len(rows) == 4
+        params = [row["job_payload"]["metadata"]["runtime_params"] for row in rows]
+        assert [p["current_id"] for p in params] == [101, 101, 102, 102]
+        # current_ids also lands in metadata, where the worker reads it from.
+        assert [row["job_payload"]["metadata"]["current_ids"] for row in rows] == [
+            [101],
+            [101],
+            [102],
+            [102],
+        ]
+
+    def test_payload_carries_the_jobs_own_params_for_dedup(self):
+        """Content dedup needs what the plan attached, not the merged view:
+        the merged one also holds execution params, identical across jobs."""
+        rows, _ = _plan([101, 102], pipeline_name=_JobParamsIdPipeline.name)
+
+        own = [row["job_payload"]["job_params"] for row in rows]
+        assert own == [
+            {"current_id": 101, "current_ids": [101]},
+            {"current_id": 101, "current_ids": [101]},
+            {"current_id": 102, "current_ids": [102]},
+            {"current_id": 102, "current_ids": [102]},
+        ]
+        assert all("env" not in p for p in own)
+
+    def test_per_job_params_are_merged_not_substituted(self):
+        """job() attaches only what identifies the job; the rest must still travel."""
+        rows, _ = _plan([101], pipeline_name=_JobParamsIdPipeline.name)
+
+        for row in rows:
+            params = row["job_payload"]["metadata"]["runtime_params"]
+            assert params["env"] == "prod"   # execution param survives
+            assert "ids" not in params       # full ID list still stripped
+
+
 class _PlainPipeline(AbstractPipeline):
     """No job_params — the abstract path must keep every param it has today."""
 

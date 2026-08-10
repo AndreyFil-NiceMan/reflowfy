@@ -419,5 +419,6 @@ def id_fanout_stamp(records, runtime_params):
     saw_ids = "ids" in runtime_params
     for record in records:
         record["saw_ids_param"] = saw_ids
+        record["job_current_id"] = runtime_params.get("current_id")
         record["_execution_id"] = runtime_params.get("execution_id", "")
     return records

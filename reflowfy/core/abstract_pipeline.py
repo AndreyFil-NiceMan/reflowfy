@@ -374,6 +374,11 @@ class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
         the plan is large: the manager writes each job to the database as it
         arrives and never holds the whole plan in memory.
 
+        Every job runs with the execution's runtime_params. To give one job
+        params of its own — which ID it covers, which shard, which tenant —
+        wrap its records with :func:`reflowfy.job`; those keys are merged into
+        that job's runtime_params and nothing else's.
+
         Args:
             runtime_params: Parameters provided by the user at runtime
 
@@ -389,6 +394,11 @@ class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
             >>> def define_jobs(self, params):
             ...     for row in stream_ids(params["query"]):
             ...         yield user_source(id=row.id)
+
+        Example (per-job params):
+            >>> def define_jobs(self, params):
+            ...     for tenant in params["tenants"]:
+            ...         yield job(rows_for(tenant), tenant=tenant)
         """
         return self.define_source(runtime_params)
 

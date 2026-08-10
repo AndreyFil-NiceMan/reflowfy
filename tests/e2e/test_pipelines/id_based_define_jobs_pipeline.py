@@ -6,7 +6,7 @@ so define_source never runs and each child ID becomes its own job with its own
 transformations, destination write and retry.
 """
 
-from reflowfy import IdBasedPipeline
+from reflowfy import IdBasedPipeline, job
 from tests.e2e.test_pipelines.destinations import e2e_http
 from tests.e2e.test_pipelines.transformations import id_fanout_stamp
 
@@ -14,7 +14,7 @@ CHILDREN_PER_ID = 3
 
 
 class E2EIdBasedDefineJobsPipeline(IdBasedPipeline):
-    """Each input ID expands into CHILDREN_PER_ID jobs."""
+    """Each input ID expands into CHILDREN_PER_ID jobs, each tagged with its ID."""
 
     name = "e2e_id_based_define_jobs"
     rate_limit = 3000  # jobs per minute
@@ -22,7 +22,11 @@ class E2EIdBasedDefineJobsPipeline(IdBasedPipeline):
     def define_jobs(self, runtime_params):
         for parent_id in runtime_params["ids"]:
             for child in range(CHILDREN_PER_ID):
-                yield [{"parent_id": parent_id, "child_id": f"{parent_id}-{child}"}]
+                yield job(
+                    [{"parent_id": parent_id, "child_id": f"{parent_id}-{child}"}],
+                    current_id=parent_id,
+                    current_ids=[parent_id],
+                )
 
     # define_source is deliberately absent: overriding define_jobs means it is
     # never called, and an IdBasedPipeline must not require a dummy stub.

@@ -14,7 +14,7 @@ import typer
 
 from reflowfy.cli.utils import console
 from reflowfy.core.execution_context import ExecutionContext
-from reflowfy.execution.job_runner import plan_slices, run_job_records
+from reflowfy.execution.job_runner import job_runtime_params, plan_slices, run_job_records
 from reflowfy.observability.logging import setup_logging
 from reflowfy.transformations.base import TransformationError
 
@@ -353,7 +353,7 @@ def register(app: typer.Typer):
                 if remaining <= 0:
                     break
                 records, t_records, t_applied, _dest = run_job_records(
-                    sub, pipeline, flat_test_params, limit=remaining
+                    sub, pipeline, job_runtime_params(sub, flat_test_params), limit=remaining
                 )
                 total_fetched += len(records)
                 transformed.extend(t_records)

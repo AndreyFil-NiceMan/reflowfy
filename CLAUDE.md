@@ -79,13 +79,17 @@ Pipelines register themselves with **no explicit registry calls**. `AbstractPipe
 
 `EXECUTION_MODE` env var selects `local` (in-process via `LocalDispatcher`, used by the default docker-compose) or `distributed` (Kafka via `KafkaDispatcher`). Same pipeline code runs in both.
 
-### Deterministic job IDs & DLQ
+### Content deduplication & DLQ
 
-When `enable_duplicate_jobs=False`, `pipeline_runner.generate_job_id` hashes stable job content into a SHA256 ID so identical data yields the same job across runs (idempotency). Date/time-like keys are stripped before hashing (see `_DATE_KEY_PATTERNS`) so IDs stay stable. Failed jobs flow to a **dead-letter queue**; `dlq_routes.py`/`dlq_scheduler.py` handle inspection and scheduled retries. `pipeline_scheduler.py` runs cron-scheduled pipelines (5-field cron, validated at class-definition time in the metaclass).
+Job IDs are plain `uuid4`. Idempotency is enforced **worker-side, by content**: when `enable_duplicate_jobs=False` the manager sets `dedup_check` on the payload, and the worker hashes the job's content (`execution/content_dedup.py`: pipeline name + transformation names + fetched records + the job's own `job_params`) and claims that hash in the `processed_content` table. First claimant runs; a later job with the same hash is marked `deduplicated` and never written. Note the hash covers records, not the source descriptor, so it is computed after fetching.
+
+The **DLQ is not a failure sink** despite the name — nothing auto-populates it. It is a "run this pipeline later with these params" queue: `POST /dlq/schedule` takes a `job_payload` that is really *runtime params*, and `dlq_scheduler.py` calls `run_pipeline` with them when due. `dlq_routes.py` handles inspection. `pipeline_scheduler.py` runs cron-scheduled pipelines (5-field cron, validated at class-definition time in the metaclass).
 
 ## E2E test mechanics
 
 `scripts/run_e2e_tests.sh` does **not** test the source tree in place. It builds a wheel, runs `reflowfy init` into a throwaway `e2e_workspace/`, patches the generated Dockerfiles to install the local wheel, rewrites `docker-compose.yml` (E2E ports 5433/8002/8003, container prefix `reflofy-e2e-`, `PIPELINE_MODULE=tests.e2e.test_pipelines`), brings up `docker-compose.e2e-infra.yml` (Kafka/ES/mock servers) plus the app, seeds test data, then runs `pytest tests/e2e/`. So changes to packaging, the CLI scaffolding, Dockerfiles, or compose files are all exercised by the E2E run, and a stale build will mask source edits — always rebuild.
+
+**E2E only covers local mode.** The scaffold it runs (`reflowfy init`) sets `EXECUTION_MODE: local`, `KAFKA_BOOTSTRAP_SERVERS: 'ignored:9092'`, and defines **no worker service** — so every E2E exercises `LocalDispatcher`, and the production path (manager → Kafka → `KafkaJobConsumer` → worker) has unit coverage only (`tests/unit/test_define_jobs_worker_path.py`, `test_executor_worker_sourcing.py`). To exercise it by hand, add a `docker-compose.override.yml` in `e2e_workspace/` setting `EXECUTION_MODE: distributed` on `reflow-manager` and adding a `worker` service built from `Dockerfile.worker` with `PIPELINE_MODULE=tests.e2e.test_pipelines`; note `docker compose up` will reuse a stale `e2e_workspace-worker` image, so pass `--build`.
 
 ## graphify knowledge graph
 

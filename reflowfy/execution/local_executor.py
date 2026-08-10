@@ -9,7 +9,7 @@ from reflowfy.core.execution_context import (
     build_flat_runtime_params,
 )
 from reflowfy.execution.base import BaseExecutor, ExecutionState, ExecutionStatus
-from reflowfy.execution.job_runner import plan_slices, run_job_records
+from reflowfy.execution.job_runner import job_runtime_params, plan_slices, run_job_records
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +58,13 @@ class LocalExecutor(BaseExecutor):
         if execution_id is None:
             execution_id = str(uuid.uuid4())
 
-        # Check if this is an IdBasedPipeline — use per-ID execution
-        if isinstance(pipeline, IdBasedPipeline):
+        # Check if this is an IdBasedPipeline — use per-ID execution. A pipeline
+        # that overrides define_jobs owns its own splitting, so it takes the
+        # standard path below: the per-ID loop resolves define_source per ID and
+        # would run a different plan than the manager dispatches.
+        if isinstance(pipeline, IdBasedPipeline) and (
+            type(pipeline).define_jobs is IdBasedPipeline.define_jobs
+        ):
             return self._execute_id_based(pipeline, runtime_params, execution_id)
 
         # Resolve pipeline with runtime params (for AbstractPipeline).
@@ -109,8 +114,9 @@ class LocalExecutor(BaseExecutor):
                 if remaining <= 0:
                     break
                 logger.debug("Fetching data from source (limit: %d)", remaining)
+                slice_params = job_runtime_params(sub, flat_runtime_params)
                 records, transformed_records, applied, destination = run_job_records(
-                    sub, pipeline, flat_runtime_params, limit=remaining
+                    sub, pipeline, slice_params, limit=remaining
                 )
 
                 if not records:
@@ -123,7 +129,7 @@ class LocalExecutor(BaseExecutor):
                 logger.debug("Sending %d records to destination", len(transformed_records))
                 destination.send_with_retry(
                     transformed_records,
-                    metadata=flat_runtime_params,
+                    metadata=slice_params,
                 )
                 total_fetched += len(records)
                 total_sent += len(transformed_records)
