@@ -53,10 +53,17 @@ def _wait(execution_id: str, timeout: int = 120) -> dict:
     raise TimeoutError(f"Execution {execution_id} did not complete in {timeout}s")
 
 
-def _received() -> list:
-    resp = httpx.get(f"{MOCK_URL}/records", timeout=10)
+def _received(execution_id: str) -> list:
+    """This execution's records only.
+
+    The mock server is shared by the whole suite and scheduled pipelines fire on
+    their own cron while these tests run, so its total is not ours to assert on.
+    id_fanout_stamp puts the execution id on every record it touches.
+    """
+    resp = httpx.get(f"{MOCK_URL}/records?limit=1000", timeout=10)
     resp.raise_for_status()
-    return resp.json().get("records", [])
+    records = resp.json().get("records", [])
+    return [r for r in records if r.get("_execution_id") == execution_id]
 
 
 class TestIdBasedDefineJobs:
@@ -82,7 +89,7 @@ class TestIdBasedDefineJobs:
         execution_id = _run(PARENT_IDS)
         assert _wait(execution_id)["state"] == "completed"
 
-        children = sorted(r["child_id"] for r in _received() if "child_id" in r)
+        children = sorted(r["child_id"] for r in _received(execution_id))
         expected = sorted(
             f"{parent}-{child}" for parent in PARENT_IDS for child in range(CHILDREN_PER_ID)
         )
@@ -95,7 +102,7 @@ class TestIdBasedDefineJobs:
         execution_id = _run(PARENT_IDS)
         assert _wait(execution_id)["state"] == "completed"
 
-        records = _received()
+        records = _received(execution_id)
         assert len(records) == EXPECTED_JOBS
         for record in records:
             assert record["saw_ids_param"] is False, (
@@ -109,7 +116,7 @@ class TestIdBasedDefineJobs:
         execution_id = _run(PARENT_IDS)
         assert _wait(execution_id)["state"] == "completed"
 
-        records = _received()
+        records = _received(execution_id)
         assert len(records) == EXPECTED_JOBS
         for record in records:
             # Every child of parent 7 must see current_id 7, not 8 and not None.

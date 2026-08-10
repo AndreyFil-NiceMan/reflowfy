@@ -1,12 +1,12 @@
 # Graph Report - reflowfy  (2026-08-10)
 
 ## Corpus Check
-- 224 files · ~144,871 words
+- 224 files · ~145,403 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 5688 nodes · 8824 edges · 274 communities detected
-- Extraction: 88% EXTRACTED · 12% INFERRED · 0% AMBIGUOUS · INFERRED: 1089 edges (avg confidence: 0.68)
+- 5717 nodes · 8860 edges · 274 communities detected
+- Extraction: 88% EXTRACTED · 12% INFERRED · 0% AMBIGUOUS · INFERRED: 1091 edges (avg confidence: 0.68)
 - Token cost: 0 input · 0 output
 
 ## Community Hubs (Navigation)
@@ -290,7 +290,7 @@
 2. `IdBasedPipeline` - 64 edges
 3. `PipelineParameter` - 57 edges
 4. `StaticSource` - 54 edges
-5. `PipelineRunner` - 50 edges
+5. `PipelineRunner` - 51 edges
 6. `MockSource` - 49 edges
 7. `IDBasedAPISource` - 47 edges
 8. `api_destination()` - 41 edges
@@ -313,59 +313,59 @@
 
 ### Community 0 - "Community 0"
 Cohesion: 0.01
-Nodes (153): AbstractPipeline, e2e_http(), Pre-configured API webhook destination for E2E tests., Pre-configured API webhook destination for E2E tests., E2EBatchIdentityPipeline, E2EContextProbePipeline, E2EErrorTolerantPipeline, E2ERuntimeParamsPipeline (+145 more)
+Nodes (207): AbstractPipeline, e2e_console(), e2e_http(), e2e_http_runtime_params(), e2e_kafka(), Reusable destination configurations for E2E test pipelines.  All destinations us, Pre-configured Kafka destination for E2E tests., Pre-configured Kafka destination for E2E tests. (+199 more)
 
 ### Community 1 - "Community 1"
 Cohesion: 0.01
-Nodes (229): BaseSource, fetch(), health_check(), Base source interface for data fetching and job splitting., Raised when a source operation fails., Represents a single job to be processed by a worker.      Attributes:         re, Raised when a source operation fails., Raised when a source operation fails. (+221 more)
+Nodes (240): ABC, ExecutionTracker, Execution tracking and status management., Track or update an execution.          Args:             status: ExecutionStatus, Get execution status by ID.          Args:             execution_id: Execution I, Update job completion status.          Called by workers when a job completes., Thread-safe in-memory execution tracker.      In production, this should be back, Get all tracked executions. (+232 more)
 
 ### Community 2 - "Community 2"
 Cohesion: 0.01
-Nodes (231): AbstractPipeline, define_destination(), define_source(), define_transformations(), PipelineMeta, Abstract base class for configurable pipelines.  This module provides the Abstra, Abstract base class for configurable pipelines.      Extend this class to create, Abstract base class for configurable pipelines.      Extend this class to create (+223 more)
+Nodes (222): BaseSource, BaseSource, fetch(), health_check(), Base source interface for data fetching and job splitting., Raised when a source operation fails., Represents a single job to be processed by a worker.      Attributes:         re, Raised when a source operation fails. (+214 more)
 
 ### Community 3 - "Community 3"
-Cohesion: 0.01
-Nodes (205): ABC, ExecutionTracker, Execution tracking and status management., Track or update an execution.          Args:             status: ExecutionStatus, Get execution status by ID.          Args:             execution_id: Execution I, Update job completion status.          Called by workers when a job completes., Thread-safe in-memory execution tracker.      In production, this should be back, Get all tracked executions. (+197 more)
+Cohesion: 0.02
+Nodes (149): AbstractPipeline, Abstract base class for configurable pipelines.      Extend this class to create, Abstract base class for configurable pipelines.      Extend this class to create, Abstract base class for configurable pipelines.      Extend this class to create, Abstract base class for configurable pipelines.      Extend this class to create, Abstract base class for configurable pipelines.      Extend this class to create, Initialize the abstract pipeline.          Args:             rate_limit: Rate li, Initialize the abstract pipeline.          Args:             rate_limit: Rate li (+141 more)
 
 ### Community 4 - "Community 4"
 Cohesion: 0.01
-Nodes (174): BaseSource, id_based_api_source(), IDBasedAPISource, paginated_api_source(), PaginatedAPISource, REST API sources with pagination support., True when the endpoint template contains ``{id}``., Get or create HTTP client. (+166 more)
+Nodes (170): JSON-safe normalization for records and payloads., Recursively convert an object to a JSON-serializable form.      Mirrors the norm, to_json_safe(), claim_content_hash(), compute_content_hash(), Worker-side content deduplication primitive.  `compute_content_hash` reproduces, Deterministic SHA256 over stable job content (v1 semantics)., Deterministic SHA256 over stable job content (v1 semantics).      ``job_params`` (+162 more)
 
 ### Community 5 - "Community 5"
 Cohesion: 0.01
-Nodes (191): _batch_timeout(), build_job_payload(), _chunk(), _filter_volatile_keys(), _finished_count(), generate_job_id(), _iter_plan(), PipelineRunner (+183 more)
+Nodes (173): id_based_api_source(), IDBasedAPISource, paginated_api_source(), PaginatedAPISource, REST API sources with pagination support., True when the endpoint template contains ``{id}``., Get or create HTTP client., Get or create HTTP client. (+165 more)
 
 ### Community 6 - "Community 6"
-Cohesion: 0.02
-Nodes (141): ABCMeta, BaseTransformation, client(), _get_records(), E2E Tests for Advanced Transformation Context Features.  Tests that ExecutionCon, All records from a single execution must carry the same execution_id         reg, E2EBatchIdentityPipeline sends 30 records in 3 batches of 10.         batch_id i, Verify that runtime_params passed in the run request reach transformations. (+133 more)
+Cohesion: 0.01
+Nodes (205): _batch_timeout(), build_job_payload(), _chunk(), _filter_volatile_keys(), _finished_count(), generate_job_id(), _iter_plan(), PipelineRunner (+197 more)
 
 ### Community 7 - "Community 7"
-Cohesion: 0.02
-Nodes (152): JSON-safe normalization for records and payloads., Recursively convert an object to a JSON-serializable form.      Mirrors the norm, to_json_safe(), claim_content_hash(), compute_content_hash(), Worker-side content deduplication primitive.  `compute_content_hash` reproduces, Deterministic SHA256 over stable job content (v1 semantics)., Atomically claim a content hash. Returns True iff this caller inserted it. (+144 more)
+Cohesion: 0.01
+Nodes (140): ABCMeta, BaseTransformation, AddProcessingInfo, FilterActiveUsers, Simple test pipeline that works without any external dependencies.  Perfect for, Transform names to uppercase., Convert first_name and last_name to uppercase.                  Args:, Filter only active users. (+132 more)
 
 ### Community 8 - "Community 8"
 Cohesion: 0.01
-Nodes (174): _dispatch_pipeline_jobs(), get_checkpoints(), get_execution_errors(), get_execution_stats(), get_jobs(), _get_kafka_config(), get_pipeline(), get_reflow_manager() (+166 more)
+Nodes (175): create_checkpoint(), _dispatch_pipeline_jobs(), get_checkpoints(), get_execution_errors(), get_execution_stats(), get_jobs(), _get_kafka_config(), get_pipeline() (+167 more)
 
 ### Community 9 - "Community 9"
 Cohesion: 0.02
-Nodes (145): E2ERuntimeParamsDestinationPipeline, E2E pipeline to verify runtime_params are appended through transforms and used b, Pipeline that pushes runtime_params through two transformations     and ensures, add_source_info(), api_add_dest_info(), api_add_source_info(), api_batch_add_metadata(), api_batch_filter_active() (+137 more)
+Nodes (151): E2EIdBasedDefineJobsPipeline, IdBasedPipeline + custom define_jobs E2E test pipeline.  The one-input-ID-fans-o, Each input ID expands into CHILDREN_PER_ID jobs, each tagged with its ID., E2EIdBasedBatchPipelineTest, E2EIdBasedPipelineTest, IdBasedPipeline E2E Test Pipelines.  Two pipelines for testing the IdBasedPipeli, E2E test pipeline for IdBasedPipeline feature.      Each ID generates mock data, E2E test pipeline for ids_batch_size > 1.      Uses ids_batch_size=2 so every so (+143 more)
 
 ### Community 10 - "Community 10"
 Cohesion: 0.02
-Nodes (84): ApiDestination, e2e_console(), e2e_http_runtime_params(), e2e_kafka(), Reusable destination configurations for E2E test pipelines.  All destinations us, Pre-configured Kafka destination for E2E tests., Pre-configured Kafka destination for E2E tests., E2E HTTP destination that embeds runtime_params into the payload at send time. (+76 more)
+Nodes (95): ApiDestination, api_destination(), ApiDestination, API destination for webhooks and REST endpoints., Merge static body fields with record data and runtime metadata., Merge static body fields with record data and runtime metadata., API destination for sending data to webhooks and REST endpoints.      Supports:, Send records to the API endpoint.          Args:             records: List of re (+87 more)
 
 ### Community 11 - "Community 11"
 Cohesion: 0.02
-Nodes (127): client(), E2E Tests for IdBasedPipeline Feature.  Tests the IdBasedPipeline by running a p, Test with an uneven number of IDs so the last batch is smaller.          25 IDs, Test with an uneven number of IDs so the last batch is smaller.          v2: one, Test that IdBasedPipeline runs to completion with all jobs passing., Test that IdBasedPipeline runs to completion with all jobs passing., Test IdBasedPipeline works with a single ID., Test IdBasedPipeline works with a single ID. (+119 more)
+Nodes (136): get_dockerfiles_path(), get_helm_chart_path(), get_package_path(), Shared utilities for CLI commands., Get the path to the installed reflowfy package., Get path to the bundled Helm chart. Falls back to local ./helm/reflowfy if avail, Get path to Dockerfiles (templates for init or dev source)., _build_images() (+128 more)
 
 ### Community 12 - "Community 12"
 Cohesion: 0.02
-Nodes (84): api_destination(), ApiDestination, API destination for webhooks and REST endpoints., Merge static body fields with record data and runtime metadata., Merge static body fields with record data and runtime metadata., API destination for sending data to webhooks and REST endpoints.      Supports:, Send records to the API endpoint.          Args:             records: List of re, Send records to the API endpoint.          Args:             records: List of re (+76 more)
+Nodes (127): client(), E2E Tests for IdBasedPipeline Feature.  Tests the IdBasedPipeline by running a p, Test with an uneven number of IDs so the last batch is smaller.          25 IDs, Test with an uneven number of IDs so the last batch is smaller.          v2: one, Test that IdBasedPipeline runs to completion with all jobs passing., Test that IdBasedPipeline runs to completion with all jobs passing., Test IdBasedPipeline works with a single ID., Test IdBasedPipeline works with a single ID. (+119 more)
 
 ### Community 13 - "Community 13"
 Cohesion: 0.02
-Nodes (93): Base, ContentDedupScheduler, init_content_dedup_scheduler(), purge_expired_content(), Background sweeper that purges expired processed_content rows.  Mirrors pipeline, Delete processed_content rows older than retention_hours. Returns count., Delete processed_content rows older than retention_hours. Returns count., Daemon thread that periodically purges expired content hashes. (+85 more)
+Nodes (95): Base, ContentDedupScheduler, init_content_dedup_scheduler(), purge_expired_content(), Background sweeper that purges expired processed_content rows.  Mirrors pipeline, Delete processed_content rows older than retention_hours. Returns count., Delete processed_content rows older than retention_hours. Returns count., Daemon thread that periodically purges expired content hashes. (+87 more)
 
 ### Community 14 - "Community 14"
 Cohesion: 0.02
@@ -377,119 +377,119 @@ Nodes (128): BaseModel, BatchPayload, _check_auth(), get_records(), get_stats(),
 
 ### Community 16 - "Community 16"
 Cohesion: 0.02
-Nodes (107): Initialize batch_id if not provided., Initialize batch_id if not provided., Initialize batch_id if not provided., QueryLoaderMixin, Query template loading shared by the pipeline base classes.  Pipelines keep thei, Reads query templates from the project's ``queries/`` folder., Load a query template from the project's ``queries/`` folder.          ``.json``, Load a query template as raw text, without extension-based parsing.          Use (+99 more)
+Nodes (98): define_destination(), define_source(), define_transformations(), PipelineMeta, Abstract base class for configurable pipelines.  This module provides the Abstra, Metaclass for automatic pipeline registration.      When a class inherits from A, Define the destination to use based on post-transformation records and runtime p, Metaclass for automatic pipeline registration.      When a class inherits from A (+90 more)
 
 ### Community 17 - "Community 17"
 Cohesion: 0.03
-Nodes (67): BaseDispatcher, BaseDispatcher, close(), dispatch_job(), dispatch_jobs_batch(), KafkaDispatcher, Job dispatchers for ReflowManager using aiokafka., Dispatch a single job to Kafka. (+59 more)
+Nodes (85): create_app(), main(), FastAPI application factory., Dynamically create routes for all registered pipelines.      Called at startup a, Application entry point., Application entry point., Application entry point., Create and configure FastAPI application.      Returns:         Configured FastA (+77 more)
 
 ### Community 18 - "Community 18"
 Cohesion: 0.03
-Nodes (88): create_app(), main(), FastAPI application factory., Dynamically create routes for all registered pipelines.      Called at startup a, Application entry point., Application entry point., Application entry point., Create and configure FastAPI application.      Returns:         Configured FastA (+80 more)
+Nodes (67): BaseDispatcher, BaseDispatcher, close(), dispatch_job(), dispatch_jobs_batch(), KafkaDispatcher, Job dispatchers for ReflowManager using aiokafka., Dispatch a single job to Kafka. (+59 more)
 
 ### Community 19 - "Community 19"
 Cohesion: 0.04
-Nodes (71): Gracefully stop background schedulers on service shutdown., shutdown_event(), PipelineSchedule, Persistent cron schedule state for a scheduled pipeline.      One row per pipeli, Convert to dictionary representation., Persistent cron schedule state for a scheduled pipeline.      One row per pipeli, Convert to dictionary representation., Convert to dictionary representation. (+63 more)
+Nodes (69): PipelineSchedule, Persistent cron schedule state for a scheduled pipeline.      One row per pipeli, Convert to dictionary representation., Persistent cron schedule state for a scheduled pipeline.      One row per pipeli, Convert to dictionary representation., Convert to dictionary representation., _compute_next_run(), get_pipeline_scheduler() (+61 more)
 
 ### Community 20 - "Community 20"
-Cohesion: 0.03
-Nodes (71): check_elasticsearch(), check_kafka(), check_mock_api(), check_mock_http(), check_postgres(), check_reflow_manager(), plain_cli_output(), pytest_collection_modifyitems() (+63 more)
-
-### Community 21 - "Community 21"
-Cohesion: 0.02
-Nodes (36): IdBasedPipeline, E2EPatchBulkPipeline, E2EPerIdPostPipeline, E2EProductsBatchPipeline, E2ERawListSearchPipeline, Advanced IDBasedAPISource E2E Test Pipelines.  Four pipeline classes covering al, Calls ``POST /users/{id}/enrich`` individually for each user ID.      IDBasedAPI, Calls ``POST /users/{id}/enrich`` individually for each user ID.      IDBasedAPI (+28 more)
-
-### Community 22 - "Community 22"
-Cohesion: 0.04
-Nodes (61): install_context_filter(), log_context(), Bind per-job context onto every log record via a LogRecordFactory + contextvars., Install the context-injecting record factory. Idempotent., Bind fields (execution_id, job_id, pipeline_name, ...) for the enclosed scope., ElasticLogHandler, A logging.Handler that bulk-ships records to Elasticsearch off the hot path.  De, Print a shipping problem to stderr at most once per minute (bypasses         the (+53 more)
-
-### Community 23 - "Community 23"
 Cohesion: 0.05
 Nodes (46): _batches_for(), _get_errors(), manager_client(), E2E Tests for API Destination.  Verifies that ApiDestination correctly routes ru, Fetch failed job error messages for a given execution., Verify unknown pipeline name returns 404 (proves registry validation works)., tenant_id is required — execution should fail when omitted., Verify unknown pipeline name returns 404 (proves registry validation works). (+38 more)
 
-### Community 24 - "Community 24"
+### Community 21 - "Community 21"
 Cohesion: 0.04
 Nodes (44): BaseDestination, example_kafka(), Example reusable destination configuration.  Use the @destination decorator to c, Example Kafka destination configuration.      Usage in a pipeline:         from, Example Kafka destination configuration.      Usage in a pipeline:         from, kafka_destination(), KafkaDestination, Kafka destination connector using aiokafka. (+36 more)
 
-### Community 25 - "Community 25"
+### Community 22 - "Community 22"
 Cohesion: 0.05
 Nodes (43): _get_schedule(), E2E Tests for Pipeline Schedule Feature.  Requires running services (ReflowManag, POST /run on a scheduled pipeline must advance next_run_at., POST /run on a scheduled pipeline must advance next_run_at., After a manual trigger, last_triggered_at must be set to a recent         timest, After a manual trigger, last_triggered_at must be set to a recent         timest, After a POST /run, last_triggered_at must be non-null., After a POST /run, last_triggered_at must be non-null. (+35 more)
 
-### Community 26 - "Community 26"
+### Community 23 - "Community 23"
 Cohesion: 0.04
 Nodes (44): ElasticTestPipeline, EnrichWithProcessingInfo, FilterByStatus, FormatEventData, Example pipeline for testing Reflofy with Elasticsearch source.  This pipeline:, Elasticsearch-based test pipeline.          Demonstrates:     - Dynamic source c, Define runtime parameters for this pipeline., Configure Elasticsearch source with runtime parameters. (+36 more)
 
-### Community 27 - "Community 27"
+### Community 24 - "Community 24"
 Cohesion: 0.05
 Nodes (33): Advanced E2E Tests for CLI commands (new, init, deploy, build).  Covers gaps not, Creating the same transformation twice should fail with exit 1., Tests for the 'reflowfy init' project initialisation command., init --name billing_etl' should create pipelines/billing_etl.py with an Abstract, init must create all 5 standard directories., Running init twice should succeed (exit 0) without raising an exception., Tests for edge cases in the 'reflowfy deploy' Helm deployment command., --no-deploy-postgres without DATABASE_URL env var → exit 1. (+25 more)
 
-### Community 28 - "Community 28"
+### Community 25 - "Community 25"
 Cohesion: 0.05
 Nodes (35): PipelineRegistry, Pipeline registry for dynamic registration and lookup., Unregister a pipeline (mainly for testing).          Args:             name: Pip, Unregister a pipeline (mainly for testing).          Args:             name: Pip, Get all registered pipeline names.          Returns:             List of pipelin, Thread-safe singleton registry for pipelines.      Pipelines are registered at m, Check if a pipeline is registered.          Args:             name: Pipeline nam, Clear all registered pipelines (mainly for testing). (+27 more)
 
-### Community 29 - "Community 29"
+### Community 26 - "Community 26"
+Cohesion: 0.07
+Nodes (39): check_elasticsearch(), check_kafka(), check_mock_api(), check_mock_http(), check_postgres(), check_reflow_manager(), plain_cli_output(), pytest_collection_modifyitems() (+31 more)
+
+### Community 27 - "Community 27"
 Cohesion: 0.07
 Nodes (34): client(), _pipeline_info(), E2E Tests: enable_duplicate_jobs flag.  Verifies that: - enable_duplicate_jobs=F, Two consecutive dedup runs: after the first, the second must skip every job., enable_duplicate_jobs=True API override bypasses dedup even on a         pipelin, enable_duplicate_jobs=True API override bypasses dedup even on a         pipelin, Tests for enable_duplicate_jobs=True (allow duplicates, baseline)., UUID-based pipeline always creates jobs — no skipping ever occurs. (+26 more)
 
-### Community 30 - "Community 30"
+### Community 28 - "Community 28"
+Cohesion: 0.06
+Nodes (32): cleanup_dlq_jobs(), dlq_client(), E2E Tests for DLQ (Dead Letter Queue) Feature.  Tests the complete DLQ workflow, Tests for GET /dlq/jobs endpoint., Schedule multiple jobs, test filtering by pipeline and status., Tests for GET /dlq/jobs/{id} endpoint., Get a specific DLQ job by ID., Get non-existent DLQ job returns 404. (+24 more)
+
+### Community 29 - "Community 29"
 Cohesion: 0.1
 Nodes (28): clear_received_records(), get_received_records(), E2E tests for the unified runtime_params flow through transformations.  Tests ve, params_step1_enrich writes step1_count + step1_ran into runtime_params.     para, params_step1_enrich writes step1_count + step1_ran into runtime_params.     para, E2EParamsEnrichPipeline.define_source injects 'injected_by_source'.     params_s, A param set by the first transformation must cause define_transformations, E2EParamsEnrichPipeline.define_source injects 'injected_by_source'.     params_s (+20 more)
 
-### Community 31 - "Community 31"
+### Community 30 - "Community 30"
 Cohesion: 0.06
 Nodes (34): AddProcessingInfo, FilterActiveUsers, Simple test pipeline that works without any external dependencies.  Auto-registe, Return mock data source., Return mock data source., No parameters needed for this simple test pipeline., Return mock data source., Return console destination. (+26 more)
 
-### Community 32 - "Community 32"
-Cohesion: 0.06
-Nodes (29): AddProcessingInfo, FilterActiveUsers, Simple test pipeline that works without any external dependencies.  Auto-registe, Return mock data source., Return mock data source., Return console destination., Return console destination., Return transformation pipeline. (+21 more)
+### Community 31 - "Community 31"
+Cohesion: 0.1
+Nodes (26): client(), _get_records(), E2E Tests for Advanced Transformation Context Features.  Tests that ExecutionCon, All records from a single execution must carry the same execution_id         reg, E2EBatchIdentityPipeline sends 30 records in 3 batches of 10.         batch_id i, Verify that runtime_params passed in the run request reach transformations., Pipeline receives runtime_params={"env": "staging", "multiplier": 3}.         Ev, With multiplier=3, each record's _value should equal record.id * 3. (+18 more)
 
-### Community 33 - "Community 33"
+### Community 32 - "Community 32"
 Cohesion: 0.07
 Nodes (23): check_elasticsearch(), client(), E2E Tests for Elasticsearch Source.  Tests the ElasticSource connector by runnin, Test that pipeline runs to completion., Test that pipeline runs to completion., A query matching no documents must create 0 jobs (no no-op job).          Seeded, A query matching no documents must create 0 jobs (no no-op job).          Seeded, docs_per_job must fan the query into ceil(count / docs_per_job) jobs.          T (+15 more)
 
-### Community 34 - "Community 34"
+### Community 33 - "Community 33"
 Cohesion: 0.06
 Nodes (25): Registry for transformation lookup by name., Get all registered transformation names.          Returns:             List of t, Check if a transformation is registered.          Args:             name: Transf, Check if a transformation is registered.          Args:             name: Transf, Thread-safe singleton registry for transformations.      Transformations are aut, Check if a transformation is registered.          Args:             name: Transf, Clear all registered transformations (mainly for testing)., Clear all registered transformations (mainly for testing). (+17 more)
 
-### Community 35 - "Community 35"
+### Community 34 - "Community 34"
 Cohesion: 0.1
 Nodes (21): client(), E2E Tests for Execution Lifecycle.  Tests pause/resume functionality and stats p, Pause an already completed execution.                  The API currently allows, Tests for POST /executions/{id}/resume endpoint., Pause then resume, and verify the pipeline eventually completes., Resume a non-existent execution returns 400/404., Resume a running (not paused) execution returns 400., Tests for stats progression during pipeline execution. (+13 more)
 
-### Community 36 - "Community 36"
+### Community 35 - "Community 35"
 Cohesion: 0.13
 Nodes (27): E2E Tests for CLI scaffolding commands ('reflowfy new' and 'reflowfy init').  Ve, Verify 'new transformation' command., Verify 'init' works with a non-'.' path argument., Verify running 'init' twice doesn't cause errors., Verify 'new pipeline' rejects creating a file that already exists., Verify 'new pipeline' generates correct class name for multi-word names., Verify 'new source' rejects creating a file that already exists., Verify 'new destination' rejects creating a file that already exists. (+19 more)
+
+### Community 36 - "Community 36"
+Cohesion: 0.15
+Nodes (24): discover_and_load_pipelines(), Global pipeline discovery utility.  This module provides centralized pipeline au, Recursively scan and import all Python modules under a directory.      Walks the, Recursively scan and import all Python modules under a directory.      Walks the, Recursively scan and import all Python modules under a directory.      Walks the, Auto-discover and import all pipeline modules and reusable components.      Scan, Auto-discover and import all pipeline modules and reusable components.      Scan, Auto-discover and import all pipeline modules and reusable components.      Scan (+16 more)
 
 ### Community 37 - "Community 37"
 Cohesion: 0.1
 Nodes (19): client(), E2E Tests for ReflowManager.  These tests require running services: - PostgreSQL, Test that getting stats for nonexistent execution returns 404., Test crash recovery mechanisms., Test that pipeline execution resumes after manager restart.          1. Start a, HTTP client for ReflowManager API., Generate unique execution ID for each test., Test health check endpoint. (+11 more)
 
 ### Community 38 - "Community 38"
+Cohesion: 0.11
+Nodes (27): _check_status(), _create_id_based_route(), create_pipeline_routes(), _create_run_route(), _create_standard_route(), _is_body_param(), _param_annotation(), PipelineRunResponse (+19 more)
+
+### Community 39 - "Community 39"
 Cohesion: 0.09
 Nodes (20): build_flat_runtime_params(), build_flat_runtime_params_from_metadata(), ParameterResolver, Execution context for passing runtime state through the pipeline., Extract all parameter names from Jinja2 templates.          Args:             ob, Build flat runtime_params from serialized job metadata.      Args:         metad, Build flat runtime_params from serialized job metadata.      Args:         metad, Resolves Jinja2 template parameters in source configurations.      Example: (+12 more)
 
-### Community 39 - "Community 39"
+### Community 40 - "Community 40"
 Cohesion: 0.14
 Nodes (21): client(), ensure_lag_test_topic(), kafka_producer(), poll_until_terminal(), E2E Tests: Kafka Destination Lag Health Check.  Two scenarios:   1. High lag  →, Temporary producer for flooding the lag-test topic., Temporary producer for flooding the lag-test topic., End-to-end tests for Kafka destination lag health check. (+13 more)
 
-### Community 40 - "Community 40"
+### Community 41 - "Community 41"
 Cohesion: 0.13
 Nodes (16): clean_pipeline_registry(), E2E Tests for CLI 'reflowfy test' command.  Tests the test command's pipeline lo, Write a Python file that doesn't register any pipeline., Tests for the 'reflowfy test' command., Test with nonexistent file should fail with exit code 1., Test a file with no registered pipelines should fail., Test a valid pipeline with --dry-run should succeed without sending., Test --limit should restrict the number of records processed. (+8 more)
 
-### Community 41 - "Community 41"
+### Community 42 - "Community 42"
 Cohesion: 0.17
 Nodes (17): E2E Tests for CLI 'reflowfy deploy' command.  Tests the deploy command's Helm ch, Deploy with --no-deploy-postgres but no DATABASE_URL should fail., Create a temporary workspace for CLI tests., Deploy with --no-deploy-postgres but no DATABASE_URL should fail., Return a copy of os.environ without specific keys., Tests for the 'reflowfy deploy' command., Deploy without --registry should fail with exit code 1., Deploy with --registry but without --kafka should fail. (+9 more)
 
-### Community 42 - "Community 42"
+### Community 43 - "Community 43"
 Cohesion: 0.19
 Nodes (15): client(), E2E Tests for Rate Limiting.  Verifies the token-bucket rate limiter (reflowfy/r, Fast pipeline: 50 records across 5 batches — stats should show         jobs_comp, Fast pipeline: all records should arrive at the mock HTTP destination., HTTP client scoped to this module., Reset mock HTTP server before each test., POST /run for the given pipeline and poll /stats until done.      Returns (execu, Verify token-bucket rate limiting through live pipeline executions. (+7 more)
 
-### Community 43 - "Community 43"
+### Community 44 - "Community 44"
 Cohesion: 0.17
 Nodes (14): check_mock_http(), client(), E2E Tests for Transformation Verification.  Tests that user-defined transformati, Verify that transformations execute in the correct order.                  Step, Verify that the computed field (_computed_category) has correct values         b, HTTP client for ReflowManager API., Verify mock HTTP server is running., Reset mock HTTP server data before each test. (+6 more)
-
-### Community 44 - "Community 44"
-Cohesion: 0.15
-Nodes (15): get_dockerfiles_path(), get_helm_chart_path(), get_package_path(), Shared utilities for CLI commands., Get the path to the installed reflowfy package., Get path to the bundled Helm chart. Falls back to local ./helm/reflowfy if avail, Get path to Dockerfiles (templates for init or dev source)., _build_images() (+7 more)
 
 ### Community 45 - "Community 45"
 Cohesion: 0.17
@@ -497,31 +497,31 @@ Nodes (14): E2E Tests for decorator components (@source, @destination, @transfor
 
 ### Community 46 - "Community 46"
 Cohesion: 0.18
-Nodes (12): client(), kafka_consumer(), E2E Tests for Kafka Destination.  Tests the KafkaDestination connector by runnin, Test that pipeline runs to completion., HTTP client for ReflowManager API., Create a Kafka consumer for verifying messages., Test Kafka destination pipeline., Verify ReflowManager is running. (+4 more)
+Nodes (12): E2E tests for an IdBasedPipeline that owns its splitting via define_jobs.  The p, A job handling one child ID has no use for every other ID in the run., job(...) params must reach the worker's transformations, per job., job(...) params must reach the worker's transformations, per job., This execution's records only.      The mock server is shared by the whole suite, define_jobs owns the splitting for an IdBasedPipeline., define_jobs owns the splitting for an IdBasedPipeline., A job handling one child ID has no use for every other ID in the run. (+4 more)
 
 ### Community 47 - "Community 47"
+Cohesion: 0.18
+Nodes (12): client(), kafka_consumer(), E2E Tests for Kafka Destination.  Tests the KafkaDestination connector by runnin, Test that pipeline runs to completion., HTTP client for ReflowManager API., Create a Kafka consumer for verifying messages., Test Kafka destination pipeline., Verify ReflowManager is running. (+4 more)
+
+### Community 48 - "Community 48"
 Cohesion: 0.15
 Nodes (11): check_postgres(), client(), E2E Tests for SQL Source.  Tests the SqlSource connector by running a pipeline t, Test that pipeline runs to completion., HTTP client for ReflowManager API., Verify PostgreSQL is available and has test data., Test SQL source pipeline., Verify ReflowManager is running. (+3 more)
 
-### Community 48 - "Community 48"
+### Community 49 - "Community 49"
 Cohesion: 0.22
 Nodes (12): E2E Tests for CLI 'reflowfy build' command.  Tests the build command's argument, Create a temporary workspace for CLI tests., Tests for the 'reflowfy build' command., Build without --registry should fail with exit code 1., Build should warn when pipelines/ directory is missing., temp_workspace(), test_build_uses_custom_project(), test_build_with_no_cache_flag() (+4 more)
 
-### Community 49 - "Community 49"
+### Community 50 - "Community 50"
 Cohesion: 0.3
 Nodes (11): build_auth_headers(), Shared HTTP authentication header construction.  Used by both the API source (sy, Return a new headers dict with the auth header applied.      - ``bearer``  -> ``, Unit tests for the shared HTTP auth header helper., test_apikey_sets_x_api_key(), test_basic_base64_encodes_user_pass(), test_bearer_sets_authorization(), test_input_dict_not_mutated() (+3 more)
 
-### Community 50 - "Community 50"
+### Community 51 - "Community 51"
 Cohesion: 0.19
 Nodes (13): E2E Tests for pipeline auto-registration.  Verifies that the PipelineMeta metacl, Verify that E2E test pipelines are auto-registered., Verify that E2E test pipelines are auto-registered., Verify registry names match the name attribute., Verify registry names match the name attribute., Verify we can auto-register a pipeline dynamically., Verify we can auto-register a pipeline dynamically., Verify idempotent registration prevents duplicates. (+5 more)
 
-### Community 51 - "Community 51"
+### Community 52 - "Community 52"
 Cohesion: 0.21
 Nodes (11): client(), E2E Tests for Concurrent Pipeline Executions.  Tests that the system correctly h, Test running the same pipeline twice with different executions., Start the same pipeline twice — both should get unique execution IDs         and, HTTP client for ReflowManager API., Wait for a pipeline execution to complete., Test running two different pipelines simultaneously., Start HTTP-dest and Kafka-dest pipelines concurrently.         Both should compl (+3 more)
-
-### Community 52 - "Community 52"
-Cohesion: 0.26
-Nodes (8): E2E tests for an IdBasedPipeline that owns its splitting via define_jobs.  The p, job(...) params must reach the worker's transformations, per job., define_jobs owns the splitting for an IdBasedPipeline., A job handling one child ID has no use for every other ID in the run., _received(), _run(), TestIdBasedDefineJobs, _wait()
 
 ### Community 53 - "Community 53"
 Cohesion: 0.38
@@ -1408,7 +1408,7 @@ Cohesion: 1.0
 Nodes (1): Apply transformation to a batch of records.          Args:             records:
 
 ## Knowledge Gaps
-- **2656 isolated node(s):** `Reflowfy - A horizontally scalable data movement and transformation framework.`, `Get Kafka configuration for aiokafka.      Reads from environment variables with`, `Get all Kafka-related environment variables.`, `Return a new headers dict with the auth header applied.      - ``bearer``  -> ```, `Example Kafka destination configuration.      Usage in a pipeline:         from` (+2651 more)
+- **2678 isolated node(s):** `Reflowfy - A horizontally scalable data movement and transformation framework.`, `Get Kafka configuration for aiokafka.      Reads from environment variables with`, `Get all Kafka-related environment variables.`, `Return a new headers dict with the auth header applied.      - ``bearer``  -> ```, `Example Kafka destination configuration.      Usage in a pipeline:         from` (+2673 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **Thin community `Community 74`** (4 nodes): `shared_sources.py`, `shared_sources.py`, `Re-exports from sources/ for backward compatibility.`, `shared_sources.py`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
@@ -1814,12 +1814,12 @@ Nodes (1): Apply transformation to a batch of records.          Args:           
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `IdBasedPipeline` connect `Community 3` to `Community 0`, `Community 1`, `Community 2`, `Community 5`, `Community 7`, `Community 13`, `Community 16`, `Community 18`?**
-  _High betweenness centrality (0.115) - this node is a cross-community bridge._
-- **Why does `BaseSource` connect `Community 1` to `Community 2`, `Community 3`, `Community 4`, `Community 7`?**
-  _High betweenness centrality (0.067) - this node is a cross-community bridge._
-- **Why does `PipelineRunner` connect `Community 5` to `Community 2`, `Community 3`, `Community 7`, `Community 8`, `Community 13`, `Community 17`, `Community 24`?**
-  _High betweenness centrality (0.065) - this node is a cross-community bridge._
+- **Why does `IdBasedPipeline` connect `Community 1` to `Community 0`, `Community 2`, `Community 3`, `Community 4`, `Community 6`, `Community 38`, `Community 11`, `Community 13`?**
+  _High betweenness centrality (0.135) - this node is a cross-community bridge._
+- **Why does `BaseSource` connect `Community 2` to `Community 1`, `Community 3`, `Community 4`, `Community 5`?**
+  _High betweenness centrality (0.088) - this node is a cross-community bridge._
+- **Why does `PipelineRunner` connect `Community 6` to `Community 1`, `Community 3`, `Community 4`, `Community 8`, `Community 13`, `Community 18`, `Community 21`?**
+  _High betweenness centrality (0.069) - this node is a cross-community bridge._
 - **Are the 41 inferred relationships involving `AbstractPipeline` (e.g. with `PipelineRegistry` and `QueryLoaderMixin`) actually correct?**
   _`AbstractPipeline` has 41 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 36 inferred relationships involving `IdBasedPipeline` (e.g. with `PipelineRunner` and `LocalExecutor`) actually correct?**

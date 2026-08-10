@@ -219,7 +219,12 @@ class WorkerExecutor:
             dedup_check = bool(job_payload.get("dedup_check", False))
             if dedup_check:
                 transformation_names = [name for name, _ in applied]
-                content_hash = compute_content_hash(_pipeline_name, transformation_names, records)
+                content_hash = compute_content_hash(
+                    _pipeline_name,
+                    transformation_names,
+                    records,
+                    job_payload.get("job_params") or None,
+                )
                 won = await claim_content_hash(
                     self._async_session, content_hash, _pipeline_name, job_id, execution_id
                 )

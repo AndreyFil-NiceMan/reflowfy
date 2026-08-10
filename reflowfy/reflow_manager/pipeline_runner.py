@@ -113,11 +113,18 @@ def build_job_payload(
     sub_source: Any,
     metadata: Dict[str, Any],
     dedup_check: bool = False,
+    job_params: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Assemble the v2 worker job message for one narrowed sub-source.
 
     The current span's W3C traceparent is injected into metadata so the worker
     can continue the trace across the Kafka hop (additive; no schema bump).
+
+    ``job_params`` is what the plan attached to this job alone (see
+    :func:`reflowfy.job`), carried separately from the merged runtime_params in
+    metadata because content deduplication has to tell two jobs apart by it —
+    the merged view also holds execution-wide params, which are identical
+    across jobs (additive; no schema bump).
     """
     enriched_metadata = dict(metadata)
     inject_trace_context(enriched_metadata)
@@ -128,6 +135,7 @@ def build_job_payload(
         "pipeline_name": pipeline_name,
         "source": SourceFactory.serialize(sub_source),
         "dedup_check": dedup_check,
+        "job_params": job_params or {},
         "metadata": enriched_metadata,
     }
 
@@ -501,7 +509,13 @@ class PipelineRunner:
             job_id = str(uuid.uuid4())
 
             job_payload = build_job_payload(
-                execution_id, job_id, pipeline_name, sub_source, metadata, dedup_check=dedup_check
+                execution_id,
+                job_id,
+                pipeline_name,
+                sub_source,
+                metadata,
+                dedup_check=dedup_check,
+                job_params=own_params,
             )
             job_payload = self._serialize_for_json(job_payload)
 

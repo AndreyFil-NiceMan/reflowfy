@@ -29,6 +29,26 @@ def test_hash_changes_with_pipeline_name():
     assert a != b
 
 
+def test_hash_changes_with_per_job_params():
+    """Same records, different job — e.g. the same rows for another tenant.
+
+    Without this the second job is claimed as a duplicate of the first and its
+    output is silently never written.
+    """
+    a = compute_content_hash("p", [], [{"id": 1}], {"tenant": "a"})
+    b = compute_content_hash("p", [], [{"id": 1}], {"tenant": "b"})
+    assert a != b
+
+
+def test_hash_is_unchanged_when_there_are_no_per_job_params():
+    """Jobs that carry no params must keep the hash they already have, so
+    enable_duplicate_jobs=False stays idempotent across this upgrade."""
+    baseline = compute_content_hash("p", ["t"], [{"id": 1}])
+
+    assert compute_content_hash("p", ["t"], [{"id": 1}], None) == baseline
+    assert compute_content_hash("p", ["t"], [{"id": 1}], {}) == baseline
+
+
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from reflowfy.reflow_manager.models import Base

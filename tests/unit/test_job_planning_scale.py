@@ -235,6 +235,20 @@ class TestPerJobParamsFromCustomPlan:
             [102],
         ]
 
+    def test_payload_carries_the_jobs_own_params_for_dedup(self):
+        """Content dedup needs what the plan attached, not the merged view:
+        the merged one also holds execution params, identical across jobs."""
+        rows, _ = _plan([101, 102], pipeline_name=_JobParamsIdPipeline.name)
+
+        own = [row["job_payload"]["job_params"] for row in rows]
+        assert own == [
+            {"current_id": 101, "current_ids": [101]},
+            {"current_id": 101, "current_ids": [101]},
+            {"current_id": 102, "current_ids": [102]},
+            {"current_id": 102, "current_ids": [102]},
+        ]
+        assert all("env" not in p for p in own)
+
     def test_per_job_params_are_merged_not_substituted(self):
         """job() attaches only what identifies the job; the rest must still travel."""
         rows, _ = _plan([101], pipeline_name=_JobParamsIdPipeline.name)

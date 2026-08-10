@@ -7,7 +7,7 @@ against PostgreSQL using whatever AsyncSession factory the worker provides.
 
 import hashlib
 import json
-from typing import Any, List
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy import delete
@@ -19,13 +19,26 @@ def compute_content_hash(
     pipeline_name: str,
     transformation_names: List[str],
     records: List[Any],
+    job_params: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Deterministic SHA256 over stable job content (v1 semantics)."""
-    stable = {
+    """Deterministic SHA256 over stable job content (v1 semantics).
+
+    ``job_params`` is what the plan attached to this one job (see
+    :func:`reflowfy.job`). Two jobs can hold identical records and still be
+    different work — the same rows for a different tenant, the same children
+    under a different parent — so those params are part of a job's identity.
+    Leaving them out silently dropped the second job as a duplicate.
+
+    Only included when non-empty, so jobs that carry no per-job params keep the
+    hashes they already have.
+    """
+    stable: Dict[str, Any] = {
         "pipeline_name": pipeline_name,
         "transformations": sorted(transformation_names),
         "records": records,
     }
+    if job_params:
+        stable["job_params"] = job_params
     content = json.dumps(stable, sort_keys=True, default=str)
     return hashlib.sha256(content.encode()).hexdigest()
 
