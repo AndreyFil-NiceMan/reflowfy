@@ -142,8 +142,8 @@ class _ExpandingIdPipeline(IdBasedPipeline):
             for child in range(3):
                 yield [{"parent_id": parent_id, "child_id": f"{parent_id}-{child}"}]
 
-    def define_source(self, runtime_params):
-        raise AssertionError("define_jobs owns the planning; define_source must not run")
+    # No define_source at all — define_jobs owns the planning, and the base
+    # class's default raises if anything ever calls it.
 
     def define_transformations(self, records, runtime_params):
         return []
@@ -168,6 +168,23 @@ class TestIdBasedOnUnifiedPlanner:
         assert len(rows) == 6
         children = [row["job_payload"]["source"]["config"]["records"][0]["child_id"] for row in rows]
         assert children == ["7-0", "7-1", "7-2", "8-0", "8-1", "8-2"]
+
+    def test_define_source_is_optional_when_define_jobs_is_overridden(self):
+        """_ExpandingIdPipeline defines no define_source. It must still register:
+        an abstract define_source would fail instantiation, and the metaclass
+        swallows that — the pipeline would just silently vanish."""
+        pipeline = pipeline_registry.get(_ExpandingIdPipeline.name)
+
+        assert pipeline is not None
+        with pytest.raises(NotImplementedError, match="define_source|define_jobs"):
+            pipeline.define_source({})
+
+    def test_overridden_define_jobs_still_drops_the_full_ids_list(self):
+        """An override sets no job_params — the payload must still not carry every ID."""
+        rows, _ = _plan([7, 8], pipeline_name=_ExpandingIdPipeline.name)
+
+        for row in rows:
+            assert "ids" not in row["job_payload"]["metadata"]["runtime_params"]
 
     def test_ids_parameter_is_still_injected_and_validated(self):
         pipeline = pipeline_registry.get(_BatchedIdPipeline.name)

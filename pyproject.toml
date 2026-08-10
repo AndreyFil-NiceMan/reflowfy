@@ -54,6 +54,11 @@ dependencies = [
     "python-on-whales>=0.70.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/AndreyFil-NiceMan/reflowfy"
+Repository = "https://github.com/AndreyFil-NiceMan/reflowfy"
+Issues = "https://github.com/AndreyFil-NiceMan/reflowfy/issues"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=7.4.0",

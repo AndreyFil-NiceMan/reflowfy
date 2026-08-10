@@ -415,6 +415,7 @@ class PipelineRunner:
                 None falls back to the pipeline's own enable_duplicate_jobs setting.
         """
         from reflowfy.core.execution_context import ExecutionContext
+        from reflowfy.core.id_based_pipeline import IdBasedPipeline
         from reflowfy.core.registry import pipeline_registry
 
         # Load pipeline from registry
@@ -469,6 +470,14 @@ class PipelineRunner:
         current_job_ids: List[str] = []
         job_rows: List[Dict[str, Any]] = []
 
+        # Params for jobs the plan didn't narrow itself. IdBasedPipeline.define_jobs
+        # sets job_params per job, but a pipeline that *overrides* define_jobs plans
+        # its own sources and sets nothing — and then every job would carry the whole
+        # `ids` list. Drop `ids` for the ID-based path the same way define_jobs does.
+        default_job_params = enriched_params
+        if isinstance(pipeline, IdBasedPipeline):
+            default_job_params = {k: v for k, v in enriched_params.items() if k != "ids"}
+
         base_source = pipeline.source
         plan = _iter_plan(pipeline_name, plan_slices(base_source, enriched_params))
         for sub_source in plan:
@@ -480,7 +489,7 @@ class PipelineRunner:
             # execution's params unchanged.
             job_params = getattr(sub_source, "job_params", None)
             if job_params is None:
-                job_params = enriched_params
+                job_params = default_job_params
             context_dict["runtime_params"] = dict(job_params)
             metadata = {**context_dict, "source_metadata": None}
             if "current_ids" in job_params:

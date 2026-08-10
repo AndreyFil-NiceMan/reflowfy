@@ -109,8 +109,13 @@ def register(app: typer.Typer):
         from reflowfy.core.id_based_pipeline import IdBasedPipeline
 
         is_id_based = isinstance(pipeline, IdBasedPipeline)
+        # A pipeline that overrides define_jobs owns its own splitting, so it runs
+        # through the standard define_jobs path below even when it is ID-based —
+        # the per-ID loop here calls define_source, which such a pipeline need not
+        # implement.
+        plans_own_jobs = type(pipeline).define_jobs is not IdBasedPipeline.define_jobs
 
-        if is_id_based:
+        if is_id_based and not plans_own_jobs:
             batch_size = pipeline.ids_batch_size
             console.print(
                 f"[bold cyan]🔑 Pipeline type: IdBasedPipeline (ids_batch_size={batch_size})[/bold cyan]"
@@ -176,7 +181,7 @@ def register(app: typer.Typer):
         # ================================================================
         # IdBasedPipeline: per-ID execution
         # ================================================================
-        if is_id_based:
+        if is_id_based and not plans_own_jobs:
             ids = params.get("ids", [])
             if not ids:
                 console.print("[red]❌ No IDs provided. 'ids' parameter is required.[/red]")

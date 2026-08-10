@@ -329,6 +329,35 @@ class CliTestIdBasedPipeline(IdBasedPipeline):
     return _write_file(workspace, "id_based_pipeline.py", content)
 
 
+def _write_id_based_define_jobs_pipeline(workspace):
+    """IdBasedPipeline that owns its splitting and defines NO define_source."""
+    content = """\
+from reflowfy.core.id_based_pipeline import IdBasedPipeline
+
+
+class CliTestIdBasedDefineJobsPipeline(IdBasedPipeline):
+    name = "cli_id_based_define_jobs"
+
+    # No define_source on purpose: define_jobs owns the splitting, so the base
+    # class must not force a stub.
+    def define_jobs(self, runtime_params):
+        for parent_id in runtime_params["ids"]:
+            yield [{"parent_id": parent_id, "child_id": f"{parent_id}-a"}]
+
+    def define_destination(self, records, runtime_params):
+        class _Dest:
+            async def send_with_retry(self, records, metadata):
+                pass
+            async def health_check(self):
+                return True
+        return _Dest()
+
+    def define_transformations(self, records, runtime_params):
+        return []
+"""
+    return _write_file(workspace, "id_based_define_jobs_pipeline.py", content)
+
+
 def _write_transform_pipeline(workspace):
     """Pipeline whose transformation stamps _tagged=True on every record."""
     content = """\
@@ -629,6 +658,24 @@ class TestCliTestIdBased:
         )
         assert "6 records processed" in result.stdout, (
             f"Expected all 6 IDs to yield a record:\n{result.stdout}"
+        )
+
+    def test_id_based_with_define_jobs_needs_no_define_source(self, temp_workspace):
+        """define_source is optional once define_jobs owns the splitting.
+
+        The per-ID branch of `reflowfy test` calls define_source, so it must not
+        claim a pipeline that plans its own jobs.
+        """
+        path = _write_id_based_define_jobs_pipeline(temp_workspace)
+
+        with patch("rich.prompt.Prompt.ask", return_value="[1, 2, 3]"):
+            result = runner.invoke(app, ["test", path, "--dry-run"])
+
+        assert result.exit_code == 0, result.stdout
+        assert "Setup failed" not in result.stdout, result.stdout
+        assert "must implement define_source" not in result.stdout, result.stdout
+        assert "3 records processed" in result.stdout, (
+            f"Expected one record per ID:\n{result.stdout}"
         )
 
     def test_id_based_no_ids_exits(self, temp_workspace):

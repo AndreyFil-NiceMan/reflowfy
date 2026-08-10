@@ -68,8 +68,10 @@ jobs:
 
       - name: Wait for PyPI to index the release
         run: |
+          # Poll the simple index, not the JSON API: pip resolves against
+          # /simple/ and its CDN copy lags the JSON API by minutes.
           for i in $(seq 1 30); do
-            if curl -fsSL "https://pypi.org/pypi/reflowfy/${VERSION}/json" >/dev/null 2>&1; then
+            if curl -fsSL "https://pypi.org/simple/reflowfy/" | grep -q "reflowfy-${VERSION}-py3-none-any.whl"; then
               echo "reflowfy ${VERSION} is available on PyPI"
               exit 0
             fi
