@@ -196,6 +196,34 @@ class TestPlanSlicesCarriesJobParams:
         assert child.job_params == {"current_ids": ["child"]}
 
 
+class TestJobHelper:
+    """reflowfy.job() is how a custom plan says what one job is *about*."""
+
+    def test_job_carries_its_records_and_params(self):
+        from reflowfy import job
+
+        planned = job([{"n": 1}], current_id=7)
+
+        assert planned.fetch({}) == [{"n": 1}]
+        assert planned.job_params == {"current_id": 7}
+
+    def test_job_params_reach_each_planned_slice(self):
+        from reflowfy import job
+
+        slices = list(plan_slices([job([{"n": i}], current_id=i) for i in (1, 2)], {}))
+
+        assert [s.job_params for s in slices] == [{"current_id": 1}, {"current_id": 2}]
+
+    def test_a_plan_without_job_falls_back_to_the_execution_params(self):
+        """chunk() attaches nothing, so those jobs just get the execution's params."""
+        from reflowfy.execution.job_runner import job_runtime_params
+
+        slices = list(plan_slices(chunk([{"n": 1}, {"n": 2}], size=1), {}))
+
+        assert all(s.job_params is None for s in slices)
+        assert job_runtime_params(slices[0], {"env": "prod"}) == {"env": "prod"}
+
+
 class _RaisingPlanPipeline(AbstractPipeline):
     name = "unit_raising_define_jobs_pipeline"
 

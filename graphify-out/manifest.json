@@ -1,7 +1,7 @@
 {
   "/home/kofli/git-repos/reflowfy/reflowfy/__init__.py": {
-    "mtime": 1786034740.6162386,
-    "hash": "64a15511a61e3ef05d5b6861adea2ba3"
+    "mtime": 1786352573.8312018,
+    "hash": "8f1136b1a05e9d86de67c8da523e7dd4"
   },
   "/home/kofli/git-repos/reflowfy/reflowfy/kafka_config.py": {
     "mtime": 1782289298.89255,
@@ -68,8 +68,8 @@
     "hash": "4c74aba13bf2e644b2025d9e1248ef5a"
   },
   "/home/kofli/git-repos/reflowfy/reflowfy/cli/commands/test.py": {
-    "mtime": 1786225956.1853983,
-    "hash": "d7d2f053fa4f07fb6742ef3ae4fe8b9e"
+    "mtime": 1786352708.01987,
+    "hash": "658df78bef01134655afda7be2017784"
   },
   "/home/kofli/git-repos/reflowfy/reflowfy/cli/commands/build.py": {
     "mtime": 1783107726.120831,
@@ -116,8 +116,8 @@
     "hash": "e1a8c3d74a64263fc0cea9c15d6dc9fb"
   },
   "/home/kofli/git-repos/reflowfy/reflowfy/reflow_manager/pipeline_runner.py": {
-    "mtime": 1786224386.4213147,
-    "hash": "bb76ff43d1d97d5b6a935666e536e168"
+    "mtime": 1786353513.8547828,
+    "hash": "3f4ad6fd7b2456a246451786584ab3b4"
   },
   "/home/kofli/git-repos/reflowfy/reflowfy/reflow_manager/models.py": {
     "mtime": 1783194283.6622548,
@@ -204,8 +204,8 @@
     "hash": "1e3405e3975b96912787ce9d272236c9"
   },
   "/home/kofli/git-repos/reflowfy/reflowfy/sources/base.py": {
-    "mtime": 1782945209.6685908,
-    "hash": "345afddd7a75a5264c485cfd8c352717"
+    "mtime": 1786352568.4081895,
+    "hash": "73ab6f3553a95ffb38ce7ffcb12161b9"
   },
   "/home/kofli/git-repos/reflowfy/reflowfy/sources/api.py": {
     "mtime": 1782945209.6685908,
@@ -268,8 +268,8 @@
     "hash": "31021ad1f47203ea5c2fdbf69c79ddd8"
   },
   "/home/kofli/git-repos/reflowfy/reflowfy/execution/local_executor.py": {
-    "mtime": 1783568189.6001954,
-    "hash": "9d3090c7a387876edfa040d2a70fdce0"
+    "mtime": 1786352906.2668343,
+    "hash": "120ee1d6acc00f4e18911e72090ccda5"
   },
   "/home/kofli/git-repos/reflowfy/reflowfy/execution/content_dedup.py": {
     "mtime": 1782945209.6675909,
@@ -280,8 +280,8 @@
     "hash": "ea0c9fced64581c6dc8911ad1392d9cd"
   },
   "/home/kofli/git-repos/reflowfy/reflowfy/execution/job_runner.py": {
-    "mtime": 1786028654.0479865,
-    "hash": "1de30445f908334206e9244bfd825298"
+    "mtime": 1786352546.181081,
+    "hash": "12901dafcc72f3e08717cf69ae027d88"
   },
   "/home/kofli/git-repos/reflowfy/reflowfy/execution/transformation_runner.py": {
     "mtime": 1782071225.5689695,
@@ -340,8 +340,8 @@
     "hash": "a6d61cb2ce14d14e5855331896f18c00"
   },
   "/home/kofli/git-repos/reflowfy/reflowfy/core/abstract_pipeline.py": {
-    "mtime": 1786028654.0469868,
-    "hash": "a40c8ab85fa6d0dd1f00ae07aaeb2a12"
+    "mtime": 1786352957.0670812,
+    "hash": "902aa8d94a0f9949da5e2d43db8b0ee2"
   },
   "/home/kofli/git-repos/reflowfy/reflowfy/core/serialization.py": {
     "mtime": 1782945209.666591,
@@ -356,8 +356,8 @@
     "hash": "528c2c06798e7499fe7c9761e321875f"
   },
   "/home/kofli/git-repos/reflowfy/reflowfy/core/id_based_pipeline.py": {
-    "mtime": 1786225839.5999284,
-    "hash": "16dde2d4f3bd0f3471828679672c85d1"
+    "mtime": 1786352924.8559246,
+    "hash": "3eced1121f1f62d8dba01337e3777e8a"
   },
   "/home/kofli/git-repos/reflowfy/reflowfy/core/execution_context.py": {
     "mtime": 1782945209.666591,
@@ -420,8 +420,8 @@
     "hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "/home/kofli/git-repos/reflowfy/tests/unit/test_define_jobs.py": {
-    "mtime": 1786028654.0479865,
-    "hash": "209fcb5845aa716cb5874247839d475a"
+    "mtime": 1786352801.091323,
+    "hash": "4556963c87839eb478e14cd5abf12aca"
   },
   "/home/kofli/git-repos/reflowfy/tests/unit/test_init_env.py": {
     "mtime": 1785793250.346677,
@@ -454,6 +454,10 @@
   "/home/kofli/git-repos/reflowfy/tests/unit/test_load_query.py": {
     "mtime": 1785791514.068461,
     "hash": "1ed811f8e6455b63791e816ebeb471cc"
+  },
+  "/home/kofli/git-repos/reflowfy/tests/unit/test_local_executor_define_jobs.py": {
+    "mtime": 1786352891.2307613,
+    "hash": "76e103c530962d34967d82592ddc011a"
   },
   "/home/kofli/git-repos/reflowfy/tests/unit/test_source_split.py": {
     "mtime": 1785089451.5627668,
@@ -536,8 +540,8 @@
     "hash": "6490925dc6ae6acc83e6db454ac7e242"
   },
   "/home/kofli/git-repos/reflowfy/tests/unit/test_job_planning_scale.py": {
-    "mtime": 1786225857.9370048,
-    "hash": "ac624abc75176702134855473847a725"
+    "mtime": 1786352821.7554233,
+    "hash": "1089f732d9cb35783fc0499b24d01d10"
   },
   "/home/kofli/git-repos/reflowfy/tests/unit/test_dispatch_background_task.py": {
     "mtime": 1782945209.6705906,
@@ -596,8 +600,8 @@
     "hash": "c4cc01a2b12b1096d433c54fb1314fbe"
   },
   "/home/kofli/git-repos/reflowfy/tests/e2e/test_id_based_define_jobs.py": {
-    "mtime": 1786225281.975892,
-    "hash": "57309b31d603c0528fda3028aff33b18"
+    "mtime": 1786353027.9024253,
+    "hash": "908ee933186d42ecbe7f7edf05d100cf"
   },
   "/home/kofli/git-repos/reflowfy/tests/e2e/test_elastic_routed_destinations.py": {
     "mtime": 1782945209.6705906,
@@ -812,8 +816,8 @@
     "hash": "ac6b19ce91254f14ffb02003eded9a2e"
   },
   "/home/kofli/git-repos/reflowfy/tests/e2e/test_pipelines/id_based_define_jobs_pipeline.py": {
-    "mtime": 1786225849.283969,
-    "hash": "f8da5e340e550b08fae20d2633f639f2"
+    "mtime": 1786353003.7003076,
+    "hash": "e8936be8985c33a0a386f3fe08a5a2f2"
   },
   "/home/kofli/git-repos/reflowfy/tests/e2e/test_pipelines/api_id_source_test_pipeline.py": {
     "mtime": 1785089451.5617669,
@@ -856,8 +860,8 @@
     "hash": "362a33a1e6af320dbd0bf2a987463b0a"
   },
   "/home/kofli/git-repos/reflowfy/tests/e2e/test_pipelines/transformations/__init__.py": {
-    "mtime": 1786225276.5658526,
-    "hash": "55c10f6770e70dbf21989b825ebf86fd"
+    "mtime": 1786353020.0633872,
+    "hash": "34cd44360647ea20468c5789e30cba54"
   },
   "/home/kofli/git-repos/reflowfy/tests/e2e/test_pipelines/queries/events_by_date.sql": {
     "mtime": 1782071225.5749698,
@@ -944,8 +948,8 @@
     "hash": "e964fe18e1f60589d37342db684bee13"
   },
   "/home/kofli/git-repos/reflowfy/reflowfy/helm/reflowfy/Chart.yaml": {
-    "mtime": 1786034740.6166909,
-    "hash": "42440bd5969441e4877ff8c2f72ff4b6"
+    "mtime": 1786226760.4018903,
+    "hash": "65131a1d49a265cffbe17f5c650fac4c"
   },
   "/home/kofli/git-repos/reflowfy/reflowfy/helm/reflowfy/templates/reflow-manager.yaml": {
     "mtime": 1785089451.560767,

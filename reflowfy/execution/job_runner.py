@@ -43,6 +43,44 @@ def chunk(records: List[Any], size: int = 1) -> List[List[Any]]:
     return [records[i : i + size] for i in range(0, len(records), size)]
 
 
+def job(records: List[Any], **params: Any) -> Any:
+    """One job carrying ``records``, plus the params that job alone should see.
+
+    ``define_jobs`` decides what a job is; this is how it says what a job is
+    *about*. The params are merged into that job's ``runtime_params``, so
+    transformations and ``define_destination`` can read them — the way the
+    built-in ID-based plan passes ``current_id``/``current_ids``. Without it a
+    custom plan's jobs all share the execution's params and cannot tell each
+    other apart.
+
+    Args:
+        records: The records for this one job.
+        **params: Extra runtime_params for this job only.
+
+    Returns:
+        A source carrying the records and the per-job params.
+
+    Example:
+        >>> def define_jobs(self, params):
+        ...     for entity_id in params["ids"]:
+        ...         yield job(fetch_rows(entity_id), current_id=entity_id)
+    """
+    from reflowfy.sources.static import StaticSource
+
+    source = StaticSource(records)
+    source.job_params = params
+    return source
+
+
+def job_runtime_params(source: Any, runtime_params: Dict[str, Any]) -> Dict[str, Any]:
+    """The runtime_params one planned job runs with: the execution's, plus its own.
+
+    Keeps the local/preview runners agreeing with what the manager writes into
+    each dispatched job's metadata.
+    """
+    return {**runtime_params, **(getattr(source, "job_params", None) or {})}
+
+
 def plan_slices(source: Any, runtime_params: Dict[str, Any]) -> Iterator[Any]:
     """Yield the per-job narrowed sources for ``source``.
 

@@ -487,9 +487,11 @@ class PipelineRunner:
             # IdBasedPipeline gives each job only the IDs that job handles,
             # instead of every ID in the execution. Everyone else gets the
             # execution's params unchanged.
-            job_params = getattr(sub_source, "job_params", None)
-            if job_params is None:
-                job_params = default_job_params
+            # Merged, not replaced: reflowfy.job() attaches only the keys that
+            # identify one job (e.g. current_id), and the rest of the
+            # execution's params still have to reach it.
+            own_params = getattr(sub_source, "job_params", None)
+            job_params = {**default_job_params, **own_params} if own_params else default_job_params
             context_dict["runtime_params"] = dict(job_params)
             metadata = {**context_dict, "source_metadata": None}
             if "current_ids" in job_params:

@@ -38,14 +38,26 @@ Example (batch mode):
 
 Example (one input ID fans out into many jobs) — override ``define_jobs`` to own
 the splitting. Each yielded element is one job, so each child ID gets its own
-transformations, its own destination write, and its own retry:
+transformations, its own destination write, and its own retry. Wrap it in
+``job(...)`` to tag the job with the params it should run with, the way the
+built-in plan passes ``current_id``/``current_ids``:
+    >>> from reflowfy import job
+    >>>
     >>> class ChildSyncPipeline(IdBasedPipeline):
     ...     name = "child_sync"
     ...
     ...     def define_jobs(self, runtime_params):
     ...         for parent_id in runtime_params["ids"]:
     ...             for child_id in fetch_child_ids(parent_id):
-    ...                 yield [{"parent_id": parent_id, "child_id": child_id}]
+    ...                 yield job(
+    ...                     [{"parent_id": parent_id, "child_id": child_id}],
+    ...                     current_id=parent_id,
+    ...                 )
+
+Note that overriding ``define_jobs`` replaces the built-in plan entirely, so
+``current_ids`` is no longer filled in for you — pass what each job needs via
+``job(...)``. If all you want is one job per ID, do not override it: that is
+already what ``ids_batch_size = 1`` (the default) does.
 """
 
 import logging

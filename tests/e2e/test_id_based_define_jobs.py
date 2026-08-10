@@ -101,3 +101,18 @@ class TestIdBasedDefineJobs:
             assert record["saw_ids_param"] is False, (
                 f"Worker received the full 'ids' list in runtime_params: {record}"
             )
+
+    def test_each_job_runs_with_the_params_its_plan_gave_it(
+        self, check_reflow_manager, check_mock_http
+    ):
+        """job(...) params must reach the worker's transformations, per job."""
+        execution_id = _run(PARENT_IDS)
+        assert _wait(execution_id)["state"] == "completed"
+
+        records = _received()
+        assert len(records) == EXPECTED_JOBS
+        for record in records:
+            # Every child of parent 7 must see current_id 7, not 8 and not None.
+            assert record["job_current_id"] == record["parent_id"], (
+                f"Job ran with the wrong per-job params: {record}"
+            )
