@@ -25,8 +25,10 @@ uv run pytest tests/unit/test_api_destination.py::TestClassName::test_name -v   
 # Lint / format / type-check (line-length 100; mypy strict; pyright strict)
 uv run ruff check reflowfy/
 uv run black reflowfy/
-uv run mypy reflowfy/
-uv run pyright              # config in [tool.pyright]; scoped to reflowfy/
+uv run mypy reflowfy/       # NOT clean: ~141 pre-existing errors, mostly no-untyped-def.
+                            # The bar for a change is "the count does not go up".
+uv run pyright              # config in [tool.pyright]; covers reflowfy/, pipelines/
+                            # and tests/e2e/test_pipelines/. Clean except 3 known errors.
 
 # Run the full local stack via the CLI (Docker Compose under the hood)
 uv run python -m reflowfy.cli.main run --build        # add -d/--detach to background
@@ -73,7 +75,24 @@ The manager dispatches a JSON message per planned slice on Kafka topic `reflow.j
 
 Pipelines register themselves with **no explicit registry calls**. `AbstractPipeline` uses a metaclass (`PipelineMeta`) that instantiates and registers any subclass defining a `name` attribute at class-definition time. If `__init__` raises (e.g. missing config), registration is **silently skipped** — a pipeline that fails to construct simply won't appear, with no error. The `pipeline_registry` (`core/registry.py`) is a thread-safe singleton and registration is idempotent by name.
 
+`PipelineMeta` also records the pipeline's params TypedDict (see below) from the subscripted base, reading `namespace["__orig_bases__"]` before it instantiates the class.
+
 `core/pipeline_discovery.py` (`discover_and_load_pipelines`) imports every module under the `PIPELINE_MODULE` directory (default `pipelines`) plus sibling `sources/`, `destinations/`, `transformations/` dirs, which triggers the metaclass and decorator registration. All three services call this on startup. In E2E, `PIPELINE_MODULE` is overridden to `tests.e2e.test_pipelines`.
+
+### Typed runtime_params
+
+`runtime_params` is one flat dict merging the user's parameters with the framework's reserved execution-context keys (built by `build_flat_runtime_params` in `core/execution_context.py`). `core/runtime_params.py` names that shape: `RuntimeParams` (a `total=False` TypedDict of the reserved keys), the `P` TypeVar bound to it, and the `Param` marker for defaults.
+
+A pipeline declares its parameters **once**, as a type: `class MyPipeline(AbstractPipeline[MyParams])` where `MyParams(RuntimeParams, total=False)` adds its own keys. Every hook then receives `MyParams` instead of `Dict[str, Any]`, and `define_parameters()` is *derived* from it by `params_from_typeddict` (`core/abstract_pipeline.py`) — so validation, defaults, CLI prompts and the generated OpenAPI routes all follow from the same declaration. A hand-written `define_parameters()` override still wins.
+
+**Not declaring one is deprecated.** `PipelineMeta` raises a `DeprecationWarning` at class-definition time for any registered pipeline whose `_params_type` is `None`, naming the pipeline and the fix. A pipeline with no parameters of its own migrates with one token — `AbstractPipeline[RuntimeParams]` — so nobody needs an empty TypedDict. Every pipeline under `pipelines/` and `tests/e2e/test_pipelines/` is migrated; the remaining unsubscripted ones live in `tests/unit/` on purpose, as backward-compat canaries. Nothing raises: an unsubscripted pipeline still registers and runs.
+
+Notes:
+- `P` defaults to `Any` (PEP 696, via `typing_extensions`), **not** to `RuntimeParams`. That is what keeps the ~130 unsubscripted `AbstractPipeline` subclasses working: defaulting to `RuntimeParams` makes every pre-existing hook annotated `Dict[str, Any]` a Liskov violation.
+- TypedDicts are closed, so a pipeline that declares `MyParams` must also declare the enrichment keys its own code *writes* into `runtime_params` (see `tests/e2e/test_pipelines/runtime_params_enrichment_pipeline.py`). Untyped pipelines are unaffected.
+- Reserved keys are all optional because the execution context is built per job: `define_source`/`define_jobs` run before `execution_id` et al. exist. Read them with `.get()`.
+- `BaseTransformation.apply` deliberately keeps `Dict[str, Any]` — a transformation is shared across pipelines, so it cannot name one pipeline's params type.
+- Worked examples: `typed_params_pipeline.py` (+ `tests/e2e/test_typed_params.py`), `id_based_api_advanced_pipeline_test.py`, `define_jobs_test_pipeline.py`. Derivation is unit-tested in `tests/unit/test_typed_runtime_params.py`.
 
 ### Execution modes
 
@@ -89,7 +108,16 @@ The **DLQ is not a failure sink** despite the name — nothing auto-populates it
 
 `scripts/run_e2e_tests.sh` does **not** test the source tree in place. It builds a wheel, runs `reflowfy init` into a throwaway `e2e_workspace/`, patches the generated Dockerfiles to install the local wheel, rewrites `docker-compose.yml` (E2E ports 5433/8002/8003, container prefix `reflofy-e2e-`, `PIPELINE_MODULE=tests.e2e.test_pipelines`), brings up `docker-compose.e2e-infra.yml` (Kafka/ES/mock servers) plus the app, seeds test data, then runs `pytest tests/e2e/`. So changes to packaging, the CLI scaffolding, Dockerfiles, or compose files are all exercised by the E2E run, and a stale build will mask source edits — always rebuild.
 
-**E2E only covers local mode.** The scaffold it runs (`reflowfy init`) sets `EXECUTION_MODE: local`, `KAFKA_BOOTSTRAP_SERVERS: 'ignored:9092'`, and defines **no worker service** — so every E2E exercises `LocalDispatcher`, and the production path (manager → Kafka → `KafkaJobConsumer` → worker) has unit coverage only (`tests/unit/test_define_jobs_worker_path.py`, `test_executor_worker_sourcing.py`). To exercise it by hand, add a `docker-compose.override.yml` in `e2e_workspace/` setting `EXECUTION_MODE: distributed` on `reflow-manager` and adding a `worker` service built from `Dockerfile.worker` with `PIPELINE_MODULE=tests.e2e.test_pipelines`; note `docker compose up` will reuse a stale `e2e_workspace-worker` image, so pass `--build`.
+**E2E only covers local mode.** The scaffold it runs (`reflowfy init`) sets `EXECUTION_MODE: local`, `KAFKA_BOOTSTRAP_SERVERS: 'ignored:9092'`, and defines **no worker service** — so every E2E exercises `LocalDispatcher`, and the production path (manager → Kafka → `KafkaJobConsumer` → worker) has unit coverage only (`tests/unit/test_define_jobs_worker_path.py`, `test_executor_worker_sourcing.py`). To exercise it, copy the ready-made `scripts/e2e-distributed.override.yml` into `e2e_workspace/docker-compose.override.yml` (it flips `reflow-manager` to `EXECUTION_MODE: distributed` and adds a `worker` from `Dockerfile.worker`), then:
+
+```bash
+./scripts/run_e2e_tests.sh --test-file tests/e2e/test_typed_params.py --keep-docker
+cp scripts/e2e-distributed.override.yml e2e_workspace/docker-compose.override.yml
+cd e2e_workspace && REFLOWFY_BASE_IMAGE=reflowfy-base:local docker compose up -d --build worker reflow-manager
+cd .. && uv run pytest tests/e2e/test_typed_params.py   # now runs over Kafka
+```
+
+Note `docker compose up` reuses a stale `e2e_workspace-worker` image, so `--build` matters, and the override must not be in place during the script's own run or it will silently switch that run to distributed too.
 
 ## graphify knowledge graph
 

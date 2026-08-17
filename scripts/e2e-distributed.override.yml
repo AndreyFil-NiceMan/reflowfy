@@ -1,0 +1,49 @@
+# Exercises the production path that the default E2E stack does not:
+#   manager -> Kafka (reflow.jobs) -> KafkaJobConsumer -> worker -> destination
+#
+# The scaffolded compose runs EXECUTION_MODE: local with no worker at all, so
+# every normal E2E goes through LocalDispatcher in-process. This override flips
+# the manager to distributed and adds a worker, to confirm typed runtime_params
+# survive the JSON round-trip over the wire.
+#
+# Usage, after ./scripts/run_e2e_tests.sh --keep-docker:
+#   cp scripts/e2e-distributed.override.yml e2e_workspace/docker-compose.override.yml
+#   cd e2e_workspace
+#   REFLOWFY_BASE_IMAGE=reflowfy-base:local docker compose up -d --build worker reflow-manager
+#   uv run pytest tests/e2e/test_typed_params.py   # now runs over Kafka
+#
+# --build matters: docker compose otherwise reuses a stale worker image.
+services:
+  reflow-manager:
+    environment:
+      EXECUTION_MODE: distributed
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+      args:
+        REFLOWFY_BASE_IMAGE: ${REFLOWFY_BASE_IMAGE:-reflowfy-base:latest}
+    container_name: reflofy-e2e-worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      reflow-manager:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://reflowfy:reflowfy@postgres:5432/reflowfy
+      KAFKA_BOOTSTRAP_SERVERS: 'reflofy-e2e-kafka:29092'
+      KAFKA_TOPIC: reflow.jobs
+      KAFKA_GROUP_ID: reflowfy-e2e-workers
+      PIPELINE_MODULE: tests.e2e.test_pipelines
+      EXECUTION_MODE: distributed
+      ELASTICSEARCH_URL: http://reflofy-e2e-elasticsearch:9200
+      SQL_CONNECTION_URL: postgresql://reflowfy:reflowfy@postgres:5432/reflowfy
+      MOCK_HTTP_URL: http://reflofy-e2e-mock-http:8091/webhook
+      MOCK_API_URL: http://reflofy-e2e-mock-api:8092
+      LOG_DESTINATION: stdout
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_JSON: 'false'
+    networks:
+      - reflowfy-network
+    restart: unless-stopped

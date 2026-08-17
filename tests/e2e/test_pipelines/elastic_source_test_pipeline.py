@@ -5,7 +5,9 @@ Pipeline that reads from Elasticsearch and outputs to console.
 Uses a JSON query template loaded from queries/events_by_timestamp.json.
 """
 
-from reflowfy import AbstractPipeline, PipelineParameter
+from typing_extensions import Required
+
+from reflowfy import AbstractPipeline, RuntimeParams
 from tests.e2e.test_pipelines.destinations import e2e_console
 from tests.e2e.test_pipelines.sources import e2e_elastic
 from tests.e2e.test_pipelines.transformations import add_source_info
@@ -13,17 +15,18 @@ from tests.e2e.test_pipelines.transformations import add_source_info
 INDEX_NAME = "e2e-test-events"
 
 
-class E2EElasticSourceTestPipeline(AbstractPipeline):
+class ElasticSourceParams(RuntimeParams, total=False):
+    """Parameters for :class:`E2EElasticSourceTestPipeline`."""
+
+    start_time: Required[str]
+    end_time: Required[str]
+
+
+class E2EElasticSourceTestPipeline(AbstractPipeline[ElasticSourceParams]):
     """E2E test pipeline for Elasticsearch source."""
 
     name = "e2e_elastic_source_test"
     rate_limit = 600  # jobs per minute
-
-    def define_parameters(self):
-        return [
-            PipelineParameter(name="start_time", required=True),
-            PipelineParameter(name="end_time", required=True),
-        ]
 
     def define_source(self, runtime_params):
         return e2e_elastic(

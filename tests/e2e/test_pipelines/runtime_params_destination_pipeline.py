@@ -3,13 +3,29 @@ E2E pipeline to verify runtime_params are appended through transforms
 and used by the destination payload/headers.
 """
 
-from reflowfy import AbstractPipeline
+from typing_extensions import Annotated
+
+from reflowfy import AbstractPipeline, Param, RuntimeParams
 from tests.e2e.test_pipelines.destinations import e2e_http_runtime_params
 from tests.e2e.test_pipelines.sources import e2e_mock
 from tests.e2e.test_pipelines.transformations import params_step1_enrich, params_step2_verify
 
 
-class E2ERuntimeParamsDestinationPipeline(AbstractPipeline):
+class RuntimeParamsDestParams(RuntimeParams, total=False):
+    """Parameters for :class:`E2ERuntimeParamsDestinationPipeline`.
+
+    ``tenant`` comes from the caller; the rest are written at runtime — by
+    define_source below and by the params_step1_enrich transformation — and are
+    declared so those writes type-check.
+    """
+
+    tenant: str
+    source_marker: Annotated[str, Param(internal=True)]
+    step1_count: Annotated[int, Param(internal=True)]
+    step1_ran: Annotated[bool, Param(internal=True)]
+
+
+class E2ERuntimeParamsDestinationPipeline(AbstractPipeline[RuntimeParamsDestParams]):
     """
     Pipeline that pushes runtime_params through two transformations
     and ensures destination uses them.

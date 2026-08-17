@@ -5,7 +5,7 @@ All sources use the @source decorator and are importable as factory functions.
 """
 
 import os
-from typing import List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from reflowfy import source
 from reflowfy.sources.mock import mock_source, generate_sample_data
@@ -17,7 +17,7 @@ def e2e_elastic(
     index: str = "e2e-test-events",
     scroll: str = "2m",
     size: int = 50,
-    base_query: Optional[dict] = None,
+    base_query: Optional[Dict[str, Any]] = None,
     num_slices: int = 1,
     docs_per_job: Optional[int] = None,
 ):
@@ -50,7 +50,7 @@ def e2e_elastic(
 def e2e_mock(
     count: int = 100,
     batch_size: int = 10,
-    data: Optional[list] = None,
+    data: Optional[List[Any]] = None,
 ):
     """Pre-configured mock data source for E2E tests."""
     return mock_source(
@@ -68,7 +68,7 @@ def e2e_id_based_api(
     batch_size: int = 2,
     response_key: Optional[str] = None,
     body: Optional[object] = None,
-    params: Optional[dict] = None,
+    params: Optional[Dict[str, Any]] = None,
 ):
     """Pre-configured ID-based API source for E2E tests."""
     from reflowfy.sources.api import id_based_api_source

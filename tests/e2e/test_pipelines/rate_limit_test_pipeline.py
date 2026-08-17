@@ -10,13 +10,13 @@ All use e2e_mock → e2e_http with rl_passthrough that stamps dispatch timestamp
 and batch_id for timing verification.
 """
 
-from reflowfy import AbstractPipeline
+from reflowfy import AbstractPipeline, RuntimeParams
 from tests.e2e.test_pipelines.sources import e2e_mock
 from tests.e2e.test_pipelines.destinations import e2e_http
 from tests.e2e.test_pipelines.transformations import rl_passthrough
 
 
-class E2ESlowRatePipeline(AbstractPipeline):
+class E2ESlowRatePipeline(AbstractPipeline[RuntimeParams]):
     """Rate = 60 jobs/min (1/s) — 5 single-record batches should take >= 3 s."""
 
     name = "e2e_slow_rate"
@@ -32,7 +32,7 @@ class E2ESlowRatePipeline(AbstractPipeline):
         return [rl_passthrough()]
 
 
-class E2EFastRatePipeline(AbstractPipeline):
+class E2EFastRatePipeline(AbstractPipeline[RuntimeParams]):
     """Rate = 30000 jobs/min — 50 records in 5 batches should complete quickly."""
 
     name = "e2e_fast_rate"
@@ -48,7 +48,7 @@ class E2EFastRatePipeline(AbstractPipeline):
         return [rl_passthrough()]
 
 
-class E2ERateLimitOverridePipeline(AbstractPipeline):
+class E2ERateLimitOverridePipeline(AbstractPipeline[RuntimeParams]):
     """Default rate = 30000 jobs/min; test overrides to 60 via RunPipelineRequest.rate_limit."""
 
     name = "e2e_rate_override"

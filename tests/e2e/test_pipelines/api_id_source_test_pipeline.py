@@ -7,7 +7,11 @@ Used for E2E testing of the IDBasedAPISource connector.
 
 import os
 
-from reflowfy import AbstractPipeline, PipelineParameter
+from typing import Any, List
+
+from typing_extensions import Annotated, NotRequired
+
+from reflowfy import AbstractPipeline, Param, RuntimeParams
 from tests.e2e.test_pipelines.destinations import e2e_console
 from tests.e2e.test_pipelines.sources import e2e_id_based_api
 from tests.e2e.test_pipelines.transformations import (
@@ -19,36 +23,21 @@ from tests.e2e.test_pipelines.transformations import (
 MOCK_API_URL = os.getenv("MOCK_API_URL", "http://localhost:8092")
 
 
-class E2EApiIdSourceTestPipeline(AbstractPipeline):
+class ApiIdSourceParams(RuntimeParams, total=False):
+    """Parameters for :class:`E2EApiIdSourceTestPipeline`."""
+
+    base_url: Annotated[NotRequired[str], Param("Base API URL", default=MOCK_API_URL)]
+    ids: Annotated[
+        NotRequired[List[Any]], Param("List of user IDs to fetch", default=[1, 2, 3, 4, 5])
+    ]
+    batch_size: Annotated[NotRequired[int], Param("IDs per job batch", default=2)]
+
+
+class E2EApiIdSourceTestPipeline(AbstractPipeline[ApiIdSourceParams]):
     """E2E test pipeline for ID-based API source."""
 
     name = "e2e_api_id_source_test"
     rate_limit = 600  # jobs per minute
-
-    def define_parameters(self):
-        return [
-            PipelineParameter(
-                name="base_url",
-                description="Base API URL",
-                param_type=str,
-                required=False,
-                default=MOCK_API_URL,
-            ),
-            PipelineParameter(
-                name="ids",
-                description="List of user IDs to fetch",
-                param_type=list,
-                required=False,
-                default=[1, 2, 3, 4, 5],
-            ),
-            PipelineParameter(
-                name="batch_size",
-                description="IDs per job batch",
-                param_type=int,
-                required=False,
-                default=2,
-            ),
-        ]
 
     def define_source(self, runtime_params):
         return e2e_id_based_api(

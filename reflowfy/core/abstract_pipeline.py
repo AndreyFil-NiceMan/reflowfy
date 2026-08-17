@@ -28,12 +28,40 @@ Example:
 
 import logging
 import re
+import typing
+import warnings
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Dict,
+    Generic,
+    Iterable,
+    List,
+    Literal,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
+
+import typing_extensions
 
 from reflowfy.core.exceptions import pipeline_step
 from reflowfy.core.query_loader import QueryLoaderMixin
+from reflowfy.core.runtime_params import P, Param, RuntimeParams
+
+if TYPE_CHECKING:
+    from reflowfy.destinations.base import BaseDestination
+    from reflowfy.sources.base import BaseSource
+    from reflowfy.transformations.base import BaseTransformation
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +73,10 @@ class PipelineMeta(ABCMeta):
     When a class inherits from AbstractPipeline and defines a 'name' attribute,
     it is automatically instantiated and registered in the pipeline registry.
 
+    It also records the pipeline's params TypedDict, taken from the generic
+    argument (``AbstractPipeline[MyParams]``), so `define_parameters()` can be
+    derived from the same declaration that types the hooks.
+
     Inherits from ABCMeta to be compatible with ABC.
     """
 
@@ -53,6 +85,19 @@ class PipelineMeta(ABCMeta):
 
         # Only register concrete pipelines (not the base class)
         if name != "AbstractPipeline" and bases:
+            # Read the params TypedDict off the subscripted base, before the
+            # registration below instantiates the class. Only a subscripted base
+            # puts __orig_bases__ in the namespace; an unsubscripted one leaves
+            # it absent, and _params_type stays inherited (None on the base).
+            for orig_base in namespace.get("__orig_bases__", ()):
+                params_type = next(
+                    (a for a in get_args(orig_base) if hasattr(a, "__required_keys__")),
+                    None,
+                )
+                if params_type is not None:
+                    cls._params_type = params_type  # type: ignore[attr-defined]
+                    break
+
             # Validate cron expression at class-definition time (before instantiation)
             schedule = namespace.get("schedule")
             if schedule is not None:
@@ -74,6 +119,23 @@ class PipelineMeta(ABCMeta):
                 from reflowfy.core.registry import pipeline_registry
 
                 pipeline_name = namespace["name"]
+
+                # getattr, not namespace: a subclass of a typed pipeline inherits
+                # its parent's params type and is not deprecated.
+                if getattr(cls, "_params_type", None) is None:
+                    warnings.warn(
+                        f"Pipeline '{pipeline_name}' does not declare a params type. "
+                        f"Untyped runtime_params is deprecated; pass a RuntimeParams "
+                        f"subclass so the hooks are typed and define_parameters() is "
+                        f"derived:\n"
+                        f"    class {name}(AbstractPipeline[MyParams]):\n"
+                        f"Use AbstractPipeline[RuntimeParams] if the pipeline takes no "
+                        f"parameters of its own.",
+                        DeprecationWarning,
+                        # 2 = the `class ...` statement in the user's module.
+                        stacklevel=2,
+                    )
+
                 try:
                     instance = cls()
                     pipeline_registry.register(instance)
@@ -244,7 +306,104 @@ class PipelineParameter:
         return result
 
 
-class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
+# Required[...]/NotRequired[...] say nothing __required_keys__ doesn't already
+# say, so they are stripped and ignored. Both spellings, since a TypedDict may
+# use either module's and typing's only exist on 3.11+.
+_REQUIREDNESS_MARKERS = frozenset(
+    marker
+    for marker in (
+        typing_extensions.Required,
+        typing_extensions.NotRequired,
+        getattr(typing, "Required", None),
+        getattr(typing, "NotRequired", None),
+    )
+    if marker is not None
+)
+
+
+def params_from_typeddict(params_type: type) -> List[PipelineParameter]:
+    """Derive the runtime parameter declarations from a params TypedDict.
+
+    Turns a :class:`~reflowfy.RuntimeParams` subclass into the
+    ``List[PipelineParameter]`` that validation, defaults, CLI prompting and the
+    generated OpenAPI schema already consume — so a pipeline's parameters are
+    declared once, as types, instead of twice.
+
+    Keys inherited from ``RuntimeParams`` are skipped: those are the framework's
+    own execution-context keys, not user parameters. So are keys marked
+    ``Param(internal=True)`` — enrichment keys the pipeline writes at runtime.
+
+    Args:
+        params_type: A TypedDict subclassing ``RuntimeParams``.
+
+    Returns:
+        One PipelineParameter per user-declared key.
+
+    Example:
+        >>> class MyParams(RuntimeParams, total=False):
+        ...     env: Required[Literal["dev", "prod"]]
+        ...     limit: Annotated[NotRequired[int], Param("max rows", default=10)]
+        >>> [(p.name, p.param_type, p.choices, p.default)
+        ...  for p in params_from_typeddict(MyParams)]
+        [('env', <class 'str'>, ['dev', 'prod'], None), ('limit', <class 'int'>, None, 10)]
+    """
+    hints = get_type_hints(params_type, include_extras=True)
+    required: frozenset[str] = getattr(params_type, "__required_keys__", frozenset())
+    reserved = set(RuntimeParams.__annotations__)
+
+    params: List[PipelineParameter] = []
+    for key, hint in hints.items():
+        if key in reserved:
+            continue
+
+        # Peel the wrappers off, in any nesting order: Annotated carries the
+        # Param() marker, Required/NotRequired only restate __required_keys__.
+        # Each pass strips one layer, so this terminates.
+        marker = Param()
+        while True:
+            origin = get_origin(hint)
+            if origin is Annotated:
+                args = get_args(hint)
+                hint = args[0]
+                marker = next((a for a in args[1:] if isinstance(a, Param)), marker)
+            elif origin in _REQUIREDNESS_MARKERS:
+                hint = get_args(hint)[0]
+            else:
+                break
+
+        # Enrichment keys type the dict but are not caller-supplied parameters.
+        if marker.internal:
+            continue
+
+        # Optional[X] / X | None means "not required", and the parameter is an X.
+        if get_origin(hint) is Union:
+            non_none = [a for a in get_args(hint) if a is not type(None)]
+            if len(non_none) == 1:
+                hint = non_none[0]
+
+        choices: Optional[List[Any]] = None
+        if get_origin(hint) is Literal:
+            choices = list(get_args(hint))
+            param_type = type(choices[0]) if choices else str
+        else:
+            # isinstance() and the `param_type in (list, dict)` body/query split
+            # both need a bare runtime type, so list[int] must collapse to list.
+            param_type = get_origin(hint) or hint
+
+        params.append(
+            PipelineParameter(
+                name=key,
+                description=marker.description,
+                required=key in required,
+                param_type=param_type if isinstance(param_type, type) else str,
+                default=marker.default,
+                choices=choices,
+            )
+        )
+    return params
+
+
+class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
     """
     Abstract base class for configurable pipelines.
 
@@ -263,6 +422,10 @@ class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
     - Override `define_parameters()` to expose required runtime parameters
     - Override `define_rate_limit()` for dynamic rate limiting
     - Override `should_apply_transformation()` for runtime condition checks
+    - Declare their parameters as a type: subclass :class:`RuntimeParams` and
+      pass it as the type argument (``AbstractPipeline[MyParams]``). Every hook
+      then receives that type instead of an opaque dict, and
+      `define_parameters()` is derived from it. Omit it and nothing changes.
 
     Attributes:
         name: Unique pipeline identifier (must be set by subclass)
@@ -283,6 +446,10 @@ class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
     #   True  = jobs may run multiple times (default, current behavior)
     #   False = each unique job (by content hash) runs at most once
     enable_duplicate_jobs: bool = True
+
+    # The params TypedDict, set by PipelineMeta from AbstractPipeline[MyParams].
+    # None means the pipeline didn't declare one.
+    _params_type: Optional[type] = None
 
     # Optional cron schedule for automatic execution (e.g. "*/5 * * * *").
     # None means the pipeline is never auto-scheduled.
@@ -332,7 +499,7 @@ class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
             except ImportError:
                 pass  # croniter not installed; validated at runtime by scheduler
 
-    def define_source(self, runtime_params: Dict[str, Any]) -> Any:
+    def define_source(self, runtime_params: P) -> "BaseSource | List[Any]":
         """
         Define the source to use based on runtime parameters.
 
@@ -356,7 +523,7 @@ class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
             f"Pipeline '{self.name}' must implement define_source() or define_jobs()"
         )
 
-    def define_jobs(self, runtime_params: Dict[str, Any]) -> Any:
+    def define_jobs(self, runtime_params: P) -> "BaseSource | Iterable[Any]":
         """
         Define how this pipeline's work is split into jobs.
 
@@ -403,7 +570,7 @@ class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
         return self.define_source(runtime_params)
 
     @abstractmethod
-    def define_destination(self, records: List[Any], runtime_params: Dict[str, Any]) -> Any:
+    def define_destination(self, records: List[Any], runtime_params: P) -> "BaseDestination":
         """
         Define the destination to use based on post-transformation records and runtime params.
 
@@ -424,8 +591,8 @@ class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
 
     @abstractmethod
     def define_transformations(
-        self, records: List[Any], runtime_params: Dict[str, Any]
-    ) -> List[Any]:
+        self, records: List[Any], runtime_params: P
+    ) -> Sequence["BaseTransformation"]:
         """
         Define list of transformations to apply based on records and runtime parameters.
 
@@ -462,9 +629,13 @@ class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
         """
         Define the parameters this pipeline accepts.
 
-        Override this method to expose the parameters users need to provide
-        when running this pipeline. This is used for API documentation and
-        validation.
+        Derived from the pipeline's params TypedDict when it declares one
+        (``AbstractPipeline[MyParams]``) — that is the whole point of declaring
+        it: the parameters are written down once, as types, and the validation,
+        defaults and API schema follow from them.
+
+        Override this method to declare them by hand instead; an override always
+        wins over the derived list.
 
         Returns:
             List of PipelineParameter instances
@@ -486,9 +657,11 @@ class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
             ...         ),
             ...     ]
         """
+        if self._params_type is not None:
+            return params_from_typeddict(self._params_type)
         return []
 
-    def define_rate_limit(self, runtime_params: Dict[str, Any]) -> Optional[float]:
+    def define_rate_limit(self, runtime_params: P) -> Optional[float]:
         """
         Define rate limit configuration based on runtime parameters.
 
@@ -510,7 +683,7 @@ class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
         return self.rate_limit
 
     def should_apply_transformation(
-        self, transformation: Any, runtime_params: Dict[str, Any], records: List[Any]
+        self, transformation: "BaseTransformation", runtime_params: P, records: List[Any]
     ) -> bool:
         """
         Determine if a transformation should be applied at runtime.
@@ -548,7 +721,7 @@ class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
         """Get names of required parameters."""
         return {p.name for p in self.get_all_parameters() if p.required}
 
-    def validate_parameters(self, runtime_params: Dict[str, Any]) -> List[str]:
+    def validate_parameters(self, runtime_params: P) -> List[str]:
         """
         Validate runtime parameters against defined parameters.
 
@@ -568,7 +741,7 @@ class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
 
         return errors
 
-    def apply_defaults(self, runtime_params: Dict[str, Any]) -> Dict[str, Any]:
+    def apply_defaults(self, runtime_params: P) -> P:
         """
         Apply default values to runtime parameters.
 
@@ -578,13 +751,13 @@ class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
         Returns:
             Parameters with defaults applied
         """
-        result = dict(runtime_params)
+        result: Dict[str, Any] = dict(runtime_params)
 
         for param in self.get_all_parameters():
             if param.name not in result and param.default is not None:
                 result[param.name] = param.default
 
-        return result
+        return cast(P, result)
 
     def get_transformation_names(self) -> List[str]:
         """
@@ -593,7 +766,7 @@ class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
         This is used for worker registration.
         """
         try:
-            return [t.name for t in self.define_transformations([], {})]
+            return [t.name for t in self.define_transformations([], cast(P, {}))]
         except Exception:
             return []
 
@@ -614,7 +787,7 @@ class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
     _destination: Any = None
     _transformations: List[Any] | None = None
 
-    def resolve(self, runtime_params: Dict[str, Any]) -> "AbstractPipeline":
+    def resolve(self, runtime_params: P) -> "AbstractPipeline[P]":
         """
         Resolve the pipeline with specific runtime parameters.
 
@@ -634,7 +807,7 @@ class AbstractPipeline(QueryLoaderMixin, metaclass=PipelineMeta):
         if errors:
             raise ValueError(f"Invalid parameters: {'; '.join(errors)}")
 
-        self._resolved_params = params
+        self._resolved_params = cast(Dict[str, Any], params)
         with pipeline_step("define_jobs", self.name):
             self._source = self.define_jobs(params)
         # destination and transformations are resolved per-job/per-batch,

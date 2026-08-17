@@ -13,7 +13,7 @@ webhook server so the test can assert an exact record cover.
 
 import os
 
-from reflowfy import AbstractPipeline
+from reflowfy import AbstractPipeline, RuntimeParams
 from reflowfy.destinations.api import api_destination
 from tests.e2e.test_pipelines.sources import e2e_elastic
 from tests.e2e.test_pipelines.transformations import add_source_info
@@ -27,7 +27,7 @@ MOCK_HTTP_URL = os.getenv("MOCK_HTTP_URL", "http://localhost:8091/webhook")
 SUBSET_QUERY = {"query": {"term": {"metadata.batch": 0}}}
 
 
-class E2EElasticOneDocPerJobPipeline(AbstractPipeline):
+class E2EElasticOneDocPerJobPipeline(AbstractPipeline[RuntimeParams]):
     """E2E pipeline exercising docs_per_job=1 (exactly one doc per job)."""
 
     name = "e2e_elastic_one_doc_per_job_test"

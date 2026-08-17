@@ -13,6 +13,7 @@ from reflowfy.core.abstract_pipeline import AbstractPipeline, PipelineParameter
 from reflowfy.core.exceptions import PipelineError
 from reflowfy.core.id_based_pipeline import IdBasedPipeline
 from reflowfy.core.registry import pipeline_registry
+from reflowfy.core.runtime_params import Param, RuntimeParams
 from reflowfy.execution.job_runner import chunk, job
 from reflowfy.observability.logging import get_logger
 from reflowfy.transformations.base import BaseTransformation, TransformationError
@@ -35,6 +36,10 @@ __all__ = [
     "AbstractPipeline",
     "IdBasedPipeline",
     "PipelineParameter",
+    # Typed runtime_params: subclass RuntimeParams, pass it as
+    # AbstractPipeline[MyParams], annotate defaults with Param.
+    "RuntimeParams",
+    "Param",
     "pipeline_registry",
     "chunk",
     "job",

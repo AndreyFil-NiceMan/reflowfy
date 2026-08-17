@@ -6,7 +6,7 @@ manager fans the query out into ``ceil(count / DOCS_PER_JOB)`` parallel
 sliced-scroll jobs instead of a single job.
 """
 
-from reflowfy import AbstractPipeline
+from reflowfy import AbstractPipeline, RuntimeParams
 from tests.e2e.test_pipelines.destinations import e2e_console
 from tests.e2e.test_pipelines.sources import e2e_elastic
 from tests.e2e.test_pipelines.transformations import add_source_info
@@ -18,7 +18,7 @@ INDEX_NAME = "e2e-test-events"
 DOCS_PER_JOB = 50
 
 
-class E2EElasticDocsPerJobPipeline(AbstractPipeline):
+class E2EElasticDocsPerJobPipeline(AbstractPipeline[RuntimeParams]):
     """E2E test pipeline exercising count-derived slicing (docs_per_job)."""
 
     name = "e2e_elastic_docs_per_job_test"

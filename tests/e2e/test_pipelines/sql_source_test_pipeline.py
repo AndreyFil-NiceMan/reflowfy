@@ -5,7 +5,9 @@ Pipeline that reads from PostgreSQL and outputs to console.
 Uses a SQL query template loaded from queries/events_by_date.sql.
 """
 
-from reflowfy import AbstractPipeline, PipelineParameter
+from typing_extensions import Annotated, NotRequired, Required
+
+from reflowfy import AbstractPipeline, Param, RuntimeParams
 from tests.e2e.test_pipelines.sources import e2e_sql
 from tests.e2e.test_pipelines.destinations import e2e_console
 from tests.e2e.test_pipelines.transformations import (
@@ -14,18 +16,19 @@ from tests.e2e.test_pipelines.transformations import (
 )
 
 
-class E2ESqlSourceTestPipeline(AbstractPipeline):
+class SqlSourceParams(RuntimeParams, total=False):
+    """Parameters for :class:`E2ESqlSourceTestPipeline`."""
+
+    start_time: Required[str]
+    end_time: Required[str]
+    filter_status: Annotated[NotRequired[str], Param(default="active")]
+
+
+class E2ESqlSourceTestPipeline(AbstractPipeline[SqlSourceParams]):
     """E2E test pipeline for SQL source."""
 
     name = "e2e_sql_source_test"
     rate_limit = 600  # jobs per minute
-
-    def define_parameters(self):
-        return [
-            PipelineParameter(name="start_time", required=True),
-            PipelineParameter(name="end_time", required=True),
-            PipelineParameter(name="filter_status", required=False, default="active"),
-        ]
 
     def define_source(self, runtime_params):
         return e2e_sql(

@@ -6,12 +6,12 @@ identical records (worker dedups the second), and a changed payload
 produces different records (worker re-processes).
 """
 
-from reflowfy import AbstractPipeline
+from reflowfy import AbstractPipeline, RuntimeParams
 from tests.e2e.test_pipelines.sources import e2e_mock
 from tests.e2e.test_pipelines.destinations import e2e_http
 
 
-class E2EContentDedupPipeline(AbstractPipeline):
+class E2EContentDedupPipeline(AbstractPipeline[RuntimeParams]):
     """Worker-side content dedup pipeline (enable_duplicate_jobs=False)."""
 
     name = "e2e_content_dedup"

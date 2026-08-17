@@ -5,7 +5,7 @@ Pipeline that applies a two-step transformation chain to verify that
 transformations are applied correctly and in order.
 """
 
-from reflowfy import AbstractPipeline
+from reflowfy import AbstractPipeline, RuntimeParams
 from tests.e2e.test_pipelines.sources import e2e_mock
 from tests.e2e.test_pipelines.destinations import e2e_http
 from tests.e2e.test_pipelines.transformations import (
@@ -14,7 +14,7 @@ from tests.e2e.test_pipelines.transformations import (
 )
 
 
-class E2ETransformationTestPipeline(AbstractPipeline):
+class E2ETransformationTestPipeline(AbstractPipeline[RuntimeParams]):
     """E2E test pipeline for verifying transformation chains."""
 
     name = "e2e_transformation_test"

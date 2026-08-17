@@ -8,7 +8,7 @@ without waiting long.
 
 import uuid
 
-from reflowfy import AbstractPipeline
+from reflowfy import AbstractPipeline, RuntimeParams
 from tests.e2e.test_pipelines.sources import e2e_mock
 from tests.e2e.test_pipelines.destinations import e2e_http
 
@@ -21,7 +21,7 @@ _NO_DUP_FIXED_DATA = [
 ]
 
 
-class E2EScheduledTestPipeline(AbstractPipeline):
+class E2EScheduledTestPipeline(AbstractPipeline[RuntimeParams]):
     """E2E scheduled pipeline — fires every minute."""
 
     name = "e2e_scheduled_test"
@@ -37,7 +37,7 @@ class E2EScheduledTestPipeline(AbstractPipeline):
         return []
 
 
-class E2EScheduledSlowPipeline(AbstractPipeline):
+class E2EScheduledSlowPipeline(AbstractPipeline[RuntimeParams]):
     """E2E scheduled pipeline with a less frequent schedule."""
 
     name = "e2e_scheduled_slow_test"
@@ -53,7 +53,7 @@ class E2EScheduledSlowPipeline(AbstractPipeline):
         return []
 
 
-class E2EScheduledNoDuplicatesPipeline(AbstractPipeline):
+class E2EScheduledNoDuplicatesPipeline(AbstractPipeline[RuntimeParams]):
     """E2E scheduled pipeline with duplicate jobs disabled."""
 
     name = "e2e_scheduled_no_duplicates_test"

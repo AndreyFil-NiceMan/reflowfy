@@ -9,7 +9,14 @@ Four pipeline classes covering all major IDBasedAPISource modes:
 4. E2EProductsBatchPipeline  — custom body key + nested response_key (body={"product_ids": <ids>})
 """
 
-from reflowfy import IdBasedPipeline, PipelineParameter
+from typing import Any, List, Sequence
+
+from typing_extensions import Annotated, NotRequired
+
+from reflowfy import IdBasedPipeline, Param, RuntimeParams
+from reflowfy.destinations.base import BaseDestination
+from reflowfy.sources.base import BaseSource
+from reflowfy.transformations.base import BaseTransformation
 from tests.e2e.test_pipelines.destinations import e2e_console
 from tests.e2e.test_pipelines.sources import e2e_id_based_api
 from tests.e2e.test_pipelines.transformations import (
@@ -23,7 +30,13 @@ from tests.e2e.test_pipelines.transformations import (
 )
 
 
-class E2ERawListSearchPipeline(IdBasedPipeline):
+class RawListSearchParams(RuntimeParams, total=False):
+    """Parameters for :class:`E2ERawListSearchPipeline`."""
+
+    batch_size: Annotated[NotRequired[int], Param("Records per SourceJob", default=5)]
+
+
+class E2ERawListSearchPipeline(IdBasedPipeline[RawListSearchParams]):
     """
     Sends user IDs to ``POST /users/search`` as a **raw JSON array** body.
 
@@ -42,18 +55,9 @@ class E2ERawListSearchPipeline(IdBasedPipeline):
     rate_limit = 1200  # jobs per minute
     ids_batch_size = 5
 
-    def define_parameters(self):
-        return [
-            PipelineParameter(
-                name="batch_size",
-                description="Records per SourceJob",
-                param_type=int,
-                required=False,
-                default=5,
-            ),
-        ]
+    # define_parameters() is derived from RawListSearchParams.
 
-    def define_source(self, runtime_params):
+    def define_source(self, runtime_params: RawListSearchParams) -> BaseSource:
         current_ids = runtime_params.get("current_ids", [])
         return e2e_id_based_api(
             endpoint_template="/users/search",
@@ -64,17 +68,31 @@ class E2ERawListSearchPipeline(IdBasedPipeline):
             batch_size=runtime_params.get("batch_size", 5),
         )
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: List[Any], runtime_params: RawListSearchParams
+    ) -> BaseDestination:
         return e2e_console(pretty_print=False, max_records_display=3)
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: List[Any], runtime_params: RawListSearchParams
+    ) -> Sequence[BaseTransformation]:
         return [
             raw_list_tag_source(),
             raw_list_count_records(),
         ]
 
 
-class E2EPatchBulkPipeline(IdBasedPipeline):
+class PatchBulkParams(RuntimeParams, total=False):
+    """Parameters for :class:`E2EPatchBulkPipeline`."""
+
+    active_only: Annotated[
+        NotRequired[bool],
+        Param("When true, only active users are returned from the bulk endpoint", default=False),
+    ]
+    batch_size: Annotated[NotRequired[int], Param("Records per SourceJob", default=4)]
+
+
+class E2EPatchBulkPipeline(IdBasedPipeline[PatchBulkParams]):
     """
     Sends user IDs to ``PATCH /users/bulk`` with an extra ``active_only`` field
     merged into the request body.
@@ -94,25 +112,9 @@ class E2EPatchBulkPipeline(IdBasedPipeline):
     rate_limit = 1200  # jobs per minute
     ids_batch_size = 8
 
-    def define_parameters(self):
-        return [
-            PipelineParameter(
-                name="active_only",
-                description="When true, only active users are returned from the bulk endpoint",
-                param_type=bool,
-                required=False,
-                default=False,
-            ),
-            PipelineParameter(
-                name="batch_size",
-                description="Records per SourceJob",
-                param_type=int,
-                required=False,
-                default=4,
-            ),
-        ]
+    # define_parameters() is derived from PatchBulkParams.
 
-    def define_source(self, runtime_params):
+    def define_source(self, runtime_params: PatchBulkParams) -> BaseSource:
         current_ids = runtime_params.get("current_ids", [])
         return e2e_id_based_api(
             endpoint_template="/users/bulk",
@@ -123,17 +125,27 @@ class E2EPatchBulkPipeline(IdBasedPipeline):
             batch_size=runtime_params.get("batch_size", 4),
         )
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: List[Any], runtime_params: PatchBulkParams
+    ) -> BaseDestination:
         return e2e_console(pretty_print=False, max_records_display=3)
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: List[Any], runtime_params: PatchBulkParams
+    ) -> Sequence[BaseTransformation]:
         return [
             patch_add_metadata(),
             patch_compute_stats(),
         ]
 
 
-class E2EPerIdPostPipeline(IdBasedPipeline):
+class PerIdPostParams(RuntimeParams, total=False):
+    """Parameters for :class:`E2EPerIdPostPipeline`."""
+
+    batch_size: Annotated[NotRequired[int], Param("IDs grouped per SourceJob", default=5)]
+
+
+class E2EPerIdPostPipeline(IdBasedPipeline[PerIdPostParams]):
     """
     Calls ``POST /users/{id}/enrich`` individually for each user ID.
 
@@ -151,18 +163,9 @@ class E2EPerIdPostPipeline(IdBasedPipeline):
     rate_limit = 1200  # jobs per minute
     ids_batch_size = 5
 
-    def define_parameters(self):
-        return [
-            PipelineParameter(
-                name="batch_size",
-                description="IDs grouped per SourceJob",
-                param_type=int,
-                required=False,
-                default=5,
-            ),
-        ]
+    # define_parameters() is derived from PerIdPostParams.
 
-    def define_source(self, runtime_params):
+    def define_source(self, runtime_params: PerIdPostParams) -> BaseSource:
         current_ids = runtime_params.get("current_ids", [])
         return e2e_id_based_api(
             endpoint_template="/users/{id}/enrich",
@@ -172,14 +175,24 @@ class E2EPerIdPostPipeline(IdBasedPipeline):
             batch_size=runtime_params.get("batch_size", 5),
         )
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: List[Any], runtime_params: PerIdPostParams
+    ) -> BaseDestination:
         return e2e_console(pretty_print=False, max_records_display=3)
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: List[Any], runtime_params: PerIdPostParams
+    ) -> Sequence[BaseTransformation]:
         return [per_id_verify_enrichment()]
 
 
-class E2EProductsBatchPipeline(IdBasedPipeline):
+class ProductsBatchParams(RuntimeParams, total=False):
+    """Parameters for :class:`E2EProductsBatchPipeline`."""
+
+    batch_size: Annotated[NotRequired[int], Param("Records per SourceJob", default=5)]
+
+
+class E2EProductsBatchPipeline(IdBasedPipeline[ProductsBatchParams]):
     """
     Looks up products from ``POST /products/lookup`` using a non-default
     body key (``product_ids`` instead of ``ids``).
@@ -199,18 +212,9 @@ class E2EProductsBatchPipeline(IdBasedPipeline):
     rate_limit = 1200  # jobs per minute
     ids_batch_size = 10
 
-    def define_parameters(self):
-        return [
-            PipelineParameter(
-                name="batch_size",
-                description="Records per SourceJob",
-                param_type=int,
-                required=False,
-                default=5,
-            ),
-        ]
+    # define_parameters() is derived from ProductsBatchParams.
 
-    def define_source(self, runtime_params):
+    def define_source(self, runtime_params: ProductsBatchParams) -> BaseSource:
         current_ids = runtime_params.get("current_ids", [])
         return e2e_id_based_api(
             endpoint_template="/products/lookup",
@@ -221,10 +225,14 @@ class E2EProductsBatchPipeline(IdBasedPipeline):
             batch_size=runtime_params.get("batch_size", 5),
         )
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: List[Any], runtime_params: ProductsBatchParams
+    ) -> BaseDestination:
         return e2e_console(pretty_print=False, max_records_display=3)
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: List[Any], runtime_params: ProductsBatchParams
+    ) -> Sequence[BaseTransformation]:
         return [
             products_tag_category(),
             products_add_tax(),

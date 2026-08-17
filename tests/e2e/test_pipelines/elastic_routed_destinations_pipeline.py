@@ -9,7 +9,9 @@ majority content-based route hint among the job's own records.
 
 import os
 
-from reflowfy import AbstractPipeline, PipelineParameter
+from typing_extensions import Required
+
+from reflowfy import AbstractPipeline, RuntimeParams
 from reflowfy.destinations.api import api_destination
 from tests.e2e.test_pipelines.sources import e2e_elastic
 from tests.e2e.test_pipelines.transformations import elastic_add_metadata_and_route
@@ -25,17 +27,18 @@ MOCK_HTTP_URL = os.getenv("MOCK_HTTP_URL", "http://localhost:8091/webhook")
 NUM_SLICES = 8
 
 
-class E2EElasticRoutedDestinationsPipeline(AbstractPipeline):
+class ElasticRoutedParams(RuntimeParams, total=False):
+    """Parameters for :class:`E2EElasticRoutedDestinationsPipeline`."""
+
+    start_time: Required[str]
+    end_time: Required[str]
+
+
+class E2EElasticRoutedDestinationsPipeline(AbstractPipeline[ElasticRoutedParams]):
     """E2E pipeline that routes each elastic slice-job to one of two destinations."""
 
     name = "e2e_elastic_routed_destinations"
     rate_limit = 1200  # jobs per minute
-
-    def define_parameters(self):
-        return [
-            PipelineParameter(name="start_time", required=True),
-            PipelineParameter(name="end_time", required=True),
-        ]
 
     def define_source(self, runtime_params):
         return e2e_elastic(

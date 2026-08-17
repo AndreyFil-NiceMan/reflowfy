@@ -4,12 +4,12 @@ DLQ Test Pipeline.
 Used for testing DLQ mechanics in E2E tests.
 """
 
-from reflowfy import AbstractPipeline
+from reflowfy import AbstractPipeline, RuntimeParams
 from tests.e2e.test_pipelines.shared_destinations import e2e_console
 from tests.e2e.test_pipelines.shared_sources import e2e_mock
 
 
-class DLQTestPipelineAuto(AbstractPipeline):
+class DLQTestPipelineAuto(AbstractPipeline[RuntimeParams]):
     """Pipeline for testing automatic DLQ processing."""
 
     name = "test_pipeline_auto"
@@ -25,7 +25,7 @@ class DLQTestPipelineAuto(AbstractPipeline):
         return []
 
 
-class DLQTestPipelineBatch(AbstractPipeline):
+class DLQTestPipelineBatch(AbstractPipeline[RuntimeParams]):
     """Pipeline for testing batch dispatch."""
 
     name = "test_pipeline_batch_dispatch"
@@ -40,7 +40,7 @@ class DLQTestPipelineBatch(AbstractPipeline):
         return []
 
 
-class DLQTestPipelineDispatch(AbstractPipeline):
+class DLQTestPipelineDispatch(AbstractPipeline[RuntimeParams]):
     """Pipeline for testing single dispatch."""
 
     name = "test_pipeline_dispatch"

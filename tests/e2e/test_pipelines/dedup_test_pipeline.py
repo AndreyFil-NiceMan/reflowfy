@@ -10,7 +10,7 @@ Two pipeline variants for testing the enable_duplicate_jobs flag:
   Jobs run every time — same as current baseline behavior.
 """
 
-from reflowfy import AbstractPipeline
+from reflowfy import AbstractPipeline, RuntimeParams
 from tests.e2e.test_pipelines.destinations import e2e_console
 from tests.e2e.test_pipelines.sources import e2e_mock
 
@@ -23,7 +23,7 @@ _FIXED_DATA = [
 ]
 
 
-class E2EDedupOffPipeline(AbstractPipeline):
+class E2EDedupOffPipeline(AbstractPipeline[RuntimeParams]):
     """Pipeline with deduplication enabled (enable_duplicate_jobs=False).
 
     The same job (identified by its content hash) will never run twice.
@@ -43,7 +43,7 @@ class E2EDedupOffPipeline(AbstractPipeline):
         return []
 
 
-class E2EDedupOnPipeline(AbstractPipeline):
+class E2EDedupOnPipeline(AbstractPipeline[RuntimeParams]):
     """Pipeline with deduplication disabled (enable_duplicate_jobs=True, default).
 
     Jobs run every time regardless of prior executions — baseline behavior.

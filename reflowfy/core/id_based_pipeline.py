@@ -61,9 +61,13 @@ already what ``ids_batch_size = 1`` (the default) does.
 """
 
 import logging
-from typing import Any, Dict, Iterator, List
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, cast
 
 from reflowfy.core.abstract_pipeline import AbstractPipeline, PipelineParameter
+from reflowfy.core.runtime_params import P
+
+if TYPE_CHECKING:
+    from reflowfy.sources.base import BaseSource
 from reflowfy.execution.job_runner import chunk
 
 logger = logging.getLogger(__name__)
@@ -78,7 +82,7 @@ _IDS_PARAMETER = PipelineParameter(
 )
 
 
-class IdBasedPipeline(AbstractPipeline):
+class IdBasedPipeline(AbstractPipeline[P]):
     """
     Pipeline that executes dynamically for each ID in a user-provided list.
 
@@ -121,7 +125,7 @@ class IdBasedPipeline(AbstractPipeline):
     # Abstract Methods — Must be implemented by subclasses
     # =========================================================================
 
-    def define_source(self, runtime_params: Dict[str, Any]) -> Any:
+    def define_source(self, runtime_params: P) -> "BaseSource | List[Any]":
         """
         Define the source to use for a batch of IDs.
 
@@ -166,7 +170,7 @@ class IdBasedPipeline(AbstractPipeline):
     # Job planning — one job per ID batch
     # =========================================================================
 
-    def define_jobs(self, runtime_params: Dict[str, Any]) -> Iterator[Any]:
+    def define_jobs(self, runtime_params: P) -> Iterator[Any]:
         """
         Plan one job per ``ids_batch_size`` IDs.
 
@@ -180,8 +184,9 @@ class IdBasedPipeline(AbstractPipeline):
         use for the other 999,998. ``current_ids``, ``current_id`` and any keys
         ``define_source`` added stay, so workers still see them.
         """
-        for ids_batch in chunk(runtime_params.get("ids", []), self.ids_batch_size):
-            resolved = self.resolve_for_ids(runtime_params, ids_batch)
+        ids: List[Any] = cast(Dict[str, Any], runtime_params).get("ids", [])
+        for ids_batch in chunk(ids, self.ids_batch_size):
+            resolved = self.resolve_for_ids(cast(Dict[str, Any], runtime_params), ids_batch)
             source = resolved["source"]
             source.job_params = {k: v for k, v in resolved["batch_params"].items() if k != "ids"}
             yield source
@@ -209,7 +214,7 @@ class IdBasedPipeline(AbstractPipeline):
 
         return [_IDS_PARAMETER] + user_params
 
-    def validate_parameters(self, runtime_params: Dict[str, Any]) -> List[str]:
+    def validate_parameters(self, runtime_params: P) -> List[str]:
         """Validate the shared parameter rules, plus the ones specific to `ids`."""
         errors = super().validate_parameters(runtime_params)
 
@@ -236,7 +241,8 @@ class IdBasedPipeline(AbstractPipeline):
             return [
                 t.name
                 for t in self.define_transformations(
-                    [], {"current_ids": ["__discovery__"], "current_id": "__discovery__"}
+                    [],
+                    cast(P, {"current_ids": ["__discovery__"], "current_id": "__discovery__"}),
                 )
             ]
         except Exception:
@@ -273,7 +279,9 @@ class IdBasedPipeline(AbstractPipeline):
         from reflowfy.sources.base import BaseSource
         from reflowfy.sources.static import StaticSource
 
-        returned = self.define_source(batch_params)
+        # Any, not the declared return type: the checks below are for the
+        # unannotated pipelines the type system can't speak for.
+        returned: Any = self.define_source(cast(P, batch_params))
         if isinstance(returned, BaseSource):
             return returned
         if isinstance(returned, list):

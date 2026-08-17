@@ -5,13 +5,13 @@ Pipeline that uses mock source and sends to Kafka topic.
 Used for E2E testing of the KafkaDestination connector.
 """
 
-from reflowfy import AbstractPipeline
+from reflowfy import AbstractPipeline, RuntimeParams
 from tests.e2e.test_pipelines.sources import e2e_mock
 from tests.e2e.test_pipelines.destinations import e2e_kafka
 from tests.e2e.test_pipelines.transformations import kafka_add_dest_info
 
 
-class E2EKafkaDestTestPipeline(AbstractPipeline):
+class E2EKafkaDestTestPipeline(AbstractPipeline[RuntimeParams]):
     """E2E test pipeline for Kafka destination."""
 
     name = "e2e_kafka_dest_test"
