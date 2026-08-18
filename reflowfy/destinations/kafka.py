@@ -1,9 +1,12 @@
+# aiokafka ships no stubs, so every AIOKafkaProducer/Consumer member is Unknown and
+# cascades through anything derived from one. Scoped here rather than repo-wide.
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 """Kafka destination connector using aiokafka."""
 
 import asyncio
 import json
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from aiokafka import AIOKafkaProducer
 from aiokafka.errors import KafkaError
 from reflowfy.destinations.base import BaseDestination, DestinationError, RetryConfig
@@ -76,7 +79,9 @@ class KafkaDestination(BaseDestination):
 
         # Parse bootstrap_servers if it's a comma-separated string
         if isinstance(bootstrap_servers, str) and "," in bootstrap_servers:
-             config["bootstrap_servers"] = [s.strip() for s in bootstrap_servers.split(",") if s.strip()]
+            config["bootstrap_servers"] = [
+                s.strip() for s in bootstrap_servers.split(",") if s.strip()
+            ]
 
         super().__init__(config, retry_config)
         self._producer: Optional[AIOKafkaProducer] = None
@@ -90,12 +95,14 @@ class KafkaDestination(BaseDestination):
         username = self.config.get("sasl_username")
         password = self.config.get("sasl_password")
         if username and password:
-            kwargs.update({
-                "security_protocol": self.config.get("security_protocol") or "SASL_PLAINTEXT",
-                "sasl_mechanism": self.config.get("sasl_mechanism") or "SCRAM-SHA-256",
-                "sasl_plain_username": username,
-                "sasl_plain_password": password,
-            })
+            kwargs.update(
+                {
+                    "security_protocol": self.config.get("security_protocol") or "SASL_PLAINTEXT",
+                    "sasl_mechanism": self.config.get("sasl_mechanism") or "SCRAM-SHA-256",
+                    "sasl_plain_username": username,
+                    "sasl_plain_password": password,
+                }
+            )
         return kwargs
 
     async def _get_producer(self) -> AIOKafkaProducer:
@@ -196,7 +203,7 @@ class KafkaDestination(BaseDestination):
                 value = json.dumps(record).encode("utf-8")
 
                 # Prepare headers
-                headers = []
+                headers: List[Tuple[str, bytes]] = []
                 if metadata:
                     for k, v in metadata.items():
                         if isinstance(v, str):

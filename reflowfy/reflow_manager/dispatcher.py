@@ -1,3 +1,5 @@
+# aiokafka ships no stubs — see reflowfy/destinations/kafka.py for the rationale.
+# pyright: reportUnknownMemberType=false
 """Job dispatchers for ReflowManager using aiokafka."""
 
 import logging

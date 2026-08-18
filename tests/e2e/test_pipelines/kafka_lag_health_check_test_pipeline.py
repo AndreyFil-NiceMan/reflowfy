@@ -8,7 +8,7 @@ definition covers both the "lag blocks dispatch" and "lag allows dispatch" scena
 
 import os
 
-from reflowfy import AbstractPipeline, RuntimeParams
+from reflowfy import AbstractPipeline, BaseDestination, Records, RuntimeParams, Transformations
 from reflowfy.destinations.kafka import kafka_destination
 from tests.e2e.test_pipelines.sources import e2e_mock
 
@@ -29,7 +29,9 @@ class E2EKafkaLagHealthCheckPipeline(AbstractPipeline[RuntimeParams]):
     def define_source(self, runtime_params):
         return e2e_mock(count=10, batch_size=10)
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
         threshold = runtime_params.get("lag_threshold", 5000)
         return kafka_destination(
             bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
@@ -40,5 +42,7 @@ class E2EKafkaLagHealthCheckPipeline(AbstractPipeline[RuntimeParams]):
             lag_check_timeout=15.0,
         )
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> Transformations:
         return []

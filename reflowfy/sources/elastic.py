@@ -79,9 +79,9 @@ class ElasticSource(BaseSource):
     def _get_client(self) -> Elasticsearch:
         """Get or create Elasticsearch client."""
         if self._client is None:
-            auth = self.config.get("auth")
+            auth: Any = self.config.get("auth")
             if isinstance(auth, list):
-                auth = tuple(auth)
+                auth = tuple(cast(List[Any], auth))
             url = self.config["url"]
             verify_certs = self.config["verify_certs"]
             kwargs: Dict[str, Any] = {
@@ -210,8 +210,12 @@ class ElasticSource(BaseSource):
 
     def _count_documents(self, client: Any, resolved: Dict[str, Any]) -> int:
         """Return how many documents the base query matches (metadata only)."""
-        base_query = resolved.get("base_query") or {}
-        query = base_query.get("query") if isinstance(base_query, dict) else None
+        base_query: Any = resolved.get("base_query") or {}
+        query = (
+            cast(Dict[str, Any], base_query).get("query")
+            if isinstance(base_query, dict)
+            else None
+        )
         body = {"query": query} if query is not None else None
         resp = client.count(index=resolved["index"], body=body)
         resp = resp.body if hasattr(resp, "body") else resp
@@ -399,9 +403,8 @@ class ElasticSource(BaseSource):
                 if hasattr(response, "body"):
                     response = response.body
                 elif not isinstance(response, dict):
-                    response = dict(
-                        response
-                    )  # pyright: ignore[reportCallIssue, reportArgumentType]
+                    # elasticsearch's ObjectApiResponse iterates keys, not pairs
+                    response = dict(cast(Dict[str, Any], response))
 
                 response = cast(Dict[str, Any], response)
                 scroll_id = response["_scroll_id"]

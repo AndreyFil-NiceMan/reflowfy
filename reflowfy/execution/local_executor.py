@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 from reflowfy.core.execution_context import (
     ExecutionContext,
@@ -62,18 +62,22 @@ class LocalExecutor(BaseExecutor):
         # that overrides define_jobs owns its own splitting, so it takes the
         # standard path below: the per-ID loop resolves define_source per ID and
         # would run a different plan than the manager dispatches.
-        if isinstance(pipeline, IdBasedPipeline) and (
-            type(pipeline).define_jobs is IdBasedPipeline.define_jobs
-        ):
-            return self._execute_id_based(pipeline, runtime_params, execution_id)
+        if isinstance(pipeline, IdBasedPipeline):
+            # isinstance narrows the generic to IdBasedPipeline[Unknown]
+            id_pipeline = cast("IdBasedPipeline[Any]", pipeline)
+            if type(id_pipeline).define_jobs is IdBasedPipeline.define_jobs:
+                return self._execute_id_based(id_pipeline, runtime_params, execution_id)
 
         # Resolve pipeline with runtime params (for AbstractPipeline).
         # _resolved_params includes defaults + any keys added by define_source.
-        if hasattr(pipeline, "resolve"):
-            pipeline.resolve(runtime_params)
+        pipeline_obj = cast(Any, pipeline)
+        if hasattr(pipeline_obj, "resolve"):
+            pipeline_obj.resolve(runtime_params)
 
         # Create execution context
-        resolved_params = dict(getattr(pipeline, "_resolved_params", runtime_params))
+        resolved_params: Dict[str, Any] = dict(
+            getattr(pipeline_obj, "_resolved_params", runtime_params)
+        )
 
         context = ExecutionContext(
             execution_id=execution_id,

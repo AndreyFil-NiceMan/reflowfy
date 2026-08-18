@@ -1,9 +1,18 @@
+# boto3-stubs marks most response keys NotRequired (Key, Size, ETag...). The S3 API
+# always returns them for the calls below. Scoped here so the rule keeps guarding our
+# own all-optional TypedDicts (RuntimeParams) everywhere else.
+# pyright: reportTypedDictNotRequiredAccess=false
 """AWS S3 source with pagination support."""
 
-from typing import Any, Dict, Iterator, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, cast
 import boto3
 from botocore.exceptions import ClientError
 from reflowfy.sources.base import BaseSource, SourceJob, SourceError
+
+if TYPE_CHECKING:
+    # boto3.client() is typed by overloads on a literal service name, so the
+    # **kwargs call below resolves to Unknown. Name the client type instead.
+    from mypy_boto3_s3.client import S3Client
 
 
 class S3Source(BaseSource):
@@ -61,24 +70,22 @@ class S3Source(BaseSource):
             **kwargs,
         }
         super().__init__(config)
-        self._client = None
+        self._client: "Optional[S3Client]" = None
 
-    def _get_client(self):
+    def _get_client(self) -> "S3Client":
         """Get or create S3 client."""
         if self._client is None:
-            client_kwargs = {
-                "service_name": "s3",
-                "region_name": self.config["region_name"],
-            }
-
-            if self.config.get("aws_access_key_id"):
-                client_kwargs["aws_access_key_id"] = self.config["aws_access_key_id"]
-                client_kwargs["aws_secret_access_key"] = self.config["aws_secret_access_key"]
-
-            if self.config.get("endpoint_url"):
-                client_kwargs["endpoint_url"] = self.config["endpoint_url"]
-
-            self._client = boto3.client(**client_kwargs)  # pyright: ignore[reportCallIssue, reportArgumentType]
+            # Every argument passed explicitly: boto3.client is typed by overloads on
+            # the literal service name, and a **kwargs splat matches none of them —
+            # which makes the returned client (and everything derived from it) Unknown.
+            key_id = self.config.get("aws_access_key_id")
+            self._client = boto3.client(  # pyright: ignore[reportUnknownMemberType]
+                "s3",
+                region_name=self.config["region_name"],
+                aws_access_key_id=key_id or None,
+                aws_secret_access_key=(self.config["aws_secret_access_key"] if key_id else None),
+                endpoint_url=self.config.get("endpoint_url") or None,
+            )
 
         return self._client
 
@@ -141,7 +148,9 @@ class S3Source(BaseSource):
             for key in explicit_keys:
                 if resolved_config["read_content"]:
                     content = self._read_object_content(key)
-                    records.extend(content if isinstance(content, list) else [content])
+                    records.extend(
+                        cast(List[Any], content) if isinstance(content, list) else [content]
+                    )
                 else:
                     records.append({"key": key})
                 if limit and len(records) >= limit:
@@ -172,7 +181,7 @@ class S3Source(BaseSource):
                     if read_content:
                         content = self._read_object_content(obj["Key"])
                         if isinstance(content, list):
-                            records.extend(content)
+                            records.extend(cast(List[Any], content))
                         else:
                             records.append(content)
                     else:
@@ -238,12 +247,12 @@ class S3Source(BaseSource):
                     continue
 
                 # Build records
-                records = []
+                records: List[Any] = []
                 for obj in filtered_objects:
                     if read_content:
                         content = self._read_object_content(obj["Key"])
                         if isinstance(content, list):
-                            records.extend(content)
+                            records.extend(cast(List[Any], content))
                         else:
                             records.append(content)
                     else:

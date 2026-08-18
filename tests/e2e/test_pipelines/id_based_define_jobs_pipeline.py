@@ -6,7 +6,7 @@ so define_source never runs and each child ID becomes its own job with its own
 transformations, destination write and retry.
 """
 
-from reflowfy import IdBasedPipeline, RuntimeParams, job
+from reflowfy import BaseDestination, IdBasedPipeline, Records, RuntimeParams, Transformations, job
 from tests.e2e.test_pipelines.destinations import e2e_http
 from tests.e2e.test_pipelines.transformations import id_fanout_stamp
 
@@ -31,8 +31,12 @@ class E2EIdBasedDefineJobsPipeline(IdBasedPipeline[RuntimeParams]):
     # define_source is deliberately absent: overriding define_jobs means it is
     # never called, and an IdBasedPipeline must not require a dummy stub.
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
         return e2e_http(body={"records": records})
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> Transformations:
         return [id_fanout_stamp()]

@@ -12,8 +12,9 @@ transformations and to the destination within the same job execution.
 """
 
 from datetime import datetime, timezone
+from typing import Any, Dict
 
-from reflowfy import transformation
+from reflowfy import Records, transformation
 
 # ---------------------------------------------------------------------------
 # Common / shared transforms
@@ -21,7 +22,7 @@ from reflowfy import transformation
 
 
 @transformation("transform_add_timestamp")
-def transform_add_timestamp(records, runtime_params):
+def transform_add_timestamp(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Adds a processing timestamp and source marker."""
     execution_id = runtime_params.get("execution_id", "unknown")
     for record in records:
@@ -32,7 +33,7 @@ def transform_add_timestamp(records, runtime_params):
 
 
 @transformation("transform_enrich_record")
-def transform_enrich_record(records, runtime_params):
+def transform_enrich_record(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Enriches records with computed fields; verifies step-1 ran first."""
     for record in records:
         record["_transform_step_2"] = True
@@ -45,7 +46,7 @@ def transform_enrich_record(records, runtime_params):
 
 
 @transformation("crash_recovery_add_info")
-def crash_recovery_add_info(records, runtime_params):
+def crash_recovery_add_info(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Adds crash-recovery pipeline metadata to records."""
     execution_id = runtime_params.get("execution_id", "unknown")
     for record in records:
@@ -55,7 +56,7 @@ def crash_recovery_add_info(records, runtime_params):
 
 
 @transformation("rl_passthrough")
-def rl_passthrough(records, runtime_params):
+def rl_passthrough(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Stamps dispatch timestamp and batch_id for rate-limit timing tests."""
     ts = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
     for record in records:
@@ -70,7 +71,7 @@ def rl_passthrough(records, runtime_params):
 
 
 @transformation("ctx_probe")
-def ctx_probe(records, runtime_params):
+def ctx_probe(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Stamps all four ExecutionContext keys onto each record."""
     for record in records:
         record["_ctx_execution_id"] = runtime_params.get("execution_id", "")
@@ -81,7 +82,7 @@ def ctx_probe(records, runtime_params):
 
 
 @transformation("ctx_runtime_params")
-def ctx_runtime_params(records, runtime_params):
+def ctx_runtime_params(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Reads env and multiplier from runtime_params; computes _value = id * multiplier."""
     env = runtime_params.get("env", "default")
     multiplier = int(runtime_params.get("multiplier", 1))
@@ -92,7 +93,7 @@ def ctx_runtime_params(records, runtime_params):
 
 
 @transformation("ctx_enrich")
-def ctx_enrich(records, runtime_params):
+def ctx_enrich(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Step 1 of 2: marks records as enriched."""
     for record in records:
         record["_enriched"] = True
@@ -100,7 +101,7 @@ def ctx_enrich(records, runtime_params):
 
 
 @transformation("ctx_maybe_fail")
-def ctx_maybe_fail(records, runtime_params):
+def ctx_maybe_fail(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Step 2 of 2: raises TransformationError only for id==999 (never in mock data)."""
     from reflowfy.transformations.base import TransformationError
 
@@ -112,7 +113,7 @@ def ctx_maybe_fail(records, runtime_params):
 
 
 @transformation("ctx_batch_id")
-def ctx_batch_id(records, runtime_params):
+def ctx_batch_id(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Stamps the current batch_id onto each record for cross-batch uniqueness testing."""
     bid = runtime_params.get("batch_id", "")
     for record in records:
@@ -126,7 +127,7 @@ def ctx_batch_id(records, runtime_params):
 
 
 @transformation("add_source_info")
-def add_source_info(records, runtime_params):
+def add_source_info(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Adds Elasticsearch source metadata to records."""
     for record in records:
         record["_source_type"] = "elasticsearch"
@@ -135,7 +136,7 @@ def add_source_info(records, runtime_params):
 
 
 @transformation("elastic_add_metadata_and_route")
-def elastic_add_metadata_and_route(records, runtime_params):
+def elastic_add_metadata_and_route(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Adds per-document metadata and a content-based route hint for destination selection.
 
     v2 worker-side sourcing: jobs are per-slice (``ElasticSource.split()``),
@@ -164,7 +165,7 @@ def elastic_add_metadata_and_route(records, runtime_params):
 
 
 @transformation("sql_add_source_info")
-def sql_add_source_info(records, runtime_params):
+def sql_add_source_info(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Adds SQL source metadata to records."""
     for record in records:
         record["_source_type"] = "sql"
@@ -173,7 +174,7 @@ def sql_add_source_info(records, runtime_params):
 
 
 @transformation("sql_filter_by_status")
-def sql_filter_by_status(records, runtime_params):
+def sql_filter_by_status(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Filters records by status from runtime_params."""
     status_filter = runtime_params.get("filter_status", "active")
     filtered = [r for r in records if r.get("status") == status_filter]
@@ -182,7 +183,7 @@ def sql_filter_by_status(records, runtime_params):
 
 
 @transformation("api_id_add_source_info")
-def api_id_add_source_info(records, runtime_params):
+def api_id_add_source_info(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Adds ID-based API source metadata to records."""
     for record in records:
         record["_source_type"] = "api_id"
@@ -191,7 +192,7 @@ def api_id_add_source_info(records, runtime_params):
 
 
 @transformation("api_id_log_record_count")
-def api_id_log_record_count(records, runtime_params):
+def api_id_log_record_count(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Logs the number of records processed from the ID-based API source."""
     print(f"  📊 ID-Based API Source: Processing {len(records)} records")
     return records
@@ -203,7 +204,7 @@ def api_id_log_record_count(records, runtime_params):
 
 
 @transformation("api_add_dest_info")
-def api_add_dest_info(records, runtime_params):
+def api_add_dest_info(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Adds API destination metadata to records."""
     execution_id = runtime_params.get("execution_id", "unknown")
     for record in records:
@@ -214,7 +215,7 @@ def api_add_dest_info(records, runtime_params):
 
 
 @transformation("kafka_add_dest_info")
-def kafka_add_dest_info(records, runtime_params):
+def kafka_add_dest_info(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Adds Kafka destination metadata to records."""
     execution_id = runtime_params.get("execution_id", "unknown")
     for record in records:
@@ -230,7 +231,7 @@ def kafka_add_dest_info(records, runtime_params):
 
 
 @transformation("id_pipeline_add_metadata")
-def id_pipeline_add_metadata(records, runtime_params):
+def id_pipeline_add_metadata(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Stamps current_ids and execution metadata onto each record."""
     current_ids = runtime_params.get("current_ids", [])
     execution_id = runtime_params.get("execution_id", "unknown")
@@ -242,7 +243,7 @@ def id_pipeline_add_metadata(records, runtime_params):
 
 
 @transformation("id_pipeline_enrich")
-def id_pipeline_enrich(records, runtime_params):
+def id_pipeline_enrich(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Enriches records with computed fields based on ID processing."""
     for record in records:
         record["_id_pipeline_verified"] = record.get("_processed_by_id_pipeline", False)
@@ -256,7 +257,7 @@ def id_pipeline_enrich(records, runtime_params):
 
 
 @transformation("raw_list_tag_source")
-def raw_list_tag_source(records, runtime_params):
+def raw_list_tag_source(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Tags records to confirm they came through the raw-list search endpoint."""
     for record in records:
         record["_source_endpoint"] = "POST /users/search"
@@ -265,7 +266,7 @@ def raw_list_tag_source(records, runtime_params):
 
 
 @transformation("raw_list_count_records")
-def raw_list_count_records(records, runtime_params):
+def raw_list_count_records(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Adds a record-position index within the batch."""
     for i, record in enumerate(records):
         record["_batch_position"] = i
@@ -273,7 +274,7 @@ def raw_list_count_records(records, runtime_params):
 
 
 @transformation("patch_add_metadata")
-def patch_add_metadata(records, runtime_params):
+def patch_add_metadata(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Stamps records that came from the PATCH /users/bulk endpoint."""
     for record in records:
         record["_source_endpoint"] = "PATCH /users/bulk"
@@ -282,7 +283,7 @@ def patch_add_metadata(records, runtime_params):
 
 
 @transformation("patch_compute_stats")
-def patch_compute_stats(records, runtime_params):
+def patch_compute_stats(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Computes count of active records in the batch."""
     active_count = sum(1 for r in records if r.get("active", False))
     for record in records:
@@ -291,7 +292,7 @@ def patch_compute_stats(records, runtime_params):
 
 
 @transformation("per_id_verify_enrichment")
-def per_id_verify_enrichment(records, runtime_params):
+def per_id_verify_enrichment(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Verifies that every record has the enrichment sub-object."""
     for record in records:
         if "enrichment" not in record:
@@ -301,7 +302,7 @@ def per_id_verify_enrichment(records, runtime_params):
 
 
 @transformation("products_tag_category")
-def products_tag_category(records, runtime_params):
+def products_tag_category(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Adds a category label for easy downstream filtering."""
     LABELS = {"A": "premium", "B": "standard", "C": "economy"}
     for record in records:
@@ -311,7 +312,7 @@ def products_tag_category(records, runtime_params):
 
 
 @transformation("products_add_tax")
-def products_add_tax(records, runtime_params):
+def products_add_tax(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Adds a 10% tax field to each product record."""
     for record in records:
         price = record.get("price", 0.0)
@@ -320,7 +321,7 @@ def products_add_tax(records, runtime_params):
 
 
 @transformation("api_batch_add_metadata")
-def api_batch_add_metadata(records, runtime_params):
+def api_batch_add_metadata(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Stamps each record with the IDs batch and execution context."""
     current_ids = runtime_params.get("current_ids", [])
     execution_id = runtime_params.get("execution_id", "unknown")
@@ -332,9 +333,9 @@ def api_batch_add_metadata(records, runtime_params):
 
 
 @transformation("api_batch_filter_active")
-def api_batch_filter_active(records, runtime_params):
+def api_batch_filter_active(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Keeps only active users and adds a computed display_name field."""
-    result = []
+    result: Records = []
     for record in records:
         if record.get("active", True):
             record["display_name"] = f"{record.get('name', '')} <{record.get('email', '')}>"
@@ -348,7 +349,7 @@ def api_batch_filter_active(records, runtime_params):
 
 
 @transformation("params_step1_enrich")
-def params_step1_enrich(records, runtime_params):
+def params_step1_enrich(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Step 1: writes step1_count into runtime_params for the next transform."""
     runtime_params["step1_count"] = len(records)
     runtime_params["step1_ran"] = True
@@ -368,7 +369,7 @@ def params_step1_enrich(records, runtime_params):
 
 
 @transformation("reveal_set_flag")
-def reveal_set_flag(records, runtime_params):
+def reveal_set_flag(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Mid-chain reveal step 1: sets a flag in runtime_params that the pipeline's
     define_transformations uses to append a second transformation on the next pass."""
     runtime_params["should_add_second"] = True
@@ -378,7 +379,7 @@ def reveal_set_flag(records, runtime_params):
 
 
 @transformation("reveal_stamp_second")
-def reveal_stamp_second(records, runtime_params):
+def reveal_stamp_second(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Mid-chain reveal step 2: only appended (and thus only runs) when step 1 set
     the flag. Stamps every record so the test can assert it actually ran."""
     for record in records:
@@ -387,7 +388,7 @@ def reveal_stamp_second(records, runtime_params):
 
 
 @transformation("params_step2_verify")
-def params_step2_verify(records, runtime_params):
+def params_step2_verify(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Step 2: verifies it can read what step1 wrote into runtime_params."""
     step1_count = runtime_params.get("step1_count", -1)
     step1_ran = runtime_params.get("step1_ran", False)
@@ -408,7 +409,7 @@ def params_step2_verify(records, runtime_params):
 
 
 @transformation("id_fanout_stamp")
-def id_fanout_stamp(records, runtime_params):
+def id_fanout_stamp(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Stamps what the worker's runtime_params actually carried.
 
     Lets the E2E assert the job payload was narrowed: an IdBasedPipeline that

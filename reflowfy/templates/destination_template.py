@@ -20,7 +20,9 @@ def example_kafka(**overrides: Any):
     Usage in a pipeline:
         from destinations.example_destination import example_kafka
 
-        def define_destination(self, records, runtime_params):
+        def define_destination(
+            self, records: Records, runtime_params: MyParams
+        ) -> BaseDestination:
             return example_kafka(topic="my-output-topic")
     """
     logger.debug(

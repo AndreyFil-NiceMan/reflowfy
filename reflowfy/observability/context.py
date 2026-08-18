@@ -8,7 +8,7 @@ propagation.
 import contextvars
 import logging
 from contextlib import contextmanager
-from typing import Any, Dict, Iterator
+from typing import Any, Dict, Generator
 
 _ctx: contextvars.ContextVar[Dict[str, Any]] = contextvars.ContextVar(
     "reflowfy_log_ctx", default={}
@@ -35,7 +35,7 @@ def install_context_filter() -> None:
 
 
 @contextmanager
-def log_context(**fields: Any) -> Iterator[None]:
+def log_context(**fields: Any) -> Generator[None, None, None]:
     """Bind fields (execution_id, job_id, pipeline_name, ...) for the enclosed scope."""
     install_context_filter()
     token = _ctx.set({**_ctx.get(), **{k: v for k, v in fields.items() if v is not None}})

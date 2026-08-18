@@ -140,10 +140,10 @@ Transformations process batches of records. Use the `@transformation` decorator 
 
 ```python
 # transformations/clean_names.py
-from reflowfy import transformation
+from reflowfy import Records, RuntimeParams, transformation
 
 @transformation("clean_names")
-def clean_names(records, context):
+def clean_names(records: Records, runtime_params: RuntimeParams) -> Records:
     """Normalize user names."""
     for record in records:
         if "name" in record:
@@ -161,31 +161,38 @@ Pipelines connect your sources, transformations, and destinations. Subclass `Abs
 
 ```python
 # pipelines/user_sync_pipeline.py
-from reflowfy import AbstractPipeline
+from reflowfy import (
+    AbstractPipeline,
+    BaseDestination,
+    BaseSource,
+    Records,
+    RuntimeParams,
+    Transformations,
+)
 from sources.prod_elastic import prod_elastic
 from destinations.prod_kafka import prod_kafka
 from transformations.clean_names import clean_names
 
-class UserSyncPipeline(AbstractPipeline):
+class UserSyncPipeline(AbstractPipeline[RuntimeParams]):
     # The auto-registration system uses this exact name:
     name = "user_sync_pipeline"
     rate_limit = 3000  # jobs per minute
 
-    def define_parameters(self):
-        # Define allowed runtime overrides
-        return []
-
-    def define_source(self, params):
+    def define_source(self, runtime_params: RuntimeParams) -> BaseSource:
         # Override the base query for this specific pipeline
         return prod_elastic(
             base_query={"query": {"match": {"type": "user_signup"}}}
         )
 
-    def define_transformations(self, params):
+    def define_transformations(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> Transformations:
         # Instantiate and return transformations
         return [clean_names()]
 
-    def define_destination(self, params):
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
         return prod_kafka()
 
 # ✅ That's it! The pipeline is automatically discovered.
@@ -225,10 +232,12 @@ from reflowfy import PipelineError, get_logger
 
 logger = get_logger(__name__)
 
-class UserSyncPipeline(AbstractPipeline):
+class UserSyncPipeline(AbstractPipeline[RuntimeParams]):
     name = "user_sync_pipeline"
 
-    def define_destination(self, records, params):
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
         if not records:
             raise PipelineError("nothing survived transformation")
         return prod_kafka()

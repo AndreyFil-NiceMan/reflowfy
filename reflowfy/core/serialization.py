@@ -1,6 +1,6 @@
 """JSON-safe normalization for records and payloads."""
 
-from typing import Any
+from typing import Any, Dict, Sequence, cast
 
 
 def to_json_safe(obj: Any) -> Any:
@@ -13,9 +13,12 @@ def to_json_safe(obj: Any) -> Any:
     if isinstance(obj, (str, int, float, bool, type(None))):
         return obj
     elif isinstance(obj, dict):
-        return {k: to_json_safe(v) for k, v in obj.items()}
+        # isinstance narrows Any to dict[Unknown, Unknown]; name the element types
+        mapping = cast(Dict[Any, Any], obj)
+        return {k: to_json_safe(v) for k, v in mapping.items()}
     elif isinstance(obj, (list, tuple)):
-        return [to_json_safe(item) for item in obj]
+        items = cast(Sequence[Any], obj)
+        return [to_json_safe(item) for item in items]
     elif hasattr(obj, "to_dict"):
         return to_json_safe(obj.to_dict())
     elif hasattr(obj, "__dict__"):

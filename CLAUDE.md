@@ -25,10 +25,16 @@ uv run pytest tests/unit/test_api_destination.py::TestClassName::test_name -v   
 # Lint / format / type-check (line-length 100; mypy strict; pyright strict)
 uv run ruff check reflowfy/
 uv run black reflowfy/
-uv run mypy reflowfy/       # NOT clean: ~141 pre-existing errors, mostly no-untyped-def.
+uv run mypy reflowfy/       # NOT clean: ~133 pre-existing errors, mostly no-untyped-def.
                             # The bar for a change is "the count does not go up".
+                            # `redundant-cast` is disabled in [tool.mypy]: mypy and
+                            # pyright disagree about isinstance-narrowed Any, and the
+                            # casts are load-bearing for pyright.
 uv run pyright              # config in [tool.pyright]; covers reflowfy/, pipelines/
-                            # and tests/e2e/test_pipelines/. Clean except 3 known errors.
+                            # and tests/e2e/test_pipelines/. CLEAN (0 errors) — the
+                            # reportUnknown* rules are ON (they were suppressed
+                            # repo-wide until 2026-08-18). Keep it at zero.
+uvx basedpyright            # also clean; stricter superset, useful as a second opinion
 
 # Run the full local stack via the CLI (Docker Compose under the hood)
 uv run python -m reflowfy.cli.main run --build        # add -d/--detach to background
@@ -93,6 +99,19 @@ Notes:
 - Reserved keys are all optional because the execution context is built per job: `define_source`/`define_jobs` run before `execution_id` et al. exist. Read them with `.get()`.
 - `BaseTransformation.apply` deliberately keeps `Dict[str, Any]` — a transformation is shared across pipelines, so it cannot name one pipeline's params type.
 - Worked examples: `typed_params_pipeline.py` (+ `tests/e2e/test_typed_params.py`), `id_based_api_advanced_pipeline_test.py`, `define_jobs_test_pipeline.py`. Derivation is unit-tested in `tests/unit/test_typed_runtime_params.py`.
+
+### Typed records and hook returns
+
+`reflowfy` exports the names a pipeline author needs to annotate a hook without a deep import: `Record` (`Dict[str, Any]`), `Records` (`List[Record]`), `Transformations` (`Sequence[BaseTransformation]`), plus `BaseSource` and `BaseDestination`. They live in `core/types.py`.
+
+They are aliases, not a second generic parameter. The framework's own signatures stay `List[Any]` because a source may yield non-dict records (raw S3 text, scalars), and `List[Any]` accepts a `Records`-annotated override — so `AbstractPipeline` did **not** need an `R` TypeVar next to `P`.
+
+`@transformation` is typed `Callable[[TransformFn], type[BaseTransformation]]` with `TransformFn = Callable[[Any, Any], Any]`. `Any` in every position on purpose: it rejects a wrong-arity function (the mistake that used to reach production as a runtime `TypeError`) without rejecting an author who annotates `runtime_params` with their own params TypedDict — a closed TypedDict is not assignable from `Dict[str, Any]`.
+
+The package ships `reflowfy/py.typed` (PEP 561), so installs are type-checked by consumers. It is registered in both `[tool.setuptools.package-data]` and `MANIFEST.in`.
+
+Where a third-party library genuinely has no types, the suppression is **file-scoped, never repo-wide**, with a header comment naming the library: `destinations/kafka.py`, `worker/consumer.py` and `reflow_manager/dispatcher.py` (aiokafka ships no stubs), and `sources/s3.py` (`reportTypedDictNotRequiredAccess`, because boto3-stubs marks `Key`/`Size`/`ETag` NotRequired). That rule stays live everywhere else on purpose — it is what catches `runtime_params["execution_id"]` subscripting on the all-optional `RuntimeParams`. `boto3.client("s3", ...)` passes every argument explicitly: boto3 is typed by overloads on the literal service name, and a `**kwargs` splat matches none of them, making the client and everything derived from it Unknown.
+
 
 ### Execution modes
 

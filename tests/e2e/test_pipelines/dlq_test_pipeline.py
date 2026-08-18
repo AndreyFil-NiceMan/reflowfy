@@ -4,7 +4,7 @@ DLQ Test Pipeline.
 Used for testing DLQ mechanics in E2E tests.
 """
 
-from reflowfy import AbstractPipeline, RuntimeParams
+from reflowfy import AbstractPipeline, BaseDestination, Records, RuntimeParams, Transformations
 from tests.e2e.test_pipelines.shared_destinations import e2e_console
 from tests.e2e.test_pipelines.shared_sources import e2e_mock
 
@@ -18,10 +18,14 @@ class DLQTestPipelineAuto(AbstractPipeline[RuntimeParams]):
     def define_source(self, runtime_params):
         return e2e_mock(data=[{"dlq_test": True}])
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
         return e2e_console(pretty_print=False)
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> Transformations:
         return []
 
 
@@ -33,10 +37,14 @@ class DLQTestPipelineBatch(AbstractPipeline[RuntimeParams]):
     def define_source(self, runtime_params):
         return e2e_mock(data=[{"batch_test": True}])
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
         return e2e_console(pretty_print=False)
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> Transformations:
         return []
 
 
@@ -48,8 +56,12 @@ class DLQTestPipelineDispatch(AbstractPipeline[RuntimeParams]):
     def define_source(self, runtime_params):
         return e2e_mock(data=[{"batch_test": True}])
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
         return e2e_console(pretty_print=False)
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> Transformations:
         return []

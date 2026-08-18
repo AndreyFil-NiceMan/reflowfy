@@ -10,7 +10,7 @@ Two pipeline variants for testing the enable_duplicate_jobs flag:
   Jobs run every time — same as current baseline behavior.
 """
 
-from reflowfy import AbstractPipeline, RuntimeParams
+from reflowfy import AbstractPipeline, BaseDestination, Records, RuntimeParams, Transformations
 from tests.e2e.test_pipelines.destinations import e2e_console
 from tests.e2e.test_pipelines.sources import e2e_mock
 
@@ -36,10 +36,14 @@ class E2EDedupOffPipeline(AbstractPipeline[RuntimeParams]):
     def define_source(self, runtime_params):
         return e2e_mock(count=5, batch_size=5, data=_FIXED_DATA)
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
         return e2e_console()
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> Transformations:
         return []
 
 
@@ -56,8 +60,12 @@ class E2EDedupOnPipeline(AbstractPipeline[RuntimeParams]):
     def define_source(self, runtime_params):
         return e2e_mock(count=5, batch_size=5, data=_FIXED_DATA)
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
         return e2e_console()
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> Transformations:
         return []

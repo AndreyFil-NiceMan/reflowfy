@@ -11,7 +11,14 @@ from typing import Any, List
 
 from typing_extensions import Annotated, NotRequired
 
-from reflowfy import AbstractPipeline, Param, RuntimeParams
+from reflowfy import (
+    AbstractPipeline,
+    BaseDestination,
+    Param,
+    Records,
+    RuntimeParams,
+    Transformations,
+)
 from tests.e2e.test_pipelines.destinations import e2e_console
 from tests.e2e.test_pipelines.sources import e2e_id_based_api
 from tests.e2e.test_pipelines.transformations import (
@@ -46,10 +53,14 @@ class E2EApiIdSourceTestPipeline(AbstractPipeline[ApiIdSourceParams]):
             batch_size=runtime_params.get("batch_size", 2),
         )
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: ApiIdSourceParams
+    ) -> BaseDestination:
         return e2e_console()
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: ApiIdSourceParams
+    ) -> Transformations:
         return [
             api_id_log_record_count(),
             api_id_add_source_info(),

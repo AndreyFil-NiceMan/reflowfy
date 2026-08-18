@@ -8,7 +8,14 @@ Two pipelines for testing the IdBasedPipeline feature:
 
 from typing_extensions import Annotated, NotRequired
 
-from reflowfy import IdBasedPipeline, Param, RuntimeParams
+from reflowfy import (
+    BaseDestination,
+    IdBasedPipeline,
+    Param,
+    Records,
+    RuntimeParams,
+    Transformations,
+)
 from tests.e2e.test_pipelines.destinations import e2e_console, e2e_http
 from tests.e2e.test_pipelines.sources import e2e_mock
 from tests.e2e.test_pipelines.transformations import (
@@ -51,10 +58,14 @@ class E2EIdBasedPipelineTest(IdBasedPipeline[IdBasedTestParams]):
         ]
         return e2e_mock(data=data, batch_size=5)
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: IdBasedTestParams
+    ) -> BaseDestination:
         return e2e_http(body={"records": records})
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: IdBasedTestParams
+    ) -> Transformations:
         return [
             id_pipeline_add_metadata(),
             id_pipeline_enrich(),
@@ -94,10 +105,14 @@ class E2EIdBasedBatchPipelineTest(IdBasedPipeline[IdBasedBatchTestParams]):
         ]
         return e2e_mock(data=data, batch_size=5)
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: IdBasedBatchTestParams
+    ) -> BaseDestination:
         return e2e_console(pretty_print=False, max_records_display=3)
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: IdBasedBatchTestParams
+    ) -> Transformations:
         return [
             id_pipeline_add_metadata(),
             id_pipeline_enrich(),

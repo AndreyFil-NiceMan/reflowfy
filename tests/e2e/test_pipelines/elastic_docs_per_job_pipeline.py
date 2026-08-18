@@ -6,7 +6,7 @@ manager fans the query out into ``ceil(count / DOCS_PER_JOB)`` parallel
 sliced-scroll jobs instead of a single job.
 """
 
-from reflowfy import AbstractPipeline, RuntimeParams
+from reflowfy import AbstractPipeline, BaseDestination, Records, RuntimeParams, Transformations
 from tests.e2e.test_pipelines.destinations import e2e_console
 from tests.e2e.test_pipelines.sources import e2e_elastic
 from tests.e2e.test_pipelines.transformations import add_source_info
@@ -33,8 +33,12 @@ class E2EElasticDocsPerJobPipeline(AbstractPipeline[RuntimeParams]):
             docs_per_job=DOCS_PER_JOB,
         )
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
         return e2e_console(max_records_display=5)
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> Transformations:
         return [add_source_info()]

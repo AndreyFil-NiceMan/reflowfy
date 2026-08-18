@@ -6,7 +6,7 @@ identical records (worker dedups the second), and a changed payload
 produces different records (worker re-processes).
 """
 
-from reflowfy import AbstractPipeline, RuntimeParams
+from reflowfy import AbstractPipeline, BaseDestination, Records, RuntimeParams, Transformations
 from tests.e2e.test_pipelines.sources import e2e_mock
 from tests.e2e.test_pipelines.destinations import e2e_http
 
@@ -22,8 +22,12 @@ class E2EContentDedupPipeline(AbstractPipeline[RuntimeParams]):
         data = [{"id": 1, "payload": payload}]
         return e2e_mock(data=data, batch_size=1)
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
         return e2e_http(body={"records": records})
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> Transformations:
         return []

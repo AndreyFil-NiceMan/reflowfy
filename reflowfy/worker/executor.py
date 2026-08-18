@@ -36,7 +36,7 @@ class JobStats:
         self.end_time: Optional[float] = None
         self.records_input = 0
         self.records_output = 0
-        self.transformation_times = {}
+        self.transformation_times: Dict[str, float] = {}
         self.destination_write_time: float = 0.0
         self.error: Optional[str] = None
         self.error_type: Optional[str] = None
@@ -178,7 +178,7 @@ class WorkerExecutor:
 
         try:
             metadata = job_payload.get("metadata", {})
-            source_descriptor = job_payload.get("source") or {}
+            source_descriptor: Dict[str, Any] = job_payload.get("source") or {}
 
             runtime_params = build_flat_runtime_params_from_metadata(metadata)
 

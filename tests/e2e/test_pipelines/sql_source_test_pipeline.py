@@ -7,7 +7,14 @@ Uses a SQL query template loaded from queries/events_by_date.sql.
 
 from typing_extensions import Annotated, NotRequired, Required
 
-from reflowfy import AbstractPipeline, Param, RuntimeParams
+from reflowfy import (
+    AbstractPipeline,
+    BaseDestination,
+    Param,
+    Records,
+    RuntimeParams,
+    Transformations,
+)
 from tests.e2e.test_pipelines.sources import e2e_sql
 from tests.e2e.test_pipelines.destinations import e2e_console
 from tests.e2e.test_pipelines.transformations import (
@@ -37,10 +44,14 @@ class E2ESqlSourceTestPipeline(AbstractPipeline[SqlSourceParams]):
             batch_size=50,
         )
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: SqlSourceParams
+    ) -> BaseDestination:
         return e2e_console(pretty_print=True, max_records_display=5)
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: SqlSourceParams
+    ) -> Transformations:
         return [
             sql_filter_by_status(),
             sql_add_source_info(),

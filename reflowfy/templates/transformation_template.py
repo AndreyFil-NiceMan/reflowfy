@@ -5,8 +5,9 @@ Transformations auto-register via metaclass when they subclass BaseTransformatio
 Just define the class and import it in any pipeline.
 """
 
-from typing import Any, Dict, List
-from reflowfy import BaseTransformation, PipelineError, get_logger
+from typing import Any, Dict
+
+from reflowfy import BaseTransformation, PipelineError, Records, get_logger
 
 # There is no `self` here — get_logger works from any module, function or class.
 # The worker attaches execution_id / job_id / pipeline_name to every record.
@@ -18,7 +19,7 @@ class ExampleTransform(BaseTransformation):
 
     name = "example_transform"
 
-    def apply(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
+    def apply(self, records: Records, runtime_params: Dict[str, Any]) -> Records:
         """
         Transform a batch of records.
 

@@ -13,3 +13,6 @@ include reflowfy/templates/.env.template
 include Dockerfile.*
 include docker-compose.yml
 include docker-compose.*.yml
+
+# PEP 561 marker
+include reflowfy/py.typed

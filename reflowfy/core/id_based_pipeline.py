@@ -218,11 +218,11 @@ class IdBasedPipeline(AbstractPipeline[P]):
         """Validate the shared parameter rules, plus the ones specific to `ids`."""
         errors = super().validate_parameters(runtime_params)
 
-        ids = runtime_params.get("ids")
+        ids: Any = runtime_params.get("ids")
         if ids is not None:
             if not isinstance(ids, list):
                 errors.append("Parameter 'ids' must be a list")
-            elif len(ids) == 0:
+            elif len(cast(List[Any], ids)) == 0:
                 errors.append("Parameter 'ids' must not be empty")
 
         return errors
@@ -285,7 +285,7 @@ class IdBasedPipeline(AbstractPipeline[P]):
         if isinstance(returned, BaseSource):
             return returned
         if isinstance(returned, list):
-            return StaticSource(returned)
+            return StaticSource(cast(List[Any], returned))
         raise TypeError(
             f"Pipeline '{self.name}': define_source must return a BaseSource or a "
             f"list of records, got {type(returned).__name__}"

@@ -7,7 +7,7 @@ apply transformations, and output to console.
 
 from typing_extensions import Annotated, NotRequired, Required
 
-from reflowfy import Param, RuntimeParams
+from reflowfy import BaseDestination, Param, Records, RuntimeParams, Transformations
 from reflowfy.core.abstract_pipeline import AbstractPipeline
 from reflowfy.sources.s3 import s3_source
 from reflowfy.destinations.console import ConsoleDestination
@@ -50,9 +50,11 @@ class S3JsonPipeline(AbstractPipeline[S3JsonParams]):
             content_type="json",
         )
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(self, records: Records, runtime_params: S3JsonParams) -> BaseDestination:
         return ConsoleDestination()
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: S3JsonParams
+    ) -> Transformations:
         # Add your transformations here
         return []

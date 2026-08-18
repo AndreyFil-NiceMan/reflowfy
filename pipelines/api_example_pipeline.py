@@ -9,7 +9,7 @@ from typing import Any, List
 
 from typing_extensions import Annotated, NotRequired
 
-from reflowfy import Param, RuntimeParams
+from reflowfy import BaseDestination, Param, Records, RuntimeParams, Transformations
 from reflowfy.core.abstract_pipeline import AbstractPipeline
 from reflowfy.sources.api import id_based_api_source
 from reflowfy.destinations.console import ConsoleDestination
@@ -50,9 +50,11 @@ class APIPipeline(AbstractPipeline[APIParams]):
             batch_size=runtime_params.get("batch_size", 2),
         )
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(self, records: Records, runtime_params: APIParams) -> BaseDestination:
         return ConsoleDestination()
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: APIParams
+    ) -> Transformations:
         # Add your transformations here
         return []

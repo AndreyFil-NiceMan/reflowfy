@@ -11,7 +11,7 @@ import os
 
 from typing_extensions import Required
 
-from reflowfy import AbstractPipeline, RuntimeParams
+from reflowfy import AbstractPipeline, BaseDestination, Records, RuntimeParams, Transformations
 from reflowfy.destinations.api import api_destination
 from tests.e2e.test_pipelines.sources import e2e_elastic
 from tests.e2e.test_pipelines.transformations import elastic_add_metadata_and_route
@@ -49,10 +49,14 @@ class E2EElasticRoutedDestinationsPipeline(AbstractPipeline[ElasticRoutedParams]
             num_slices=NUM_SLICES,
         )
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: ElasticRoutedParams
+    ) -> Transformations:
         return [elastic_add_metadata_and_route()]
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: ElasticRoutedParams
+    ) -> BaseDestination:
         # v2: no per-job "page_num" is available anymore (worker-side sourcing
         # only passes one source descriptor + execution metadata per job), so
         # the route hint is computed per-record from content (see

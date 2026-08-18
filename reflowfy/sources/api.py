@@ -1,6 +1,6 @@
 """REST API sources."""
 
-from typing import Any, Dict, Iterator, List, Optional, Union
+from typing import Any, Dict, Iterator, List, Optional, Union, cast
 
 import httpx
 
@@ -125,15 +125,15 @@ class IDBasedAPISource(BaseSource):
         """Extract records list from a response using ``response_key``."""
         response_key = self.config.get("response_key")
         if not response_key:
-            return data if isinstance(data, list) else []
+            return cast(List[Any], data) if isinstance(data, list) else []
         keys = response_key.split(".")
-        result = data
+        result: Any = data
         for key in keys:
             if isinstance(result, dict):
-                result = result.get(key, [])
+                result = cast(Dict[str, Any], result).get(key, [])
             else:
                 return []
-        return result if isinstance(result, list) else [result]
+        return cast(List[Any], result) if isinstance(result, list) else [result]
 
     def _fetch_by_id(self, id_value: Union[str, int]) -> Optional[Any]:
         """Fetch a single resource by ID (per-ID mode)."""
@@ -145,7 +145,10 @@ class IDBasedAPISource(BaseSource):
         if method in ("GET", "HEAD"):
             body = None
         elif isinstance(body, dict):
-            body = {k: v.format(id=id_value) if isinstance(v, str) else v for k, v in body.items()}
+            body = {
+                k: v.format(id=id_value) if isinstance(v, str) else v
+                for k, v in cast(Dict[str, Any], body).items()
+            }
 
         query = self.config["params"] or None
 
@@ -206,7 +209,7 @@ class IDBasedAPISource(BaseSource):
         if not self._is_per_id_mode():
             return self._fetch_batch(ids)
 
-        records = []
+        records: List[Any] = []
         for id_value in ids:
             record = self._fetch_by_id(id_value)
             if record:
@@ -247,18 +250,18 @@ class IDBasedAPISource(BaseSource):
 
         for i in range(0, len(ids), batch_size):
             id_batch = ids[i : i + batch_size]
-            records = []
+            batch_records: List[Any] = []
             for id_value in id_batch:
                 record = self._fetch_by_id(id_value)
                 if record:
-                    records.append(record)
-            if records:
+                    batch_records.append(record)
+            if batch_records:
                 yield SourceJob(
-                    records=records,
+                    records=batch_records,
                     metadata={
                         "batch_num": batch_num,
                         "id_count": len(id_batch),
-                        "record_count": len(records),
+                        "record_count": len(batch_records),
                         "ids": id_batch,
                     },
                 )

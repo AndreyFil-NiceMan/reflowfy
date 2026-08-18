@@ -10,7 +10,7 @@ All use e2e_mock → e2e_http with rl_passthrough that stamps dispatch timestamp
 and batch_id for timing verification.
 """
 
-from reflowfy import AbstractPipeline, RuntimeParams
+from reflowfy import AbstractPipeline, BaseDestination, Records, RuntimeParams, Transformations
 from tests.e2e.test_pipelines.sources import e2e_mock
 from tests.e2e.test_pipelines.destinations import e2e_http
 from tests.e2e.test_pipelines.transformations import rl_passthrough
@@ -25,10 +25,14 @@ class E2ESlowRatePipeline(AbstractPipeline[RuntimeParams]):
     def define_source(self, runtime_params):
         return e2e_mock(count=5, batch_size=1)
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
         return e2e_http(body={"records": records})
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> Transformations:
         return [rl_passthrough()]
 
 
@@ -41,10 +45,14 @@ class E2EFastRatePipeline(AbstractPipeline[RuntimeParams]):
     def define_source(self, runtime_params):
         return e2e_mock(count=50, batch_size=10)
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
         return e2e_http(body={"records": records})
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> Transformations:
         return [rl_passthrough()]
 
 
@@ -57,8 +65,12 @@ class E2ERateLimitOverridePipeline(AbstractPipeline[RuntimeParams]):
     def define_source(self, runtime_params):
         return e2e_mock(count=5, batch_size=1)
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
         return e2e_http(body={"records": records})
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> Transformations:
         return [rl_passthrough()]

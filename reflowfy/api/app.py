@@ -12,7 +12,9 @@ from reflowfy import __version__
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from reflowfy.core.registry import pipeline_registry
 from reflowfy.core.pipeline_discovery import discover_and_load_pipelines
-from reflowfy.observability import metrics as _metrics  # noqa: F401  (register families)
+from reflowfy.observability import (  # noqa: F401  (register families)
+    metrics as _metrics,  # pyright: ignore[reportUnusedImport]
+)
 from reflowfy.observability.logging import setup_logging
 from reflowfy.observability.tracing import init_tracing, instrument_fastapi
 from reflowfy.api.routes import create_pipeline_routes
