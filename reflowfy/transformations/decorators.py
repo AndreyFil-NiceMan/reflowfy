@@ -17,10 +17,15 @@ Example:
         return [uppercase_names()]
 """
 
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, cast
+
+if TYPE_CHECKING:
+    from reflowfy.transformations.base import BaseTransformation
 
 
-def transformation(name: str):
+def transformation(
+    name: str,
+) -> Callable[[Callable[..., Any]], "type[BaseTransformation]"]:
     """
     Decorator to create a reusable transformation from a function.
 
@@ -43,7 +48,8 @@ def transformation(name: str):
         def define_transformations(self, records, runtime_params):
             return [filter_active()]  # Instantiate to use
     """
-    def decorator(func: Callable[..., Any]) -> type:
+
+    def decorator(func: Callable[..., Any]) -> "type[BaseTransformation]":
         from reflowfy.transformations.base import BaseTransformation
 
         # Create a new BaseTransformation subclass dynamically
@@ -51,12 +57,13 @@ def transformation(name: str):
             func.__name__,
             (BaseTransformation,),
             {
-                'name': name,
-                'apply': lambda self, records, runtime_params: func(records, runtime_params),
-                '__doc__': func.__doc__ or f"Transformation: {name}",
-                '__module__': func.__module__,
-            }
+                "name": name,
+                "apply": lambda self, records, runtime_params: func(records, runtime_params),
+                "__doc__": func.__doc__ or f"Transformation: {name}",
+                "__module__": func.__module__,
+            },
         )
 
-        return cls
+        return cast("type[BaseTransformation]", cls)
+
     return decorator

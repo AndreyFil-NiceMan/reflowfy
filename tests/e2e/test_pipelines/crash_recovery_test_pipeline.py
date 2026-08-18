@@ -6,13 +6,13 @@ rate limit override to ensure the pipeline runs long enough to be
 interrupted and recovered.
 """
 
-from reflowfy import AbstractPipeline
+from reflowfy import AbstractPipeline, RuntimeParams
 from tests.e2e.test_pipelines.destinations import e2e_http
 from tests.e2e.test_pipelines.sources import e2e_mock
 from tests.e2e.test_pipelines.transformations import crash_recovery_add_info
 
 
-class CrashRecoveryTestPipeline(AbstractPipeline):
+class CrashRecoveryTestPipeline(AbstractPipeline[RuntimeParams]):
     """Test pipeline for crash recovery scenarios."""
 
     name = "crash_recovery_test"

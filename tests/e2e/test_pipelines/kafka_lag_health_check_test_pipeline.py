@@ -8,7 +8,7 @@ definition covers both the "lag blocks dispatch" and "lag allows dispatch" scena
 
 import os
 
-from reflowfy import AbstractPipeline
+from reflowfy import AbstractPipeline, RuntimeParams
 from reflowfy.destinations.kafka import kafka_destination
 from tests.e2e.test_pipelines.sources import e2e_mock
 
@@ -20,7 +20,7 @@ LAG_TEST_TOPIC = os.getenv("E2E_LAG_TEST_TOPIC", "e2e-lag-health-check")
 LAG_TEST_GROUP = os.getenv("E2E_LAG_TEST_GROUP", "e2e-lag-test-consumer-group")
 
 
-class E2EKafkaLagHealthCheckPipeline(AbstractPipeline):
+class E2EKafkaLagHealthCheckPipeline(AbstractPipeline[RuntimeParams]):
     """E2E test pipeline for Kafka destination lag health check."""
 
     name = "e2e_kafka_lag_health_check"

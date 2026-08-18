@@ -6,7 +6,9 @@ Two pipelines for testing the IdBasedPipeline feature:
 - E2EIdBasedBatchPipelineTest: ids_batch_size=2, two IDs per source call
 """
 
-from reflowfy import IdBasedPipeline, PipelineParameter
+from typing_extensions import Annotated, NotRequired
+
+from reflowfy import IdBasedPipeline, Param, RuntimeParams
 from tests.e2e.test_pipelines.destinations import e2e_console, e2e_http
 from tests.e2e.test_pipelines.sources import e2e_mock
 from tests.e2e.test_pipelines.transformations import (
@@ -15,7 +17,15 @@ from tests.e2e.test_pipelines.transformations import (
 )
 
 
-class E2EIdBasedPipelineTest(IdBasedPipeline):
+class IdBasedTestParams(RuntimeParams, total=False):
+    """Parameters for :class:`E2EIdBasedPipelineTest`."""
+
+    records_per_id: Annotated[
+        NotRequired[int], Param("Number of mock records to generate per ID", default=10)
+    ]
+
+
+class E2EIdBasedPipelineTest(IdBasedPipeline[IdBasedTestParams]):
     """
     E2E test pipeline for IdBasedPipeline feature.
 
@@ -25,17 +35,6 @@ class E2EIdBasedPipelineTest(IdBasedPipeline):
 
     name = "e2e_id_based_pipeline_test"
     rate_limit = 3000  # jobs per minute
-
-    def define_parameters(self):
-        return [
-            PipelineParameter(
-                name="records_per_id",
-                description="Number of mock records to generate per ID",
-                param_type=int,
-                required=False,
-                default=10,
-            ),
-        ]
 
     def define_source(self, runtime_params):
         current_ids = runtime_params.get("current_ids", [])
@@ -62,7 +61,15 @@ class E2EIdBasedPipelineTest(IdBasedPipeline):
         ]
 
 
-class E2EIdBasedBatchPipelineTest(IdBasedPipeline):
+class IdBasedBatchTestParams(RuntimeParams, total=False):
+    """Parameters for :class:`E2EIdBasedBatchPipelineTest`."""
+
+    records_per_id: Annotated[
+        NotRequired[int], Param("Number of mock records to generate per ID", default=5)
+    ]
+
+
+class E2EIdBasedBatchPipelineTest(IdBasedPipeline[IdBasedBatchTestParams]):
     """
     E2E test pipeline for ids_batch_size > 1.
 
@@ -72,17 +79,6 @@ class E2EIdBasedBatchPipelineTest(IdBasedPipeline):
     name = "e2e_id_based_batch_pipeline_test"
     rate_limit = 3000  # jobs per minute
     ids_batch_size = 2
-
-    def define_parameters(self):
-        return [
-            PipelineParameter(
-                name="records_per_id",
-                description="Number of mock records to generate per ID",
-                param_type=int,
-                required=False,
-                default=5,
-            ),
-        ]
 
     def define_source(self, runtime_params):
         current_ids = runtime_params.get("current_ids", [])

@@ -7,17 +7,28 @@ jobs with its own logic. Used for E2E testing of the ``define_jobs`` hook and
 """
 
 import os
+from typing import Any, Dict, Iterable, List, Sequence
 
 import httpx
+from typing_extensions import Annotated, NotRequired
 
-from reflowfy import AbstractPipeline, PipelineParameter, chunk
+from reflowfy import AbstractPipeline, Param, RuntimeParams, chunk
+from reflowfy.destinations.base import BaseDestination
+from reflowfy.transformations.base import BaseTransformation
 from tests.e2e.test_pipelines.destinations import e2e_console
 
 # Inside Docker: http://e2e-mock-api:8092 — outside Docker defaults to localhost:8092
 MOCK_API_URL = os.getenv("MOCK_API_URL", "http://localhost:8092")
 
 
-class E2EDefineJobsPipeline(AbstractPipeline):
+class DefineJobsParams(RuntimeParams, total=False):
+    """Params for :class:`E2EDefineJobsPipeline`."""
+
+    base_url: Annotated[NotRequired[str], Param("Base API URL", default=MOCK_API_URL)]
+    job_size: Annotated[NotRequired[int], Param("Records per job", default=1)]
+
+
+class E2EDefineJobsPipeline(AbstractPipeline[DefineJobsParams]):
     """E2E test pipeline that owns its job splitting.
 
     ``GET /objects`` returns ``{"obj1": 1, "obj2": 2, "obj3": 3}`` — 3 records,
@@ -27,32 +38,20 @@ class E2EDefineJobsPipeline(AbstractPipeline):
     name = "e2e_define_jobs"
     rate_limit = 600  # jobs per minute
 
-    def define_parameters(self):
-        return [
-            PipelineParameter(
-                name="base_url",
-                description="Base API URL",
-                param_type=str,
-                required=False,
-                default=MOCK_API_URL,
-            ),
-            PipelineParameter(
-                name="job_size",
-                description="Records per job",
-                param_type=int,
-                required=False,
-                default=1,
-            ),
-        ]
+    # define_parameters() is derived from DefineJobsParams.
 
-    def define_jobs(self, runtime_params):
+    def define_jobs(self, runtime_params: DefineJobsParams) -> Iterable[Any]:
         base_url = runtime_params.get("base_url", MOCK_API_URL)
-        data = httpx.get(f"{base_url}/objects", timeout=10.0).json()
+        data: Dict[str, Any] = httpx.get(f"{base_url}/objects", timeout=10.0).json()
         records = [{"name": key, "value": value} for key, value in data.items()]
         return chunk(records, size=runtime_params.get("job_size", 1))
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: List[Any], runtime_params: DefineJobsParams
+    ) -> BaseDestination:
         return e2e_console()
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: List[Any], runtime_params: DefineJobsParams
+    ) -> Sequence[BaseTransformation]:
         return []

@@ -8,7 +8,7 @@ Four pipelines for testing transformation context features:
 - E2EBatchIdentityPipeline:   stamps batch_id per record to verify uniqueness per batch
 """
 
-from reflowfy import AbstractPipeline
+from reflowfy import AbstractPipeline, RuntimeParams
 from tests.e2e.test_pipelines.destinations import e2e_http
 from tests.e2e.test_pipelines.sources import e2e_mock
 from tests.e2e.test_pipelines.transformations import (
@@ -20,7 +20,7 @@ from tests.e2e.test_pipelines.transformations import (
 )
 
 
-class E2EContextProbePipeline(AbstractPipeline):
+class E2EContextProbePipeline(AbstractPipeline[RuntimeParams]):
     """Stamps all 4 ExecutionContext keys onto records."""
 
     name = "e2e_context_probe"
@@ -36,7 +36,7 @@ class E2EContextProbePipeline(AbstractPipeline):
         return [ctx_probe()]
 
 
-class E2ERuntimeParamsPipeline(AbstractPipeline):
+class E2ERuntimeParamsPipeline(AbstractPipeline[RuntimeParams]):
     """Reads runtime_params; test sends env=staging and multiplier=3."""
 
     name = "e2e_runtime_params"
@@ -52,7 +52,7 @@ class E2ERuntimeParamsPipeline(AbstractPipeline):
         return [ctx_runtime_params()]
 
 
-class E2EErrorTolerantPipeline(AbstractPipeline):
+class E2EErrorTolerantPipeline(AbstractPipeline[RuntimeParams]):
     """Two-step transformation chain; mock data never contains id=999 so always completes."""
 
     name = "e2e_error_tolerant"
@@ -68,7 +68,7 @@ class E2EErrorTolerantPipeline(AbstractPipeline):
         return [ctx_enrich(), ctx_maybe_fail()]
 
 
-class E2EBatchIdentityPipeline(AbstractPipeline):
+class E2EBatchIdentityPipeline(AbstractPipeline[RuntimeParams]):
     """30 records across 3 batches of 10; each batch must carry a distinct batch_id."""
 
     name = "e2e_batch_identity"

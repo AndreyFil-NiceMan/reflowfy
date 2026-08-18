@@ -13,13 +13,22 @@ Perfect for testing the Reflowfy framework locally:
 Just run the API and call the /test endpoint!
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence
+
 from reflowfy import (
     AbstractPipeline,
     BaseTransformation,
+    RuntimeParams,
     get_logger,
 )
+
+# Uncomment when you declare parameters on SimpleTestParams below:
+# from typing import Literal
+# from typing_extensions import Annotated, NotRequired, Required
+# from reflowfy import Param
+from reflowfy.destinations.base import BaseDestination
 from reflowfy.destinations.console import console_destination
+from reflowfy.sources.base import BaseSource
 from reflowfy.sources.mock import generate_sample_data, mock_source
 
 # Logging: works from anywhere — transformations, @source functions, plain helpers.
@@ -89,7 +98,21 @@ class AddProcessingInfo(BaseTransformation):
 SAMPLE_DATA = generate_sample_data(count=500)
 
 
-class SimpleTestPipeline(AbstractPipeline):
+class SimpleTestParams(RuntimeParams, total=False):
+    """The parameters this pipeline accepts, declared once as types.
+
+    Subclassing RuntimeParams means the framework's execution-context keys
+    (execution_id, batch_id, pipeline_name, created_at, ...) come along for free.
+    Add your own below; each becomes a validated, documented pipeline parameter:
+
+        env: Required[Literal["dev", "prod"]]        # required, with choices
+        limit: Annotated[NotRequired[int], Param("Max rows", default=100)]
+
+    Declare here, too, any key your own code *writes* into runtime_params.
+    """
+
+
+class SimpleTestPipeline(AbstractPipeline[SimpleTestParams]):
     """
     Simple test pipeline with mock source and console destination.
 
@@ -99,11 +122,10 @@ class SimpleTestPipeline(AbstractPipeline):
     name = "simple_test_pipeline"
     rate_limit = 600  # jobs per minute
 
-    def define_parameters(self):
-        """No parameters needed for this simple test pipeline."""
-        return []
+    # define_parameters() is derived from SimpleTestParams — no need to write it
+    # by hand. Override it if you would rather build the list yourself.
 
-    def define_source(self, runtime_params: Dict[str, Any]) -> Any:
+    def define_source(self, runtime_params: SimpleTestParams) -> BaseSource:
         """Return mock data source."""
         # Tip: load query templates from the queries/ folder with no boilerplate.
         # self.load_query() finds the file (recursively, so subfolders work) and
@@ -119,12 +141,14 @@ class SimpleTestPipeline(AbstractPipeline):
     # To split the work into jobs yourself, implement define_jobs INSTEAD of
     # define_source — each element of the returned list is one job:
     #
-    #   def define_jobs(self, runtime_params):
+    #   def define_jobs(self, runtime_params: SimpleTestParams) -> Iterable[Any]:
     #       from reflowfy import chunk
     #       rows = httpx.get(runtime_params["url"]).json()["items"]
     #       return chunk(rows, size=10)   # 10 records per job
 
-    def define_destination(self, records: List[Any], runtime_params: Dict[str, Any]) -> Any:
+    def define_destination(
+        self, records: List[Any], runtime_params: SimpleTestParams
+    ) -> BaseDestination:
         """Return console destination."""
         # Raise PipelineError from any define_* hook to fail the job deliberately —
         # see transformations/example_transformation.py. The message, type and
@@ -136,8 +160,8 @@ class SimpleTestPipeline(AbstractPipeline):
         )
 
     def define_transformations(
-        self, records: List[Any], runtime_params: Dict[str, Any]
-    ) -> List[Any]:
+        self, records: List[Any], runtime_params: SimpleTestParams
+    ) -> Sequence[BaseTransformation]:
         """Return transformation pipeline."""
         return [
             FilterActiveUsers(),

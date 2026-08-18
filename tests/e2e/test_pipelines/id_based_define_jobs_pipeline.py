@@ -6,21 +6,21 @@ so define_source never runs and each child ID becomes its own job with its own
 transformations, destination write and retry.
 """
 
-from reflowfy import IdBasedPipeline, job
+from reflowfy import IdBasedPipeline, RuntimeParams, job
 from tests.e2e.test_pipelines.destinations import e2e_http
 from tests.e2e.test_pipelines.transformations import id_fanout_stamp
 
 CHILDREN_PER_ID = 3
 
 
-class E2EIdBasedDefineJobsPipeline(IdBasedPipeline):
+class E2EIdBasedDefineJobsPipeline(IdBasedPipeline[RuntimeParams]):
     """Each input ID expands into CHILDREN_PER_ID jobs, each tagged with its ID."""
 
     name = "e2e_id_based_define_jobs"
     rate_limit = 3000  # jobs per minute
 
     def define_jobs(self, runtime_params):
-        for parent_id in runtime_params["ids"]:
+        for parent_id in runtime_params.get("ids", []):
             for child in range(CHILDREN_PER_ID):
                 yield job(
                     [{"parent_id": parent_id, "child_id": f"{parent_id}-{child}"}],

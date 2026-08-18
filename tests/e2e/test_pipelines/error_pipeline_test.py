@@ -6,7 +6,7 @@ Used by test_dx_improvements.py to verify that:
 - GET /executions/{id}/errors returns the error details
 """
 
-from reflowfy import AbstractPipeline, BaseTransformation
+from reflowfy import AbstractPipeline, BaseTransformation, RuntimeParams
 from reflowfy.destinations.console import console_destination
 from tests.e2e.test_pipelines.sources import e2e_mock
 
@@ -20,7 +20,7 @@ class AlwaysFailTransformation(BaseTransformation):
         raise RuntimeError("Intentional failure: error_pipeline_test transformation")
 
 
-class ErrorPipelineTest(AbstractPipeline):
+class ErrorPipelineTest(AbstractPipeline[RuntimeParams]):
     """Pipeline whose transformation always raises — used to test error reporting."""
 
     name = "error_pipeline_test"

@@ -37,8 +37,17 @@ Pipeline: {name}
 Auto-registered — no need to call pipeline_registry.register().
 """
 
-from reflowfy import AbstractPipeline, PipelineParameter, BaseTransformation
+from typing import Any, List, Sequence
+
+from reflowfy import AbstractPipeline, BaseTransformation, RuntimeParams
 from reflowfy import PipelineError, get_logger
+from reflowfy.destinations.base import BaseDestination
+from reflowfy.sources.base import BaseSource
+
+# Uncomment when you declare parameters on {class_name}Params:
+# from typing import Literal
+# from typing_extensions import Annotated, NotRequired, Required
+# from reflowfy import Param
 
 # Works from anywhere — no `self` needed, so transformations, @source functions
 # and plain helpers can log too. execution_id / job_id / pipeline_name are
@@ -46,18 +55,31 @@ from reflowfy import PipelineError, get_logger
 logger = get_logger(__name__)
 
 
-class {class_name}(AbstractPipeline):
+class {class_name}Params(RuntimeParams, total=False):
+    """Parameters for {class_name}, declared once as types.
+
+    Subclassing RuntimeParams brings in the execution-context keys
+    (execution_id, batch_id, pipeline_name, created_at, ...). Add your own —
+    each one becomes a validated, documented pipeline parameter, so there is no
+    define_parameters() to write:
+
+        env: Required[Literal["dev", "prod"]]
+        limit: Annotated[NotRequired[int], Param("Max rows", default=100)]
+
+    Declare here, too, any key your own code writes into runtime_params.
+    """
+
+
+class {class_name}(AbstractPipeline[{class_name}Params]):
     """{class_name} pipeline."""
 
     name = "{name}"
     rate_limit = 3000  # jobs per minute
 
-    def define_parameters(self):
-        return [
-            # PipelineParameter(name="param", required=True, description="..."),
-        ]
+    # define_parameters() is derived from {class_name}Params. Override it to
+    # build the list by hand instead.
 
-    def define_source(self, runtime_params):
+    def define_source(self, runtime_params: {class_name}Params) -> BaseSource:
         logger.info("Resolving source for {name}")
         # Raise from any define_* hook to fail deliberately; the message, type and
         # traceback land on the job record, and the error names the failing step.
@@ -71,19 +93,23 @@ class {class_name}(AbstractPipeline):
     # Or, to split the work into jobs yourself, implement define_jobs INSTEAD
     # of define_source — each element of the returned list is one job:
     #
-    # def define_jobs(self, runtime_params):
+    # def define_jobs(self, runtime_params: {class_name}Params) -> Iterable[Any]:
     #     from reflowfy import chunk
     #     rows = httpx.get(runtime_params["url"]).json()["items"]
     #     return chunk(rows, size=10)   # 10 records per job
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: List[Any], runtime_params: {class_name}Params
+    ) -> BaseDestination:
         logger.info("Resolving destination for %d records", len(records))
         # Return a configured destination
         # from reflowfy import kafka_destination
         # return kafka_destination(bootstrap_servers="kafka:9092", topic="output")
         raise PipelineError("define_destination is not implemented for {name}")
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: List[Any], runtime_params: {class_name}Params
+    ) -> Sequence[BaseTransformation]:
         return []
 ''')
         console.print(f"✅ Created pipeline: {target}", style="green")

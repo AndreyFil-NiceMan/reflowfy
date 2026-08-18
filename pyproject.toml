@@ -45,6 +45,10 @@ dependencies = [
     # Async worker dependencies
     "aiokafka==0.12.0",
     "python-dotenv>=1.0.0",
+    # TypeVar(default=...), TypedDict, Required/NotRequired on Python 3.10:
+    # typing's own versions get __required_keys__ wrong there, and the derived
+    # define_parameters() depends on it.
+    "typing-extensions>=4.13",
     "asyncpg>=0.29.0",
     "croniter>=1.4.0",
     "nest_asyncio>=1.5.0",
@@ -109,7 +113,7 @@ warn_return_any = true
 warn_unused_configs = true
 
 [tool.pyright]
-include = ["reflowfy"]
+include = ["reflowfy", "tests/e2e/test_pipelines", "pipelines"]
 exclude = [
     "**/__pycache__",
     "build",
@@ -129,6 +133,10 @@ reportUnknownVariableType = false
 reportUnknownParameterType = false
 reportUnknownLambdaType = false
 reportMissingTypeStubs = false
+# Same rationale, for the pipeline dirs now in scope: their ~136 hooks are
+# deliberately unannotated (the typed style is opt-in), and a missing annotation
+# is not a bug. Real signal — bad overrides, wrong arity, bad calls — still fires.
+reportMissingParameterType = false
 # FastAPI route handlers and Typer CLI commands are invoked via decorators, so a
 # static checker always sees them as unused.
 reportUnusedFunction = false

@@ -6,7 +6,9 @@ from the mock API's POST /users/batch endpoint. Every 10 IDs are grouped
 into a single POST request so define_source is called once per batch.
 """
 
-from reflowfy import IdBasedPipeline, PipelineParameter
+from typing_extensions import Annotated, NotRequired
+
+from reflowfy import IdBasedPipeline, Param, RuntimeParams
 from tests.e2e.test_pipelines.destinations import e2e_console
 from tests.e2e.test_pipelines.sources import e2e_id_based_api
 from tests.e2e.test_pipelines.transformations import (
@@ -15,7 +17,16 @@ from tests.e2e.test_pipelines.transformations import (
 )
 
 
-class E2EIdBasedAPIBatchPipelineTest(IdBasedPipeline):
+class IdBasedApiBatchParams(RuntimeParams, total=False):
+    """Parameters for :class:`E2EIdBasedAPIBatchPipelineTest`."""
+
+    batch_size: Annotated[
+        NotRequired[int],
+        Param("Records per SourceJob (controls job count per ID-batch)", default=5),
+    ]
+
+
+class E2EIdBasedAPIBatchPipelineTest(IdBasedPipeline[IdBasedApiBatchParams]):
     """
     E2E test pipeline for IdBasedPipeline + IDBasedAPISource in batch POST mode.
 
@@ -27,17 +38,6 @@ class E2EIdBasedAPIBatchPipelineTest(IdBasedPipeline):
     name = "e2e_id_based_api_batch_pipeline_test"
     rate_limit = 1200  # jobs per minute
     ids_batch_size = 10
-
-    def define_parameters(self):
-        return [
-            PipelineParameter(
-                name="batch_size",
-                description="Records per SourceJob (controls job count per ID-batch)",
-                param_type=int,
-                required=False,
-                default=5,
-            ),
-        ]
 
     def define_source(self, runtime_params):
         current_ids = runtime_params.get("current_ids", [])
