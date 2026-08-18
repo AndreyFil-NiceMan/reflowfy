@@ -1,6 +1,6 @@
 """Test a pipeline locally without Docker."""
 
-from typing import Any
+from typing import Any, List, Tuple
 import asyncio
 import importlib.util
 import json
@@ -239,8 +239,8 @@ def register(app: typer.Typer):
                 # Plan slices and run each through the shared v2 core, capped at
                 # `limit` across slices.
                 console.print(f"  [cyan]Fetching records (limit={limit})...[/cyan]")
-                transformed = []
-                applied = []
+                transformed: List[Any] = []
+                applied: List[Tuple[str, float]] = []
                 batch_fetched = 0
                 try:
                     for sub in plan_slices(source, meta):

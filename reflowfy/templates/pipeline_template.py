@@ -13,12 +13,16 @@ Perfect for testing the Reflowfy framework locally:
 Just run the API and call the /test endpoint!
 """
 
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict
 
 from reflowfy import (
     AbstractPipeline,
+    BaseDestination,
+    BaseSource,
     BaseTransformation,
+    Records,
     RuntimeParams,
+    Transformations,
     get_logger,
 )
 
@@ -26,9 +30,7 @@ from reflowfy import (
 # from typing import Literal
 # from typing_extensions import Annotated, NotRequired, Required
 # from reflowfy import Param
-from reflowfy.destinations.base import BaseDestination
 from reflowfy.destinations.console import console_destination
-from reflowfy.sources.base import BaseSource
 from reflowfy.sources.mock import generate_sample_data, mock_source
 
 # Logging: works from anywhere — transformations, @source functions, plain helpers.
@@ -45,9 +47,9 @@ class UppercaseNames(BaseTransformation):
 
     name = "uppercase_names"
 
-    def apply(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
+    def apply(self, records: Records, runtime_params: Dict[str, Any]) -> Records:
         """Convert first_name and last_name to uppercase."""
-        transformed = []
+        transformed: Records = []
 
         for record in records:
             new_record = record.copy()
@@ -68,7 +70,7 @@ class FilterActiveUsers(BaseTransformation):
 
     name = "filter_active_users"
 
-    def apply(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
+    def apply(self, records: Records, runtime_params: Dict[str, Any]) -> Records:
         """Keep only records where active=True."""
         return [r for r in records if r.get("active", False)]
 
@@ -78,7 +80,7 @@ class AddProcessingInfo(BaseTransformation):
 
     name = "add_processing_info"
 
-    def apply(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
+    def apply(self, records: Records, runtime_params: Dict[str, Any]) -> Records:
         """Add processing information from context."""
         execution_id = runtime_params.get("execution_id", "unknown")
         logger.info("Tagging %d records for execution %s", len(records), execution_id)
@@ -147,7 +149,7 @@ class SimpleTestPipeline(AbstractPipeline[SimpleTestParams]):
     #       return chunk(rows, size=10)   # 10 records per job
 
     def define_destination(
-        self, records: List[Any], runtime_params: SimpleTestParams
+        self, records: Records, runtime_params: SimpleTestParams
     ) -> BaseDestination:
         """Return console destination."""
         # Raise PipelineError from any define_* hook to fail the job deliberately —
@@ -160,8 +162,8 @@ class SimpleTestPipeline(AbstractPipeline[SimpleTestParams]):
         )
 
     def define_transformations(
-        self, records: List[Any], runtime_params: SimpleTestParams
-    ) -> Sequence[BaseTransformation]:
+        self, records: Records, runtime_params: SimpleTestParams
+    ) -> Transformations:
         """Return transformation pipeline."""
         return [
             FilterActiveUsers(),

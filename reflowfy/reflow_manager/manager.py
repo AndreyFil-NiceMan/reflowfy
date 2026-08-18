@@ -10,7 +10,7 @@ This is a slim coordinator that composes the following modules:
 """
 
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from reflowfy.reflow_manager.models import Execution, Job
@@ -229,7 +229,7 @@ class ReflowManager:
             .all()
         )
 
-        batches = []
+        batches: List[Dict[str, Any]] = []
         for row in results:
             # Determine batch state
             if row.failed and row.failed > 0:

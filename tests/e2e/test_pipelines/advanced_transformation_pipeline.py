@@ -8,7 +8,7 @@ Four pipelines for testing transformation context features:
 - E2EBatchIdentityPipeline:   stamps batch_id per record to verify uniqueness per batch
 """
 
-from reflowfy import AbstractPipeline, RuntimeParams
+from reflowfy import AbstractPipeline, BaseDestination, Records, RuntimeParams, Transformations
 from tests.e2e.test_pipelines.destinations import e2e_http
 from tests.e2e.test_pipelines.sources import e2e_mock
 from tests.e2e.test_pipelines.transformations import (
@@ -29,10 +29,14 @@ class E2EContextProbePipeline(AbstractPipeline[RuntimeParams]):
     def define_source(self, runtime_params):
         return e2e_mock(count=20, batch_size=10)
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
         return e2e_http(body={"records": records})
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> Transformations:
         return [ctx_probe()]
 
 
@@ -45,10 +49,14 @@ class E2ERuntimeParamsPipeline(AbstractPipeline[RuntimeParams]):
     def define_source(self, runtime_params):
         return e2e_mock(count=10, batch_size=10)
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
         return e2e_http(body={"records": records})
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> Transformations:
         return [ctx_runtime_params()]
 
 
@@ -61,10 +69,14 @@ class E2EErrorTolerantPipeline(AbstractPipeline[RuntimeParams]):
     def define_source(self, runtime_params):
         return e2e_mock(count=10, batch_size=10)
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
         return e2e_http(body={"records": records})
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> Transformations:
         return [ctx_enrich(), ctx_maybe_fail()]
 
 
@@ -77,8 +89,12 @@ class E2EBatchIdentityPipeline(AbstractPipeline[RuntimeParams]):
     def define_source(self, runtime_params):
         return e2e_mock(count=30, batch_size=10)
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
         return e2e_http(body={"records": records})
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> Transformations:
         return [ctx_batch_id()]

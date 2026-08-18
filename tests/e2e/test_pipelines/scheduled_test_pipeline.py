@@ -8,7 +8,7 @@ without waiting long.
 
 import uuid
 
-from reflowfy import AbstractPipeline, RuntimeParams
+from reflowfy import AbstractPipeline, BaseDestination, Records, RuntimeParams, Transformations
 from tests.e2e.test_pipelines.sources import e2e_mock
 from tests.e2e.test_pipelines.destinations import e2e_http
 
@@ -30,10 +30,14 @@ class E2EScheduledTestPipeline(AbstractPipeline[RuntimeParams]):
     def define_source(self, runtime_params):
         return e2e_mock(count=5, batch_size=5)
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
         return e2e_http(body={"records": records})
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> Transformations:
         return []
 
 
@@ -46,10 +50,14 @@ class E2EScheduledSlowPipeline(AbstractPipeline[RuntimeParams]):
     def define_source(self, runtime_params):
         return e2e_mock(count=5, batch_size=5)
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
         return e2e_http(body={"records": records})
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> Transformations:
         return []
 
 
@@ -63,8 +71,12 @@ class E2EScheduledNoDuplicatesPipeline(AbstractPipeline[RuntimeParams]):
     def define_source(self, runtime_params):
         return e2e_mock(data=_NO_DUP_FIXED_DATA, batch_size=5)
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
         return e2e_http(body={"records": records})
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> Transformations:
         return []

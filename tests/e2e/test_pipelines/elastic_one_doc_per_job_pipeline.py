@@ -13,7 +13,7 @@ webhook server so the test can assert an exact record cover.
 
 import os
 
-from reflowfy import AbstractPipeline, RuntimeParams
+from reflowfy import AbstractPipeline, BaseDestination, Records, RuntimeParams, Transformations
 from reflowfy.destinations.api import api_destination
 from tests.e2e.test_pipelines.sources import e2e_elastic
 from tests.e2e.test_pipelines.transformations import add_source_info
@@ -42,7 +42,9 @@ class E2EElasticOneDocPerJobPipeline(AbstractPipeline[RuntimeParams]):
             docs_per_job=1,
         )
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
         return api_destination(
             url=MOCK_HTTP_URL,
             method="POST",
@@ -54,5 +56,7 @@ class E2EElasticOneDocPerJobPipeline(AbstractPipeline[RuntimeParams]):
             body={"records": records},
         )
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> Transformations:
         return [add_source_info()]

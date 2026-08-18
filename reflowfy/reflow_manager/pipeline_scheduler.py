@@ -9,7 +9,7 @@ import os
 import threading
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Set
 
 from croniter import croniter
 from sqlalchemy.orm import Session
@@ -235,7 +235,7 @@ class PipelineScheduler:
 
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         all_pipelines = pipeline_registry.list_all()
-        scheduled_names = set()
+        scheduled_names: Set[str] = set()
 
         for pipeline in all_pipelines:
             if not getattr(pipeline, "is_scheduled", False):

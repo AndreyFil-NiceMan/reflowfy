@@ -6,7 +6,7 @@ and auto-registers it.
 
 Example:
     @transformation("uppercase_names")
-    def uppercase_names(records, runtime_params):
+    def uppercase_names(records: Records, runtime_params: RuntimeParams) -> Records:
         for r in records:
             if "name" in r:
                 r["name"] = r["name"].upper()
@@ -22,16 +22,25 @@ from typing import TYPE_CHECKING, Any, Callable, cast
 if TYPE_CHECKING:
     from reflowfy.transformations.base import BaseTransformation
 
+TransformFn = Callable[[Any, Any], Any]
+"""Shape of a decorated transformation: ``(records, runtime_params) -> records``.
+
+Deliberately `Any` in every position rather than `(Records, RuntimeParams) ->
+Records`: it checks the arity — the one mistake that reaches production as a
+runtime TypeError — without rejecting an author who annotates `runtime_params`
+with their own params TypedDict.
+"""
+
 
 def transformation(
     name: str,
-) -> Callable[[Callable[..., Any]], "type[BaseTransformation]"]:
+) -> Callable[[TransformFn], "type[BaseTransformation]"]:
     """
     Decorator to create a reusable transformation from a function.
 
     The decorated function becomes a callable that returns a BaseTransformation
     instance when called. The function signature should be:
-        def my_transform(records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]
+        def my_transform(records: Records, runtime_params: RuntimeParams) -> Records
 
     Args:
         name: Unique name for this transformation
@@ -41,7 +50,7 @@ def transformation(
 
     Example:
         @transformation("filter_active")
-        def filter_active(records, runtime_params):
+        def filter_active(records: Records, runtime_params: RuntimeParams) -> Records:
             return [r for r in records if r.get("active")]
 
         # Use in pipeline:
@@ -49,8 +58,11 @@ def transformation(
             return [filter_active()]  # Instantiate to use
     """
 
-    def decorator(func: Callable[..., Any]) -> "type[BaseTransformation]":
+    def decorator(func: TransformFn) -> "type[BaseTransformation]":
         from reflowfy.transformations.base import BaseTransformation
+
+        def apply(self: "BaseTransformation", records: Any, runtime_params: Any) -> Any:
+            return func(records, runtime_params)
 
         # Create a new BaseTransformation subclass dynamically
         cls = type(
@@ -58,7 +70,7 @@ def transformation(
             (BaseTransformation,),
             {
                 "name": name,
-                "apply": lambda self, records, runtime_params: func(records, runtime_params),
+                "apply": apply,
                 "__doc__": func.__doc__ or f"Transformation: {name}",
                 "__module__": func.__module__,
             },

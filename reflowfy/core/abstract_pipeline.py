@@ -382,9 +382,10 @@ def params_from_typeddict(params_type: type) -> List[PipelineParameter]:
                 hint = non_none[0]
 
         choices: Optional[List[Any]] = None
+        param_type: Any
         if get_origin(hint) is Literal:
             choices = list(get_args(hint))
-            param_type = type(choices[0]) if choices else str
+            param_type = type(cast(object, choices[0])) if choices else str
         else:
             # isinstance() and the `param_type in (list, dict)` body/query split
             # both need a bare runtime type, so list[int] must collapse to list.
@@ -731,7 +732,7 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
         Returns:
             List of validation error messages (empty if valid)
         """
-        errors = []
+        errors: List[str] = []
 
         for param in self.get_all_parameters():
             value = runtime_params.get(param.name)

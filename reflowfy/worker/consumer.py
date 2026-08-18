@@ -1,3 +1,5 @@
+# aiokafka ships no stubs — see reflowfy/destinations/kafka.py for the rationale.
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownArgumentType=false
 """Async Kafka consumer for job processing."""
 
 import asyncio

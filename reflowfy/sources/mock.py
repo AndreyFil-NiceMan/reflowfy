@@ -115,7 +115,7 @@ def generate_sample_data(count: int = 100) -> List[Dict[str, Any]]:
     last_names = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller"]
     cities = ["New York", "Los Angeles", "Chicago", "Houston", "Phoenix", "Philadelphia"]
 
-    data = []
+    data: List[Dict[str, Any]] = []
     for i in range(count):
         data.append(
             {

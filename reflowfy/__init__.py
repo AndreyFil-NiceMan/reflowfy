@@ -12,11 +12,14 @@ It is Kafka-based, Kubernetes-native, and order-independent for maximum parallel
 from reflowfy.core.abstract_pipeline import AbstractPipeline, PipelineParameter
 from reflowfy.core.exceptions import PipelineError
 from reflowfy.core.id_based_pipeline import IdBasedPipeline
+from reflowfy.core.types import Record, Records, Transformations
 from reflowfy.core.registry import pipeline_registry
 from reflowfy.core.runtime_params import Param, RuntimeParams
 from reflowfy.execution.job_runner import chunk, job
 from reflowfy.observability.logging import get_logger
 from reflowfy.transformations.base import BaseTransformation, TransformationError
+from reflowfy.sources.base import BaseSource
+from reflowfy.destinations.base import BaseDestination
 from reflowfy.sources.base import SourceError
 from reflowfy.destinations.base import DestinationError
 from reflowfy.sources.elastic import elastic_source
@@ -30,7 +33,7 @@ from reflowfy.sources.decorators import source, source_registry
 from reflowfy.destinations.decorators import destination, destination_registry
 from reflowfy.transformations.decorators import transformation
 
-__version__ = "1.0.30"
+__version__ = "1.0.31"
 
 __all__ = [
     "AbstractPipeline",
@@ -39,6 +42,13 @@ __all__ = [
     # Typed runtime_params: subclass RuntimeParams, pass it as
     # AbstractPipeline[MyParams], annotate defaults with Param.
     "RuntimeParams",
+    # Annotating your hooks: `Records` == List[Dict[str, Any]], and the
+    # base classes the hooks return.
+    "Record",
+    "Records",
+    "Transformations",
+    "BaseSource",
+    "BaseDestination",
     "Param",
     "pipeline_registry",
     "chunk",

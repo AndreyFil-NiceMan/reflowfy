@@ -13,7 +13,7 @@ normalize → transform → resolve-destination sequence lives here so the
 test/preview paths cannot drift from what the worker actually runs.
 """
 
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple, cast
 
 from reflowfy.core.exceptions import pipeline_step
 from reflowfy.core.serialization import to_json_safe
@@ -124,7 +124,7 @@ def plan_slices(source: Any, runtime_params: Dict[str, Any]) -> Iterator[Any]:
             if item:
                 # ponytail: records ride in the job payload; chunks approaching
                 # Kafka's 1MB limit need a custom BaseSource that re-fetches.
-                yield StaticSource(item)
+                yield StaticSource(cast(List[Any], item))
         else:
             raise TypeError(
                 "define_jobs returned an iterable, so each element must be one job: "

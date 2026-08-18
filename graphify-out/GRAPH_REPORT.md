@@ -1,12 +1,12 @@
-# Graph Report - reflowfy  (2026-08-17)
+# Graph Report - reflowfy  (2026-08-18)
 
 ## Corpus Check
-- 386 files · ~211,628 words
+- 229 files · ~150,980 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 5918 nodes · 9325 edges · 283 communities detected
-- Extraction: 87% EXTRACTED · 13% INFERRED · 0% AMBIGUOUS · INFERRED: 1240 edges (avg confidence: 0.66)
+- 6090 nodes · 9526 edges · 288 communities detected
+- Extraction: 87% EXTRACTED · 13% INFERRED · 0% AMBIGUOUS · INFERRED: 1247 edges (avg confidence: 0.66)
 - Token cost: 0 input · 0 output
 
 ## Community Hubs (Navigation)
@@ -107,8 +107,8 @@
 - [[_COMMUNITY_Community 94|Community 94]]
 - [[_COMMUNITY_Community 95|Community 95]]
 - [[_COMMUNITY_Community 96|Community 96]]
-- [[_COMMUNITY_Community 100|Community 100]]
-- [[_COMMUNITY_Community 101|Community 101]]
+- [[_COMMUNITY_Community 97|Community 97]]
+- [[_COMMUNITY_Community 98|Community 98]]
 - [[_COMMUNITY_Community 102|Community 102]]
 - [[_COMMUNITY_Community 103|Community 103]]
 - [[_COMMUNITY_Community 104|Community 104]]
@@ -137,12 +137,15 @@
 - [[_COMMUNITY_Community 127|Community 127]]
 - [[_COMMUNITY_Community 128|Community 128]]
 - [[_COMMUNITY_Community 129|Community 129]]
+- [[_COMMUNITY_Community 130|Community 130]]
 - [[_COMMUNITY_Community 131|Community 131]]
-- [[_COMMUNITY_Community 132|Community 132]]
 - [[_COMMUNITY_Community 133|Community 133]]
 - [[_COMMUNITY_Community 134|Community 134]]
 - [[_COMMUNITY_Community 135|Community 135]]
 - [[_COMMUNITY_Community 136|Community 136]]
+- [[_COMMUNITY_Community 137|Community 137]]
+- [[_COMMUNITY_Community 139|Community 139]]
+- [[_COMMUNITY_Community 140|Community 140]]
 - [[_COMMUNITY_Community 141|Community 141]]
 - [[_COMMUNITY_Community 142|Community 142]]
 - [[_COMMUNITY_Community 143|Community 143]]
@@ -177,8 +180,8 @@
 - [[_COMMUNITY_Community 172|Community 172]]
 - [[_COMMUNITY_Community 173|Community 173]]
 - [[_COMMUNITY_Community 174|Community 174]]
-- [[_COMMUNITY_Community 175|Community 175]]
 - [[_COMMUNITY_Community 176|Community 176]]
+- [[_COMMUNITY_Community 177|Community 177]]
 - [[_COMMUNITY_Community 178|Community 178]]
 - [[_COMMUNITY_Community 179|Community 179]]
 - [[_COMMUNITY_Community 180|Community 180]]
@@ -192,15 +195,12 @@
 - [[_COMMUNITY_Community 188|Community 188]]
 - [[_COMMUNITY_Community 189|Community 189]]
 - [[_COMMUNITY_Community 190|Community 190]]
-- [[_COMMUNITY_Community 191|Community 191]]
 - [[_COMMUNITY_Community 192|Community 192]]
+- [[_COMMUNITY_Community 193|Community 193]]
+- [[_COMMUNITY_Community 194|Community 194]]
+- [[_COMMUNITY_Community 195|Community 195]]
+- [[_COMMUNITY_Community 196|Community 196]]
 - [[_COMMUNITY_Community 197|Community 197]]
-- [[_COMMUNITY_Community 198|Community 198]]
-- [[_COMMUNITY_Community 199|Community 199]]
-- [[_COMMUNITY_Community 200|Community 200]]
-- [[_COMMUNITY_Community 201|Community 201]]
-- [[_COMMUNITY_Community 202|Community 202]]
-- [[_COMMUNITY_Community 203|Community 203]]
 - [[_COMMUNITY_Community 204|Community 204]]
 - [[_COMMUNITY_Community 205|Community 205]]
 - [[_COMMUNITY_Community 206|Community 206]]
@@ -235,17 +235,17 @@
 - [[_COMMUNITY_Community 235|Community 235]]
 - [[_COMMUNITY_Community 236|Community 236]]
 - [[_COMMUNITY_Community 237|Community 237]]
+- [[_COMMUNITY_Community 238|Community 238]]
+- [[_COMMUNITY_Community 239|Community 239]]
+- [[_COMMUNITY_Community 240|Community 240]]
+- [[_COMMUNITY_Community 241|Community 241]]
 - [[_COMMUNITY_Community 242|Community 242]]
-- [[_COMMUNITY_Community 243|Community 243]]
-- [[_COMMUNITY_Community 244|Community 244]]
-- [[_COMMUNITY_Community 245|Community 245]]
-- [[_COMMUNITY_Community 246|Community 246]]
 - [[_COMMUNITY_Community 247|Community 247]]
+- [[_COMMUNITY_Community 248|Community 248]]
+- [[_COMMUNITY_Community 249|Community 249]]
+- [[_COMMUNITY_Community 250|Community 250]]
 - [[_COMMUNITY_Community 251|Community 251]]
 - [[_COMMUNITY_Community 252|Community 252]]
-- [[_COMMUNITY_Community 253|Community 253]]
-- [[_COMMUNITY_Community 254|Community 254]]
-- [[_COMMUNITY_Community 255|Community 255]]
 - [[_COMMUNITY_Community 256|Community 256]]
 - [[_COMMUNITY_Community 257|Community 257]]
 - [[_COMMUNITY_Community 258|Community 258]]
@@ -293,11 +293,16 @@
 - [[_COMMUNITY_Community 300|Community 300]]
 - [[_COMMUNITY_Community 301|Community 301]]
 - [[_COMMUNITY_Community 302|Community 302]]
+- [[_COMMUNITY_Community 303|Community 303]]
+- [[_COMMUNITY_Community 304|Community 304]]
+- [[_COMMUNITY_Community 305|Community 305]]
+- [[_COMMUNITY_Community 306|Community 306]]
+- [[_COMMUNITY_Community 307|Community 307]]
 
 ## God Nodes (most connected - your core abstractions)
-1. `BaseSource` - 75 edges
-2. `AbstractPipeline` - 74 edges
-3. `PipelineParameter` - 65 edges
+1. `AbstractPipeline` - 77 edges
+2. `BaseSource` - 75 edges
+3. `PipelineParameter` - 66 edges
 4. `IdBasedPipeline` - 65 edges
 5. `BaseDestination` - 61 edges
 6. `StaticSource` - 54 edges
@@ -322,47 +327,47 @@
 
 ### Community 0 - "Community 0"
 Cohesion: 0.01
-Nodes (326): BaseSource, id_based_api_source(), IDBasedAPISource, paginated_api_source(), PaginatedAPISource, REST API sources with pagination support., True when the endpoint template contains ``{id}``., Get or create HTTP client. (+318 more)
+Nodes (283): ABCMeta, BaseTransformation, PipelineMeta, Metaclass for automatic pipeline registration.      When a class inherits from A, Metaclass for automatic pipeline registration.      When a class inherits from A, Metaclass for automatic pipeline registration.      When a class inherits from A, Metaclass for automatic pipeline registration.      When a class inherits from A, Metaclass for automatic pipeline registration.      When a class inherits from A (+275 more)
 
 ### Community 1 - "Community 1"
 Cohesion: 0.01
-Nodes (171): AbstractPipeline, ApiDestination, e2e_console(), e2e_http(), e2e_http_runtime_params(), e2e_kafka(), Reusable destination configurations for E2E test pipelines.  All destinations us, Pre-configured Kafka destination for E2E tests. (+163 more)
+Nodes (312): Base, IdBasedPipeline, E2EIdBasedAPIBatchPipelineTest, IdBasedPipeline E2E Test Pipeline — Batch POST API source.  Pipeline that uses I, E2E test pipeline for IdBasedPipeline + IDBasedAPISource in batch POST mode., E2EIdBasedDefineJobsPipeline, IdBasedPipeline + custom define_jobs E2E test pipeline.  The one-input-ID-fans-o, Each input ID expands into CHILDREN_PER_ID jobs, each tagged with its ID. (+304 more)
 
 ### Community 2 - "Community 2"
 Cohesion: 0.01
-Nodes (259): ABCMeta, PipelineMeta, PipelineParameter, Validate a value against this parameter's type and constraints.          Args:, Validate a value against this parameter's type and constraints.          Args:, Validate a value against this parameter's type and constraints.          Args:, Validate a value against this parameter's type and constraints.          Args:, Validate a value against this parameter's type and constraints.          Args: (+251 more)
+Nodes (217): ABC, ExecutionTracker, Execution tracking and status management., Track or update an execution.          Args:             status: ExecutionStatus, Get execution status by ID.          Args:             execution_id: Execution I, Update job completion status.          Called by workers when a job completes., Thread-safe in-memory execution tracker.      In production, this should be back, Get all tracked executions. (+209 more)
 
 ### Community 3 - "Community 3"
 Cohesion: 0.01
-Nodes (183): AbstractPipeline, Abstract base class for configurable pipelines.      Extend this class to create, Abstract base class for configurable pipelines.      Extend this class to create, Abstract base class for configurable pipelines.      Extend this class to create, Abstract base class for configurable pipelines.      Extend this class to create, Abstract base class for configurable pipelines.      Extend this class to create, Initialize the abstract pipeline.          Args:             rate_limit: Rate li, Initialize the abstract pipeline.          Args:             rate_limit: Rate li (+175 more)
+Nodes (157): ApiDestination, e2e_console(), e2e_http(), e2e_http_runtime_params(), e2e_kafka(), Reusable destination configurations for E2E test pipelines.  All destinations us, Pre-configured Kafka destination for E2E tests., Pre-configured Kafka destination for E2E tests. (+149 more)
 
 ### Community 4 - "Community 4"
 Cohesion: 0.01
-Nodes (200): Base, define_destination(), define_source(), define_transformations(), IdBasedPipeline, IdBasedPipelineMeta, ID-based pipeline for dynamic per-ID execution.  This module provides the IdBase, Define the source to use for a batch of IDs.          Optional: implement this * (+192 more)
+Nodes (181): ElasticSource, _pit_keep_alive(), Fetch data from Elasticsearch (local mode).          Args:             runtime_p, Split Elasticsearch data into jobs using scroll API.          Each scroll page b, Elasticsearch source connector.      Supports:     - Runtime parameter resolutio, Elasticsearch source connector.      Supports:     - Runtime parameter resolutio, Return how many documents the base query matches (metadata only)., Open a PIT and yield one source per sliced-scroll slice.          ``num_slices`` (+173 more)
 
 ### Community 5 - "Community 5"
 Cohesion: 0.01
-Nodes (199): build_job_payload(), _chunk(), _filter_volatile_keys(), _finished_count(), generate_job_id(), _iter_plan(), PipelineRunner, Pipeline execution runner for ReflowManager. (+191 more)
+Nodes (178): BaseSource, id_based_api_source(), IDBasedAPISource, paginated_api_source(), PaginatedAPISource, REST API sources with pagination support., True when the endpoint template contains ``{id}``., Get or create HTTP client. (+170 more)
 
 ### Community 6 - "Community 6"
-Cohesion: 0.02
-Nodes (161): JSON-safe normalization for records and payloads., Recursively convert an object to a JSON-serializable form.      Mirrors the norm, to_json_safe(), claim_content_hash(), compute_content_hash(), Worker-side content deduplication primitive.  `compute_content_hash` reproduces, Deterministic SHA256 over stable job content (v1 semantics)., Deterministic SHA256 over stable job content (v1 semantics).      ``job_params`` (+153 more)
-
-### Community 7 - "Community 7"
 Cohesion: 0.01
 Nodes (185): _dispatch_pipeline_jobs(), get_checkpoints(), get_execution_errors(), get_execution_stats(), get_jobs(), _get_kafka_config(), get_pipeline(), get_reflow_manager() (+177 more)
 
-### Community 8 - "Community 8"
+### Community 7 - "Community 7"
 Cohesion: 0.02
-Nodes (121): BaseTransformation, client(), _get_records(), E2E Tests for Advanced Transformation Context Features.  Tests that ExecutionCon, All records from a single execution must carry the same execution_id         reg, E2EBatchIdentityPipeline sends 30 records in 3 batches of 10.         batch_id i, Verify that runtime_params passed in the run request reach transformations., Pipeline receives runtime_params={"env": "staging", "multiplier": 3}.         Ev (+113 more)
+Nodes (179): E2ERuntimeParamsDestinationPipeline, E2E pipeline to verify runtime_params are appended through transforms and used b, Pipeline that pushes runtime_params through two transformations     and ensures, Parameters for :class:`E2ERuntimeParamsDestinationPipeline`.      ``tenant`` com, Pipeline that pushes runtime_params through two transformations     and ensures, RuntimeParamsDestParams, add_source_info(), api_add_dest_info() (+171 more)
+
+### Community 8 - "Community 8"
+Cohesion: 0.01
+Nodes (94): AbstractPipeline, E2EBatchIdentityPipeline, E2EContextProbePipeline, E2EErrorTolerantPipeline, E2ERuntimeParamsPipeline, Advanced Transformation Test Pipelines.  Four pipelines for testing transformati, Stamps all 4 ExecutionContext keys onto records., Reads runtime_params; test sends env=staging and multiplier=3. (+86 more)
 
 ### Community 9 - "Community 9"
 Cohesion: 0.02
-Nodes (148): E2EIdBasedAPIBatchPipelineTest, IdBasedPipeline E2E Test Pipeline — Batch POST API source.  Pipeline that uses I, E2E test pipeline for IdBasedPipeline + IDBasedAPISource in batch POST mode., E2EIdBasedDefineJobsPipeline, IdBasedPipeline + custom define_jobs E2E test pipeline.  The one-input-ID-fans-o, Each input ID expands into CHILDREN_PER_ID jobs, each tagged with its ID., add_source_info(), api_add_dest_info() (+140 more)
+Nodes (155): JSON-safe normalization for records and payloads., Recursively convert an object to a JSON-serializable form.      Mirrors the norm, to_json_safe(), claim_content_hash(), compute_content_hash(), Worker-side content deduplication primitive.  `compute_content_hash` reproduces, Deterministic SHA256 over stable job content (v1 semantics)., Deterministic SHA256 over stable job content (v1 semantics).      ``job_params`` (+147 more)
 
 ### Community 10 - "Community 10"
-Cohesion: 0.02
-Nodes (86): ABC, ExecutionTracker, Execution tracking and status management., Track or update an execution.          Args:             status: ExecutionStatus, Get execution status by ID.          Args:             execution_id: Execution I, Update job completion status.          Called by workers when a job completes., Thread-safe in-memory execution tracker.      In production, this should be back, Get all tracked executions. (+78 more)
+Cohesion: 0.01
+Nodes (161): AbstractPipeline, define_destination(), define_source(), define_transformations(), params_from_typeddict(), Abstract base class for configurable pipelines.  This module provides the Abstra, Abstract base class for configurable pipelines.      Extend this class to create, Abstract base class for configurable pipelines.      Extend this class to create (+153 more)
 
 ### Community 11 - "Community 11"
 Cohesion: 0.02
@@ -370,15 +375,15 @@ Nodes (127): client(), E2E Tests for IdBasedPipeline Feature.  Tests the IdBased
 
 ### Community 12 - "Community 12"
 Cohesion: 0.02
-Nodes (118): define_destination(), define_source(), define_transformations(), params_from_typeddict(), Abstract base class for configurable pipelines.  This module provides the Abstra, Derive the runtime parameter declarations from a params TypedDict.      Turns a, Define the destination to use based on post-transformation records and runtime p, Abstract base class for configurable pipelines.      Extend this class to create (+110 more)
+Nodes (81): api_destination(), ApiDestination, API destination for webhooks and REST endpoints., Merge static body fields with record data and runtime metadata., Merge static body fields with record data and runtime metadata., API destination for sending data to webhooks and REST endpoints.      Supports:, Send records to the API endpoint.          Args:             records: List of re, Send records to the API endpoint.          Args:             records: List of re (+73 more)
 
 ### Community 13 - "Community 13"
-Cohesion: 0.02
-Nodes (81): api_destination(), ApiDestination, API destination for webhooks and REST endpoints., Merge static body fields with record data and runtime metadata., Merge static body fields with record data and runtime metadata., API destination for sending data to webhooks and REST endpoints.      Supports:, Send records to the API endpoint.          Args:             records: List of re, Send records to the API endpoint.          Args:             records: List of re (+73 more)
+Cohesion: 0.03
+Nodes (108): build_flat_runtime_params(), build_flat_runtime_params_from_metadata(), ExecutionContext, ParameterResolver, Execution context for passing runtime state through the pipeline., Extract all parameter names from Jinja2 templates.          Args:             ob, Build flat runtime_params from serialized job metadata.      Args:         metad, Build flat runtime_params from serialized job metadata.      Args:         metad (+100 more)
 
 ### Community 14 - "Community 14"
 Cohesion: 0.02
-Nodes (131): BaseModel, BatchPayload, _check_auth(), get_records(), get_stats(), health_check(), Mock API Webhook Server for ApiDestination E2E Tests.  A minimal FastAPI server, Receive individual records from ApiDestination (batch_requests=False). (+123 more)
+Nodes (112): Initialize batch_id if not provided., Initialize batch_id if not provided., Initialize batch_id if not provided., QueryLoaderMixin, Query template loading shared by the pipeline base classes.  Pipelines keep thei, Reads query templates from the project's ``queries/`` folder., Load a query template from the project's ``queries/`` folder.          ``.json``, Load a query template as raw text, without extension-based parsing.          Use (+104 more)
 
 ### Community 15 - "Community 15"
 Cohesion: 0.02
@@ -386,19 +391,19 @@ Nodes (123): clean_pipeline_registry(), Advanced E2E Tests for CLI 'reflowfy tes
 
 ### Community 16 - "Community 16"
 Cohesion: 0.02
-Nodes (107): Initialize batch_id if not provided., Initialize batch_id if not provided., Initialize batch_id if not provided., QueryLoaderMixin, Query template loading shared by the pipeline base classes.  Pipelines keep thei, Reads query templates from the project's ``queries/`` folder., Load a query template from the project's ``queries/`` folder.          ``.json``, Load a query template as raw text, without extension-based parsing.          Use (+99 more)
+Nodes (128): BaseModel, BatchPayload, _check_auth(), get_records(), get_stats(), health_check(), Mock API Webhook Server for ApiDestination E2E Tests.  A minimal FastAPI server, Receive individual records from ApiDestination (batch_requests=False). (+120 more)
 
 ### Community 17 - "Community 17"
 Cohesion: 0.03
-Nodes (67): BaseDispatcher, BaseDispatcher, close(), dispatch_job(), dispatch_jobs_batch(), KafkaDispatcher, Job dispatchers for ReflowManager using aiokafka., Dispatch a single job to Kafka. (+59 more)
+Nodes (88): create_app(), main(), FastAPI application factory., Dynamically create routes for all registered pipelines.      Called at startup a, Application entry point., Application entry point., Application entry point., Create and configure FastAPI application.      Returns:         Configured FastA (+80 more)
 
 ### Community 18 - "Community 18"
 Cohesion: 0.04
-Nodes (71): Gracefully stop background schedulers on service shutdown., shutdown_event(), PipelineSchedule, Persistent cron schedule state for a scheduled pipeline.      One row per pipeli, Convert to dictionary representation., Persistent cron schedule state for a scheduled pipeline.      One row per pipeli, Convert to dictionary representation., Convert to dictionary representation. (+63 more)
+Nodes (69): PipelineSchedule, Persistent cron schedule state for a scheduled pipeline.      One row per pipeli, Convert to dictionary representation., Persistent cron schedule state for a scheduled pipeline.      One row per pipeli, Convert to dictionary representation., Convert to dictionary representation., _compute_next_run(), get_pipeline_scheduler() (+61 more)
 
 ### Community 19 - "Community 19"
 Cohesion: 0.03
-Nodes (41): e2e_elastic(), e2e_id_based_api(), e2e_paginated_api(), e2e_sql(), Reusable source configurations for E2E test pipelines.  All sources use the @sou, Pre-configured SQL source for E2E tests., Pre-configured Elasticsearch source for E2E tests., Pre-configured Elasticsearch source for E2E tests.      ``num_slices`` (default (+33 more)
+Nodes (51): pipeline_step(), PipelineError, Public exception types for user pipeline code.  Import from the package root::, Raised by a pipeline step.      Raise this from any ``define_*`` hook to fail th, Re-raise an error from a user hook as a :class:`PipelineError` naming the step., Exception, chunk(), job() (+43 more)
 
 ### Community 20 - "Community 20"
 Cohesion: 0.05
@@ -406,43 +411,43 @@ Nodes (61): install_context_filter(), log_context(), Bind per-job context onto e
 
 ### Community 21 - "Community 21"
 Cohesion: 0.03
-Nodes (54): BaseDestination, example_kafka(), Example reusable destination configuration.  Use the @destination decorator to c, Example Kafka destination configuration.      Usage in a pipeline:         from, Example Kafka destination configuration.      Usage in a pipeline:         from, Example Kafka destination configuration.      Usage in a pipeline:         from, kafka_destination(), KafkaDestination (+46 more)
+Nodes (55): BaseDispatcher, BaseDispatcher, close(), dispatch_job(), dispatch_jobs_batch(), KafkaDispatcher, Job dispatchers for ReflowManager using aiokafka., Dispatch a single job to Kafka. (+47 more)
 
 ### Community 22 - "Community 22"
-Cohesion: 0.04
-Nodes (61): create_app(), main(), FastAPI application factory., Dynamically create routes for all registered pipelines.      Called at startup a, Application entry point., Application entry point., Application entry point., Create and configure FastAPI application.      Returns:         Configured FastA (+53 more)
+Cohesion: 0.03
+Nodes (60): ElasticTestParams, ElasticTestPipeline, EnrichWithProcessingInfo, FilterByStatus, FormatEventData, Example pipeline for testing Reflofy with Elasticsearch source.  This pipeline:, Elasticsearch-based test pipeline.          Demonstrates:     - Dynamic source c, Parameters for :class:`ElasticTestPipeline`. (+52 more)
 
 ### Community 23 - "Community 23"
-Cohesion: 0.05
-Nodes (46): _batches_for(), _get_errors(), manager_client(), E2E Tests for API Destination.  Verifies that ApiDestination correctly routes ru, Fetch failed job error messages for a given execution., Verify unknown pipeline name returns 404 (proves registry validation works)., tenant_id is required — execution should fail when omitted., Verify unknown pipeline name returns 404 (proves registry validation works). (+38 more)
+Cohesion: 0.03
+Nodes (54): BaseDestination, example_kafka(), Example reusable destination configuration.  Use the @destination decorator to c, Example Kafka destination configuration.      Usage in a pipeline:         from, Example Kafka destination configuration.      Usage in a pipeline:         from, Example Kafka destination configuration.      Usage in a pipeline:         from, kafka_destination(), KafkaDestination (+46 more)
 
 ### Community 24 - "Community 24"
-Cohesion: 0.03
-Nodes (46): ElasticTestPipeline, EnrichWithProcessingInfo, FilterByStatus, FormatEventData, Example pipeline for testing Reflofy with Elasticsearch source.  This pipeline:, Elasticsearch-based test pipeline.          Demonstrates:     - Dynamic source c, Define runtime parameters for this pipeline., Configure Elasticsearch source with runtime parameters. (+38 more)
+Cohesion: 0.05
+Nodes (46): _batches_for(), _get_errors(), manager_client(), E2E Tests for API Destination.  Verifies that ApiDestination correctly routes ru, Fetch failed job error messages for a given execution., Verify unknown pipeline name returns 404 (proves registry validation works)., tenant_id is required — execution should fail when omitted., Verify unknown pipeline name returns 404 (proves registry validation works). (+38 more)
 
 ### Community 25 - "Community 25"
 Cohesion: 0.05
 Nodes (43): _get_schedule(), E2E Tests for Pipeline Schedule Feature.  Requires running services (ReflowManag, POST /run on a scheduled pipeline must advance next_run_at., POST /run on a scheduled pipeline must advance next_run_at., After a manual trigger, last_triggered_at must be set to a recent         timest, After a manual trigger, last_triggered_at must be set to a recent         timest, After a POST /run, last_triggered_at must be non-null., After a POST /run, last_triggered_at must be non-null. (+35 more)
 
 ### Community 26 - "Community 26"
+Cohesion: 0.04
+Nodes (52): AddProcessingInfo, FilterActiveUsers, Simple test pipeline that works without any external dependencies.  Auto-registe, Return mock data source., Return mock data source., No parameters needed for this simple test pipeline., Return mock data source., Return console destination. (+44 more)
+
+### Community 27 - "Community 27"
 Cohesion: 0.05
 Nodes (33): Advanced E2E Tests for CLI commands (new, init, deploy, build).  Covers gaps not, Creating the same transformation twice should fail with exit 1., Tests for the 'reflowfy init' project initialisation command., init --name billing_etl' should create pipelines/billing_etl.py with an Abstract, init must create all 5 standard directories., Running init twice should succeed (exit 0) without raising an exception., Tests for edge cases in the 'reflowfy deploy' Helm deployment command., --no-deploy-postgres without DATABASE_URL env var → exit 1. (+25 more)
 
-### Community 27 - "Community 27"
+### Community 28 - "Community 28"
 Cohesion: 0.06
 Nodes (33): cleanup_dlq_jobs(), dlq_client(), E2E Tests for DLQ (Dead Letter Queue) Feature.  Tests the complete DLQ workflow, Tests for GET /dlq/jobs endpoint., Schedule multiple jobs, test filtering by pipeline and status., Tests for GET /dlq/jobs/{id} endpoint., Get a specific DLQ job by ID., Get non-existent DLQ job returns 404. (+25 more)
 
-### Community 28 - "Community 28"
-Cohesion: 0.05
-Nodes (33): check_mock_api(), client(), E2E tests for IDBasedAPISource with pipeline execution., E2E tests for PaginatedAPISource with pipeline execution., Test that ID-based API source pipeline can start., Verify ReflowManager is running., Test that API source pipeline can start., Test that ID-based API source creates jobs from ID list. (+25 more)
-
 ### Community 29 - "Community 29"
-Cohesion: 0.05
-Nodes (35): PipelineRegistry, Pipeline registry for dynamic registration and lookup., Unregister a pipeline (mainly for testing).          Args:             name: Pip, Unregister a pipeline (mainly for testing).          Args:             name: Pip, Get all registered pipeline names.          Returns:             List of pipelin, Thread-safe singleton registry for pipelines.      Pipelines are registered at m, Check if a pipeline is registered.          Args:             name: Pipeline nam, Clear all registered pipelines (mainly for testing). (+27 more)
-
-### Community 30 - "Community 30"
 Cohesion: 0.07
 Nodes (34): client(), _pipeline_info(), E2E Tests: enable_duplicate_jobs flag.  Verifies that: - enable_duplicate_jobs=F, Two consecutive dedup runs: after the first, the second must skip every job., enable_duplicate_jobs=True API override bypasses dedup even on a         pipelin, enable_duplicate_jobs=True API override bypasses dedup even on a         pipelin, Tests for enable_duplicate_jobs=True (allow duplicates, baseline)., UUID-based pipeline always creates jobs — no skipping ever occurs. (+26 more)
+
+### Community 30 - "Community 30"
+Cohesion: 0.05
+Nodes (35): PipelineRegistry, Pipeline registry for dynamic registration and lookup., Unregister a pipeline (mainly for testing).          Args:             name: Pip, Unregister a pipeline (mainly for testing).          Args:             name: Pip, Get all registered pipeline names.          Returns:             List of pipelin, Thread-safe singleton registry for pipelines.      Pipelines are registered at m, Check if a pipeline is registered.          Args:             name: Pipeline nam, Clear all registered pipelines (mainly for testing). (+27 more)
 
 ### Community 31 - "Community 31"
 Cohesion: 0.07
@@ -453,672 +458,672 @@ Cohesion: 0.1
 Nodes (28): clear_received_records(), get_received_records(), E2E tests for the unified runtime_params flow through transformations.  Tests ve, params_step1_enrich writes step1_count + step1_ran into runtime_params.     para, params_step1_enrich writes step1_count + step1_ran into runtime_params.     para, E2EParamsEnrichPipeline.define_source injects 'injected_by_source'.     params_s, A param set by the first transformation must cause define_transformations, E2EParamsEnrichPipeline.define_source injects 'injected_by_source'.     params_s (+20 more)
 
 ### Community 33 - "Community 33"
+Cohesion: 0.1
+Nodes (26): client(), _get_records(), E2E Tests for Advanced Transformation Context Features.  Tests that ExecutionCon, All records from a single execution must carry the same execution_id         reg, E2EBatchIdentityPipeline sends 30 records in 3 batches of 10.         batch_id i, Verify that runtime_params passed in the run request reach transformations., Pipeline receives runtime_params={"env": "staging", "multiplier": 3}.         Ev, With multiplier=3, each record's _value should equal record.id * 3. (+18 more)
+
+### Community 34 - "Community 34"
 Cohesion: 0.07
 Nodes (23): check_elasticsearch(), client(), E2E Tests for Elasticsearch Source.  Tests the ElasticSource connector by runnin, Test that pipeline runs to completion., Test that pipeline runs to completion., A query matching no documents must create 0 jobs (no no-op job).          Seeded, A query matching no documents must create 0 jobs (no no-op job).          Seeded, docs_per_job must fan the query into ceil(count / docs_per_job) jobs.          T (+15 more)
 
-### Community 34 - "Community 34"
+### Community 35 - "Community 35"
+Cohesion: 0.07
+Nodes (26): AddProcessingInfo, FilterActiveUsers, Simple test pipeline that works without any external dependencies.  Perfect for, Return mock data source., Return console destination., Return console destination., Return transformation pipeline., Return transformation pipeline. (+18 more)
+
+### Community 36 - "Community 36"
+Cohesion: 0.07
+Nodes (26): AddProcessingInfo, FilterActiveUsers, Simple test pipeline that works without any external dependencies.  Perfect for, Return mock data source., Return console destination., Return console destination., Return transformation pipeline., Return transformation pipeline. (+18 more)
+
+### Community 37 - "Community 37"
 Cohesion: 0.06
 Nodes (25): Registry for transformation lookup by name., Get all registered transformation names.          Returns:             List of t, Check if a transformation is registered.          Args:             name: Transf, Check if a transformation is registered.          Args:             name: Transf, Thread-safe singleton registry for transformations.      Transformations are aut, Check if a transformation is registered.          Args:             name: Transf, Clear all registered transformations (mainly for testing)., Clear all registered transformations (mainly for testing). (+17 more)
 
-### Community 35 - "Community 35"
+### Community 38 - "Community 38"
 Cohesion: 0.1
 Nodes (21): client(), E2E Tests for Execution Lifecycle.  Tests pause/resume functionality and stats p, Pause an already completed execution.                  The API currently allows, Tests for POST /executions/{id}/resume endpoint., Pause then resume, and verify the pipeline eventually completes., Resume a non-existent execution returns 400/404., Resume a running (not paused) execution returns 400., Tests for stats progression during pipeline execution. (+13 more)
 
-### Community 36 - "Community 36"
+### Community 39 - "Community 39"
 Cohesion: 0.13
 Nodes (27): E2E Tests for CLI scaffolding commands ('reflowfy new' and 'reflowfy init').  Ve, Verify 'new transformation' command., Verify 'init' works with a non-'.' path argument., Verify running 'init' twice doesn't cause errors., Verify 'new pipeline' rejects creating a file that already exists., Verify 'new pipeline' generates correct class name for multi-word names., Verify 'new source' rejects creating a file that already exists., Verify 'new destination' rejects creating a file that already exists. (+19 more)
 
-### Community 37 - "Community 37"
-Cohesion: 0.11
-Nodes (27): _check_status(), _create_id_based_route(), create_pipeline_routes(), _create_run_route(), _create_standard_route(), _is_body_param(), _param_annotation(), PipelineRunResponse (+19 more)
-
-### Community 38 - "Community 38"
+### Community 40 - "Community 40"
 Cohesion: 0.1
 Nodes (19): client(), E2E Tests for ReflowManager.  These tests require running services: - PostgreSQL, Test that getting stats for nonexistent execution returns 404., Test crash recovery mechanisms., Test that pipeline execution resumes after manager restart.          1. Start a, HTTP client for ReflowManager API., Generate unique execution ID for each test., Test health check endpoint. (+11 more)
 
-### Community 39 - "Community 39"
-Cohesion: 0.14
-Nodes (21): client(), ensure_lag_test_topic(), kafka_producer(), poll_until_terminal(), E2E Tests: Kafka Destination Lag Health Check.  Two scenarios:   1. High lag  →, Temporary producer for flooding the lag-test topic., Temporary producer for flooding the lag-test topic., End-to-end tests for Kafka destination lag health check. (+13 more)
-
-### Community 40 - "Community 40"
+### Community 41 - "Community 41"
 Cohesion: 0.13
 Nodes (17): client(), _params_for(), _post_run(), E2E tests for typed runtime_params.  The pipeline under test (`tests/e2e/test_pi, Keys written by define_source and by a transformation both arrive., Keys written by define_source and by a transformation both arrive., env is Literal["dev", "prod"], derived into choices and validated., `env: Literal["dev", "prod"]` becomes a Literal on the generated route. (+9 more)
 
-### Community 41 - "Community 41"
+### Community 42 - "Community 42"
+Cohesion: 0.14
+Nodes (21): client(), ensure_lag_test_topic(), kafka_producer(), poll_until_terminal(), E2E Tests: Kafka Destination Lag Health Check.  Two scenarios:   1. High lag  →, Temporary producer for flooding the lag-test topic., Temporary producer for flooding the lag-test topic., End-to-end tests for Kafka destination lag health check. (+13 more)
+
+### Community 43 - "Community 43"
 Cohesion: 0.13
 Nodes (16): clean_pipeline_registry(), E2E Tests for CLI 'reflowfy test' command.  Tests the test command's pipeline lo, Write a Python file that doesn't register any pipeline., Tests for the 'reflowfy test' command., Test with nonexistent file should fail with exit code 1., Test a file with no registered pipelines should fail., Test a valid pipeline with --dry-run should succeed without sending., Test --limit should restrict the number of records processed. (+8 more)
 
-### Community 42 - "Community 42"
+### Community 44 - "Community 44"
 Cohesion: 0.17
 Nodes (17): E2E Tests for CLI 'reflowfy deploy' command.  Tests the deploy command's Helm ch, Deploy with --no-deploy-postgres but no DATABASE_URL should fail., Create a temporary workspace for CLI tests., Deploy with --no-deploy-postgres but no DATABASE_URL should fail., Return a copy of os.environ without specific keys., Tests for the 'reflowfy deploy' command., Deploy without --registry should fail with exit code 1., Deploy with --registry but without --kafka should fail. (+9 more)
 
-### Community 43 - "Community 43"
+### Community 45 - "Community 45"
+Cohesion: 0.15
+Nodes (16): E2E Tests for decorator components (@source, @destination, @transformation).  Ve, Verify shared sources are registered correctly., Verify shared destinations are registered correctly., Verify shared sources return valid configurations., Verify shared destinations return valid configurations., Verify we can create a transformation with a decorator dynamically., test_dynamic_transformation_decorator(), test_shared_destination_invocation() (+8 more)
+
+### Community 46 - "Community 46"
 Cohesion: 0.19
 Nodes (15): client(), E2E Tests for Rate Limiting.  Verifies the token-bucket rate limiter (reflowfy/r, Fast pipeline: 50 records across 5 batches — stats should show         jobs_comp, Fast pipeline: all records should arrive at the mock HTTP destination., HTTP client scoped to this module., Reset mock HTTP server before each test., POST /run for the given pipeline and poll /stats until done.      Returns (execu, Verify token-bucket rate limiting through live pipeline executions. (+7 more)
 
-### Community 44 - "Community 44"
-Cohesion: 0.16
-Nodes (15): E2E Tests for decorator components (@source, @destination, @transformation).  Ve, Verify shared sources are registered correctly., Verify shared destinations are registered correctly., Verify shared sources return valid configurations., Verify shared destinations return valid configurations., Verify we can create a transformation with a decorator dynamically., test_dynamic_transformation_decorator(), test_shared_destination_invocation() (+7 more)
-
-### Community 45 - "Community 45"
+### Community 47 - "Community 47"
 Cohesion: 0.17
 Nodes (14): check_mock_http(), client(), E2E Tests for Transformation Verification.  Tests that user-defined transformati, Verify that transformations execute in the correct order.                  Step, Verify that the computed field (_computed_category) has correct values         b, HTTP client for ReflowManager API., Verify mock HTTP server is running., Reset mock HTTP server data before each test. (+6 more)
 
-### Community 46 - "Community 46"
+### Community 48 - "Community 48"
 Cohesion: 0.15
 Nodes (15): get_dockerfiles_path(), get_helm_chart_path(), get_package_path(), Shared utilities for CLI commands., Get the path to the installed reflowfy package., Get path to the bundled Helm chart. Falls back to local ./helm/reflowfy if avail, Get path to Dockerfiles (templates for init or dev source)., _build_images() (+7 more)
 
-### Community 47 - "Community 47"
+### Community 49 - "Community 49"
 Cohesion: 0.19
 Nodes (12): E2E tests for an IdBasedPipeline that owns its splitting via define_jobs.  The p, A job handling one child ID has no use for every other ID in the run., job(...) params must reach the worker's transformations, per job., job(...) params must reach the worker's transformations, per job., This execution's records only.      The mock server is shared by the whole suite, define_jobs owns the splitting for an IdBasedPipeline., define_jobs owns the splitting for an IdBasedPipeline., A job handling one child ID has no use for every other ID in the run. (+4 more)
 
-### Community 48 - "Community 48"
+### Community 50 - "Community 50"
 Cohesion: 0.18
 Nodes (12): client(), kafka_consumer(), E2E Tests for Kafka Destination.  Tests the KafkaDestination connector by runnin, Test that pipeline runs to completion., HTTP client for ReflowManager API., Create a Kafka consumer for verifying messages., Test Kafka destination pipeline., Verify ReflowManager is running. (+4 more)
 
-### Community 49 - "Community 49"
+### Community 51 - "Community 51"
 Cohesion: 0.15
 Nodes (11): check_postgres(), client(), E2E Tests for SQL Source.  Tests the SqlSource connector by running a pipeline t, Test that pipeline runs to completion., HTTP client for ReflowManager API., Verify PostgreSQL is available and has test data., Test SQL source pipeline., Verify ReflowManager is running. (+3 more)
 
-### Community 50 - "Community 50"
+### Community 52 - "Community 52"
 Cohesion: 0.22
 Nodes (12): E2E Tests for CLI 'reflowfy build' command.  Tests the build command's argument, Create a temporary workspace for CLI tests., Tests for the 'reflowfy build' command., Build without --registry should fail with exit code 1., Build should warn when pipelines/ directory is missing., temp_workspace(), test_build_uses_custom_project(), test_build_with_no_cache_flag() (+4 more)
 
-### Community 51 - "Community 51"
+### Community 53 - "Community 53"
+Cohesion: 0.17
+Nodes (14): get_dlq_stats(), get_failure_stats(), get_overview_stats(), get_pipeline_detail(), get_pipeline_stats(), Statistics API routes for ReflowManager., Detailed statistics for a single pipeline, including recent executions.      Arg, Detailed statistics for a single pipeline, including recent executions.      Arg (+6 more)
+
+### Community 54 - "Community 54"
 Cohesion: 0.3
 Nodes (11): build_auth_headers(), Shared HTTP authentication header construction.  Used by both the API source (sy, Return a new headers dict with the auth header applied.      - ``bearer``  -> ``, Unit tests for the shared HTTP auth header helper., test_apikey_sets_x_api_key(), test_basic_base64_encodes_user_pass(), test_bearer_sets_authorization(), test_input_dict_not_mutated() (+3 more)
 
-### Community 52 - "Community 52"
+### Community 55 - "Community 55"
 Cohesion: 0.19
 Nodes (13): E2E Tests for pipeline auto-registration.  Verifies that the PipelineMeta metacl, Verify that E2E test pipelines are auto-registered., Verify that E2E test pipelines are auto-registered., Verify registry names match the name attribute., Verify registry names match the name attribute., Verify we can auto-register a pipeline dynamically., Verify we can auto-register a pipeline dynamically., Verify idempotent registration prevents duplicates. (+5 more)
 
-### Community 53 - "Community 53"
+### Community 56 - "Community 56"
 Cohesion: 0.21
 Nodes (11): client(), E2E Tests for Concurrent Pipeline Executions.  Tests that the system correctly h, Test running the same pipeline twice with different executions., Start the same pipeline twice — both should get unique execution IDs         and, HTTP client for ReflowManager API., Wait for a pipeline execution to complete., Test running two different pipelines simultaneously., Start HTTP-dest and Kafka-dest pipelines concurrently.         Both should compl (+3 more)
 
-### Community 54 - "Community 54"
+### Community 57 - "Community 57"
 Cohesion: 0.38
 Nodes (8): client(), E2E: worker-side content deduplication.  enable_duplicate_jobs=False now means t, Unlike the old manager-side dedup, jobs are now always created         and dispa, _records(), _reset(), _run(), TestWorkerContentDedup, _wait()
 
-### Community 55 - "Community 55"
+### Community 58 - "Community 58"
 Cohesion: 0.3
 Nodes (11): create_index(), get_elasticsearch_url(), insert_sample_data(), main(), Initialize Elasticsearch test data for E2E tests.  Creates a test index with sam, Verify inserted data., Initialize test data., Get Elasticsearch URL. (+3 more)
 
-### Community 56 - "Community 56"
-Cohesion: 0.22
-Nodes (11): get_dlq_stats(), get_failure_stats(), get_overview_stats(), get_pipeline_detail(), get_pipeline_stats(), Statistics API routes for ReflowManager., Detailed statistics for a single pipeline, including recent executions.      Arg, Global dashboard statistics across all pipelines.      Returns total executions, (+3 more)
-
-### Community 57 - "Community 57"
+### Community 59 - "Community 59"
 Cohesion: 0.22
 Nodes (11): get_archived_job(), get_schedule(), get_schedule_stats(), list_archived_jobs(), list_schedules(), Schedule management routes for ReflowManager., Get a single archived (permanently failed) DLQ job by ID., List all pipeline schedule entries. (+3 more)
 
-### Community 58 - "Community 58"
+### Community 60 - "Community 60"
 Cohesion: 0.23
 Nodes (11): clear(), destination(), DestinationRegistry, get(), list_all(), Decorator for registering reusable destination configurations.  Users define reu, Registry for reusable destination factory functions., Registry for reusable destination factory functions. (+3 more)
 
-### Community 59 - "Community 59"
+### Community 61 - "Community 61"
 Cohesion: 0.23
 Nodes (11): clear(), get(), list_all(), Decorator for registering reusable source configurations.  Users define reusable, Registry for reusable source factory functions., Registry for reusable source factory functions., Decorator to register a reusable source configuration.      Args:         name:, Decorator to register a reusable source configuration.      Args:         name: (+3 more)
 
-### Community 60 - "Community 60"
-Cohesion: 0.41
-Nodes (7): client(), _get_mock_records(), _get_mock_stats(), E2E test for elastic source routing into two destinations.  Verifies (v2 worker-, reset_mock_http(), _run_pipeline(), TestElasticRoutedDestinations
+### Community 62 - "Community 62"
+Cohesion: 0.27
+Nodes (6): _consumer(), Unit tests for KafkaJobConsumer per-message handling., A null-value Kafka record (e.g. tombstone) must be skipped cleanly,         not, A failed job (execute_job -> False) has its failure recorded in         Postgres, A job without schema_version==2 must be skipped (not executed) and         commi, TestProcessMessage
 
-### Community 61 - "Community 61"
+### Community 63 - "Community 63"
 Cohesion: 0.35
 Nodes (9): E2E Tests for CLI 'reflowfy run' command.  Tests the run command's Docker Compos, Create a temporary workspace for CLI tests., Tests for the 'reflowfy run' command., temp_workspace(), test_run_calls_docker_compose_up(), test_run_with_build_and_detach(), test_run_with_build_flag(), test_run_with_detach_flag() (+1 more)
 
-### Community 62 - "Community 62"
+### Community 64 - "Community 64"
+Cohesion: 0.41
+Nodes (7): client(), _get_mock_records(), _get_mock_stats(), E2E test for elastic source routing into two destinations.  Verifies (v2 worker-, reset_mock_http(), _run_pipeline(), TestElasticRoutedDestinations
+
+### Community 65 - "Community 65"
 Cohesion: 0.31
 Nodes (9): generate_event_data(), generate_test_documents(), generate_user_data(), init_elasticsearch_test_data(), Initialize Elasticsearch with test data for Reflofy testing.  This script: 1. Co, Initialize Elasticsearch with test data.          Args:         es_url: Elastics, Generate random user data., Generate event-specific data. (+1 more)
 
-### Community 63 - "Community 63"
+### Community 66 - "Community 66"
 Cohesion: 0.42
 Nodes (6): client(), _get_batches(), E2E tests for runtime_params destination pipeline.  Verifies that runtime_params, reset_mock_http(), _run_pipeline(), TestRuntimeParamsDestination
 
-### Community 64 - "Community 64"
-Cohesion: 0.38
-Nodes (4): _EmptySource, _ExplodingPipeline, run_job_records must not invoke transformations on an empty slice.  Elastic slic, test_empty_slice_skips_transformation_and_destination()
-
-### Community 65 - "Community 65"
+### Community 67 - "Community 67"
 Cohesion: 0.33
 Nodes (7): E2E: verify the observability signals actually flow.  In E2E the stack runs EXEC, The manager exposes Prometheus metrics with reflowfy_* families., After a run, execution + job counters advance., Manager logs are shipped to the e2e Elasticsearch as reflowfy-logs-*., test_logs_land_in_elastic(), test_metrics_endpoint_exposes_reflowfy_families(), test_pipeline_run_records_metrics()
 
-### Community 66 - "Community 66"
+### Community 68 - "Community 68"
 Cohesion: 0.38
 Nodes (7): E2E Tests for CLI 'reflowfy check' command.  Tests the check command's kubectl i, Create a temporary workspace for CLI tests., Tests for the 'reflowfy check' command., temp_workspace(), test_check_calls_kubectl_get_pods(), test_check_outputs_status_message(), TestCheckCommand
 
-### Community 67 - "Community 67"
-Cohesion: 0.22
-Nodes (4): E2ESqlSourceTestPipeline, SQL Source Test Pipeline.  Pipeline that reads from PostgreSQL and outputs to co, E2E test pipeline for SQL source., E2E test pipeline for SQL source.
-
-### Community 68 - "Community 68"
+### Community 69 - "Community 69"
 Cohesion: 0.29
 Nodes (6): Test a pipeline locally without Docker., Register the test command., Register the test command., Register the test command., Register the test command., register()
 
-### Community 69 - "Community 69"
+### Community 70 - "Community 70"
 Cohesion: 0.38
 Nodes (5): get_kafka_config(), get_kafka_env_vars(), Centralized Kafka configuration with SASL support., Get Kafka configuration for aiokafka.      Reads from environment variables with, Get all Kafka-related environment variables.
 
-### Community 70 - "Community 70"
+### Community 71 - "Community 71"
 Cohesion: 0.43
 Nodes (5): main(), Reflowfy CLI — main entry point.  All commands are organized in the `commands/`, Show the reflowfy version., version_callback(), version_cmd()
 
-### Community 71 - "Community 71"
+### Community 72 - "Community 72"
 Cohesion: 0.33
 Nodes (5): Initialize a new Reflowfy project., Register the init command., Register the init command., Register the init command., register()
 
-### Community 72 - "Community 72"
+### Community 73 - "Community 73"
 Cohesion: 0.38
 Nodes (3): Unit tests for the _dispatch_pipeline_jobs background task error handling., If ReflowManager construction raises, the execution must still be         marked, TestDispatchFailureMarksExecution
 
-### Community 73 - "Community 73"
+### Community 74 - "Community 74"
 Cohesion: 0.4
 Nodes (4): Deploy Reflowfy to Kubernetes/OpenShift using Helm., Register the deploy command., Register the deploy command., register()
 
-### Community 74 - "Community 74"
+### Community 75 - "Community 75"
 Cohesion: 0.4
 Nodes (4): Scaffold new Reflowfy components., Register the new command., Register the new command., register()
 
-### Community 75 - "Community 75"
+### Community 76 - "Community 76"
 Cohesion: 0.5
 Nodes (3): Run Reflowfy locally using Docker Compose., Register the run command., register()
 
-### Community 76 - "Community 76"
+### Community 77 - "Community 77"
 Cohesion: 0.5
 Nodes (3): Verify deployment health., Register the check command., register()
 
-### Community 77 - "Community 77"
-Cohesion: 0.5
-Nodes (1): Re-exports from sources/ for backward compatibility.
-
 ### Community 78 - "Community 78"
 Cohesion: 0.5
-Nodes (1): E2E Test Pipelines Package.  This package contains pipeline definitions for E2E
+Nodes (1): Re-exports from sources/ for backward compatibility.
 
 ### Community 79 - "Community 79"
 Cohesion: 0.5
-Nodes (1): Re-exports from destinations/ for backward compatibility.
+Nodes (1): E2E Test Pipelines Package.  This package contains pipeline definitions for E2E
 
 ### Community 80 - "Community 80"
-Cohesion: 0.67
-Nodes (1): ReflowManager - Rate limiting and pipeline state management service.
+Cohesion: 0.5
+Nodes (1): Re-exports from destinations/ for backward compatibility.
 
 ### Community 81 - "Community 81"
 Cohesion: 0.67
-Nodes (1): Source and destination factory classes for dynamic instantiation.
+Nodes (1): ReflowManager - Rate limiting and pipeline state management service.
 
 ### Community 82 - "Community 82"
 Cohesion: 0.67
-Nodes (1): Execution engines for local and distributed processing.
+Nodes (1): Source and destination factory classes for dynamic instantiation.
 
 ### Community 83 - "Community 83"
 Cohesion: 0.67
-Nodes (1): Prometheus metrics collection.
+Nodes (1): Execution engines for local and distributed processing.
 
 ### Community 84 - "Community 84"
 Cohesion: 0.67
-Nodes (1): Observability components for logging and metrics.
+Nodes (1): Prometheus metrics collection.
 
 ### Community 85 - "Community 85"
 Cohesion: 0.67
-Nodes (1): Core framework components for pipeline definition and execution.
+Nodes (1): Observability components for logging and metrics.
 
 ### Community 86 - "Community 86"
 Cohesion: 0.67
-Nodes (1): FastAPI application for pipeline orchestration.
+Nodes (1): Core framework components for pipeline definition and execution.
 
 ### Community 87 - "Community 87"
 Cohesion: 0.67
-Nodes (1): update_version()
+Nodes (1): FastAPI application for pipeline orchestration.
 
 ### Community 88 - "Community 88"
 Cohesion: 0.67
-Nodes (1): Start API for distributed testing with Kafka.  This API will: 1. Load the simple
+Nodes (1): update_version()
 
 ### Community 89 - "Community 89"
 Cohesion: 0.67
-Nodes (1): Start Reflowfy worker locally to consume jobs from Kafka.  This worker will: 1.
+Nodes (1): Start API for distributed testing with Kafka.  This API will: 1. Load the simple
 
 ### Community 90 - "Community 90"
 Cohesion: 0.67
-Nodes (1): Example startup script showing how to use Reflowfy.  This script: 1. Imports pip
+Nodes (1): Start Reflowfy worker locally to consume jobs from Kafka.  This worker will: 1.
 
 ### Community 91 - "Community 91"
 Cohesion: 0.67
-Nodes (1): Example startup script for testing Reflowfy locally.  This script imports a simp
+Nodes (1): Example startup script showing how to use Reflowfy.  This script: 1. Imports pip
 
 ### Community 92 - "Community 92"
 Cohesion: 0.67
-Nodes (1): Script to run the elastic_test_pipeline locally without starting the API.
+Nodes (1): Example startup script for testing Reflowfy locally.  This script imports a simp
 
 ### Community 93 - "Community 93"
-Cohesion: 1.0
-Nodes (1): Reflowfy - A horizontally scalable data movement and transformation framework.
+Cohesion: 0.67
+Nodes (1): Script to run the elastic_test_pipeline locally without starting the API.
 
 ### Community 94 - "Community 94"
 Cohesion: 1.0
-Nodes (1): Re-exports from sources/ for backward compatibility.
+Nodes (1): Reflowfy - A horizontally scalable data movement and transformation framework.
 
 ### Community 95 - "Community 95"
 Cohesion: 1.0
-Nodes (1): E2E Test Pipelines Package.  This package contains pipeline definitions for E2E
+Nodes (1): Names for the values that flow through a pipeline.  A record is whatever a sourc
 
 ### Community 96 - "Community 96"
 Cohesion: 1.0
+Nodes (1): Re-exports from sources/ for backward compatibility.
+
+### Community 97 - "Community 97"
+Cohesion: 1.0
+Nodes (1): E2E Test Pipelines Package.  This package contains pipeline definitions for E2E
+
+### Community 98 - "Community 98"
+Cohesion: 1.0
 Nodes (1): Re-exports from destinations/ for backward compatibility.
-
-### Community 100 - "Community 100"
-Cohesion: 1.0
-Nodes (1): Dispatch a single job.
-
-### Community 101 - "Community 101"
-Cohesion: 1.0
-Nodes (1): Dispatch a batch of jobs.
 
 ### Community 102 - "Community 102"
 Cohesion: 1.0
-Nodes (1): Return the next scheduled datetime after `after` for the given cron expression.
+Nodes (1): Dispatch a single job.
 
 ### Community 103 - "Community 103"
 Cohesion: 1.0
-Nodes (1): Send records to destination.          Args:             records: List of records
+Nodes (1): Dispatch a batch of jobs.
 
 ### Community 104 - "Community 104"
 Cohesion: 1.0
-Nodes (1): Check if destination is healthy and accessible.          Returns:             Tr
+Nodes (1): Return the next scheduled datetime after `after` for the given cron expression.
 
 ### Community 105 - "Community 105"
 Cohesion: 1.0
-Nodes (1): Register a destination factory function.
+Nodes (1): Send records to destination.          Args:             records: List of records
 
 ### Community 106 - "Community 106"
 Cohesion: 1.0
-Nodes (1): Get a destination factory by name.
+Nodes (1): Check if destination is healthy and accessible.          Returns:             Tr
 
 ### Community 107 - "Community 107"
 Cohesion: 1.0
-Nodes (1): List all registered destination names.
+Nodes (1): Register a destination factory function.
 
 ### Community 108 - "Community 108"
 Cohesion: 1.0
-Nodes (1): Clear all registered destinations (for testing).
+Nodes (1): Get a destination factory by name.
 
 ### Community 109 - "Community 109"
 Cohesion: 1.0
-Nodes (1): Stable type name used to serialize/reconstruct this source.
+Nodes (1): List all registered destination names.
 
 ### Community 110 - "Community 110"
 Cohesion: 1.0
-Nodes (1): Fetch data from source (used in local mode).          Args:             runtime_
+Nodes (1): Clear all registered destinations (for testing).
 
 ### Community 111 - "Community 111"
 Cohesion: 1.0
-Nodes (1): Split source data into jobs for distributed processing.          This is a gener
+Nodes (1): Stable type name used to serialize/reconstruct this source.
 
 ### Community 112 - "Community 112"
 Cohesion: 1.0
-Nodes (1): Check if source is accessible and healthy.          Returns:             True if
+Nodes (1): Fetch data from source (used in local mode).          Args:             runtime_
 
 ### Community 113 - "Community 113"
 Cohesion: 1.0
-Nodes (1): Register a source factory function.
+Nodes (1): Split source data into jobs for distributed processing.          This is a gener
 
 ### Community 114 - "Community 114"
 Cohesion: 1.0
-Nodes (1): Get a source factory by name.
+Nodes (1): Check if source is accessible and healthy.          Returns:             True if
 
 ### Community 115 - "Community 115"
 Cohesion: 1.0
-Nodes (1): List all registered source names.
+Nodes (1): Register a source factory function.
 
 ### Community 116 - "Community 116"
 Cohesion: 1.0
-Nodes (1): Clear all registered sources (for testing).
+Nodes (1): Get a source factory by name.
 
 ### Community 117 - "Community 117"
 Cohesion: 1.0
-Nodes (1): Register a destination type.          Args:             type_name: Short name fo
+Nodes (1): List all registered source names.
 
 ### Community 118 - "Community 118"
 Cohesion: 1.0
-Nodes (1): Create a destination instance by type name.          Args:             type_name
+Nodes (1): Clear all registered sources (for testing).
 
 ### Community 119 - "Community 119"
 Cohesion: 1.0
-Nodes (1): List all registered destination types.
+Nodes (1): Register a destination type.          Args:             type_name: Short name fo
 
 ### Community 120 - "Community 120"
 Cohesion: 1.0
-Nodes (1): Check if a destination type is registered.
+Nodes (1): Create a destination instance by type name.          Args:             type_name
 
 ### Community 121 - "Community 121"
 Cohesion: 1.0
-Nodes (1): Register a source type.          Args:             type_name: Class name used as
+Nodes (1): List all registered destination types.
 
 ### Community 122 - "Community 122"
 Cohesion: 1.0
-Nodes (1): Reconstruct a source from its registry type name and config dict.          Every
+Nodes (1): Check if a destination type is registered.
 
 ### Community 123 - "Community 123"
 Cohesion: 1.0
-Nodes (1): Serialize a source instance to a ``{type, config}`` descriptor.
+Nodes (1): Register a source type.          Args:             type_name: Class name used as
 
 ### Community 124 - "Community 124"
 Cohesion: 1.0
-Nodes (1): List all registered source types.
+Nodes (1): Reconstruct a source from its registry type name and config dict.          Every
 
 ### Community 125 - "Community 125"
 Cohesion: 1.0
-Nodes (1): Check if a source type is registered.
+Nodes (1): Serialize a source instance to a ``{type, config}`` descriptor.
 
 ### Community 126 - "Community 126"
 Cohesion: 1.0
-Nodes (1): Apply transformation to a batch of records.          Args:             records:
+Nodes (1): List all registered source types.
 
 ### Community 127 - "Community 127"
 Cohesion: 1.0
-Nodes (1): Calculate success rate.
+Nodes (1): Check if a source type is registered.
 
 ### Community 128 - "Community 128"
 Cohesion: 1.0
-Nodes (1): Check if execution is complete.
+Nodes (1): Apply transformation to a batch of records.          Args:             records:
 
 ### Community 129 - "Community 129"
 Cohesion: 1.0
-Nodes (1): Execute a pipeline.          Args:             pipeline: Pipeline instance to ex
+Nodes (1): Calculate success rate.
+
+### Community 130 - "Community 130"
+Cohesion: 1.0
+Nodes (1): Check if execution is complete.
 
 ### Community 131 - "Community 131"
 Cohesion: 1.0
-Nodes (1): Define the destination to use based on post-transformation records and runtime p
-
-### Community 132 - "Community 132"
-Cohesion: 1.0
-Nodes (1): Define list of transformations to apply based on records and runtime parameters.
+Nodes (1): Execute a pipeline.          Args:             pipeline: Pipeline instance to ex
 
 ### Community 133 - "Community 133"
 Cohesion: 1.0
-Nodes (1): Get the resolved source. Call resolve() first.
+Nodes (1): Define the destination to use based on post-transformation records and runtime p
 
 ### Community 134 - "Community 134"
 Cohesion: 1.0
-Nodes (1): Get the resolved destination. Call resolve() first.
+Nodes (1): Get the resolved source. Call resolve() first.
 
 ### Community 135 - "Community 135"
 Cohesion: 1.0
-Nodes (1): Get the resolved transformations. Call resolve() first.
+Nodes (1): Get the resolved destination. Call resolve() first.
 
 ### Community 136 - "Community 136"
 Cohesion: 1.0
+Nodes (1): Get the resolved transformations. Call resolve() first.
+
+### Community 137 - "Community 137"
+Cohesion: 1.0
 Nodes (1): Return True if this pipeline has a cron schedule configured.
 
-### Community 141 - "Community 141"
+### Community 139 - "Community 139"
 Cohesion: 1.0
 Nodes (1): Create a mock S3 client.
 
-### Community 142 - "Community 142"
+### Community 140 - "Community 140"
 Cohesion: 1.0
 Nodes (1): Sample S3 object listing response.
 
-### Community 143 - "Community 143"
+### Community 141 - "Community 141"
 Cohesion: 1.0
 Nodes (1): Test handling 404 response.
 
-### Community 144 - "Community 144"
+### Community 142 - "Community 142"
 Cohesion: 1.0
 Nodes (1): Test job splitting with batching.
 
-### Community 145 - "Community 145"
+### Community 143 - "Community 143"
 Cohesion: 1.0
 Nodes (1): Test bearer token authentication.
 
-### Community 146 - "Community 146"
+### Community 144 - "Community 144"
 Cohesion: 1.0
 Nodes (1): Test API key authentication.
 
-### Community 147 - "Community 147"
+### Community 145 - "Community 145"
 Cohesion: 1.0
 Nodes (1): After waiting for one scheduler poll cycle (≤60s), the execution count         f
 
-### Community 148 - "Community 148"
+### Community 146 - "Community 146"
 Cohesion: 1.0
 Nodes (1): After an auto-fire, next_run_at must advance to the next cron tick.
 
-### Community 149 - "Community 149"
+### Community 147 - "Community 147"
 Cohesion: 1.0
 Nodes (1): /executions/{id}/errors returns 200 for a known execution.
 
-### Community 150 - "Community 150"
+### Community 148 - "Community 148"
 Cohesion: 1.0
 Nodes (1): /executions/{id}/errors returns 404 for a non-existent execution.
 
-### Community 151 - "Community 151"
+### Community 149 - "Community 149"
 Cohesion: 1.0
 Nodes (1): A job that fails stores error_message in the DB and exposes it via /errors.
 
-### Community 152 - "Community 152"
+### Community 150 - "Community 150"
 Cohesion: 1.0
 Nodes (1): Each item in /errors has the expected fields.
 
-### Community 153 - "Community 153"
+### Community 151 - "Community 151"
 Cohesion: 1.0
 Nodes (1): Defining a pipeline with a bad cron expression raises ValueError immediately.
 
-### Community 154 - "Community 154"
+### Community 152 - "Community 152"
 Cohesion: 1.0
 Nodes (1): A valid 5-field cron expression does not raise.
 
-### Community 155 - "Community 155"
+### Community 153 - "Community 153"
 Cohesion: 1.0
 Nodes (1): 6-field cron (common mistake from AWS/Quartz) raises ValueError.
 
-### Community 156 - "Community 156"
+### Community 154 - "Community 154"
 Cohesion: 1.0
 Nodes (1): Running a dedup pipeline twice shows deduplicated_jobs > 0 on second run.
 
-### Community 157 - "Community 157"
+### Community 155 - "Community 155"
 Cohesion: 1.0
 Nodes (1): With enable_duplicate_jobs=True, deduplicated_jobs is 0.
 
-### Community 158 - "Community 158"
+### Community 156 - "Community 156"
 Cohesion: 1.0
 Nodes (1): Every execution stats response includes the deduplicated_jobs field.
 
-### Community 159 - "Community 159"
+### Community 157 - "Community 157"
 Cohesion: 1.0
 Nodes (1): A normal pipeline completes successfully after the _run_async fix.
 
-### Community 160 - "Community 160"
+### Community 158 - "Community 158"
 Cohesion: 1.0
 Nodes (1): _run_async handles missing nest_asyncio gracefully.
 
-### Community 161 - "Community 161"
+### Community 159 - "Community 159"
 Cohesion: 1.0
 Nodes (1): Every dispatched job has batch_number in its metadata payload.
 
-### Community 162 - "Community 162"
+### Community 160 - "Community 160"
 Cohesion: 1.0
 Nodes (1): Every dispatched job has total_batches in its metadata payload after Phase 1.
 
-### Community 163 - "Community 163"
+### Community 161 - "Community 161"
 Cohesion: 1.0
 Nodes (1): batch_number values in job metadata are within [1, total_batches].
 
-### Community 164 - "Community 164"
+### Community 162 - "Community 162"
 Cohesion: 1.0
 Nodes (1): ExecutionContext dataclass exposes batch_number, total_batches, retry_count, is_
 
-### Community 165 - "Community 165"
+### Community 163 - "Community 163"
 Cohesion: 1.0
 Nodes (1): PipelineScheduler._poll_and_trigger uses with_for_update(skip_locked=True).
 
-### Community 166 - "Community 166"
+### Community 164 - "Community 164"
 Cohesion: 1.0
 Nodes (1): Schedules API is reachable; disabled schedules are not triggered.
 
-### Community 167 - "Community 167"
+### Community 165 - "Community 165"
 Cohesion: 1.0
 Nodes (1): Build should build all 3 images (api, reflow-manager, worker).
 
-### Community 168 - "Community 168"
+### Community 166 - "Community 166"
 Cohesion: 1.0
 Nodes (1): Build with --no-cache should pass cache=False to Docker.
 
-### Community 169 - "Community 169"
+### Community 167 - "Community 167"
 Cohesion: 1.0
 Nodes (1): Build with --no-push should not call docker.push.
 
-### Community 170 - "Community 170"
+### Community 168 - "Community 168"
 Cohesion: 1.0
 Nodes (1): Build with push enabled should call docker.push for each image.
 
-### Community 171 - "Community 171"
+### Community 169 - "Community 169"
 Cohesion: 1.0
 Nodes (1): Build with --project should use it in image tags.
 
-### Community 172 - "Community 172"
+### Community 170 - "Community 170"
 Cohesion: 1.0
 Nodes (1): Check should call kubectl with correct label selector.
 
-### Community 173 - "Community 173"
+### Community 171 - "Community 171"
 Cohesion: 1.0
 Nodes (1): Check should print a status checking message.
 
-### Community 174 - "Community 174"
+### Community 172 - "Community 172"
 Cohesion: 1.0
 Nodes (1): Pipeline with rate=60 jobs/min (1/s) and 5 single-record batches should take
 
-### Community 175 - "Community 175"
+### Community 173 - "Community 173"
 Cohesion: 1.0
 Nodes (1): E2ERateLimitOverridePipeline has class default=30000 jobs/min but the test
 
-### Community 176 - "Community 176"
+### Community 174 - "Community 174"
 Cohesion: 1.0
 Nodes (1): Run slow (60/min) and fast (30000/min) pipelines concurrently in threads.
 
-### Community 178 - "Community 178"
+### Community 176 - "Community 176"
 Cohesion: 1.0
 Nodes (1): Schedule a job with very short delay, verify it gets processed.
 
-### Community 179 - "Community 179"
+### Community 177 - "Community 177"
 Cohesion: 1.0
 Nodes (1): Run without flags should call 'docker compose up'.
 
-### Community 180 - "Community 180"
+### Community 178 - "Community 178"
 Cohesion: 1.0
 Nodes (1): Run with --build should build first then start.
 
-### Community 181 - "Community 181"
+### Community 179 - "Community 179"
 Cohesion: 1.0
 Nodes (1): Run with --detach should append -d flag.
 
-### Community 182 - "Community 182"
+### Community 180 - "Community 180"
 Cohesion: 1.0
 Nodes (1): Run with --build --detach should build then start in detached mode.
 
-### Community 183 - "Community 183"
+### Community 181 - "Community 181"
 Cohesion: 1.0
 Nodes (1): Deploy should construct a valid helm upgrade --install command.
 
-### Community 184 - "Community 184"
+### Community 182 - "Community 182"
 Cohesion: 1.0
 Nodes (1): Deploy with --keda should include KEDA configuration.
 
-### Community 185 - "Community 185"
+### Community 183 - "Community 183"
 Cohesion: 1.0
 Nodes (1): Deploy without --keda should disable it and set worker replicas.
 
-### Community 186 - "Community 186"
+### Community 184 - "Community 184"
 Cohesion: 1.0
 Nodes (1): Deploy with --no-deploy-postgres should use external DB config.
 
-### Community 187 - "Community 187"
+### Community 185 - "Community 185"
 Cohesion: 1.0
 Nodes (1): Deploy with --postgres-image should set repo and tag.
 
-### Community 188 - "Community 188"
+### Community 186 - "Community 186"
 Cohesion: 1.0
 Nodes (1): Deploy with --image-pull-secret should set the secret name.
 
-### Community 189 - "Community 189"
+### Community 187 - "Community 187"
 Cohesion: 1.0
 Nodes (1): Jobs ARE dispatched (worker-side sourcing has no pre-dispatch manager         ga
 
-### Community 190 - "Community 190"
+### Community 188 - "Community 188"
 Cohesion: 1.0
 Nodes (1): Jobs SHOULD be dispatched when consumer lag is below the threshold.          lag
 
-### Community 191 - "Community 191"
+### Community 189 - "Community 189"
 Cohesion: 1.0
 Nodes (1): Verify Kafka topic exists (wait for it if necessary).
 
-### Community 192 - "Community 192"
+### Community 190 - "Community 190"
 Cohesion: 1.0
 Nodes (1): Test that messages are sent to Kafka topic.
 
-### Community 197 - "Community 197"
+### Community 192 - "Community 192"
 Cohesion: 1.0
 Nodes (1): Define the destination to use based on post-transformation records and runtime p
 
-### Community 198 - "Community 198"
-Cohesion: 1.0
-Nodes (1): Get the resolved transformations. Call resolve() first.
-
-### Community 199 - "Community 199"
-Cohesion: 1.0
-Nodes (1): Return True if this pipeline has a cron schedule configured.
-
-### Community 200 - "Community 200"
-Cohesion: 1.0
-Nodes (1): Stable type name used to serialize/reconstruct this source.
-
-### Community 201 - "Community 201"
-Cohesion: 1.0
-Nodes (1): Fetch data from source (used in local mode).          Args:             runtime_
-
-### Community 202 - "Community 202"
-Cohesion: 1.0
-Nodes (1): Split source data into jobs for distributed processing.          This is a gener
-
-### Community 203 - "Community 203"
-Cohesion: 1.0
-Nodes (1): Check if source is accessible and healthy.          Returns:             True if
-
-### Community 204 - "Community 204"
-Cohesion: 1.0
-Nodes (1): Define the destination to use based on post-transformation records and runtime p
-
-### Community 205 - "Community 205"
+### Community 193 - "Community 193"
 Cohesion: 1.0
 Nodes (1): Define list of transformations to apply based on records and runtime parameters.
 
-### Community 206 - "Community 206"
+### Community 194 - "Community 194"
 Cohesion: 1.0
 Nodes (1): Get the resolved source. Call resolve() first.
 
-### Community 207 - "Community 207"
+### Community 195 - "Community 195"
 Cohesion: 1.0
 Nodes (1): Get the resolved destination. Call resolve() first.
 
-### Community 208 - "Community 208"
+### Community 196 - "Community 196"
 Cohesion: 1.0
 Nodes (1): Get the resolved transformations. Call resolve() first.
 
-### Community 209 - "Community 209"
+### Community 197 - "Community 197"
 Cohesion: 1.0
 Nodes (1): Return True if this pipeline has a cron schedule configured.
 
-### Community 210 - "Community 210"
+### Community 204 - "Community 204"
 Cohesion: 1.0
-Nodes (1): Define the source to use for a batch of IDs.          Called once per ID-batch.
+Nodes (1): Get the resolved transformations. Call resolve() first.
 
-### Community 211 - "Community 211"
+### Community 205 - "Community 205"
+Cohesion: 1.0
+Nodes (1): Return True if this pipeline has a cron schedule configured.
+
+### Community 206 - "Community 206"
+Cohesion: 1.0
+Nodes (1): Stable type name used to serialize/reconstruct this source.
+
+### Community 207 - "Community 207"
+Cohesion: 1.0
+Nodes (1): Fetch data from source (used in local mode).          Args:             runtime_
+
+### Community 208 - "Community 208"
+Cohesion: 1.0
+Nodes (1): Split source data into jobs for distributed processing.          This is a gener
+
+### Community 209 - "Community 209"
+Cohesion: 1.0
+Nodes (1): Check if source is accessible and healthy.          Returns:             True if
+
+### Community 210 - "Community 210"
 Cohesion: 1.0
 Nodes (1): Define the destination to use based on post-transformation records and runtime p
 
-### Community 212 - "Community 212"
+### Community 211 - "Community 211"
 Cohesion: 1.0
 Nodes (1): Define list of transformations to apply based on records and runtime parameters.
+
+### Community 212 - "Community 212"
+Cohesion: 1.0
+Nodes (1): Get the resolved source. Call resolve() first.
 
 ### Community 213 - "Community 213"
 Cohesion: 1.0
@@ -1126,761 +1131,789 @@ Nodes (1): Get the resolved destination. Call resolve() first.
 
 ### Community 214 - "Community 214"
 Cohesion: 1.0
-Nodes (1): Return True if this pipeline has a cron schedule configured.
+Nodes (1): Get the resolved transformations. Call resolve() first.
 
 ### Community 215 - "Community 215"
 Cohesion: 1.0
-Nodes (1): Define the source to use for a batch of IDs.          Called once per ID-batch.
+Nodes (1): Return True if this pipeline has a cron schedule configured.
 
 ### Community 216 - "Community 216"
 Cohesion: 1.0
-Nodes (1): Define the destination using post-transformation records and runtime params.
+Nodes (1): Define the source to use for a batch of IDs.          Called once per ID-batch.
 
 ### Community 217 - "Community 217"
 Cohesion: 1.0
-Nodes (1): Define list of transformations to apply for a batch of IDs.          Args:
+Nodes (1): Define the destination to use based on post-transformation records and runtime p
 
 ### Community 218 - "Community 218"
 Cohesion: 1.0
-Nodes (1): Deploy with --keda should include KEDA configuration.
+Nodes (1): Define list of transformations to apply based on records and runtime parameters.
 
 ### Community 219 - "Community 219"
 Cohesion: 1.0
-Nodes (1): Deploy without --keda should disable it and set worker replicas.
+Nodes (1): Get the resolved destination. Call resolve() first.
 
 ### Community 220 - "Community 220"
 Cohesion: 1.0
-Nodes (1): Deploy with --no-deploy-postgres should use external DB config.
+Nodes (1): Return True if this pipeline has a cron schedule configured.
 
 ### Community 221 - "Community 221"
 Cohesion: 1.0
-Nodes (1): Deploy with --postgres-image should set repo and tag.
+Nodes (1): Define the source to use for a batch of IDs.          Called once per ID-batch.
 
 ### Community 222 - "Community 222"
 Cohesion: 1.0
-Nodes (1): Deploy with --image-pull-secret should set the secret name.
+Nodes (1): Define the destination using post-transformation records and runtime params.
 
 ### Community 223 - "Community 223"
 Cohesion: 1.0
-Nodes (1): Get the resolved source. Call resolve() first.
+Nodes (1): Define list of transformations to apply for a batch of IDs.          Args:
 
 ### Community 224 - "Community 224"
 Cohesion: 1.0
-Nodes (1): Get the resolved destination. Call resolve() first.
+Nodes (1): Deploy with --keda should include KEDA configuration.
 
 ### Community 225 - "Community 225"
 Cohesion: 1.0
-Nodes (1): Get the resolved transformations. Call resolve() first.
+Nodes (1): Deploy without --keda should disable it and set worker replicas.
 
 ### Community 226 - "Community 226"
 Cohesion: 1.0
-Nodes (1): Define the source to use for a batch of IDs.          Called once per ID-batch.
+Nodes (1): Deploy with --no-deploy-postgres should use external DB config.
 
 ### Community 227 - "Community 227"
 Cohesion: 1.0
-Nodes (1): Define the destination using post-transformation records and runtime params.
+Nodes (1): Deploy with --postgres-image should set repo and tag.
 
 ### Community 228 - "Community 228"
 Cohesion: 1.0
-Nodes (1): Define list of transformations to apply for a batch of IDs.          Args:
+Nodes (1): Deploy with --image-pull-secret should set the secret name.
 
 ### Community 229 - "Community 229"
 Cohesion: 1.0
-Nodes (1): Define the destination to use based on post-transformation records and runtime p
+Nodes (1): Get the resolved source. Call resolve() first.
 
 ### Community 230 - "Community 230"
 Cohesion: 1.0
-Nodes (1): Define list of transformations to apply based on records and runtime parameters.
+Nodes (1): Get the resolved destination. Call resolve() first.
 
 ### Community 231 - "Community 231"
 Cohesion: 1.0
-Nodes (1): Get the resolved source. Call resolve() first.
+Nodes (1): Get the resolved transformations. Call resolve() first.
 
 ### Community 232 - "Community 232"
 Cohesion: 1.0
-Nodes (1): Get the resolved destination. Call resolve() first.
+Nodes (1): Define the source to use for a batch of IDs.          Called once per ID-batch.
 
 ### Community 233 - "Community 233"
 Cohesion: 1.0
-Nodes (1): Get the resolved transformations. Call resolve() first.
+Nodes (1): Define the destination using post-transformation records and runtime params.
 
 ### Community 234 - "Community 234"
 Cohesion: 1.0
-Nodes (1): Return True if this pipeline has a cron schedule configured.
+Nodes (1): Define list of transformations to apply for a batch of IDs.          Args:
 
 ### Community 235 - "Community 235"
 Cohesion: 1.0
-Nodes (1): Define the source to use for a batch of IDs.          Called once per ID-batch.
+Nodes (1): Define the destination to use based on post-transformation records and runtime p
 
 ### Community 236 - "Community 236"
 Cohesion: 1.0
-Nodes (1): Define the destination using post-transformation records and runtime params.
+Nodes (1): Define list of transformations to apply based on records and runtime parameters.
 
 ### Community 237 - "Community 237"
 Cohesion: 1.0
-Nodes (1): Define list of transformations to apply for a batch of IDs.          Args:
-
-### Community 242 - "Community 242"
-Cohesion: 1.0
-Nodes (1): Define the destination to use based on post-transformation records and runtime p
-
-### Community 243 - "Community 243"
-Cohesion: 1.0
-Nodes (1): Define list of transformations to apply based on records and runtime parameters.
-
-### Community 244 - "Community 244"
-Cohesion: 1.0
-Nodes (1): Get the resolved source. Call resolve() first.
-
-### Community 245 - "Community 245"
-Cohesion: 1.0
 Nodes (1): Get the resolved destination. Call resolve() first.
 
-### Community 246 - "Community 246"
+### Community 238 - "Community 238"
 Cohesion: 1.0
 Nodes (1): Get the resolved transformations. Call resolve() first.
 
-### Community 247 - "Community 247"
+### Community 239 - "Community 239"
 Cohesion: 1.0
 Nodes (1): Return True if this pipeline has a cron schedule configured.
 
-### Community 251 - "Community 251"
-Cohesion: 1.0
-Nodes (1): Return the next scheduled datetime after `after` for the given cron expression.
-
-### Community 252 - "Community 252"
-Cohesion: 1.0
-Nodes (1): Register a destination factory function.
-
-### Community 253 - "Community 253"
-Cohesion: 1.0
-Nodes (1): Get a destination factory by name.
-
-### Community 254 - "Community 254"
-Cohesion: 1.0
-Nodes (1): List all registered destination names.
-
-### Community 255 - "Community 255"
-Cohesion: 1.0
-Nodes (1): Clear all registered destinations (for testing).
-
-### Community 256 - "Community 256"
-Cohesion: 1.0
-Nodes (1): Register a source factory function.
-
-### Community 257 - "Community 257"
-Cohesion: 1.0
-Nodes (1): Get a source factory by name.
-
-### Community 258 - "Community 258"
-Cohesion: 1.0
-Nodes (1): List all registered source names.
-
-### Community 259 - "Community 259"
-Cohesion: 1.0
-Nodes (1): Clear all registered sources (for testing).
-
-### Community 260 - "Community 260"
-Cohesion: 1.0
-Nodes (1): Dispatch a single job.
-
-### Community 261 - "Community 261"
-Cohesion: 1.0
-Nodes (1): Dispatch a batch of jobs.
-
-### Community 262 - "Community 262"
-Cohesion: 1.0
-Nodes (1): Define the source to use based on runtime parameters.          Args:
-
-### Community 263 - "Community 263"
-Cohesion: 1.0
-Nodes (1): Define the destination to use based on post-transformation records and runtime p
-
-### Community 264 - "Community 264"
-Cohesion: 1.0
-Nodes (1): Define list of transformations to apply based on records and runtime parameters.
-
-### Community 265 - "Community 265"
-Cohesion: 1.0
-Nodes (1): Get the resolved source. Call resolve() first.
-
-### Community 266 - "Community 266"
-Cohesion: 1.0
-Nodes (1): Get the resolved destination. Call resolve() first.
-
-### Community 267 - "Community 267"
-Cohesion: 1.0
-Nodes (1): Return the next scheduled datetime after `after` for the given cron expression.
-
-### Community 268 - "Community 268"
-Cohesion: 1.0
-Nodes (1): Fetch data from source (used in local mode).          Args:             runtime_
-
-### Community 269 - "Community 269"
-Cohesion: 1.0
-Nodes (1): Split source data into jobs for distributed processing.          This is a gener
-
-### Community 270 - "Community 270"
-Cohesion: 1.0
-Nodes (1): Check if source is accessible and healthy.          Returns:             True if
-
-### Community 271 - "Community 271"
-Cohesion: 1.0
-Nodes (1): Jobs should NOT be dispatched when consumer lag exceeds the threshold.
-
-### Community 272 - "Community 272"
-Cohesion: 1.0
-Nodes (1): Jobs SHOULD be dispatched when consumer lag is below the threshold.          lag
-
-### Community 273 - "Community 273"
-Cohesion: 1.0
-Nodes (1): Test bearer token authentication.
-
-### Community 274 - "Community 274"
-Cohesion: 1.0
-Nodes (1): Test API key authentication.
-
-### Community 275 - "Community 275"
-Cohesion: 1.0
-Nodes (1): Define list of transformations to apply for a batch of IDs.          Args:
-
-### Community 276 - "Community 276"
-Cohesion: 1.0
-Nodes (1): Test fetching with offset pagination.
-
-### Community 277 - "Community 277"
-Cohesion: 1.0
-Nodes (1): Test job splitting with offset pagination.
-
-### Community 278 - "Community 278"
-Cohesion: 1.0
-Nodes (1): Health check can be disabled via config.
-
-### Community 279 - "Community 279"
-Cohesion: 1.0
-Nodes (1): Test fetching a single resource by ID.
-
-### Community 280 - "Community 280"
-Cohesion: 1.0
-Nodes (1): Test handling 404 response.
-
-### Community 281 - "Community 281"
-Cohesion: 1.0
-Nodes (1): Test bearer token authentication.
-
-### Community 282 - "Community 282"
-Cohesion: 1.0
-Nodes (1): Test API key authentication.
-
-### Community 283 - "Community 283"
-Cohesion: 1.0
-Nodes (1): Get the resolved destination. Call resolve() first.
-
-### Community 284 - "Community 284"
-Cohesion: 1.0
-Nodes (1): Get the resolved transformations. Call resolve() first.
-
-### Community 285 - "Community 285"
-Cohesion: 1.0
-Nodes (1): Return True if this pipeline has a cron schedule configured.
-
-### Community 286 - "Community 286"
-Cohesion: 1.0
-Nodes (1): Create a mock S3 client.
-
-### Community 287 - "Community 287"
-Cohesion: 1.0
-Nodes (1): Sample S3 object listing response.
-
-### Community 288 - "Community 288"
-Cohesion: 1.0
-Nodes (1): After waiting for one scheduler poll cycle (≤60s), the execution count         f
-
-### Community 289 - "Community 289"
-Cohesion: 1.0
-Nodes (1): After an auto-fire, next_run_at must advance to the next cron tick.
-
-### Community 290 - "Community 290"
-Cohesion: 1.0
-Nodes (1): Test fetching with offset pagination.
-
-### Community 291 - "Community 291"
-Cohesion: 1.0
-Nodes (1): Test job splitting with offset pagination.
-
-### Community 292 - "Community 292"
-Cohesion: 1.0
-Nodes (1): Test bearer token authentication.
-
-### Community 293 - "Community 293"
-Cohesion: 1.0
-Nodes (1): Test API key authentication.
-
-### Community 294 - "Community 294"
-Cohesion: 1.0
-Nodes (1): Define the source to use based on runtime parameters.          Args:
-
-### Community 295 - "Community 295"
-Cohesion: 1.0
-Nodes (1): Define the destination to use based on runtime parameters.          Args:
-
-### Community 296 - "Community 296"
-Cohesion: 1.0
-Nodes (1): Define list of transformations to apply based on runtime parameters.          Ar
-
-### Community 297 - "Community 297"
-Cohesion: 1.0
-Nodes (1): Get the resolved destination. Call resolve() first.
-
-### Community 298 - "Community 298"
-Cohesion: 1.0
-Nodes (1): Get the resolved transformations. Call resolve() first.
-
-### Community 299 - "Community 299"
+### Community 240 - "Community 240"
 Cohesion: 1.0
 Nodes (1): Define the source to use for a batch of IDs.          Called once per ID-batch.
 
-### Community 300 - "Community 300"
+### Community 241 - "Community 241"
 Cohesion: 1.0
-Nodes (1): Define the destination (shared across all IDs).          Args:             runti
+Nodes (1): Define the destination using post-transformation records and runtime params.
 
-### Community 301 - "Community 301"
+### Community 242 - "Community 242"
 Cohesion: 1.0
 Nodes (1): Define list of transformations to apply for a batch of IDs.          Args:
 
+### Community 247 - "Community 247"
+Cohesion: 1.0
+Nodes (1): Define the destination to use based on post-transformation records and runtime p
+
+### Community 248 - "Community 248"
+Cohesion: 1.0
+Nodes (1): Define list of transformations to apply based on records and runtime parameters.
+
+### Community 249 - "Community 249"
+Cohesion: 1.0
+Nodes (1): Get the resolved source. Call resolve() first.
+
+### Community 250 - "Community 250"
+Cohesion: 1.0
+Nodes (1): Get the resolved destination. Call resolve() first.
+
+### Community 251 - "Community 251"
+Cohesion: 1.0
+Nodes (1): Get the resolved transformations. Call resolve() first.
+
+### Community 252 - "Community 252"
+Cohesion: 1.0
+Nodes (1): Return True if this pipeline has a cron schedule configured.
+
+### Community 256 - "Community 256"
+Cohesion: 1.0
+Nodes (1): Return the next scheduled datetime after `after` for the given cron expression.
+
+### Community 257 - "Community 257"
+Cohesion: 1.0
+Nodes (1): Register a destination factory function.
+
+### Community 258 - "Community 258"
+Cohesion: 1.0
+Nodes (1): Get a destination factory by name.
+
+### Community 259 - "Community 259"
+Cohesion: 1.0
+Nodes (1): List all registered destination names.
+
+### Community 260 - "Community 260"
+Cohesion: 1.0
+Nodes (1): Clear all registered destinations (for testing).
+
+### Community 261 - "Community 261"
+Cohesion: 1.0
+Nodes (1): Register a source factory function.
+
+### Community 262 - "Community 262"
+Cohesion: 1.0
+Nodes (1): Get a source factory by name.
+
+### Community 263 - "Community 263"
+Cohesion: 1.0
+Nodes (1): List all registered source names.
+
+### Community 264 - "Community 264"
+Cohesion: 1.0
+Nodes (1): Clear all registered sources (for testing).
+
+### Community 265 - "Community 265"
+Cohesion: 1.0
+Nodes (1): Dispatch a single job.
+
+### Community 266 - "Community 266"
+Cohesion: 1.0
+Nodes (1): Dispatch a batch of jobs.
+
+### Community 267 - "Community 267"
+Cohesion: 1.0
+Nodes (1): Define the source to use based on runtime parameters.          Args:
+
+### Community 268 - "Community 268"
+Cohesion: 1.0
+Nodes (1): Define the destination to use based on post-transformation records and runtime p
+
+### Community 269 - "Community 269"
+Cohesion: 1.0
+Nodes (1): Define list of transformations to apply based on records and runtime parameters.
+
+### Community 270 - "Community 270"
+Cohesion: 1.0
+Nodes (1): Get the resolved source. Call resolve() first.
+
+### Community 271 - "Community 271"
+Cohesion: 1.0
+Nodes (1): Get the resolved destination. Call resolve() first.
+
+### Community 272 - "Community 272"
+Cohesion: 1.0
+Nodes (1): Return the next scheduled datetime after `after` for the given cron expression.
+
+### Community 273 - "Community 273"
+Cohesion: 1.0
+Nodes (1): Fetch data from source (used in local mode).          Args:             runtime_
+
+### Community 274 - "Community 274"
+Cohesion: 1.0
+Nodes (1): Split source data into jobs for distributed processing.          This is a gener
+
+### Community 275 - "Community 275"
+Cohesion: 1.0
+Nodes (1): Check if source is accessible and healthy.          Returns:             True if
+
+### Community 276 - "Community 276"
+Cohesion: 1.0
+Nodes (1): Jobs should NOT be dispatched when consumer lag exceeds the threshold.
+
+### Community 277 - "Community 277"
+Cohesion: 1.0
+Nodes (1): Jobs SHOULD be dispatched when consumer lag is below the threshold.          lag
+
+### Community 278 - "Community 278"
+Cohesion: 1.0
+Nodes (1): Test bearer token authentication.
+
+### Community 279 - "Community 279"
+Cohesion: 1.0
+Nodes (1): Test API key authentication.
+
+### Community 280 - "Community 280"
+Cohesion: 1.0
+Nodes (1): Define list of transformations to apply for a batch of IDs.          Args:
+
+### Community 281 - "Community 281"
+Cohesion: 1.0
+Nodes (1): Test fetching with offset pagination.
+
+### Community 282 - "Community 282"
+Cohesion: 1.0
+Nodes (1): Test job splitting with offset pagination.
+
+### Community 283 - "Community 283"
+Cohesion: 1.0
+Nodes (1): Health check can be disabled via config.
+
+### Community 284 - "Community 284"
+Cohesion: 1.0
+Nodes (1): Test fetching a single resource by ID.
+
+### Community 285 - "Community 285"
+Cohesion: 1.0
+Nodes (1): Test handling 404 response.
+
+### Community 286 - "Community 286"
+Cohesion: 1.0
+Nodes (1): Test bearer token authentication.
+
+### Community 287 - "Community 287"
+Cohesion: 1.0
+Nodes (1): Test API key authentication.
+
+### Community 288 - "Community 288"
+Cohesion: 1.0
+Nodes (1): Get the resolved destination. Call resolve() first.
+
+### Community 289 - "Community 289"
+Cohesion: 1.0
+Nodes (1): Get the resolved transformations. Call resolve() first.
+
+### Community 290 - "Community 290"
+Cohesion: 1.0
+Nodes (1): Return True if this pipeline has a cron schedule configured.
+
+### Community 291 - "Community 291"
+Cohesion: 1.0
+Nodes (1): Create a mock S3 client.
+
+### Community 292 - "Community 292"
+Cohesion: 1.0
+Nodes (1): Sample S3 object listing response.
+
+### Community 293 - "Community 293"
+Cohesion: 1.0
+Nodes (1): After waiting for one scheduler poll cycle (≤60s), the execution count         f
+
+### Community 294 - "Community 294"
+Cohesion: 1.0
+Nodes (1): After an auto-fire, next_run_at must advance to the next cron tick.
+
+### Community 295 - "Community 295"
+Cohesion: 1.0
+Nodes (1): Test fetching with offset pagination.
+
+### Community 296 - "Community 296"
+Cohesion: 1.0
+Nodes (1): Test job splitting with offset pagination.
+
+### Community 297 - "Community 297"
+Cohesion: 1.0
+Nodes (1): Test bearer token authentication.
+
+### Community 298 - "Community 298"
+Cohesion: 1.0
+Nodes (1): Test API key authentication.
+
+### Community 299 - "Community 299"
+Cohesion: 1.0
+Nodes (1): Define the source to use based on runtime parameters.          Args:
+
+### Community 300 - "Community 300"
+Cohesion: 1.0
+Nodes (1): Define the destination to use based on runtime parameters.          Args:
+
+### Community 301 - "Community 301"
+Cohesion: 1.0
+Nodes (1): Define list of transformations to apply based on runtime parameters.          Ar
+
 ### Community 302 - "Community 302"
+Cohesion: 1.0
+Nodes (1): Get the resolved destination. Call resolve() first.
+
+### Community 303 - "Community 303"
+Cohesion: 1.0
+Nodes (1): Get the resolved transformations. Call resolve() first.
+
+### Community 304 - "Community 304"
+Cohesion: 1.0
+Nodes (1): Define the source to use for a batch of IDs.          Called once per ID-batch.
+
+### Community 305 - "Community 305"
+Cohesion: 1.0
+Nodes (1): Define the destination (shared across all IDs).          Args:             runti
+
+### Community 306 - "Community 306"
+Cohesion: 1.0
+Nodes (1): Define list of transformations to apply for a batch of IDs.          Args:
+
+### Community 307 - "Community 307"
 Cohesion: 1.0
 Nodes (1): Apply transformation to a batch of records.          Args:             records:
 
 ## Knowledge Gaps
-- **2780 isolated node(s):** `Reflowfy - A horizontally scalable data movement and transformation framework.`, `Get Kafka configuration for aiokafka.      Reads from environment variables with`, `Get all Kafka-related environment variables.`, `Return a new headers dict with the auth header applied.      - ``bearer``  -> ```, `Example Kafka destination configuration.      Usage in a pipeline:         from` (+2775 more)
+- **2922 isolated node(s):** `Reflowfy - A horizontally scalable data movement and transformation framework.`, `Get Kafka configuration for aiokafka.      Reads from environment variables with`, `Get all Kafka-related environment variables.`, `Return a new headers dict with the auth header applied.      - ``bearer``  -> ```, `Example Kafka destination configuration.      Usage in a pipeline:         from` (+2917 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **Thin community `Community 77`** (4 nodes): `shared_sources.py`, `shared_sources.py`, `Re-exports from sources/ for backward compatibility.`, `shared_sources.py`
+- **Thin community `Community 78`** (4 nodes): `shared_sources.py`, `shared_sources.py`, `Re-exports from sources/ for backward compatibility.`, `shared_sources.py`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 78`** (4 nodes): `__init__.py`, `__init__.py`, `E2E Test Pipelines Package.  This package contains pipeline definitions for E2E`, `__init__.py`
+- **Thin community `Community 79`** (4 nodes): `__init__.py`, `__init__.py`, `E2E Test Pipelines Package.  This package contains pipeline definitions for E2E`, `__init__.py`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 79`** (4 nodes): `shared_destinations.py`, `shared_destinations.py`, `Re-exports from destinations/ for backward compatibility.`, `shared_destinations.py`
+- **Thin community `Community 80`** (4 nodes): `shared_destinations.py`, `shared_destinations.py`, `Re-exports from destinations/ for backward compatibility.`, `shared_destinations.py`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 80`** (3 nodes): `__init__.py`, `ReflowManager - Rate limiting and pipeline state management service.`, `__init__.py`
+- **Thin community `Community 81`** (3 nodes): `__init__.py`, `ReflowManager - Rate limiting and pipeline state management service.`, `__init__.py`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 81`** (3 nodes): `Source and destination factory classes for dynamic instantiation.`, `__init__.py`, `__init__.py`
+- **Thin community `Community 82`** (3 nodes): `Source and destination factory classes for dynamic instantiation.`, `__init__.py`, `__init__.py`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 82`** (3 nodes): `Execution engines for local and distributed processing.`, `__init__.py`, `__init__.py`
+- **Thin community `Community 83`** (3 nodes): `Execution engines for local and distributed processing.`, `__init__.py`, `__init__.py`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 83`** (3 nodes): `metrics.py`, `Prometheus metrics collection.`, `metrics.py`
+- **Thin community `Community 84`** (3 nodes): `metrics.py`, `Prometheus metrics collection.`, `metrics.py`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 84`** (3 nodes): `__init__.py`, `Observability components for logging and metrics.`, `__init__.py`
+- **Thin community `Community 85`** (3 nodes): `__init__.py`, `Observability components for logging and metrics.`, `__init__.py`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 85`** (3 nodes): `Core framework components for pipeline definition and execution.`, `__init__.py`, `__init__.py`
+- **Thin community `Community 86`** (3 nodes): `Core framework components for pipeline definition and execution.`, `__init__.py`, `__init__.py`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 86`** (3 nodes): `FastAPI application for pipeline orchestration.`, `__init__.py`, `__init__.py`
+- **Thin community `Community 87`** (3 nodes): `FastAPI application for pipeline orchestration.`, `__init__.py`, `__init__.py`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 87`** (3 nodes): `update_version.py`, `update_version.py`, `update_version()`
+- **Thin community `Community 88`** (3 nodes): `update_version.py`, `update_version.py`, `update_version()`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 88`** (3 nodes): `run_api_distributed.py`, `Start API for distributed testing with Kafka.  This API will: 1. Load the simple`, `run_api_distributed.py`
+- **Thin community `Community 89`** (3 nodes): `run_api_distributed.py`, `Start API for distributed testing with Kafka.  This API will: 1. Load the simple`, `run_api_distributed.py`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 89`** (3 nodes): `run_local_worker.py`, `Start Reflowfy worker locally to consume jobs from Kafka.  This worker will: 1.`, `run_local_worker.py`
+- **Thin community `Community 90`** (3 nodes): `run_local_worker.py`, `Start Reflowfy worker locally to consume jobs from Kafka.  This worker will: 1.`, `run_local_worker.py`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 90`** (3 nodes): `run_api.py`, `Example startup script showing how to use Reflowfy.  This script: 1. Imports pip`, `run_api.py`
+- **Thin community `Community 91`** (3 nodes): `run_api.py`, `Example startup script showing how to use Reflowfy.  This script: 1. Imports pip`, `run_api.py`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 91`** (3 nodes): `run_simple_test.py`, `Example startup script for testing Reflowfy locally.  This script imports a simp`, `run_simple_test.py`
+- **Thin community `Community 92`** (3 nodes): `run_simple_test.py`, `Example startup script for testing Reflowfy locally.  This script imports a simp`, `run_simple_test.py`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 92`** (3 nodes): `run_elastic_pipeline_local.py`, `Script to run the elastic_test_pipeline locally without starting the API.`, `run_elastic_pipeline_local.py`
+- **Thin community `Community 93`** (3 nodes): `run_elastic_pipeline_local.py`, `Script to run the elastic_test_pipeline locally without starting the API.`, `run_elastic_pipeline_local.py`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 93`** (2 nodes): `__init__.py`, `Reflowfy - A horizontally scalable data movement and transformation framework.`
+- **Thin community `Community 94`** (2 nodes): `__init__.py`, `Reflowfy - A horizontally scalable data movement and transformation framework.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 94`** (2 nodes): `shared_sources.py`, `Re-exports from sources/ for backward compatibility.`
+- **Thin community `Community 95`** (2 nodes): `Names for the values that flow through a pipeline.  A record is whatever a sourc`, `types.py`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 95`** (2 nodes): `__init__.py`, `E2E Test Pipelines Package.  This package contains pipeline definitions for E2E`
+- **Thin community `Community 96`** (2 nodes): `shared_sources.py`, `Re-exports from sources/ for backward compatibility.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 96`** (2 nodes): `shared_destinations.py`, `Re-exports from destinations/ for backward compatibility.`
+- **Thin community `Community 97`** (2 nodes): `__init__.py`, `E2E Test Pipelines Package.  This package contains pipeline definitions for E2E`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 100`** (1 nodes): `Dispatch a single job.`
+- **Thin community `Community 98`** (2 nodes): `shared_destinations.py`, `Re-exports from destinations/ for backward compatibility.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 101`** (1 nodes): `Dispatch a batch of jobs.`
+- **Thin community `Community 102`** (1 nodes): `Dispatch a single job.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 102`** (1 nodes): `Return the next scheduled datetime after `after` for the given cron expression.`
+- **Thin community `Community 103`** (1 nodes): `Dispatch a batch of jobs.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 103`** (1 nodes): `Send records to destination.          Args:             records: List of records`
+- **Thin community `Community 104`** (1 nodes): `Return the next scheduled datetime after `after` for the given cron expression.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 104`** (1 nodes): `Check if destination is healthy and accessible.          Returns:             Tr`
+- **Thin community `Community 105`** (1 nodes): `Send records to destination.          Args:             records: List of records`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 105`** (1 nodes): `Register a destination factory function.`
+- **Thin community `Community 106`** (1 nodes): `Check if destination is healthy and accessible.          Returns:             Tr`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 106`** (1 nodes): `Get a destination factory by name.`
+- **Thin community `Community 107`** (1 nodes): `Register a destination factory function.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 107`** (1 nodes): `List all registered destination names.`
+- **Thin community `Community 108`** (1 nodes): `Get a destination factory by name.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 108`** (1 nodes): `Clear all registered destinations (for testing).`
+- **Thin community `Community 109`** (1 nodes): `List all registered destination names.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 109`** (1 nodes): `Stable type name used to serialize/reconstruct this source.`
+- **Thin community `Community 110`** (1 nodes): `Clear all registered destinations (for testing).`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 110`** (1 nodes): `Fetch data from source (used in local mode).          Args:             runtime_`
+- **Thin community `Community 111`** (1 nodes): `Stable type name used to serialize/reconstruct this source.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 111`** (1 nodes): `Split source data into jobs for distributed processing.          This is a gener`
+- **Thin community `Community 112`** (1 nodes): `Fetch data from source (used in local mode).          Args:             runtime_`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 112`** (1 nodes): `Check if source is accessible and healthy.          Returns:             True if`
+- **Thin community `Community 113`** (1 nodes): `Split source data into jobs for distributed processing.          This is a gener`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 113`** (1 nodes): `Register a source factory function.`
+- **Thin community `Community 114`** (1 nodes): `Check if source is accessible and healthy.          Returns:             True if`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 114`** (1 nodes): `Get a source factory by name.`
+- **Thin community `Community 115`** (1 nodes): `Register a source factory function.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 115`** (1 nodes): `List all registered source names.`
+- **Thin community `Community 116`** (1 nodes): `Get a source factory by name.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 116`** (1 nodes): `Clear all registered sources (for testing).`
+- **Thin community `Community 117`** (1 nodes): `List all registered source names.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 117`** (1 nodes): `Register a destination type.          Args:             type_name: Short name fo`
+- **Thin community `Community 118`** (1 nodes): `Clear all registered sources (for testing).`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 118`** (1 nodes): `Create a destination instance by type name.          Args:             type_name`
+- **Thin community `Community 119`** (1 nodes): `Register a destination type.          Args:             type_name: Short name fo`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 119`** (1 nodes): `List all registered destination types.`
+- **Thin community `Community 120`** (1 nodes): `Create a destination instance by type name.          Args:             type_name`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 120`** (1 nodes): `Check if a destination type is registered.`
+- **Thin community `Community 121`** (1 nodes): `List all registered destination types.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 121`** (1 nodes): `Register a source type.          Args:             type_name: Class name used as`
+- **Thin community `Community 122`** (1 nodes): `Check if a destination type is registered.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 122`** (1 nodes): `Reconstruct a source from its registry type name and config dict.          Every`
+- **Thin community `Community 123`** (1 nodes): `Register a source type.          Args:             type_name: Class name used as`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 123`** (1 nodes): `Serialize a source instance to a ``{type, config}`` descriptor.`
+- **Thin community `Community 124`** (1 nodes): `Reconstruct a source from its registry type name and config dict.          Every`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 124`** (1 nodes): `List all registered source types.`
+- **Thin community `Community 125`** (1 nodes): `Serialize a source instance to a ``{type, config}`` descriptor.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 125`** (1 nodes): `Check if a source type is registered.`
+- **Thin community `Community 126`** (1 nodes): `List all registered source types.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 126`** (1 nodes): `Apply transformation to a batch of records.          Args:             records:`
+- **Thin community `Community 127`** (1 nodes): `Check if a source type is registered.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 127`** (1 nodes): `Calculate success rate.`
+- **Thin community `Community 128`** (1 nodes): `Apply transformation to a batch of records.          Args:             records:`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 128`** (1 nodes): `Check if execution is complete.`
+- **Thin community `Community 129`** (1 nodes): `Calculate success rate.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 129`** (1 nodes): `Execute a pipeline.          Args:             pipeline: Pipeline instance to ex`
+- **Thin community `Community 130`** (1 nodes): `Check if execution is complete.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 131`** (1 nodes): `Define the destination to use based on post-transformation records and runtime p`
+- **Thin community `Community 131`** (1 nodes): `Execute a pipeline.          Args:             pipeline: Pipeline instance to ex`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 132`** (1 nodes): `Define list of transformations to apply based on records and runtime parameters.`
+- **Thin community `Community 133`** (1 nodes): `Define the destination to use based on post-transformation records and runtime p`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 133`** (1 nodes): `Get the resolved source. Call resolve() first.`
+- **Thin community `Community 134`** (1 nodes): `Get the resolved source. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 134`** (1 nodes): `Get the resolved destination. Call resolve() first.`
+- **Thin community `Community 135`** (1 nodes): `Get the resolved destination. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 135`** (1 nodes): `Get the resolved transformations. Call resolve() first.`
+- **Thin community `Community 136`** (1 nodes): `Get the resolved transformations. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 136`** (1 nodes): `Return True if this pipeline has a cron schedule configured.`
+- **Thin community `Community 137`** (1 nodes): `Return True if this pipeline has a cron schedule configured.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 141`** (1 nodes): `Create a mock S3 client.`
+- **Thin community `Community 139`** (1 nodes): `Create a mock S3 client.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 142`** (1 nodes): `Sample S3 object listing response.`
+- **Thin community `Community 140`** (1 nodes): `Sample S3 object listing response.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 143`** (1 nodes): `Test handling 404 response.`
+- **Thin community `Community 141`** (1 nodes): `Test handling 404 response.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 144`** (1 nodes): `Test job splitting with batching.`
+- **Thin community `Community 142`** (1 nodes): `Test job splitting with batching.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 145`** (1 nodes): `Test bearer token authentication.`
+- **Thin community `Community 143`** (1 nodes): `Test bearer token authentication.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 146`** (1 nodes): `Test API key authentication.`
+- **Thin community `Community 144`** (1 nodes): `Test API key authentication.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 147`** (1 nodes): `After waiting for one scheduler poll cycle (≤60s), the execution count         f`
+- **Thin community `Community 145`** (1 nodes): `After waiting for one scheduler poll cycle (≤60s), the execution count         f`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 148`** (1 nodes): `After an auto-fire, next_run_at must advance to the next cron tick.`
+- **Thin community `Community 146`** (1 nodes): `After an auto-fire, next_run_at must advance to the next cron tick.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 149`** (1 nodes): `/executions/{id}/errors returns 200 for a known execution.`
+- **Thin community `Community 147`** (1 nodes): `/executions/{id}/errors returns 200 for a known execution.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 150`** (1 nodes): `/executions/{id}/errors returns 404 for a non-existent execution.`
+- **Thin community `Community 148`** (1 nodes): `/executions/{id}/errors returns 404 for a non-existent execution.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 151`** (1 nodes): `A job that fails stores error_message in the DB and exposes it via /errors.`
+- **Thin community `Community 149`** (1 nodes): `A job that fails stores error_message in the DB and exposes it via /errors.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 152`** (1 nodes): `Each item in /errors has the expected fields.`
+- **Thin community `Community 150`** (1 nodes): `Each item in /errors has the expected fields.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 153`** (1 nodes): `Defining a pipeline with a bad cron expression raises ValueError immediately.`
+- **Thin community `Community 151`** (1 nodes): `Defining a pipeline with a bad cron expression raises ValueError immediately.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 154`** (1 nodes): `A valid 5-field cron expression does not raise.`
+- **Thin community `Community 152`** (1 nodes): `A valid 5-field cron expression does not raise.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 155`** (1 nodes): `6-field cron (common mistake from AWS/Quartz) raises ValueError.`
+- **Thin community `Community 153`** (1 nodes): `6-field cron (common mistake from AWS/Quartz) raises ValueError.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 156`** (1 nodes): `Running a dedup pipeline twice shows deduplicated_jobs > 0 on second run.`
+- **Thin community `Community 154`** (1 nodes): `Running a dedup pipeline twice shows deduplicated_jobs > 0 on second run.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 157`** (1 nodes): `With enable_duplicate_jobs=True, deduplicated_jobs is 0.`
+- **Thin community `Community 155`** (1 nodes): `With enable_duplicate_jobs=True, deduplicated_jobs is 0.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 158`** (1 nodes): `Every execution stats response includes the deduplicated_jobs field.`
+- **Thin community `Community 156`** (1 nodes): `Every execution stats response includes the deduplicated_jobs field.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 159`** (1 nodes): `A normal pipeline completes successfully after the _run_async fix.`
+- **Thin community `Community 157`** (1 nodes): `A normal pipeline completes successfully after the _run_async fix.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 160`** (1 nodes): `_run_async handles missing nest_asyncio gracefully.`
+- **Thin community `Community 158`** (1 nodes): `_run_async handles missing nest_asyncio gracefully.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 161`** (1 nodes): `Every dispatched job has batch_number in its metadata payload.`
+- **Thin community `Community 159`** (1 nodes): `Every dispatched job has batch_number in its metadata payload.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 162`** (1 nodes): `Every dispatched job has total_batches in its metadata payload after Phase 1.`
+- **Thin community `Community 160`** (1 nodes): `Every dispatched job has total_batches in its metadata payload after Phase 1.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 163`** (1 nodes): `batch_number values in job metadata are within [1, total_batches].`
+- **Thin community `Community 161`** (1 nodes): `batch_number values in job metadata are within [1, total_batches].`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 164`** (1 nodes): `ExecutionContext dataclass exposes batch_number, total_batches, retry_count, is_`
+- **Thin community `Community 162`** (1 nodes): `ExecutionContext dataclass exposes batch_number, total_batches, retry_count, is_`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 165`** (1 nodes): `PipelineScheduler._poll_and_trigger uses with_for_update(skip_locked=True).`
+- **Thin community `Community 163`** (1 nodes): `PipelineScheduler._poll_and_trigger uses with_for_update(skip_locked=True).`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 166`** (1 nodes): `Schedules API is reachable; disabled schedules are not triggered.`
+- **Thin community `Community 164`** (1 nodes): `Schedules API is reachable; disabled schedules are not triggered.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 167`** (1 nodes): `Build should build all 3 images (api, reflow-manager, worker).`
+- **Thin community `Community 165`** (1 nodes): `Build should build all 3 images (api, reflow-manager, worker).`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 168`** (1 nodes): `Build with --no-cache should pass cache=False to Docker.`
+- **Thin community `Community 166`** (1 nodes): `Build with --no-cache should pass cache=False to Docker.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 169`** (1 nodes): `Build with --no-push should not call docker.push.`
+- **Thin community `Community 167`** (1 nodes): `Build with --no-push should not call docker.push.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 170`** (1 nodes): `Build with push enabled should call docker.push for each image.`
+- **Thin community `Community 168`** (1 nodes): `Build with push enabled should call docker.push for each image.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 171`** (1 nodes): `Build with --project should use it in image tags.`
+- **Thin community `Community 169`** (1 nodes): `Build with --project should use it in image tags.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 172`** (1 nodes): `Check should call kubectl with correct label selector.`
+- **Thin community `Community 170`** (1 nodes): `Check should call kubectl with correct label selector.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 173`** (1 nodes): `Check should print a status checking message.`
+- **Thin community `Community 171`** (1 nodes): `Check should print a status checking message.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 174`** (1 nodes): `Pipeline with rate=60 jobs/min (1/s) and 5 single-record batches should take`
+- **Thin community `Community 172`** (1 nodes): `Pipeline with rate=60 jobs/min (1/s) and 5 single-record batches should take`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 175`** (1 nodes): `E2ERateLimitOverridePipeline has class default=30000 jobs/min but the test`
+- **Thin community `Community 173`** (1 nodes): `E2ERateLimitOverridePipeline has class default=30000 jobs/min but the test`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 176`** (1 nodes): `Run slow (60/min) and fast (30000/min) pipelines concurrently in threads.`
+- **Thin community `Community 174`** (1 nodes): `Run slow (60/min) and fast (30000/min) pipelines concurrently in threads.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 178`** (1 nodes): `Schedule a job with very short delay, verify it gets processed.`
+- **Thin community `Community 176`** (1 nodes): `Schedule a job with very short delay, verify it gets processed.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 179`** (1 nodes): `Run without flags should call 'docker compose up'.`
+- **Thin community `Community 177`** (1 nodes): `Run without flags should call 'docker compose up'.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 180`** (1 nodes): `Run with --build should build first then start.`
+- **Thin community `Community 178`** (1 nodes): `Run with --build should build first then start.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 181`** (1 nodes): `Run with --detach should append -d flag.`
+- **Thin community `Community 179`** (1 nodes): `Run with --detach should append -d flag.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 182`** (1 nodes): `Run with --build --detach should build then start in detached mode.`
+- **Thin community `Community 180`** (1 nodes): `Run with --build --detach should build then start in detached mode.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 183`** (1 nodes): `Deploy should construct a valid helm upgrade --install command.`
+- **Thin community `Community 181`** (1 nodes): `Deploy should construct a valid helm upgrade --install command.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 184`** (1 nodes): `Deploy with --keda should include KEDA configuration.`
+- **Thin community `Community 182`** (1 nodes): `Deploy with --keda should include KEDA configuration.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 185`** (1 nodes): `Deploy without --keda should disable it and set worker replicas.`
+- **Thin community `Community 183`** (1 nodes): `Deploy without --keda should disable it and set worker replicas.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 186`** (1 nodes): `Deploy with --no-deploy-postgres should use external DB config.`
+- **Thin community `Community 184`** (1 nodes): `Deploy with --no-deploy-postgres should use external DB config.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 187`** (1 nodes): `Deploy with --postgres-image should set repo and tag.`
+- **Thin community `Community 185`** (1 nodes): `Deploy with --postgres-image should set repo and tag.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 188`** (1 nodes): `Deploy with --image-pull-secret should set the secret name.`
+- **Thin community `Community 186`** (1 nodes): `Deploy with --image-pull-secret should set the secret name.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 189`** (1 nodes): `Jobs ARE dispatched (worker-side sourcing has no pre-dispatch manager         ga`
+- **Thin community `Community 187`** (1 nodes): `Jobs ARE dispatched (worker-side sourcing has no pre-dispatch manager         ga`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 190`** (1 nodes): `Jobs SHOULD be dispatched when consumer lag is below the threshold.          lag`
+- **Thin community `Community 188`** (1 nodes): `Jobs SHOULD be dispatched when consumer lag is below the threshold.          lag`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 191`** (1 nodes): `Verify Kafka topic exists (wait for it if necessary).`
+- **Thin community `Community 189`** (1 nodes): `Verify Kafka topic exists (wait for it if necessary).`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 192`** (1 nodes): `Test that messages are sent to Kafka topic.`
+- **Thin community `Community 190`** (1 nodes): `Test that messages are sent to Kafka topic.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 197`** (1 nodes): `Define the destination to use based on post-transformation records and runtime p`
+- **Thin community `Community 192`** (1 nodes): `Define the destination to use based on post-transformation records and runtime p`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 198`** (1 nodes): `Get the resolved transformations. Call resolve() first.`
+- **Thin community `Community 193`** (1 nodes): `Define list of transformations to apply based on records and runtime parameters.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 199`** (1 nodes): `Return True if this pipeline has a cron schedule configured.`
+- **Thin community `Community 194`** (1 nodes): `Get the resolved source. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 200`** (1 nodes): `Stable type name used to serialize/reconstruct this source.`
+- **Thin community `Community 195`** (1 nodes): `Get the resolved destination. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 201`** (1 nodes): `Fetch data from source (used in local mode).          Args:             runtime_`
+- **Thin community `Community 196`** (1 nodes): `Get the resolved transformations. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 202`** (1 nodes): `Split source data into jobs for distributed processing.          This is a gener`
+- **Thin community `Community 197`** (1 nodes): `Return True if this pipeline has a cron schedule configured.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 203`** (1 nodes): `Check if source is accessible and healthy.          Returns:             True if`
+- **Thin community `Community 204`** (1 nodes): `Get the resolved transformations. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 204`** (1 nodes): `Define the destination to use based on post-transformation records and runtime p`
+- **Thin community `Community 205`** (1 nodes): `Return True if this pipeline has a cron schedule configured.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 205`** (1 nodes): `Define list of transformations to apply based on records and runtime parameters.`
+- **Thin community `Community 206`** (1 nodes): `Stable type name used to serialize/reconstruct this source.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 206`** (1 nodes): `Get the resolved source. Call resolve() first.`
+- **Thin community `Community 207`** (1 nodes): `Fetch data from source (used in local mode).          Args:             runtime_`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 207`** (1 nodes): `Get the resolved destination. Call resolve() first.`
+- **Thin community `Community 208`** (1 nodes): `Split source data into jobs for distributed processing.          This is a gener`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 208`** (1 nodes): `Get the resolved transformations. Call resolve() first.`
+- **Thin community `Community 209`** (1 nodes): `Check if source is accessible and healthy.          Returns:             True if`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 209`** (1 nodes): `Return True if this pipeline has a cron schedule configured.`
+- **Thin community `Community 210`** (1 nodes): `Define the destination to use based on post-transformation records and runtime p`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 210`** (1 nodes): `Define the source to use for a batch of IDs.          Called once per ID-batch.`
+- **Thin community `Community 211`** (1 nodes): `Define list of transformations to apply based on records and runtime parameters.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 211`** (1 nodes): `Define the destination to use based on post-transformation records and runtime p`
-  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 212`** (1 nodes): `Define list of transformations to apply based on records and runtime parameters.`
+- **Thin community `Community 212`** (1 nodes): `Get the resolved source. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 - **Thin community `Community 213`** (1 nodes): `Get the resolved destination. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 214`** (1 nodes): `Return True if this pipeline has a cron schedule configured.`
+- **Thin community `Community 214`** (1 nodes): `Get the resolved transformations. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 215`** (1 nodes): `Define the source to use for a batch of IDs.          Called once per ID-batch.`
+- **Thin community `Community 215`** (1 nodes): `Return True if this pipeline has a cron schedule configured.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 216`** (1 nodes): `Define the destination using post-transformation records and runtime params.`
+- **Thin community `Community 216`** (1 nodes): `Define the source to use for a batch of IDs.          Called once per ID-batch.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 217`** (1 nodes): `Define list of transformations to apply for a batch of IDs.          Args:`
+- **Thin community `Community 217`** (1 nodes): `Define the destination to use based on post-transformation records and runtime p`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 218`** (1 nodes): `Deploy with --keda should include KEDA configuration.`
+- **Thin community `Community 218`** (1 nodes): `Define list of transformations to apply based on records and runtime parameters.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 219`** (1 nodes): `Deploy without --keda should disable it and set worker replicas.`
+- **Thin community `Community 219`** (1 nodes): `Get the resolved destination. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 220`** (1 nodes): `Deploy with --no-deploy-postgres should use external DB config.`
+- **Thin community `Community 220`** (1 nodes): `Return True if this pipeline has a cron schedule configured.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 221`** (1 nodes): `Deploy with --postgres-image should set repo and tag.`
+- **Thin community `Community 221`** (1 nodes): `Define the source to use for a batch of IDs.          Called once per ID-batch.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 222`** (1 nodes): `Deploy with --image-pull-secret should set the secret name.`
+- **Thin community `Community 222`** (1 nodes): `Define the destination using post-transformation records and runtime params.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 223`** (1 nodes): `Get the resolved source. Call resolve() first.`
+- **Thin community `Community 223`** (1 nodes): `Define list of transformations to apply for a batch of IDs.          Args:`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 224`** (1 nodes): `Get the resolved destination. Call resolve() first.`
+- **Thin community `Community 224`** (1 nodes): `Deploy with --keda should include KEDA configuration.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 225`** (1 nodes): `Get the resolved transformations. Call resolve() first.`
+- **Thin community `Community 225`** (1 nodes): `Deploy without --keda should disable it and set worker replicas.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 226`** (1 nodes): `Define the source to use for a batch of IDs.          Called once per ID-batch.`
+- **Thin community `Community 226`** (1 nodes): `Deploy with --no-deploy-postgres should use external DB config.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 227`** (1 nodes): `Define the destination using post-transformation records and runtime params.`
+- **Thin community `Community 227`** (1 nodes): `Deploy with --postgres-image should set repo and tag.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 228`** (1 nodes): `Define list of transformations to apply for a batch of IDs.          Args:`
+- **Thin community `Community 228`** (1 nodes): `Deploy with --image-pull-secret should set the secret name.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 229`** (1 nodes): `Define the destination to use based on post-transformation records and runtime p`
+- **Thin community `Community 229`** (1 nodes): `Get the resolved source. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 230`** (1 nodes): `Define list of transformations to apply based on records and runtime parameters.`
+- **Thin community `Community 230`** (1 nodes): `Get the resolved destination. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 231`** (1 nodes): `Get the resolved source. Call resolve() first.`
+- **Thin community `Community 231`** (1 nodes): `Get the resolved transformations. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 232`** (1 nodes): `Get the resolved destination. Call resolve() first.`
+- **Thin community `Community 232`** (1 nodes): `Define the source to use for a batch of IDs.          Called once per ID-batch.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 233`** (1 nodes): `Get the resolved transformations. Call resolve() first.`
+- **Thin community `Community 233`** (1 nodes): `Define the destination using post-transformation records and runtime params.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 234`** (1 nodes): `Return True if this pipeline has a cron schedule configured.`
+- **Thin community `Community 234`** (1 nodes): `Define list of transformations to apply for a batch of IDs.          Args:`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 235`** (1 nodes): `Define the source to use for a batch of IDs.          Called once per ID-batch.`
+- **Thin community `Community 235`** (1 nodes): `Define the destination to use based on post-transformation records and runtime p`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 236`** (1 nodes): `Define the destination using post-transformation records and runtime params.`
+- **Thin community `Community 236`** (1 nodes): `Define list of transformations to apply based on records and runtime parameters.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 237`** (1 nodes): `Define list of transformations to apply for a batch of IDs.          Args:`
+- **Thin community `Community 237`** (1 nodes): `Get the resolved destination. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 242`** (1 nodes): `Define the destination to use based on post-transformation records and runtime p`
+- **Thin community `Community 238`** (1 nodes): `Get the resolved transformations. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 243`** (1 nodes): `Define list of transformations to apply based on records and runtime parameters.`
+- **Thin community `Community 239`** (1 nodes): `Return True if this pipeline has a cron schedule configured.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 244`** (1 nodes): `Get the resolved source. Call resolve() first.`
+- **Thin community `Community 240`** (1 nodes): `Define the source to use for a batch of IDs.          Called once per ID-batch.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 245`** (1 nodes): `Get the resolved destination. Call resolve() first.`
+- **Thin community `Community 241`** (1 nodes): `Define the destination using post-transformation records and runtime params.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 246`** (1 nodes): `Get the resolved transformations. Call resolve() first.`
+- **Thin community `Community 242`** (1 nodes): `Define list of transformations to apply for a batch of IDs.          Args:`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 247`** (1 nodes): `Return True if this pipeline has a cron schedule configured.`
+- **Thin community `Community 247`** (1 nodes): `Define the destination to use based on post-transformation records and runtime p`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 251`** (1 nodes): `Return the next scheduled datetime after `after` for the given cron expression.`
+- **Thin community `Community 248`** (1 nodes): `Define list of transformations to apply based on records and runtime parameters.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 252`** (1 nodes): `Register a destination factory function.`
+- **Thin community `Community 249`** (1 nodes): `Get the resolved source. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 253`** (1 nodes): `Get a destination factory by name.`
+- **Thin community `Community 250`** (1 nodes): `Get the resolved destination. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 254`** (1 nodes): `List all registered destination names.`
+- **Thin community `Community 251`** (1 nodes): `Get the resolved transformations. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 255`** (1 nodes): `Clear all registered destinations (for testing).`
+- **Thin community `Community 252`** (1 nodes): `Return True if this pipeline has a cron schedule configured.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 256`** (1 nodes): `Register a source factory function.`
+- **Thin community `Community 256`** (1 nodes): `Return the next scheduled datetime after `after` for the given cron expression.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 257`** (1 nodes): `Get a source factory by name.`
+- **Thin community `Community 257`** (1 nodes): `Register a destination factory function.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 258`** (1 nodes): `List all registered source names.`
+- **Thin community `Community 258`** (1 nodes): `Get a destination factory by name.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 259`** (1 nodes): `Clear all registered sources (for testing).`
+- **Thin community `Community 259`** (1 nodes): `List all registered destination names.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 260`** (1 nodes): `Dispatch a single job.`
+- **Thin community `Community 260`** (1 nodes): `Clear all registered destinations (for testing).`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 261`** (1 nodes): `Dispatch a batch of jobs.`
+- **Thin community `Community 261`** (1 nodes): `Register a source factory function.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 262`** (1 nodes): `Define the source to use based on runtime parameters.          Args:`
+- **Thin community `Community 262`** (1 nodes): `Get a source factory by name.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 263`** (1 nodes): `Define the destination to use based on post-transformation records and runtime p`
+- **Thin community `Community 263`** (1 nodes): `List all registered source names.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 264`** (1 nodes): `Define list of transformations to apply based on records and runtime parameters.`
+- **Thin community `Community 264`** (1 nodes): `Clear all registered sources (for testing).`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 265`** (1 nodes): `Get the resolved source. Call resolve() first.`
+- **Thin community `Community 265`** (1 nodes): `Dispatch a single job.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 266`** (1 nodes): `Get the resolved destination. Call resolve() first.`
+- **Thin community `Community 266`** (1 nodes): `Dispatch a batch of jobs.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 267`** (1 nodes): `Return the next scheduled datetime after `after` for the given cron expression.`
+- **Thin community `Community 267`** (1 nodes): `Define the source to use based on runtime parameters.          Args:`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 268`** (1 nodes): `Fetch data from source (used in local mode).          Args:             runtime_`
+- **Thin community `Community 268`** (1 nodes): `Define the destination to use based on post-transformation records and runtime p`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 269`** (1 nodes): `Split source data into jobs for distributed processing.          This is a gener`
+- **Thin community `Community 269`** (1 nodes): `Define list of transformations to apply based on records and runtime parameters.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 270`** (1 nodes): `Check if source is accessible and healthy.          Returns:             True if`
+- **Thin community `Community 270`** (1 nodes): `Get the resolved source. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 271`** (1 nodes): `Jobs should NOT be dispatched when consumer lag exceeds the threshold.`
+- **Thin community `Community 271`** (1 nodes): `Get the resolved destination. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 272`** (1 nodes): `Jobs SHOULD be dispatched when consumer lag is below the threshold.          lag`
+- **Thin community `Community 272`** (1 nodes): `Return the next scheduled datetime after `after` for the given cron expression.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 273`** (1 nodes): `Test bearer token authentication.`
+- **Thin community `Community 273`** (1 nodes): `Fetch data from source (used in local mode).          Args:             runtime_`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 274`** (1 nodes): `Test API key authentication.`
+- **Thin community `Community 274`** (1 nodes): `Split source data into jobs for distributed processing.          This is a gener`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 275`** (1 nodes): `Define list of transformations to apply for a batch of IDs.          Args:`
+- **Thin community `Community 275`** (1 nodes): `Check if source is accessible and healthy.          Returns:             True if`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 276`** (1 nodes): `Test fetching with offset pagination.`
+- **Thin community `Community 276`** (1 nodes): `Jobs should NOT be dispatched when consumer lag exceeds the threshold.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 277`** (1 nodes): `Test job splitting with offset pagination.`
+- **Thin community `Community 277`** (1 nodes): `Jobs SHOULD be dispatched when consumer lag is below the threshold.          lag`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 278`** (1 nodes): `Health check can be disabled via config.`
+- **Thin community `Community 278`** (1 nodes): `Test bearer token authentication.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 279`** (1 nodes): `Test fetching a single resource by ID.`
+- **Thin community `Community 279`** (1 nodes): `Test API key authentication.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 280`** (1 nodes): `Test handling 404 response.`
+- **Thin community `Community 280`** (1 nodes): `Define list of transformations to apply for a batch of IDs.          Args:`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 281`** (1 nodes): `Test bearer token authentication.`
+- **Thin community `Community 281`** (1 nodes): `Test fetching with offset pagination.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 282`** (1 nodes): `Test API key authentication.`
+- **Thin community `Community 282`** (1 nodes): `Test job splitting with offset pagination.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 283`** (1 nodes): `Get the resolved destination. Call resolve() first.`
+- **Thin community `Community 283`** (1 nodes): `Health check can be disabled via config.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 284`** (1 nodes): `Get the resolved transformations. Call resolve() first.`
+- **Thin community `Community 284`** (1 nodes): `Test fetching a single resource by ID.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 285`** (1 nodes): `Return True if this pipeline has a cron schedule configured.`
+- **Thin community `Community 285`** (1 nodes): `Test handling 404 response.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 286`** (1 nodes): `Create a mock S3 client.`
+- **Thin community `Community 286`** (1 nodes): `Test bearer token authentication.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 287`** (1 nodes): `Sample S3 object listing response.`
+- **Thin community `Community 287`** (1 nodes): `Test API key authentication.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 288`** (1 nodes): `After waiting for one scheduler poll cycle (≤60s), the execution count         f`
+- **Thin community `Community 288`** (1 nodes): `Get the resolved destination. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 289`** (1 nodes): `After an auto-fire, next_run_at must advance to the next cron tick.`
+- **Thin community `Community 289`** (1 nodes): `Get the resolved transformations. Call resolve() first.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 290`** (1 nodes): `Test fetching with offset pagination.`
+- **Thin community `Community 290`** (1 nodes): `Return True if this pipeline has a cron schedule configured.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 291`** (1 nodes): `Test job splitting with offset pagination.`
+- **Thin community `Community 291`** (1 nodes): `Create a mock S3 client.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 292`** (1 nodes): `Test bearer token authentication.`
+- **Thin community `Community 292`** (1 nodes): `Sample S3 object listing response.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 293`** (1 nodes): `Test API key authentication.`
+- **Thin community `Community 293`** (1 nodes): `After waiting for one scheduler poll cycle (≤60s), the execution count         f`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 294`** (1 nodes): `Define the source to use based on runtime parameters.          Args:`
+- **Thin community `Community 294`** (1 nodes): `After an auto-fire, next_run_at must advance to the next cron tick.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 295`** (1 nodes): `Define the destination to use based on runtime parameters.          Args:`
+- **Thin community `Community 295`** (1 nodes): `Test fetching with offset pagination.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 296`** (1 nodes): `Define list of transformations to apply based on runtime parameters.          Ar`
+- **Thin community `Community 296`** (1 nodes): `Test job splitting with offset pagination.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 297`** (1 nodes): `Get the resolved destination. Call resolve() first.`
+- **Thin community `Community 297`** (1 nodes): `Test bearer token authentication.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 298`** (1 nodes): `Get the resolved transformations. Call resolve() first.`
+- **Thin community `Community 298`** (1 nodes): `Test API key authentication.`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 299`** (1 nodes): `Define the source to use for a batch of IDs.          Called once per ID-batch.`
+- **Thin community `Community 299`** (1 nodes): `Define the source to use based on runtime parameters.          Args:`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 300`** (1 nodes): `Define the destination (shared across all IDs).          Args:             runti`
+- **Thin community `Community 300`** (1 nodes): `Define the destination to use based on runtime parameters.          Args:`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 301`** (1 nodes): `Define list of transformations to apply for a batch of IDs.          Args:`
+- **Thin community `Community 301`** (1 nodes): `Define list of transformations to apply based on runtime parameters.          Ar`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
-- **Thin community `Community 302`** (1 nodes): `Apply transformation to a batch of records.          Args:             records:`
+- **Thin community `Community 302`** (1 nodes): `Get the resolved destination. Call resolve() first.`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 303`** (1 nodes): `Get the resolved transformations. Call resolve() first.`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 304`** (1 nodes): `Define the source to use for a batch of IDs.          Called once per ID-batch.`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 305`** (1 nodes): `Define the destination (shared across all IDs).          Args:             runti`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 306`** (1 nodes): `Define list of transformations to apply for a batch of IDs.          Args:`
+  Too small to be a meaningful cluster - may be noise or needs more connections extracted.
+- **Thin community `Community 307`** (1 nodes): `Apply transformation to a batch of records.          Args:             records:`
   Too small to be a meaningful cluster - may be noise or needs more connections extracted.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `BaseSource` connect `Community 2` to `Community 0`, `Community 3`, `Community 4`, `Community 6`, `Community 10`?**
-  _High betweenness centrality (0.103) - this node is a cross-community bridge._
-- **Why does `IdBasedPipeline` connect `Community 4` to `Community 0`, `Community 1`, `Community 2`, `Community 3`, `Community 5`, `Community 6`, `Community 37`, `Community 10`, `Community 16`?**
-  _High betweenness centrality (0.084) - this node is a cross-community bridge._
-- **Why does `PipelineRunner` connect `Community 5` to `Community 3`, `Community 4`, `Community 6`, `Community 7`, `Community 17`, `Community 21`?**
-  _High betweenness centrality (0.077) - this node is a cross-community bridge._
-- **Are the 66 inferred relationships involving `BaseSource` (e.g. with `UppercaseNames` and `FilterActiveUsers`) actually correct?**
+- **Why does `BaseSource` connect `Community 0` to `Community 2`, `Community 4`, `Community 5`, `Community 9`, `Community 10`, `Community 13`, `Community 26`?**
+  _High betweenness centrality (0.114) - this node is a cross-community bridge._
+- **Why does `IdBasedPipeline` connect `Community 2` to `Community 0`, `Community 1`, `Community 8`, `Community 9`, `Community 10`, `Community 13`, `Community 14`, `Community 17`?**
+  _High betweenness centrality (0.094) - this node is a cross-community bridge._
+- **Why does `AbstractPipeline` connect `Community 10` to `Community 0`, `Community 1`, `Community 2`, `Community 8`, `Community 13`, `Community 14`, `Community 19`, `Community 30`?**
+  _High betweenness centrality (0.083) - this node is a cross-community bridge._
+- **Are the 48 inferred relationships involving `AbstractPipeline` (e.g. with `PipelineRegistry` and `QueryLoaderMixin`) actually correct?**
+  _`AbstractPipeline` has 48 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 66 inferred relationships involving `BaseSource` (e.g. with `StaticSource` and `S3Source`) actually correct?**
   _`BaseSource` has 66 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 46 inferred relationships involving `AbstractPipeline` (e.g. with `PipelineRegistry` and `QueryLoaderMixin`) actually correct?**
-  _`AbstractPipeline` has 46 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 53 inferred relationships involving `PipelineParameter` (e.g. with `QueryLoaderMixin` and `Param`) actually correct?**
   _`PipelineParameter` has 53 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 36 inferred relationships involving `IdBasedPipeline` (e.g. with `PipelineRunner` and `LocalExecutor`) actually correct?**

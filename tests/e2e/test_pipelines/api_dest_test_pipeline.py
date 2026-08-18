@@ -9,7 +9,14 @@ from typing import Literal
 
 from typing_extensions import Annotated, NotRequired, Required
 
-from reflowfy import AbstractPipeline, Param, RuntimeParams
+from reflowfy import (
+    AbstractPipeline,
+    BaseDestination,
+    Param,
+    Records,
+    RuntimeParams,
+    Transformations,
+)
 from reflowfy.destinations.api import api_destination
 from tests.e2e.test_pipelines.sources import e2e_mock
 from tests.e2e.test_pipelines.transformations import api_add_dest_info
@@ -49,7 +56,9 @@ class E2EApiDestTestPipeline(AbstractPipeline[ApiDestParams]):
     def define_source(self, runtime_params):
         return e2e_mock(count=100, batch_size=10)
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: ApiDestParams
+    ) -> BaseDestination:
         return api_destination(
             url=MOCK_HTTP_URL,
             method="POST",
@@ -73,5 +82,7 @@ class E2EApiDestTestPipeline(AbstractPipeline[ApiDestParams]):
             },
         )
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: ApiDestParams
+    ) -> Transformations:
         return [api_add_dest_info()]

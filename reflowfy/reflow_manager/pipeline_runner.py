@@ -97,7 +97,7 @@ def _run_async(coro: Any) -> Any:
         try:
             import nest_asyncio
 
-            nest_asyncio.apply()
+            nest_asyncio.apply()  # pyright: ignore[reportUnknownMemberType]  # no stubs
             return asyncio.get_event_loop().run_until_complete(coro)
         except ImportError:
             import concurrent.futures

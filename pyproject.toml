@@ -75,7 +75,8 @@ dev = [
     "pyright>=1.1.350",
     # Type stubs / packages so pyright can resolve optional-feature imports
     "boto3>=1.34.0",
-    "boto3-stubs>=1.34.0",
+    # [s3]: the service extra — bare boto3-stubs types boto3.client() as Unknown
+    "boto3-stubs[s3]>=1.34.0",
     "types-croniter>=1.4.0",
     "testcontainers>=3.7.1",
     "build>=1.0.0",
@@ -96,7 +97,7 @@ version = {attr = "reflowfy.__version__"}
 [tool.setuptools.package-data]
 "reflowfy.helm" = ["**/*"]
 "reflowfy.templates" = ["*", ".env.template"]
-"reflowfy" = ["../Dockerfile.*", "../docker-compose.yml"]
+"reflowfy" = ["py.typed", "../Dockerfile.*", "../docker-compose.yml"]
 
 [tool.black]
 line-length = 100
@@ -111,6 +112,12 @@ python_version = "3.10"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+# mypy and pyright disagree about isinstance-narrowed `Any`: mypy keeps it Any and
+# calls the cast redundant, pyright strict narrows it to list[Unknown]/dict[Unknown]
+# and needs the cast to name the element types. The casts are load-bearing for
+# pyright, so this warning only fires on code that is already correct.
+# (disable_error_code, not warn_redundant_casts — `strict = true` overrides the latter.)
+disable_error_code = ["redundant-cast"]
 
 [tool.pyright]
 include = ["reflowfy", "tests/e2e/test_pipelines", "pipelines"]
@@ -123,19 +130,10 @@ exclude = [
 ]
 pythonVersion = "3.10"
 typeCheckingMode = "strict"
-# Keep strict correctness checks, but silence the "unknown type" completeness
-# cascade that comes from untyped third-party libs (aiokafka, nest_asyncio, ...).
-# These are about annotation completeness, not bugs. Re-enable as the codebase
-# gains annotations.
-reportUnknownMemberType = false
-reportUnknownArgumentType = false
-reportUnknownVariableType = false
-reportUnknownParameterType = false
-reportUnknownLambdaType = false
 reportMissingTypeStubs = false
-# Same rationale, for the pipeline dirs now in scope: their ~136 hooks are
-# deliberately unannotated (the typed style is opt-in), and a missing annotation
-# is not a bug. Real signal — bad overrides, wrong arity, bad calls — still fires.
+# The pipeline dirs in scope have ~136 deliberately unannotated hooks (the typed
+# style is opt-in), and a missing annotation is not a bug. Real signal — bad
+# overrides, wrong arity, bad calls — still fires.
 reportMissingParameterType = false
 # FastAPI route handlers and Typer CLI commands are invoked via decorators, so a
 # static checker always sees them as unused.

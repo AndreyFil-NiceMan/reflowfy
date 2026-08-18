@@ -3,6 +3,9 @@ Example pipeline - Copy this template to create your own pipelines.
 """
 
 from reflowfy import (
+    Transformations,
+    BaseDestination,
+    Records,
     AbstractPipeline,
     RuntimeParams,
     BaseTransformation,
@@ -45,13 +48,17 @@ class ExamplePipeline(AbstractPipeline[RuntimeParams]):
             size=1000,
         )
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
         """Configure your destination."""
         return kafka_destination(
             bootstrap_servers="kafka:29092",
             topic="my-output-topic",
         )
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> Transformations:
         """Define your transformation pipeline."""
         return [MyTransformation()]

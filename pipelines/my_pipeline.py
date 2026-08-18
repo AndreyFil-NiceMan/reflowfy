@@ -11,7 +11,12 @@ Perfect for testing the Reflowfy framework locally:
 Just run the API and call the /test endpoint!
 """
 
+from typing import Any, Dict
+
 from reflowfy import (
+    Transformations,
+    BaseDestination,
+    Records,
     AbstractPipeline,
     RuntimeParams,
     BaseTransformation,
@@ -29,9 +34,9 @@ class UppercaseNames(BaseTransformation):
 
     name = "uppercase_names"
 
-    def apply(self, records, runtime_params):
+    def apply(self, records: Records, runtime_params: Dict[str, Any]) -> Records:
         """Convert first_name and last_name to uppercase."""
-        transformed = []
+        transformed: Records = []
 
         for record in records:
             new_record = record.copy()
@@ -52,7 +57,7 @@ class FilterActiveUsers(BaseTransformation):
 
     name = "filter_active_users"
 
-    def apply(self, records, runtime_params):
+    def apply(self, records: Records, runtime_params: Dict[str, Any]) -> Records:
         """Keep only records where active=True."""
         return [r for r in records if r.get("active", False)]
 
@@ -62,7 +67,7 @@ class AddProcessingInfo(BaseTransformation):
 
     name = "add_processing_info"
 
-    def apply(self, records, runtime_params):
+    def apply(self, records: Records, runtime_params: Dict[str, Any]) -> Records:
         """Add processing information from context."""
         execution_id = runtime_params.get("execution_id", "unknown")
 
@@ -98,14 +103,18 @@ class SimpleTestPipeline(AbstractPipeline[RuntimeParams]):
             batch_size=10,
         )
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
         """Return console destination."""
         return console_destination(
             pretty_print=True,
             max_records_display=10,
         )
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> Transformations:
         """Return transformation pipeline."""
         return [
             FilterActiveUsers(),

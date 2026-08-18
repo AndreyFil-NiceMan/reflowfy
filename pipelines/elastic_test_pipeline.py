@@ -33,6 +33,9 @@ from typing import Literal
 from typing_extensions import Annotated, NotRequired, Required
 
 from reflowfy import (
+    Transformations,
+    BaseDestination,
+    Records,
     Param,
     RuntimeParams,
     AbstractPipeline,
@@ -164,14 +167,18 @@ class ElasticTestPipeline(AbstractPipeline[ElasticTestParams]):
             size=1,
         )
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: ElasticTestParams
+    ) -> BaseDestination:
         """Configure console destination."""
         return console_destination(
             pretty_print=True,
             max_records_display=10,
         )
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: ElasticTestParams
+    ) -> Transformations:
         """Build transformation pipeline."""
         filter_status = runtime_params.get("filter_status", "active")
 

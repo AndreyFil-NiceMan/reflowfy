@@ -6,7 +6,14 @@ Used by test_dx_improvements.py to verify that:
 - GET /executions/{id}/errors returns the error details
 """
 
-from reflowfy import AbstractPipeline, BaseTransformation, RuntimeParams
+from reflowfy import (
+    AbstractPipeline,
+    BaseDestination,
+    BaseTransformation,
+    Records,
+    RuntimeParams,
+    Transformations,
+)
 from reflowfy.destinations.console import console_destination
 from tests.e2e.test_pipelines.sources import e2e_mock
 
@@ -30,8 +37,12 @@ class ErrorPipelineTest(AbstractPipeline[RuntimeParams]):
     def define_source(self, runtime_params):
         return e2e_mock(count=10, batch_size=10)
 
-    def define_destination(self, records, runtime_params):
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
         return console_destination()
 
-    def define_transformations(self, records, runtime_params):
+    def define_transformations(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> Transformations:
         return [AlwaysFailTransformation()]

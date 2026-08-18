@@ -16,6 +16,11 @@ class ExecutionState(str, Enum):
     PARTIALLY_FAILED = "partially_failed"
 
 
+def _empty_metadata() -> Dict[str, Any]:
+    """Typed default factory — a bare `dict` resolves to dict[Unknown, Unknown]."""
+    return {}
+
+
 @dataclass
 class ExecutionStatus:
     """Execution status tracking."""
@@ -28,7 +33,7 @@ class ExecutionStatus:
     failed_jobs: int = 0
     retry_count: int = 0
     error_message: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=_empty_metadata)
 
     @property
     def success_rate(self) -> float:

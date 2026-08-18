@@ -3,9 +3,14 @@
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Set, cast
 
 from jinja2 import BaseLoader, Environment, TemplateSyntaxError, UndefinedError
+
+
+def _empty_params() -> Dict[str, Any]:
+    """Typed default factory — a bare `dict` resolves to dict[Unknown, Unknown]."""
+    return {}
 
 
 @dataclass
@@ -27,8 +32,8 @@ class ExecutionContext:
     execution_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     batch_id: Optional[str] = None
     pipeline_name: str = ""
-    runtime_params: Dict[str, Any] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    runtime_params: Dict[str, Any] = field(default_factory=_empty_params)
+    metadata: Dict[str, Any] = field(default_factory=_empty_params)
     created_at: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
     )
@@ -163,10 +168,13 @@ class ParameterResolver:
             ValueError: If template syntax is invalid or parameter is missing
         """
         if isinstance(obj, dict):
-            return {k: self.resolve(v, params) for k, v in obj.items()}
+            # isinstance narrows Any to dict[Unknown, Unknown]; name the element types
+            mapping = cast(Dict[Any, Any], obj)
+            return {k: self.resolve(v, params) for k, v in mapping.items()}
 
         elif isinstance(obj, list):
-            return [self.resolve(item, params) for item in obj]
+            items = cast(List[Any], obj)
+            return [self.resolve(item, params) for item in items]
 
         elif isinstance(obj, str):
             # Check if string contains Jinja2 template syntax
@@ -192,14 +200,16 @@ class ParameterResolver:
         Returns:
             Set of parameter names used in templates
         """
-        params = set()
+        params: Set[str] = set()
 
         if isinstance(obj, dict):
-            for v in obj.values():
+            mapping = cast(Dict[Any, Any], obj)
+            for v in mapping.values():
                 params.update(self.extract_parameters(v))
 
         elif isinstance(obj, list):
-            for item in obj:
+            items = cast(List[Any], obj)
+            for item in items:
                 params.update(self.extract_parameters(item))
 
         elif isinstance(obj, str):
