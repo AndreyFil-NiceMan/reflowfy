@@ -29,6 +29,21 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKSPACE="$PROJECT_ROOT/e2e_workspace"
 DIST_DIR="$PROJECT_ROOT/dist"
 
+# Pin every uv command to THIS project's venv.
+#
+# The run cd's into $WORKSPACE, which has no pyproject.toml, so uv searches
+# upward for one. If this checkout is nested inside another project — a git
+# worktree under .claude/worktrees/ is exactly that — uv finds the OUTER
+# pyproject.toml and installs the built wheel into the outer project's venv,
+# silently replacing its dependencies. Naming the environment explicitly stops
+# the search from ever mattering.
+export UV_PROJECT_ENVIRONMENT="$PROJECT_ROOT/.venv"
+# `uv pip` ignores UV_PROJECT_ENVIRONMENT: it resolves VIRTUAL_ENV first, then
+# searches cwd and its parents for a .venv. `uv pip install --force-reinstall`
+# on the built wheel is the call that rewrites dependencies, so it needs the
+# same pin or the upward search is back.
+export VIRTUAL_ENV="$PROJECT_ROOT/.venv"
+
 # Parse arguments
 TEST_SUITE="all"
 TEST_FILE=""
@@ -216,6 +231,25 @@ log_info "Step 0: Building and Installing Reflowfy..."
 if ! command -v uv &> /dev/null; then
     log_error "uv could not be found"
     exit 1
+fi
+
+# Fail fast on a Docker daemon that cannot start containers. Without this the
+# run builds a wheel and scaffolds a whole workspace before dying inside the
+# first `docker build`, several minutes from the actual cause.
+if [ "$SKIP_DOCKER" = false ] && command -v docker &> /dev/null; then
+    docker_client=$(docker version --format '{{.Client.Version}}' 2>/dev/null || echo "")
+    docker_server=$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo "")
+    if [ -n "$docker_client" ] && [ -n "$docker_server" ] && \
+       [ "$docker_client" != "$docker_server" ]; then
+        # An upgrade that did not restart the daemon leaves an old dockerd
+        # exec'ing the new containerd shim. They disagree on the shim address
+        # format and every container fails with a mangled protocol string:
+        #   failed to start shim: ... unsupported protocol: Yunix
+        log_warning "Docker client ($docker_client) != server ($docker_server)."
+        log_warning "The daemon was not restarted after an upgrade; containers"
+        log_warning "may fail with 'failed to start shim'."
+        log_warning "Fix: sudo systemctl restart docker"
+    fi
 fi
 
 # Clean dist
