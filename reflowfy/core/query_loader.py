@@ -3,8 +3,12 @@
 Pipelines keep their query templates in the project's ``queries/`` folder and
 read them with :meth:`QueryLoaderMixin.load_query`, so no pipeline has to build
 paths or open files itself. Mixed into both
-:class:`~reflowfy.core.abstract_pipeline.AbstractPipeline` and
-:class:`~reflowfy.core.id_based_pipeline.IdBasedPipeline`.
+:class:`~reflowfy.core.abstract_pipeline.AbstractPipeline`,
+:class:`~reflowfy.core.id_based_pipeline.IdBasedPipeline` and
+:class:`~reflowfy.transformations.base.BaseTransformation`, so a transformation
+reads its own query templates the same way. Code with no ``self`` to hang it on
+(a ``@transformation``-decorated function, a plain helper) imports the
+module-level :func:`load_query` / :func:`load_query_text` instead.
 """
 
 import json
@@ -94,3 +98,13 @@ class QueryLoaderMixin:
                 if candidate.is_dir():
                     return candidate
         return Path.cwd() / "queries"
+
+
+# ponytail: one shared instance so `from reflowfy import load_query` works outside a
+# pipeline (decorator transformations, plain helpers). It has no project module of its
+# own, so it resolves via the mixin's <cwd>/queries fallback — which is the project root
+# both locally and in the containers (WORKDIR /app).
+_global_loader = QueryLoaderMixin()
+
+load_query = _global_loader.load_query
+load_query_text = _global_loader.load_query_text

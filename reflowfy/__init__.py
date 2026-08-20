@@ -13,6 +13,7 @@ from reflowfy.core.abstract_pipeline import AbstractPipeline, PipelineParameter
 from reflowfy.core.exceptions import PipelineError
 from reflowfy.core.id_based_pipeline import IdBasedPipeline
 from reflowfy.core.types import Record, Records, Transformations
+from reflowfy.core.query_loader import load_query, load_query_text
 from reflowfy.core.registry import pipeline_registry
 from reflowfy.core.runtime_params import Param, RuntimeParams
 from reflowfy.execution.job_runner import chunk, job
@@ -36,6 +37,8 @@ from reflowfy.transformations.decorators import transformation
 __version__ = "1.0.31"
 
 __all__ = [
+    "load_query",
+    "load_query_text",
     "AbstractPipeline",
     "IdBasedPipeline",
     "PipelineParameter",

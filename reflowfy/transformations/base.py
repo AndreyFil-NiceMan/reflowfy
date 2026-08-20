@@ -3,6 +3,8 @@
 from abc import ABCMeta, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple
 
+from reflowfy.core.query_loader import QueryLoaderMixin
+
 
 class TransformationMeta(ABCMeta):
     """
@@ -29,7 +31,7 @@ class TransformationMeta(ABCMeta):
         return cls
 
 
-class BaseTransformation(metaclass=TransformationMeta):
+class BaseTransformation(QueryLoaderMixin, metaclass=TransformationMeta):
     """
     Base class for all transformations.
 
