@@ -182,8 +182,9 @@ Next steps:
   2. Edit .env to configure Kafka, Registry, and Database
   3. Edit pipelines/{name}.py to customize your pipeline
   4. reflowfy new pipeline|source|destination|transformation <name>
-  5. reflowfy run --build    (test locally)
-  6. reflowfy deploy        (deploy to OpenShift - reads from .env)
+  5. reflowfy test {name} --dry-run   (no Docker, fastest loop)
+  6. reflowfy run --build    (run the full stack locally)
+  7. reflowfy deploy        (deploy to OpenShift - reads from .env)
 """,
                 style="bold green",
             )
