@@ -7,7 +7,7 @@ docs/superpowers/specs/2026-06-09-dynamic-transformation-resolution-design.md.
 """
 
 import time
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple, cast
 
 from reflowfy.transformations.base import TransformationError
 
@@ -55,8 +55,10 @@ def find_culprit_record(
     missing = exc.args[0]
     for i, record in enumerate(records[:scan_limit]):
         # A non-mapping record cannot be the source of a missing-key error here.
-        if isinstance(record, dict) and missing not in record:
-            return i, record
+        if isinstance(record, dict) and missing not in cast(Dict[Any, Any], record):
+            # Index back into `records` so the returned value keeps its original
+            # type rather than the narrowed dict.
+            return i, records[i]
     return None, None
 
 
@@ -134,6 +136,9 @@ def apply_transformations_iteratively(
                 records_in=records_in,
                 culprit_index=culprit_index,
                 culprit_record=culprit,
+                # The steps that already succeeded, so a reporter can show the
+                # whole chain up to the break rather than just the break.
+                applied_steps=list(applied),
             )
         applied.append(
             AppliedStep(

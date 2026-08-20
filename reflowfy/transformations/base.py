@@ -115,6 +115,7 @@ class TransformationError(Exception):
         records_in: How many records this step received, or None if unknown.
         culprit_index: Index of the implicated record, or None if not identified.
         culprit_record: The implicated record itself, or None.
+        applied_steps: The steps that succeeded before this one, in order.
     """
 
     def __init__(
@@ -126,6 +127,7 @@ class TransformationError(Exception):
         records_in: Optional[int] = None,
         culprit_index: Optional[int] = None,
         culprit_record: Optional[Any] = None,
+        applied_steps: Optional[List[Any]] = None,
     ):
         self.transformation_name = transformation_name
         self.original_error = original_error
@@ -133,4 +135,5 @@ class TransformationError(Exception):
         self.records_in = records_in
         self.culprit_index = culprit_index
         self.culprit_record = culprit_record
+        self.applied_steps: List[Any] = applied_steps or []
         super().__init__(f"Transformation '{transformation_name}' failed: {message}")

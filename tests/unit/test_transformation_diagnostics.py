@@ -26,28 +26,28 @@ class FakePipeline:
 
 
 class KeepEvens(BaseTransformation):
-    name = "keep_evens"
+    name = "diag_keep_evens"
 
     def apply(self, records, runtime_params):
         return [r for r in records if r["id"] % 2 == 0]
 
 
 class DropAll(BaseTransformation):
-    name = "drop_all"
+    name = "diag_drop_all"
 
     def apply(self, records, runtime_params):
         return []
 
 
 class NeedsLastName(BaseTransformation):
-    name = "needs_last_name"
+    name = "diag_needs_last_name"
 
     def apply(self, records, runtime_params):
         return [{**r, "last_name": r["last_name"].upper()} for r in records]
 
 
 class Boom(BaseTransformation):
-    name = "boom"
+    name = "diag_boom"
 
     def apply(self, records, runtime_params):
         raise ValueError("kaboom")
@@ -68,7 +68,7 @@ def test_applied_step_reports_real_in_out_counts():
 
     assert len(result) == 5
     step = applied[0]
-    assert step.name == "keep_evens"
+    assert step.name == "diag_keep_evens"
     assert step.records_in == 10
     assert step.records_out == 5
     assert step.delta == -5
@@ -104,7 +104,7 @@ def test_failure_names_the_exception_type():
         apply_transformations_iteratively(pipeline, records, {})
 
     assert "KeyError" in str(exc.value)
-    assert exc.value.transformation_name == "needs_last_name"
+    assert exc.value.transformation_name == "diag_needs_last_name"
 
 
 def test_failure_points_at_the_offending_record():

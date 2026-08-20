@@ -190,6 +190,11 @@ class PipelineParameter:
         dict: "object",
     }
 
+    @property
+    def type_name(self) -> str:
+        """Human-readable name of this parameter's type ("string", "integer", ...)."""
+        return self._TYPE_NAMES.get(self.param_type, self.param_type.__name__)
+
     def validate(self, value: Any) -> Optional[str]:
         """
         Validate a value against this parameter's type and constraints.
@@ -207,8 +212,7 @@ class PipelineParameter:
 
         # Type validation
         if not self._check_type(value):
-            type_name = self._TYPE_NAMES.get(self.param_type, self.param_type.__name__)
-            return f"Parameter '{self.name}' must be {type_name}, got {type(value).__name__}"
+            return f"Parameter '{self.name}' must be {self.type_name}, got {type(value).__name__}"
 
         # Choices validation
         if self.choices and value not in self.choices:
@@ -275,10 +279,17 @@ class PipelineParameter:
                 import json
 
                 try:
-                    return json.loads(value)
+                    parsed: Any = json.loads(value)
                 except (json.JSONDecodeError, ValueError):
-                    # Fallback: treat as comma-separated values
-                    return [v.strip() for v in value.split(",") if v.strip()]
+                    parsed = None
+                if isinstance(parsed, list):
+                    return cast(List[Any], parsed)
+                # A bare scalar is valid JSON, so "3" parses as the int 3 rather
+                # than a list — which would hand the pipeline a non-iterable for
+                # a list parameter. Anything that isn't a JSON list is treated as
+                # comma-separated values, so "3" becomes ["3"] and "7,8" becomes
+                # ["7", "8"].
+                return [v.strip() for v in value.split(",") if v.strip()]
 
             if self.param_type is dict and isinstance(value, str):
                 import json
