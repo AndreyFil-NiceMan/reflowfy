@@ -104,11 +104,38 @@ class BaseTransformation(QueryLoaderMixin, metaclass=TransformationMeta):
 
 
 class TransformationError(Exception):
-    """Raised when a transformation fails."""
+    """Raised when a transformation fails.
+
+    Carries enough context to say *where* in the chain the failure happened and
+    *which* record caused it, so callers can report it without re-running any
+    user code.
+
+    Attributes:
+        transformation_name: The transformation that raised.
+        original_error: The underlying exception, if any.
+        step_index: 0-based position in the applied chain, or None if unknown.
+        records_in: How many records this step received, or None if unknown.
+        culprit_index: Index of the implicated record, or None if not identified.
+        culprit_record: The implicated record itself, or None.
+        applied_steps: The steps that succeeded before this one, in order.
+    """
 
     def __init__(
-        self, transformation_name: str, message: str, original_error: Optional[Exception] = None
+        self,
+        transformation_name: str,
+        message: str,
+        original_error: Optional[Exception] = None,
+        step_index: Optional[int] = None,
+        records_in: Optional[int] = None,
+        culprit_index: Optional[int] = None,
+        culprit_record: Optional[Any] = None,
+        applied_steps: Optional[List[Any]] = None,
     ):
         self.transformation_name = transformation_name
         self.original_error = original_error
+        self.step_index = step_index
+        self.records_in = records_in
+        self.culprit_index = culprit_index
+        self.culprit_record = culprit_record
+        self.applied_steps: List[Any] = applied_steps or []
         super().__init__(f"Transformation '{transformation_name}' failed: {message}")

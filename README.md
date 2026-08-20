@@ -79,7 +79,52 @@ reflowfy new destination data_lake_s3
 reflowfy new transformation flatten_json
 ```
 
-### 4. Run Locally
+### 4. Test a Pipeline (no Docker)
+
+The fastest loop while writing a pipeline. Fetches a capped sample through the
+same execution core the worker uses, applies your transformations, and reports
+what each step did to the batch:
+
+```bash
+reflowfy test my_pipeline --dry-run
+```
+
+```
+✓ Fetched 5 records
+  ✓ filter_active_users  5 → 2 records  (-3)
+  ✓ uppercase_names      2 → 2 records  (±0)
+```
+
+When a transformation raises, it tells you which one, what it received, and the
+record that caused it — instead of a framework traceback:
+
+```
+❌ Transformation #2 failed: uppercase_last
+   KeyError: 'last_name'
+
+   Failing record (index 7 of 12):
+     {"id": 7, "first_name": "user7", "active": true}
+
+   Where:
+     pipelines/my_pipeline.py:36 in apply
+```
+
+| Flag | What it does |
+| ---- | ------------ |
+| `--dry-run` | Print records instead of writing to the destination |
+| `-l, --limit N` | Cap records fetched (default 100) |
+| `-v`, `-vv` | Add step timings, `runtime_params` and full tracebacks; `-vv` shows every record |
+| `-p, --param k=v` | Set a parameter without being prompted (repeatable) |
+| `--no-input` | Never prompt; fail if a required parameter is missing |
+| `--json` | Machine-readable report, for CI |
+| `--fail-fast` | For ID pipelines, stop at the first failed batch and exit non-zero |
+
+It exits non-zero when the run fails, so `reflowfy test <name> --no-input --json`
+works as a CI gate. An ID pipeline previews many independent batches, so one bad
+ID is reported but does not by itself fail the run — pass `--fail-fast` for the
+strict reading. A file path works in place of the name.
+
+### 5. Run Locally
 
 Start the full stack (API, Manager, Worker, Kafka, Postgres) locally using Docker Compose:
 
@@ -91,7 +136,7 @@ reflowfy run --build
 reflowfy run -d
 ```
 
-### 5. Deploy
+### 6. Deploy
 
 Deploy to OpenShift/Kubernetes with a single command:
 

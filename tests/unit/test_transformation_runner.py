@@ -68,7 +68,7 @@ def test_static_list_applies_each_once():
     pipeline = FakePipeline(lambda records, params: [AppendMarker(), Marker2()])
     result, applied = apply_transformations_iteratively(pipeline, [], {})
     assert result == ["append_marker", "marker2"]
-    assert [name for name, _ in applied] == ["append_marker", "marker2"]
+    assert [step.name for step in applied] == ["append_marker", "marker2"]
 
 
 def test_midchain_param_reveals_next_transformation():
@@ -81,7 +81,7 @@ def test_midchain_param_reveals_next_transformation():
     pipeline = FakePipeline(define)
     result, applied = apply_transformations_iteratively(pipeline, [], {})
     assert result == ["set_flag", "marker2"]
-    assert [name for name, _ in applied] == ["set_flag", "marker2"]
+    assert [step.name for step in applied] == ["set_flag", "marker2"]
 
 
 def test_three_deep_chain():
@@ -95,7 +95,7 @@ def test_three_deep_chain():
 
     pipeline = FakePipeline(define)
     result, applied = apply_transformations_iteratively(pipeline, [], {})
-    assert [name for name, _ in applied] == ["set_flag", "set_k2", "marker3"]
+    assert [step.name for step in applied] == ["set_flag", "set_k2", "marker3"]
 
 
 def test_runaway_append_raises():
@@ -127,7 +127,7 @@ def test_prefix_change_is_ignored():
     pipeline = FakePipeline(define)
     result, applied = apply_transformations_iteratively(pipeline, [], {})
     # First applied is the original index-0 (append_marker); then the new tail (marker3).
-    assert [name for name, _ in applied] == ["append_marker", "marker3"]
+    assert [step.name for step in applied] == ["append_marker", "marker3"]
 
 
 def test_apply_error_is_wrapped():
@@ -152,4 +152,4 @@ def test_duck_typed_transformation_without_validate_hooks():
     pipeline = FakePipeline(lambda records, params: [_DuckTransformation()])
     result, applied = apply_transformations_iteratively(pipeline, [], {})
     assert result == ["duck"]
-    assert [name for name, _ in applied] == ["duck"]
+    assert [step.name for step in applied] == ["duck"]

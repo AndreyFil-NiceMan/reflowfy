@@ -29,6 +29,26 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKSPACE="$PROJECT_ROOT/e2e_workspace"
 DIST_DIR="$PROJECT_ROOT/dist"
 
+# Pin every uv command to THIS project's venv.
+#
+# The run cd's into $WORKSPACE, which has no pyproject.toml, so uv searches
+# upward for one. If this checkout is nested inside another project — a git
+# worktree under .claude/worktrees/ is exactly that — uv finds the OUTER
+# pyproject.toml and installs the built wheel into the outer project's venv,
+# silently replacing its dependencies. Naming the environment explicitly stops
+# the search from ever mattering.
+export UV_PROJECT_ENVIRONMENT="$PROJECT_ROOT/.venv"
+# `uv pip` ignores UV_PROJECT_ENVIRONMENT: it resolves VIRTUAL_ENV first, then
+# searches cwd and its parents for a .venv. `uv pip install --force-reinstall`
+# on the built wheel is the call that rewrites dependencies, so it needs the
+# same pin or the upward search is back.
+export VIRTUAL_ENV="$PROJECT_ROOT/.venv"
+# Step 4 invokes `pytest` bare, which otherwise requires the caller to have
+# activated a venv first. Putting this venv's bin on PATH is what activation
+# does, so the run works from any shell and always uses the interpreter the
+# wheel was just installed into.
+export PATH="$PROJECT_ROOT/.venv/bin:$PATH"
+
 # Parse arguments
 TEST_SUITE="all"
 TEST_FILE=""
@@ -216,6 +236,39 @@ log_info "Step 0: Building and Installing Reflowfy..."
 if ! command -v uv &> /dev/null; then
     log_error "uv could not be found"
     exit 1
+fi
+
+# Fail fast on a Docker daemon that cannot start containers. Without this the
+# run builds a wheel and scaffolds a whole workspace before dying inside the
+# first `docker build`, several minutes from the actual cause.
+if [ "$SKIP_DOCKER" = false ] && command -v docker &> /dev/null; then
+    docker_client=$(docker version --format '{{.Client.Version}}' 2>/dev/null || echo "")
+    docker_server=$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo "")
+    if [ -n "$docker_client" ] && [ -n "$docker_server" ] && \
+       [ "$docker_client" != "$docker_server" ]; then
+        log_warning "Docker client ($docker_client) != server ($docker_server)."
+        log_warning "The docker daemon was not restarted after an upgrade."
+        log_warning "Fix: sudo systemctl restart docker"
+    fi
+
+    # The check that actually matters. containerd -- not dockerd -- spawns the
+    # shim, so an upgrade that restarts docker but not containerd leaves a
+    # running containerd from before the upgrade exec'ing the new shim binary.
+    # They disagree on the shim's bootstrap format and EVERY container dies with
+    # a mangled protocol string:
+    #   failed to start shim: ... unsupported protocol: Yunix
+    # Matching docker/client versions do not rule this out, so compare the
+    # containerd revision docker reports against the shim binary on disk.
+    ctd_running=$(docker info --format '{{.ContainerdCommit.ID}}' 2>/dev/null || echo "")
+    ctd_shim=$(containerd-shim-runc-v2 -v 2>/dev/null | awk '/Revision/{print $2}')
+    if [ -n "$ctd_running" ] && [ -n "$ctd_shim" ] && [ "$ctd_running" != "$ctd_shim" ]; then
+        log_error "containerd revision mismatch — containers cannot start."
+        log_error "  running containerd: $ctd_running"
+        log_error "  shim on disk:       $ctd_shim"
+        log_error "containerd was not restarted after an upgrade."
+        log_error "Fix: sudo systemctl restart containerd docker"
+        exit 1
+    fi
 fi
 
 # Clean dist

@@ -34,11 +34,19 @@ uv run pyright              # config in [tool.pyright]; covers reflowfy/, pipeli
                             # and tests/e2e/test_pipelines/. CLEAN (0 errors) — the
                             # reportUnknown* rules are ON (they were suppressed
                             # repo-wide until 2026-08-18). Keep it at zero.
+                            # NOTE: pyright must resolve the venv or it reports
+                            # ~2200 phantom errors (unresolved imports make every
+                            # downstream type Unknown). If it does not pick up
+                            # .venv automatically — e.g. in a git worktree — pass
+                            # `--pythonpath /path/to/.venv/bin/python`.
 uvx basedpyright            # also clean; stricter superset, useful as a second opinion
 
 # Run the full local stack via the CLI (Docker Compose under the hood)
 uv run python -m reflowfy.cli.main run --build        # add -d/--detach to background
-uv run python -m reflowfy.cli.main check              # validate pipelines/config
+uv run python -m reflowfy.cli.main check              # kubectl get pods — cluster health only,
+                                                     # NOT local pipeline validation
+uv run python -m reflowfy.cli.main test <pipeline>    # run one pipeline locally, no Docker
+                                                     # -v/-vv, -p k=v, --no-input, --json, --dry-run
 
 # Build the wheel
 uv run python -m build

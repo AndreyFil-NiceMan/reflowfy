@@ -17,7 +17,10 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple, cast
 
 from reflowfy.core.exceptions import pipeline_step
 from reflowfy.core.serialization import to_json_safe
-from reflowfy.execution.transformation_runner import apply_transformations_iteratively
+from reflowfy.execution.transformation_runner import (
+    AppliedStep,
+    apply_transformations_iteratively,
+)
 
 
 def chunk(records: List[Any], size: int = 1) -> List[List[Any]]:
@@ -139,7 +142,7 @@ def run_job_records(
     pipeline: Any,
     runtime_params: Dict[str, Any],
     limit: Optional[int] = None,
-) -> Tuple[List[Any], List[Any], List[Tuple[str, float]], Any]:
+) -> Tuple[List[Any], List[Any], List[AppliedStep], Any]:
     """Run the v2 per-job core for one (already-narrowed) source.
 
     Fetches the source's records, normalizes them to JSON-safe form (so
@@ -156,7 +159,7 @@ def run_job_records(
     Does NOT send — the caller owns sending, stats, and presentation.
 
     Returns ``(records, transformed_records, applied, destination)`` where
-    ``applied`` is the list of ``(name, duration)`` pairs from the
+    ``applied`` is the list of :class:`AppliedStep` from the
     transformation runner.
     """
     name = getattr(pipeline, "name", "<unknown>")

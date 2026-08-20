@@ -143,10 +143,16 @@ reflowfy check
 
 ## CLI Command Reference
 
-| Command           | Description                     |
-| ----------------- | ------------------------------- |
-| `reflowfy init`   | Scaffold a new project          |
-| `reflowfy run`    | Run locally with Docker Compose |
-| `reflowfy build`  | Build & push images to registry |
-| `reflowfy deploy` | Deploy to OpenShift with Helm   |
-| `reflowfy check`  | Verify deployment health        |
+| Command           | Description                                   |
+| ----------------- | --------------------------------------------- |
+| `reflowfy init`   | Scaffold a new project                        |
+| `reflowfy new`    | Scaffold a pipeline/source/destination/etc.   |
+| `reflowfy test`   | Run one pipeline locally, no Docker           |
+| `reflowfy run`    | Run locally with Docker Compose               |
+| `reflowfy build`  | Build & push images to registry               |
+| `reflowfy deploy` | Deploy to OpenShift with Helm                 |
+| `reflowfy check`  | Verify deployment health (`kubectl get pods`) |
+
+`reflowfy test <pipeline>` is the one to reach for while writing a pipeline — it
+skips Docker entirely, caps the records fetched, and reports what each
+transformation did to the batch. See the README's Quick Start for its flags.
