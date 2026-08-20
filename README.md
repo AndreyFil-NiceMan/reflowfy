@@ -117,10 +117,12 @@ record that caused it — instead of a framework traceback:
 | `-p, --param k=v` | Set a parameter without being prompted (repeatable) |
 | `--no-input` | Never prompt; fail if a required parameter is missing |
 | `--json` | Machine-readable report, for CI |
-| `--keep-going` | For ID pipelines, continue after a batch fails |
+| `--fail-fast` | For ID pipelines, stop at the first failed batch and exit non-zero |
 
-It exits non-zero when any batch fails, so `reflowfy test <name> --no-input --json`
-works as a CI gate. A file path works in place of the name.
+It exits non-zero when the run fails, so `reflowfy test <name> --no-input --json`
+works as a CI gate. An ID pipeline previews many independent batches, so one bad
+ID is reported but does not by itself fail the run — pass `--fail-fast` for the
+strict reading. A file path works in place of the name.
 
 ### 5. Run Locally
 

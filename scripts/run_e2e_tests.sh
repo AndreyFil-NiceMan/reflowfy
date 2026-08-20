@@ -43,6 +43,11 @@ export UV_PROJECT_ENVIRONMENT="$PROJECT_ROOT/.venv"
 # on the built wheel is the call that rewrites dependencies, so it needs the
 # same pin or the upward search is back.
 export VIRTUAL_ENV="$PROJECT_ROOT/.venv"
+# Step 4 invokes `pytest` bare, which otherwise requires the caller to have
+# activated a venv first. Putting this venv's bin on PATH is what activation
+# does, so the run works from any shell and always uses the interpreter the
+# wheel was just installed into.
+export PATH="$PROJECT_ROOT/.venv/bin:$PATH"
 
 # Parse arguments
 TEST_SUITE="all"

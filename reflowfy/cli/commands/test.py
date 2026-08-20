@@ -19,7 +19,7 @@ import traceback
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, TypeGuard
 
 import typer
 
@@ -55,7 +55,7 @@ class TestOptions:
     limit: int = 100
     dry_run: bool = False
     verbose: int = 0
-    keep_going: bool = False
+    fail_fast: bool = False
     as_json: bool = False
 
 
@@ -588,8 +588,10 @@ def register(app: typer.Typer):
         no_input: bool = typer.Option(
             False, "--no-input", help="Never prompt; fail if a required parameter is missing"
         ),
-        keep_going: bool = typer.Option(
-            False, "--keep-going", help="For ID pipelines, continue after a batch fails"
+        fail_fast: bool = typer.Option(
+            False,
+            "--fail-fast",
+            help="For ID pipelines, stop at the first failed batch and exit non-zero",
         ),
         as_json: bool = typer.Option(
             False, "--json", help="Emit a machine-readable report on stdout"
@@ -610,7 +612,7 @@ def register(app: typer.Typer):
             limit=limit,
             dry_run=dry_run,
             verbose=verbose,
-            keep_going=keep_going,
+            fail_fast=fail_fast,
             as_json=as_json,
         )
 
@@ -641,6 +643,9 @@ def register(app: typer.Typer):
 
         failed = [r for r in reports if not r.ok]
         total_records = sum(len(r.transformed) for r in reports)
+        # A single-batch run has nothing to be partial about, so any failure
+        # fails the run. Per-batch ID failures are tolerated unless asked not.
+        strict = opts.fail_fast or not runs_id_batches(resolved)
 
         if opts.as_json:
             console.quiet = False
@@ -654,38 +659,55 @@ def register(app: typer.Typer):
                 "ok": not failed,
             }
             typer.echo(json.dumps(payload, default=str, indent=2))
-            raise typer.Exit(1 if failed else 0)
+            raise typer.Exit(1 if failed and strict else 0)
 
         if opts.dry_run:
             console.print("\n[yellow]🏜️  Dry run — skipped destination send[/yellow]")
+
+        sent = any(r.sent for r in reports)
+        outcome = "records sent successfully" if sent else "records processed"
 
         if failed:
             console.print(
                 f"\n[bold red]❌ Test failed: {len(failed)} of {len(reports)} "
                 f"batch(es) errored[/bold red]"
             )
-            raise typer.Exit(1)
+            # An ID pipeline previews many independent batches, and one bad ID
+            # should not condemn the rest — a partial failure is reported but
+            # does not fail the run. --fail-fast opts into the strict reading.
+            if strict:
+                raise typer.Exit(1)
+            console.print(
+                f"[yellow]⚠️  Finished with failures: {total_records} {outcome} "
+                f"from {len(reports) - len(failed)} of {len(reports)} batch(es). "
+                f"Use --fail-fast to exit non-zero.[/yellow]"
+            )
+            return
 
-        console.print(
-            f"\n[bold green]✅ Test complete: {total_records} records processed[/bold green]"
-        )
+        console.print(f"\n[bold green]✅ Test complete: {total_records} {outcome}[/bold green]")
 
 
 def run_pipeline_test(
     pipeline: "AbstractPipeline[Any]", params: Dict[str, Any], opts: TestOptions
 ) -> List[BatchReport]:
     """Run the pipeline, as one batch or one per ID batch, and report each."""
-    from reflowfy.core.id_based_pipeline import IdBasedPipeline
-
-    # A pipeline that overrides define_jobs owns its own splitting, so it takes
-    # the standard path even when it is ID-based — the per-ID loop calls
-    # define_source, which such a pipeline need not implement.
-    is_id_based = isinstance(pipeline, IdBasedPipeline)
-    plans_own_jobs = type(pipeline).define_jobs is not IdBasedPipeline.define_jobs
-
-    if is_id_based and not plans_own_jobs:
+    if runs_id_batches(pipeline):
         return run_id_batches(pipeline, params, opts)
     return [run_single(pipeline, params, opts)]
+
+
+def runs_id_batches(pipeline: "AbstractPipeline[Any]") -> TypeGuard["IdBasedPipeline[Any]"]:
+    """True if this pipeline is previewed one batch of IDs at a time.
+
+    A pipeline that overrides ``define_jobs`` owns its own splitting, so it
+    takes the standard path even when it is ID-based — the per-ID loop calls
+    ``define_source``, which such a pipeline need not implement.
+    """
+    from reflowfy.core.id_based_pipeline import IdBasedPipeline
+
+    if not isinstance(pipeline, IdBasedPipeline):
+        return False
+    return type(pipeline).define_jobs is IdBasedPipeline.define_jobs
 
 
 def run_single(
@@ -722,7 +744,7 @@ def run_id_batches(
     ids: List[Any] = list(params.get("ids") or [])
     if not ids:
         console.print("[red]❌ No IDs provided. The 'ids' parameter is required.[/red]")
-        raise typer.Exit(2)
+        raise typer.Exit(1)
 
     batch_size: int = pipeline.ids_batch_size
     id_batches: List[List[Any]] = [ids[i : i + batch_size] for i in range(0, len(ids), batch_size)]
@@ -749,9 +771,9 @@ def run_id_batches(
             report = BatchReport(label=label, error=exc)
             reports.append(report)
             render_failure(exc, opts, indent="  ")
-            if opts.keep_going:
-                continue
-            break
+            if opts.fail_fast:
+                break
+            continue
 
         console.print(f"  [bold]🔌 Source:[/bold] {summarize(source, opts.verbose)}")
         render_params(flat, opts, indent="  ")
@@ -765,8 +787,8 @@ def run_id_batches(
             if not report.ok:
                 render_failure(report.error, opts, indent="  ")  # type: ignore[arg-type]
 
-        if not report.ok and not opts.keep_going:
-            console.print("  [dim]stopping after this batch — pass --keep-going to continue[/dim]")
+        if not report.ok and opts.fail_fast:
+            console.print("  [dim]stopping — --fail-fast is set[/dim]")
             break
 
     return reports
