@@ -186,3 +186,39 @@ def test_id_based_pipeline_missing_query_raises(tmp_path: Path) -> None:
 
     with pytest.raises(FileNotFoundError):
         pipeline.load_query("nope.sql")
+
+
+def test_transformation_loads_query_relative_to_its_own_module(tmp_path: Path) -> None:
+    """A class-based transformation resolves queries/ from its own module file."""
+    (tmp_path / "transformations").mkdir()
+    (tmp_path / "queries").mkdir()
+    (tmp_path / "queries" / "enrich.sql").write_text("SELECT 3")
+
+    module_name = "faux_transformation_module"
+    module = types.ModuleType(module_name)
+    module.__file__ = str(tmp_path / "transformations" / "t.py")
+    sys.modules[module_name] = module
+
+    from reflowfy.transformations.base import BaseTransformation
+
+    class _T(BaseTransformation):
+        name = "faux_query_transform"
+
+        def apply(self, records: Any, runtime_params: Any) -> Any:
+            return records
+
+    _T.__module__ = module_name
+
+    assert _T().load_query("enrich.sql") == "SELECT 3"
+
+
+def test_module_level_load_query_uses_cwd(tmp_path: Path, monkeypatch: Any) -> None:
+    """`from reflowfy import load_query` works with no pipeline/transformation self."""
+    (tmp_path / "queries").mkdir()
+    (tmp_path / "queries" / "global.json").write_text('{"a": 1}')
+    monkeypatch.chdir(tmp_path)
+
+    from reflowfy import load_query, load_query_text
+
+    assert load_query("global.json") == {"a": 1}
+    assert load_query_text("global.json") == '{"a": 1}'

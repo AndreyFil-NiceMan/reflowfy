@@ -34,6 +34,11 @@ class ExampleTransform(BaseTransformation):
         """
         execution_id = runtime_params.get("execution_id", "unknown")
 
+        # Query templates from the project's queries/ folder are available here too:
+        #   mapping = self.load_query("field_mapping.json")
+        # Outside a class (e.g. a @transformation function), import it instead:
+        #   from reflowfy import load_query
+
         # Raise to fail the job deliberately. The message, type and traceback are
         # stored on the job record, and the error names the step that failed.
         if runtime_params.get("strict") and not records:
