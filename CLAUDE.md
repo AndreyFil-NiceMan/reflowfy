@@ -113,6 +113,17 @@ The package ships `reflowfy/py.typed` (PEP 561), so installs are type-checked by
 Where a third-party library genuinely has no types, the suppression is **file-scoped, never repo-wide**, with a header comment naming the library: `destinations/kafka.py`, `worker/consumer.py` and `reflow_manager/dispatcher.py` (aiokafka ships no stubs), and `sources/s3.py` (`reportTypedDictNotRequiredAccess`, because boto3-stubs marks `Key`/`Size`/`ETag` NotRequired). That rule stays live everywhere else on purpose — it is what catches `runtime_params["execution_id"]` subscripting on the all-optional `RuntimeParams`. `boto3.client("s3", ...)` passes every argument explicitly: boto3 is typed by overloads on the literal service name, and a `**kwargs` splat matches none of them, making the client and everything derived from it Unknown.
 
 
+### Sourcing inside a transformation
+
+A transformation can fetch from a source itself (lookup/enrichment — e.g. hit Elastic per batch).
+Sources are plain sync objects with a self-contained `fetch(runtime_params)`; no framework wiring
+is involved. Build the source in `__init__` (an `ElasticSource` holds a client — don't rebuild it
+per batch) and call `self._lookup.fetch(runtime_params)` inside `apply`. Canary:
+`tests/unit/test_source_in_transformation.py`.
+
+Note this fetch is *not* sharded, deduplicated or checkpointed — it runs once per batch on the
+worker. Data that should be sharded belongs in `define_source`, not here.
+
 ### Execution modes
 
 `EXECUTION_MODE` env var selects `local` (in-process via `LocalDispatcher`, used by the default docker-compose) or `distributed` (Kafka via `KafkaDispatcher`). Same pipeline code runs in both.
