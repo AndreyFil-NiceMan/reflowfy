@@ -209,16 +209,22 @@ class WorkerExecutor:
                 return True
 
             logger.info("Processing job %s: %d records", job_id, len(records))
-            for name, duration in applied:
-                stats.transformation_times[name] = round(duration, 3)
-                logger.debug("Applied transformation %s (%.3fs)", name, duration)
+            for step in applied:
+                stats.transformation_times[step.name] = round(step.duration, 3)
+                logger.debug(
+                    "Applied transformation %s (%.3fs, %d -> %d records)",
+                    step.name,
+                    step.duration,
+                    step.records_in,
+                    step.records_out,
+                )
 
             stats.records_output = len(transformed_records)
 
             # Worker-side content deduplication (enable_duplicate_jobs=False).
             dedup_check = bool(job_payload.get("dedup_check", False))
             if dedup_check:
-                transformation_names = [name for name, _ in applied]
+                transformation_names = [step.name for step in applied]
                 content_hash = compute_content_hash(
                     _pipeline_name,
                     transformation_names,

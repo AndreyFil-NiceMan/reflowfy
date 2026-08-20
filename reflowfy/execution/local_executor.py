@@ -127,8 +127,13 @@ class LocalExecutor(BaseExecutor):
                     continue
 
                 logger.debug("Fetched %d records", len(records))
-                for name, _duration in applied:
-                    logger.debug("Applied transformation: %s", name)
+                for step in applied:
+                    logger.debug(
+                        "Applied transformation: %s (%d -> %d records)",
+                        step.name,
+                        step.records_in,
+                        step.records_out,
+                    )
 
                 logger.debug("Sending %d records to destination", len(transformed_records))
                 destination.send_with_retry(
@@ -249,8 +254,13 @@ class LocalExecutor(BaseExecutor):
                     )
                     if not records:
                         continue
-                    for name, _duration in applied:
-                        logger.debug("Applied: %s", name)
+                    for step in applied:
+                        logger.debug(
+                            "Applied: %s (%d -> %d records)",
+                            step.name,
+                            step.records_in,
+                            step.records_out,
+                        )
                     destination.send_with_retry(
                         transformed_records,
                         metadata=flat_id_params,
