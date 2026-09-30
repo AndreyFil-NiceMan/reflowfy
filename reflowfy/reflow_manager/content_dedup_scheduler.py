@@ -20,8 +20,8 @@ from reflowfy.reflow_manager.database import SessionLocal
 logger = logging.getLogger(__name__)
 
 CONTENT_DEDUP_RETENTION_HOURS = int(os.getenv("CONTENT_DEDUP_RETENTION_HOURS", "24"))
-# 0 = keep executions/jobs forever.
-EXECUTION_RETENTION_HOURS = int(os.getenv("EXECUTION_RETENTION_HOURS", "0"))
+# Default 24h; 0 = keep executions/jobs forever.
+EXECUTION_RETENTION_HOURS = int(os.getenv("EXECUTION_RETENTION_HOURS", "24"))
 CONTENT_DEDUP_SWEEP_INTERVAL = int(os.getenv("CONTENT_DEDUP_SWEEP_INTERVAL_SECONDS", "3600"))
 
 
