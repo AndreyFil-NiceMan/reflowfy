@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 CONTENT_DEDUP_RETENTION_HOURS = int(os.getenv("CONTENT_DEDUP_RETENTION_HOURS", "24"))
 # 0 = keep executions/jobs forever.
-EXECUTION_RETENTION_DAYS = int(os.getenv("EXECUTION_RETENTION_DAYS", "0"))
+EXECUTION_RETENTION_HOURS = int(os.getenv("EXECUTION_RETENTION_HOURS", "0"))
 CONTENT_DEDUP_SWEEP_INTERVAL = int(os.getenv("CONTENT_DEDUP_SWEEP_INTERVAL_SECONDS", "3600"))
 
 
@@ -34,15 +34,15 @@ def purge_expired_content(db: Session, retention_hours: int, now: Optional[datet
 
 
 def purge_expired_executions(
-    db: Session, retention_days: int, now: Optional[datetime] = None
+    db: Session, retention_hours: int, now: Optional[datetime] = None
 ) -> int:
-    """Delete finished executions (and their jobs) older than retention_days. Returns count."""
-    if retention_days <= 0:
+    """Delete finished executions (and their jobs) older than retention_hours. Returns count."""
+    if retention_hours <= 0:
         return 0
     now = now or datetime.now(timezone.utc).replace(tzinfo=None)
     # completed_at is only set on terminal executions, so running ones are never touched.
     expired = select(Execution.execution_id).where(
-        Execution.completed_at < now - timedelta(days=retention_days)
+        Execution.completed_at < now - timedelta(hours=retention_hours)
     )
     db.execute(delete(Job).where(Job.execution_id.in_(expired)))
     result = db.execute(delete(Execution).where(Execution.execution_id.in_(expired)))
@@ -56,9 +56,9 @@ class ContentDedupScheduler:
         self,
         retention_hours: int = CONTENT_DEDUP_RETENTION_HOURS,
         sweep_interval: int = CONTENT_DEDUP_SWEEP_INTERVAL,
-        execution_retention_days: int = EXECUTION_RETENTION_DAYS,
+        execution_retention_hours: int = EXECUTION_RETENTION_HOURS,
     ):
-        self.execution_retention_days = execution_retention_days
+        self.execution_retention_hours = execution_retention_hours
         self.retention_hours = retention_hours
         self.sweep_interval = sweep_interval
         self._running = False
@@ -92,15 +92,15 @@ class ContentDedupScheduler:
             db = SessionLocal()
             try:
                 deleted = purge_expired_content(db, self.retention_hours)
-                executions = purge_expired_executions(db, self.execution_retention_days)
+                executions = purge_expired_executions(db, self.execution_retention_hours)
                 db.commit()
                 if deleted:
                     logger.info("Content Dedup Sweeper purged %d expired hash(es)", deleted)
                 if executions:
                     logger.info(
-                        "Retention sweeper purged %d execution(s) older than %dd with their jobs",
+                        "Retention sweeper purged %d execution(s) older than %dh with their jobs",
                         executions,
-                        self.execution_retention_days,
+                        self.execution_retention_hours,
                     )
             except Exception:  # pragma: no cover
                 db.rollback()

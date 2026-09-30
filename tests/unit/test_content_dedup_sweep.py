@@ -37,14 +37,14 @@ def test_purge_removes_only_expired(session):
 
 def test_purge_executions_removes_old_finished_with_jobs(session):
     now = datetime(2026, 6, 30, 12, 0, 0)
-    for eid, done in [("old", now - timedelta(days=8)), ("new", now - timedelta(days=1)), ("running", None)]:
+    for eid, done in [("old", now - timedelta(hours=8)), ("new", now - timedelta(hours=1)), ("running", None)]:
         session.add(Execution(execution_id=eid, pipeline_name="p", state="completed",
                               created_at=now - timedelta(days=30), completed_at=done))
         session.add(Job(job_id=f"j-{eid}", execution_id=eid, job_payload={}, state="completed"))
     session.commit()
 
-    assert purge_expired_executions(session, retention_days=0, now=now) == 0
-    assert purge_expired_executions(session, retention_days=7, now=now) == 1
+    assert purge_expired_executions(session, retention_hours=0, now=now) == 0
+    assert purge_expired_executions(session, retention_hours=7, now=now) == 1
     session.commit()
 
     assert {e.execution_id for e in session.query(Execution)} == {"new", "running"}
