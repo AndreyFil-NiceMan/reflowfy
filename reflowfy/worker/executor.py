@@ -151,8 +151,18 @@ class WorkerExecutor:
             from opentelemetry import trace
 
             # Inside try so a malformed trace carrier can't skip metric recording.
-            parent = extract_and_attach(job_payload.get("metadata", {}))
-            with log_context(execution_id=execution_id, job_id=job_id, pipeline_name=pipeline_name):
+            metadata = job_payload.get("metadata") or {}
+            parent = extract_and_attach(metadata)
+            # ponytail: log the count of current_ids, not the list — it can be huge.
+            job_params = metadata.get("runtime_params") or {}
+            current_ids = metadata.get("current_ids")
+            with log_context(
+                execution_id=execution_id,
+                job_id=job_id,
+                pipeline_name=pipeline_name,
+                current_id=job_params.get("current_id"),
+                current_ids_count=len(current_ids) if isinstance(current_ids, list) else None,
+            ):
                 with trace.get_tracer("worker").start_as_current_span(
                     "process_job", context=parent
                 ):
