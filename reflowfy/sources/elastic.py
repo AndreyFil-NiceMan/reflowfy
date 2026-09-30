@@ -1,5 +1,6 @@
 """Elasticsearch source with scroll-based pagination."""
 
+from copy import deepcopy
 from math import ceil
 from typing import Any, Dict, Iterator, List, Optional, Tuple, cast
 
@@ -7,6 +8,7 @@ from elasticsearch import Elasticsearch
 from elasticsearch.exceptions import ApiError
 
 from reflowfy.core.types import Records, wrap_as_record
+from reflowfy.observability.logging import get_logger
 from reflowfy.sources.base import BaseSource, SourceError, SourceJob
 
 # The manager opens a PIT while planning; workers search it later, one
@@ -18,10 +20,65 @@ from reflowfy.sources.base import BaseSource, SourceError, SourceJob
 # ApiError(503, 'search_phase_execution_exception') in the worker.
 DEFAULT_PIT_KEEP_ALIVE = "30m"
 
+logger = get_logger(__name__)
+
 
 def _pit_keep_alive(config: Dict[str, Any]) -> str:
     """Read the PIT keep_alive, tolerating job payloads serialized before it existed."""
     return str(config.get("pit_keep_alive") or DEFAULT_PIT_KEEP_ALIVE)
+
+
+def _sub_aggs(spec: Any) -> Dict[str, Any]:
+    """The ``aggs``/``aggregations`` children of one aggregation (or query) body."""
+    if not isinstance(spec, dict):
+        return {}
+    d = cast(Dict[str, Any], spec)
+    return cast(Dict[str, Any], d.get("aggs") or d.get("aggregations") or {})
+
+
+def _find_composites(aggs: Dict[str, Any], prefix: Tuple[str, ...] = ()) -> List[Tuple[str, ...]]:
+    """Name paths to every composite aggregation, at any nesting depth."""
+    found: List[Tuple[str, ...]] = []
+    for name, spec in aggs.items():
+        path = (*prefix, str(name))
+        if isinstance(spec, dict) and "composite" in spec:
+            found.append(path)
+        else:
+            found.extend(_find_composites(_sub_aggs(spec), path))
+    return found
+
+
+def _composite_path(base_query: Any) -> Optional[Tuple[str, ...]]:
+    """Path to the query's composite aggregation, ``None`` if it has none.
+
+    Raises ``SourceError`` for several: each needs its own ``after_key`` paging
+    and they would otherwise be silently dropped after the first.
+    """
+    found = _find_composites(_sub_aggs(base_query))
+    if len(found) > 1:
+        names = ", ".join("/".join(p) for p in found)
+        raise SourceError(
+            "elasticsearch",
+            f"Query has {len(found)} composite aggregations ({names}); "
+            "only one per source is supported — use one source per composite.",
+            None,
+        )
+    return found[0] if found else None
+
+
+def _prune_to_path(aggs: Dict[str, Any], path: Tuple[str, ...]) -> List[str]:
+    """Drop every aggregation not on ``path`` (in place); return the dropped names.
+
+    Siblings are dead weight — their results are never read — and cost the
+    cluster work on every page.
+    """
+    dropped: List[str] = []
+    for name in [n for n in aggs if n != path[0]]:
+        dropped.append(name)
+        del aggs[name]
+    if len(path) > 1:
+        dropped.extend(_prune_to_path(_sub_aggs(aggs[path[0]]), path[1:]))
+    return dropped
 
 
 class ElasticSource(BaseSource):
@@ -116,6 +173,10 @@ class ElasticSource(BaseSource):
 
         client = self._get_client()
 
+        path = _composite_path(resolved_config["base_query"])
+        if path:
+            return self._fetch_composite(client, resolved_config, path, limit)
+
         pit_id = resolved_config.get("pit_id")
         window = resolved_config.get("window")
         if pit_id and window is not None:
@@ -209,13 +270,138 @@ class ElasticSource(BaseSource):
         except ApiError as e:
             raise SourceError("elasticsearch", f"Failed to fetch data: {e}", e)
 
+    def _composite_request(
+        self, resolved: Dict[str, Any], path: Tuple[str, ...], size: Optional[int] = None
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Build the composite search body; return ``(body, composite_spec)``.
+
+        Other aggregations are pruned from the request (their results are never
+        read). The composite's page size is ``size``, else its own, else the
+        source's ``size`` (Elasticsearch would default to 10).
+        """
+        body = deepcopy(resolved["base_query"])
+        # In the body, not as ``size=``: the 8.x client copies kwargs into the
+        # body dict we reuse across pages, so page 2 would send ``size`` twice.
+        body["size"] = 0
+        aggs = _sub_aggs(body)
+        dropped = _prune_to_path(aggs, path)
+        if dropped:
+            logger.info("elastic composite: ignoring non-composite aggregations %s", dropped)
+        node: Dict[str, Any] = aggs
+        for name in path[:-1]:
+            node = _sub_aggs(node[name])
+        composite = node[path[-1]]["composite"]
+        if size:
+            composite["size"] = size
+        else:
+            composite.setdefault("size", resolved["size"])
+        return body, composite
+
+    @staticmethod
+    def _composite_page(
+        client: Any, resolved: Dict[str, Any], body: Dict[str, Any], path: Tuple[str, ...]
+    ) -> Tuple[List[Any], Any]:
+        """Run one composite request; return ``(buckets, after_key)``."""
+        try:
+            raw = client.search(index=resolved["index"], body=body)
+        except ApiError as e:
+            raise SourceError("elasticsearch", f"Failed to fetch data: {e}", e)
+        resp = cast(Dict[str, Any], raw.body if hasattr(raw, "body") else raw)
+        agg: Any = resp.get("aggregations", {})
+        for name in path:
+            if not isinstance(agg, dict) or name not in agg:
+                raise SourceError(
+                    "elasticsearch",
+                    f"Composite aggregation '{'/'.join(path)}' not found in the "
+                    f"response at '{name}'. Only single-bucket parents "
+                    "(filter, nested, global, ...) are supported, not terms/range. "
+                    "Make the parent a source of the composite instead.",
+                    None,
+                )
+            agg = cast(Dict[str, Any], agg)[name]
+        found = cast(Dict[str, Any], agg)
+        return found.get("buckets", []), found.get("after_key")
+
+    def _fetch_composite(
+        self, client: Any, resolved: Dict[str, Any], path: Tuple[str, ...], limit: Optional[int]
+    ) -> Records:
+        """Read a composite aggregation; one record per bucket.
+
+        Buckets live in ``aggregations``, not ``hits``, so the hit-based paths
+        would return nothing (or raw docs) for such a query. The composite may sit
+        under single-bucket parents (``filter``, ``nested``, ...). The top-level
+        hit ``size`` is forced to 0.
+
+        A sub-source planned by ``split()`` carries ``composite_page`` and reads
+        exactly that one page. Otherwise every page is walked via ``after_key``
+        and held in memory — use ``docs_per_job`` to bound that.
+        """
+        page_spec = resolved.get("composite_page")
+        body, composite = self._composite_request(
+            resolved, path, page_spec["size"] if page_spec else None
+        )
+        if page_spec:
+            if page_spec["after"] is not None:
+                composite["after"] = page_spec["after"]
+            buckets, _ = self._composite_page(client, resolved, body, path)
+            paged: Records = [wrap_as_record(b) for b in buckets]
+            return paged[:limit] if limit else paged
+
+        records: Records = []
+        pages = 0
+        while True:
+            buckets, after_key = self._composite_page(client, resolved, body, path)
+            pages += 1
+            records.extend(wrap_as_record(b) for b in buckets)
+            logger.debug("elastic composite page %d: %d buckets", pages, len(buckets))
+            if limit and len(records) >= limit:
+                return records[:limit]
+            if not buckets or not after_key:
+                logger.info(
+                    "elastic composite '%s': %d buckets in %d pages",
+                    "/".join(path),
+                    len(records),
+                    pages,
+                )
+                return records
+            composite["after"] = after_key
+
+    def _split_composite(
+        self, client: Any, resolved: Dict[str, Any], path: Tuple[str, ...], page_size: int
+    ) -> Iterator["ElasticSource"]:
+        """Yield one sub-source per composite page of ``page_size`` buckets.
+
+        The scan keeps only each page's ``after_key`` — sub-aggregations are
+        stripped so it stays cheap — and workers re-read their own page. Jobs
+        are yielded as the scan advances, so neither side holds all buckets.
+        """
+        body, composite = self._composite_request(resolved, path, page_size)
+        node: Dict[str, Any] = _sub_aggs(body)
+        for name in path[:-1]:
+            node = _sub_aggs(node[name])
+        node[path[-1]].pop("aggs", None)
+        node[path[-1]].pop("aggregations", None)
+
+        cursor = composite.get("after")
+        pages = 0
+        while True:
+            buckets, after_key = self._composite_page(client, resolved, body, path)
+            if not buckets:
+                break
+            sub = self._sub_source(resolved)
+            sub.config["composite_page"] = {"after": cursor, "size": page_size}
+            pages += 1
+            yield sub
+            if len(buckets) < page_size or not after_key:
+                break
+            cursor = composite["after"] = after_key
+        logger.info("elastic composite '%s': planned %d jobs", "/".join(path), pages)
+
     def _count_documents(self, client: Any, resolved: Dict[str, Any]) -> int:
         """Return how many documents the base query matches (metadata only)."""
         base_query: Any = resolved.get("base_query") or {}
         query = (
-            cast(Dict[str, Any], base_query).get("query")
-            if isinstance(base_query, dict)
-            else None
+            cast(Dict[str, Any], base_query).get("query") if isinstance(base_query, dict) else None
         )
         body = {"query": query} if query is not None else None
         resp = client.count(index=resolved["index"], body=body)
@@ -241,6 +427,16 @@ class ElasticSource(BaseSource):
         matching no documents yields no jobs. A single job yields ``self``.
         """
         resolved = self.resolve_parameters(runtime_params) or self.config
+        path = _composite_path(resolved["base_query"])
+        if path:
+            if resolved.get("num_slices"):
+                logger.warning("elastic source: num_slices is ignored for composite aggregations")
+            docs_per_job = int(resolved.get("docs_per_job") or 0)
+            if docs_per_job:
+                yield from self._split_composite(self._get_client(), resolved, path, docs_per_job)
+            else:
+                yield self  # one job pages the whole aggregation into memory
+            return
         client = self._get_client()
         count = self._count_documents(client, resolved)
         if count == 0:
