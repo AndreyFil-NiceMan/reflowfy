@@ -19,6 +19,8 @@ _CONTEXT_FIELDS = (
     "job_id",
     "pipeline_name",
     "batch_id",
+    "current_id",
+    "current_ids_count",
     "trace.id",
     "span.id",
     "otelTraceID",

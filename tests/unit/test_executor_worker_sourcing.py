@@ -343,3 +343,44 @@ async def test_v2_payload_survives_kafka_json_wire(monkeypatch):
     assert ok is True
     # datetime arrived at the destination as a JSON-safe string, end to end
     assert captured == [{"ts": str(ts), "n": 1}]
+
+
+async def test_job_logs_carry_current_id_and_ids_count(monkeypatch):
+    """current_id / current_ids_count ride log_context onto every job log line."""
+    import json
+    import logging
+
+    from reflowfy.core.registry import pipeline_registry
+    from reflowfy.observability.logging import ECSJSONFormatter
+
+    monkeypatch.setattr(pipeline_registry, "get", lambda name: _FakePipeline())
+    ex = WorkerExecutor(database_url="postgresql://x/y")
+    monkeypatch.setattr(ex, "_update_job_in_db", _async_noop)
+
+    payload = _static_payload()
+    ids = ["user-42", "u2"]
+    payload["metadata"]["runtime_params"] = {"current_id": "user-42", "current_ids": ids}
+    payload["metadata"]["current_ids"] = ids
+
+    lines = []
+
+    class _H(logging.Handler):
+        def emit(self, record):
+            lines.append(json.loads(ECSJSONFormatter().format(record)))
+
+    handler = _H()
+    logger = logging.getLogger("reflowfy")
+    old_level = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    try:
+        assert await ex.execute_job(payload) is True
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(old_level)
+
+    job_lines = [line for line in lines if line.get("job_id") == "j"]
+    assert job_lines
+    for line in job_lines:
+        assert line["current_id"] == "user-42"
+        assert line["current_ids_count"] == 2
