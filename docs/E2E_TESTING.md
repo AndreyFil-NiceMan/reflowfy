@@ -8,11 +8,12 @@ This guide covers how to run end-to-end tests for the Reflofy framework, includi
 # Run all E2E tests
 ./scripts/run_e2e_tests.sh
 
-# Run only source tests
+# Run one suite (sources | destinations | pipelines | core | dx | schedule)
 ./scripts/run_e2e_tests.sh sources
-
-# Run only destination tests
 ./scripts/run_e2e_tests.sh destinations
+
+# Run all six suites concurrently against one Docker stack
+./scripts/run_e2e_tests.sh --parallel
 ```
 
 This script will:

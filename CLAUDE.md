@@ -17,7 +17,8 @@ uv run pytest tests/unit/test_api_destination.py::TestClassName::test_name -v   
 
 # E2E tests (build wheel, spin up full Docker stack, run, teardown)
 ./scripts/run_e2e_tests.sh                 # all suites
-./scripts/run_e2e_tests.sh sources         # sources | destinations | dx | schedule
+./scripts/run_e2e_tests.sh sources         # sources | destinations | pipelines | core | dx | schedule
+./scripts/run_e2e_tests.sh --parallel      # all six suites concurrently, one Docker stack
 ./scripts/run_e2e_tests.sh --no-docker     # assume services already running
 ./scripts/run_e2e_tests.sh --keep-docker   # leave Docker up after tests
 ./scripts/run_e2e_tests.sh --test-file tests/e2e/test_dlq.py

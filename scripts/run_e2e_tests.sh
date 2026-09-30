@@ -6,16 +6,36 @@
 #
 # Usage:
 #   ./scripts/run_e2e_tests.sh              # Run all E2E tests
-#   ./scripts/run_e2e_tests.sh sources      # Run only source tests
-#   ./scripts/run_e2e_tests.sh destinations # Run only destination tests
-#   ./scripts/run_e2e_tests.sh dx           # Run only Developer Experience tests
-#   ./scripts/run_e2e_tests.sh schedule     # Run only pipeline schedule tests
+#   ./scripts/run_e2e_tests.sh sources      # Source connector tests
+#   ./scripts/run_e2e_tests.sh destinations # Destination connector tests
+#   ./scripts/run_e2e_tests.sh pipelines    # Pipeline hooks (id-based, define_jobs, typed/runtime params, skip_job)
+#   ./scripts/run_e2e_tests.sh core         # Transformations, manager/execution/observability, API routes
+#   ./scripts/run_e2e_tests.sh dx           # CLI + Developer Experience tests
+#   ./scripts/run_e2e_tests.sh schedule     # Scheduling, dedup, DLQ, rate limiting (shared-state tests)
+#   ./scripts/run_e2e_tests.sh --parallel   # Run all six suites concurrently against one Docker stack
 #   ./scripts/run_e2e_tests.sh --no-docker  # Skip services start (assume running)
 #   ./scripts/run_e2e_tests.sh --keep-docker # Keep Docker running after tests finish
 #   ./scripts/run_e2e_tests.sh --test-file tests/e2e/test_runtime_params_flow.py  # Run specific file
 # ==============================================================================
 
 set -e
+
+# Each suite's files, reused by both a single-suite run (Step 4) and
+# --parallel (which fires every suite below at once against one shared
+# Docker stack). Tests within a suite share pipeline names/tables more than
+# tests across suites do, so this grouping is what keeps --parallel safe:
+# "schedule" bundles everything that touches shared mutable state (the rate
+# limiter's token bucket, the dedup content-hash table, the DLQ queue) so
+# those tests never race a sibling suite over the same rows.
+declare -A SUITE_PATHS=(
+    [sources]="tests/e2e/sources/"
+    [destinations]="tests/e2e/destinations/"
+    [pipelines]="tests/e2e/test_id_based_pipeline.py tests/e2e/test_id_based_define_jobs.py tests/e2e/test_define_jobs.py tests/e2e/test_skip_job.py tests/e2e/test_typed_params.py tests/e2e/test_runtime_params_flow.py tests/e2e/test_runtime_params_destination.py tests/e2e/test_decorator_components.py"
+    [core]="tests/e2e/test_advanced_transformations.py tests/e2e/test_transformations.py tests/e2e/test_reflow_manager.py tests/e2e/test_execution_lifecycle.py tests/e2e/test_observability.py tests/e2e/test_elastic_routed_destinations.py tests/e2e/test_concurrent_pipelines.py tests/e2e/test_auto_registration.py tests/e2e/test_api_routes.py"
+    [dx]="tests/e2e/test_cli_test_advanced.py tests/e2e/test_cli_advanced.py tests/e2e/test_cli_deploy.py tests/e2e/test_cli_scaffolding.py tests/e2e/test_cli_test.py tests/e2e/test_cli_build.py tests/e2e/test_cli_run.py tests/e2e/test_cli_check.py tests/e2e/test_dx_improvements.py"
+    [schedule]="tests/e2e/test_schedule.py tests/e2e/test_dlq.py tests/e2e/test_deduplication.py tests/e2e/test_worker_content_dedup.py tests/e2e/test_rate_limiting.py"
+)
+SUITE_ORDER=(sources destinations pipelines core dx schedule)
 
 # Colors for output
 RED='\033[0;31m'
@@ -54,25 +74,17 @@ TEST_SUITE="all"
 TEST_FILE=""
 SKIP_DOCKER=false
 KEEP_DOCKER=false
+PARALLEL=false
 
 prev_arg=""
 for arg in "$@"; do
     case $arg in
-        sources)
-            TEST_SUITE="sources"
+        sources|destinations|pipelines|core|dx|schedule|all)
+            TEST_SUITE="$arg"
             ;;
-        destinations)
-            TEST_SUITE="destinations"
+        --parallel)
+            PARALLEL=true
             ;;
-        dx)
-            TEST_SUITE="dx"
-            ;;
-        schedule)
-            TEST_SUITE="schedule"
-            ;;
-        all)
-             TEST_SUITE="all"
-             ;;
         --no-docker)
             SKIP_DOCKER=true
             ;;
@@ -529,27 +541,34 @@ cd "$PROJECT_ROOT"
 
 if [ -n "$TEST_FILE" ]; then
     pytest "$TEST_FILE" -v --tb=short -ra
+    TEST_EXIT_CODE=$?
+elif [ "$PARALLEL" = true ]; then
+    log_info "Running suites in parallel: ${SUITE_ORDER[*]}"
+    declare -A SUITE_PIDS
+    LOG_DIR=$(mktemp -d)
+    for suite in "${SUITE_ORDER[@]}"; do
+        # shellcheck disable=SC2086 # SUITE_PATHS values are intentionally unquoted path lists
+        pytest ${SUITE_PATHS[$suite]} -v --tb=short -ra >"$LOG_DIR/$suite.log" 2>&1 &
+        SUITE_PIDS[$suite]=$!
+    done
+    TEST_EXIT_CODE=0
+    for suite in "${SUITE_ORDER[@]}"; do
+        if wait "${SUITE_PIDS[$suite]}"; then
+            log_success "[$suite] passed"
+        else
+            log_error "[$suite] failed — see $LOG_DIR/$suite.log"
+            TEST_EXIT_CODE=1
+        fi
+        cat "$LOG_DIR/$suite.log"
+    done
+elif [ "$TEST_SUITE" = "all" ]; then
+    pytest tests/e2e/ -v --tb=short -ra
+    TEST_EXIT_CODE=$?
 else
-    case $TEST_SUITE in
-        sources)
-            pytest tests/e2e/sources/ -v --tb=short
-            ;;
-        destinations)
-            pytest tests/e2e/destinations/ -v --tb=short -ra
-            ;;
-        dx)
-            pytest tests/e2e/test_auto_registration.py tests/e2e/test_decorator_components.py tests/e2e/test_cli_scaffolding.py tests/e2e/test_cli_build.py tests/e2e/test_cli_run.py tests/e2e/test_cli_check.py tests/e2e/test_cli_deploy.py tests/e2e/test_cli_test.py -v --tb=short -ra
-            ;;
-        schedule)
-            pytest tests/e2e/test_schedule.py tests/e2e/test_worker_content_dedup.py -v --tb=short -ra
-            ;;
-        all)
-            pytest tests/e2e/ -v --tb=short -ra
-            ;;
-    esac
+    # shellcheck disable=SC2086 # SUITE_PATHS values are intentionally unquoted path lists
+    pytest ${SUITE_PATHS[$TEST_SUITE]} -v --tb=short -ra
+    TEST_EXIT_CODE=$?
 fi
-
-TEST_EXIT_CODE=$?
 
 if [ $TEST_EXIT_CODE -eq 0 ]; then
     log_success "All E2E tests passed!"
