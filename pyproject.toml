@@ -39,7 +39,7 @@ dependencies = [
     "opentelemetry-instrumentation-fastapi>=0.48b0",
     "opentelemetry-instrumentation-logging>=0.48b0",
     "psycopg2-binary>=2.9.9",
-    "sqlalchemy>=2.0.23",
+    "sqlalchemy>=2.0.23,<2.1",  # 2.1 defaults postgresql:// to psycopg v3, which we do not ship
     "structlog>=23.2.0",
     "tenacity>=8.2.3",
     # Async worker dependencies

@@ -2116,7 +2116,7 @@ requires-dist = [
     { name = "python-on-whales", specifier = ">=0.70.0" },
     { name = "rich", specifier = ">=13.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.6" },
-    { name = "sqlalchemy", specifier = ">=2.0.23" },
+    { name = "sqlalchemy", specifier = ">=2.0.23,<2.1" },
     { name = "structlog", specifier = ">=23.2.0" },
     { name = "tenacity", specifier = ">=8.2.3" },
     { name = "testcontainers", marker = "extra == 'dev'", specifier = ">=3.7.1" },
