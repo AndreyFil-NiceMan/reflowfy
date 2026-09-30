@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS executions (
 CREATE INDEX IF NOT EXISTS idx_executions_pipeline_name ON executions(pipeline_name);
 CREATE INDEX IF NOT EXISTS idx_executions_state ON executions(state);
 CREATE INDEX IF NOT EXISTS idx_executions_created_at ON executions(created_at);
+CREATE INDEX IF NOT EXISTS idx_executions_completed_at ON executions(completed_at) WHERE completed_at IS NOT NULL;
 
 
 -- Rate limit state table
@@ -64,6 +65,10 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE INDEX IF NOT EXISTS idx_jobs_execution_id ON jobs(execution_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_state ON jobs(state);
 CREATE INDEX IF NOT EXISTS idx_jobs_batch_number ON jobs(batch_number);
+
+-- Retention deletes are bulk: vacuum at 2% dead rows instead of the 20% default
+ALTER TABLE jobs SET (autovacuum_vacuum_scale_factor = 0.02, autovacuum_analyze_scale_factor = 0.02);
+ALTER TABLE executions SET (autovacuum_vacuum_scale_factor = 0.02, autovacuum_analyze_scale_factor = 0.02);
 
 
 -- Trigger to update updated_at timestamp on executions

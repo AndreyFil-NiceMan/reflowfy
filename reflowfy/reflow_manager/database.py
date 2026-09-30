@@ -67,6 +67,14 @@ def _apply_column_migrations() -> None:
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS error_traceback TEXT",
         # P1.4 — track how many jobs were skipped by content-hash deduplication
         "ALTER TABLE executions ADD COLUMN IF NOT EXISTS deduplicated_jobs INTEGER DEFAULT 0",
+        # Retention sweeper filters on completed_at; partial index skips unfinished rows
+        "CREATE INDEX IF NOT EXISTS idx_executions_completed_at "
+        "ON executions(completed_at) WHERE completed_at IS NOT NULL",
+        # Bulk retention deletes leave dead tuples; vacuum at 2% instead of the 20% default
+        "ALTER TABLE jobs SET (autovacuum_vacuum_scale_factor = 0.02, "
+        "autovacuum_analyze_scale_factor = 0.02)",
+        "ALTER TABLE executions SET (autovacuum_vacuum_scale_factor = 0.02, "
+        "autovacuum_analyze_scale_factor = 0.02)",
     ]
 
     with engine.begin() as conn:
