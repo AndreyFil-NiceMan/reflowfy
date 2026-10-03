@@ -44,18 +44,18 @@ class TestBuildCommand:
         assert "Registry is required" in result.stdout
 
     def test_warns_when_no_pipelines_directory(self, temp_workspace):
-        """Build should warn when pipelines/ directory is missing."""
+        """Build should warn when src/pipelines/ directory is missing."""
         with patch("reflowfy.cli.commands.build.docker") as mock_docker:
             mock_docker.build = MagicMock()
             result = runner.invoke(
                 app, ["build", "--registry", "registry.test.local", "--no-push"]
             )
-            assert "No 'pipelines/' folder found" in result.stdout
+            assert "No 'src/pipelines/' folder found" in result.stdout
 
     @patch("reflowfy.cli.commands.build.docker")
     def test_build_with_registry_targets_all_images(self, mock_docker, temp_workspace):
         """Build should build all 3 images (api, reflow-manager, worker)."""
-        os.mkdir("pipelines")
+        os.makedirs("src/pipelines")
         mock_docker.build = MagicMock()
         mock_docker.push = MagicMock()
 
@@ -79,7 +79,7 @@ class TestBuildCommand:
     @patch("reflowfy.cli.commands.build.docker")
     def test_build_with_no_cache_flag(self, mock_docker, temp_workspace):
         """Build with --no-cache should pass cache=False to Docker."""
-        os.mkdir("pipelines")
+        os.makedirs("src/pipelines")
         mock_docker.build = MagicMock()
 
         result = runner.invoke(
@@ -94,7 +94,7 @@ class TestBuildCommand:
     @patch("reflowfy.cli.commands.build.docker")
     def test_build_without_push(self, mock_docker, temp_workspace):
         """Build with --no-push should not call docker.push."""
-        os.mkdir("pipelines")
+        os.makedirs("src/pipelines")
         mock_docker.build = MagicMock()
         mock_docker.push = MagicMock()
 
@@ -108,7 +108,7 @@ class TestBuildCommand:
     @patch("reflowfy.cli.commands.build.docker")
     def test_build_with_push(self, mock_docker, temp_workspace):
         """Build with push enabled should call docker.push for each image."""
-        os.mkdir("pipelines")
+        os.makedirs("src/pipelines")
         mock_docker.build = MagicMock()
         mock_docker.push = MagicMock()
 
@@ -122,7 +122,7 @@ class TestBuildCommand:
     @patch("reflowfy.cli.commands.build.docker")
     def test_build_uses_custom_project(self, mock_docker, temp_workspace):
         """Build with --project should use it in image tags."""
-        os.mkdir("pipelines")
+        os.makedirs("src/pipelines")
         mock_docker.build = MagicMock()
 
         result = runner.invoke(

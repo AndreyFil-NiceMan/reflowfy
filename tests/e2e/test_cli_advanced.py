@@ -50,58 +50,58 @@ class TestCliNewAdvanced:
     """Tests for the 'reflowfy new' scaffold command."""
 
     def test_new_transformation_creates_file(self, temp_workspace):
-        """'new transformation my_enrich' should create transformations/my_enrich.py."""
-        os.makedirs("transformations", exist_ok=True)
+        """'new transformation my_enrich' should create src/transformations/my_enrich.py."""
+        os.makedirs("src/transformations", exist_ok=True)
 
         result = runner.invoke(app, ["new", "transformation", "my_enrich"])
 
         assert result.exit_code == 0, result.stdout
-        assert os.path.isfile("transformations/my_enrich.py"), (
-            "Expected transformations/my_enrich.py to be created"
+        assert os.path.isfile("src/transformations/my_enrich.py"), (
+            "Expected src/transformations/my_enrich.py to be created"
         )
-        content = open("transformations/my_enrich.py").read()
+        content = open("src/transformations/my_enrich.py").read()
         assert "MyEnrichTransformation" in content or "my_enrich" in content, (
             f"Expected class name or 'my_enrich' in generated file:\n{content}"
         )
 
     def test_new_transformation_contains_base_class(self, temp_workspace):
         """Generated transformation file should reference BaseTransformation."""
-        os.makedirs("transformations", exist_ok=True)
+        os.makedirs("src/transformations", exist_ok=True)
 
         runner.invoke(app, ["new", "transformation", "data_cleaner"])
 
-        content = open("transformations/data_cleaner.py").read()
+        content = open("src/transformations/data_cleaner.py").read()
         assert "BaseTransformation" in content or "transformation" in content.lower(), (
             f"Expected BaseTransformation reference in generated file:\n{content}"
         )
 
     def test_new_single_word_pipeline_name(self, temp_workspace):
         """'new pipeline users' should create class 'UsersPipeline'."""
-        os.makedirs("pipelines", exist_ok=True)
+        os.makedirs("src/pipelines", exist_ok=True)
 
         result = runner.invoke(app, ["new", "pipeline", "users"])
 
         assert result.exit_code == 0, result.stdout
-        content = open("pipelines/users.py").read()
+        content = open("src/pipelines/users.py").read()
         assert "UsersPipeline" in content, (
             f"Expected 'UsersPipeline' class in generated file:\n{content}"
         )
 
     def test_new_pipeline_name_with_numbers(self, temp_workspace):
         """'new pipeline pipeline_v2' should PascalCase to 'PipelineV2Pipeline'."""
-        os.makedirs("pipelines", exist_ok=True)
+        os.makedirs("src/pipelines", exist_ok=True)
 
         result = runner.invoke(app, ["new", "pipeline", "pipeline_v2"])
 
         assert result.exit_code == 0, result.stdout
-        content = open("pipelines/pipeline_v2.py").read()
+        content = open("src/pipelines/pipeline_v2.py").read()
         assert "PipelineV2Pipeline" in content, (
             f"Expected 'PipelineV2Pipeline' in generated file:\n{content}"
         )
 
     def test_new_duplicate_transformation_exits(self, temp_workspace):
         """Creating the same transformation twice should fail with exit 1."""
-        os.makedirs("transformations", exist_ok=True)
+        os.makedirs("src/transformations", exist_ok=True)
 
         runner.invoke(app, ["new", "transformation", "dup_transform"])
         result = runner.invoke(app, ["new", "transformation", "dup_transform"])
@@ -119,14 +119,14 @@ class TestCliInitAdvanced:
     """Tests for the 'reflowfy init' project initialisation command."""
 
     def test_init_custom_name_creates_correct_class(self, temp_workspace):
-        """'init --name billing_etl' should create pipelines/billing_etl.py with an AbstractPipeline."""
+        """'init --name billing_etl' should create src/pipelines/billing_etl.py with an AbstractPipeline."""
         result = runner.invoke(app, ["init", ".", "--name", "billing_etl"])
 
         assert result.exit_code == 0, result.stdout
-        assert os.path.isfile("pipelines/billing_etl.py"), (
-            "Expected pipelines/billing_etl.py to be created"
+        assert os.path.isfile("src/pipelines/billing_etl.py"), (
+            "Expected src/pipelines/billing_etl.py to be created"
         )
-        content = open("pipelines/billing_etl.py").read()
+        content = open("src/pipelines/billing_etl.py").read()
         assert "AbstractPipeline" in content or "Pipeline" in content, (
             f"Expected pipeline class definition in generated file:\n{content}"
         )
@@ -135,7 +135,7 @@ class TestCliInitAdvanced:
         """init must create all 5 standard directories."""
         runner.invoke(app, ["init", ".", "--name", "test_pipe"])
 
-        for d in ("pipelines", "sources", "destinations", "transformations", "queries"):
+        for d in ("src/pipelines", "src/sources", "src/destinations", "src/transformations", "src/queries"):
             assert os.path.isdir(d), f"Expected directory '{d}' to be created by init"
 
     def test_init_idempotent_does_not_overwrite(self, temp_workspace):
@@ -148,7 +148,7 @@ class TestCliInitAdvanced:
             f"Second 'init' run should succeed (exit 0):\n{result2.stdout}"
         )
         # Directories must still exist after second run
-        for d in ("pipelines", "sources", "destinations", "transformations", "queries"):
+        for d in ("src/pipelines", "src/sources", "src/destinations", "src/transformations", "src/queries"):
             assert os.path.isdir(d), f"Directory '{d}' missing after second init"
 
 
@@ -293,7 +293,7 @@ class TestCliBuildAdvanced:
         """--tag v9.9.9 should appear in all 3 built image tags."""
         mock_docker = MagicMock()
 
-        os.makedirs("pipelines", exist_ok=True)
+        os.makedirs("src/pipelines", exist_ok=True)
 
         with patch("reflowfy.cli.commands.build.docker", mock_docker):
             result = runner.invoke(
@@ -316,7 +316,7 @@ class TestCliBuildAdvanced:
         """--project acme should include 'acme' in the image namespace."""
         mock_docker = MagicMock()
 
-        os.makedirs("pipelines", exist_ok=True)
+        os.makedirs("src/pipelines", exist_ok=True)
 
         with patch("reflowfy.cli.commands.build.docker", mock_docker):
             result = runner.invoke(

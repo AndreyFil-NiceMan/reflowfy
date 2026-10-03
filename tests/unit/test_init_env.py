@@ -25,3 +25,15 @@ def test_init_generates_a_unique_postgres_password(tmp_path: Path) -> None:
 
     assert first and first != "reflowfy", "blank or default password would fail the chart guard"
     assert first != second, "a shared password means it is committed, not generated"
+
+
+def test_init_scaffolds_under_src_and_dockerfiles_copy_it(tmp_path: Path) -> None:
+    result = CliRunner().invoke(app, ["init", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+
+    for folder in ("pipelines", "sources", "destinations", "transformations", "queries"):
+        assert (tmp_path / "src" / folder).is_dir()
+        assert not (tmp_path / folder).exists()
+    for dockerfile in ("api", "reflow-manager", "worker"):
+        text = (tmp_path / f"Dockerfile.{dockerfile}").read_text()
+        assert "COPY src/ src/" in text and "PYTHONPATH=/app/src" in text

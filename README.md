@@ -60,10 +60,12 @@ This generates a standard project structure:
 
 ```text
 my_project/
-├── pipelines/          # Define pipelines here
-├── sources/            # Reusable @source configs
-├── destinations/       # Reusable @destination configs
-├── transformations/    # Reusable @transformation logic
+├── src/
+│   ├── pipelines/      # Define pipelines here
+│   ├── sources/        # Reusable @source configs
+│   ├── destinations/   # Reusable @destination configs
+│   ├── transformations/ # Reusable @transformation logic
+│   └── queries/        # Query templates
 ├── .env
 └── docker-compose.yml
 ```
