@@ -102,6 +102,10 @@ def discover_and_load_pipelines(module_name: Optional[str] = None) -> int:
     cwd = os.getcwd()
     if cwd not in sys.path:
         sys.path.insert(0, cwd)
+    # Projects scaffolded by `reflowfy init` keep their packages under src/
+    src = os.path.join(cwd, "src")
+    if os.path.isdir(src) and src not in sys.path:
+        sys.path.insert(0, src)
 
     total_loaded = 0
 

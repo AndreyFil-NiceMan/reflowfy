@@ -13,14 +13,11 @@ RUN if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.
  && if [ -f pyproject.toml ]; then pip install --no-cache-dir uv && uv pip install --system --no-cache .; fi
 
 # Copy user pipelines and components
-COPY pipelines/ pipelines/
-COPY sources/ sources/
-COPY transformations/ transformations/
-COPY destinations/ destinations/
+COPY src/ src/
 
 # Environment variables
 ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app/src:/app
 ENV API_HOST=0.0.0.0
 ENV API_PORT=8000
 ENV PIPELINE_MODULE=pipelines

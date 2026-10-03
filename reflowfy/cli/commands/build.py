@@ -34,8 +34,8 @@ def _build_images(
 
     build_context = Path(".")
 
-    if not (build_context / "pipelines").exists():
-        console.print("⚠️  No 'pipelines/' folder found in current directory.", style="yellow")
+    if not (build_context / "src" / "pipelines").exists():
+        console.print("⚠️  No 'src/pipelines/' folder found in current directory.", style="yellow")
         console.print(
             "   Make sure you're in your project root or run 'reflowfy init' first.", style="yellow"
         )

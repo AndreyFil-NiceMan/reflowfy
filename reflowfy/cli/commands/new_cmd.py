@@ -20,7 +20,7 @@ def register(app: typer.Typer):
 
         console = Console()
 
-        target = Path("pipelines") / f"{name}.py"
+        target = Path("src") / "pipelines" / f"{name}.py"
         if target.exists():
             console.print(f"⚠️  File already exists: {target}", style="yellow")
             raise typer.Exit(1)
@@ -123,7 +123,7 @@ class {class_name}(AbstractPipeline[{class_name}Params]):
 
         console = Console()
 
-        target = Path("sources") / f"{name}.py"
+        target = Path("src") / "sources" / f"{name}.py"
         if target.exists():
             console.print(f"⚠️  File already exists: {target}", style="yellow")
             raise typer.Exit(1)
@@ -165,7 +165,7 @@ def {name}(**overrides):
 
         console = Console()
 
-        target = Path("destinations") / f"{name}.py"
+        target = Path("src") / "destinations" / f"{name}.py"
         if target.exists():
             console.print(f"⚠️  File already exists: {target}", style="yellow")
             raise typer.Exit(1)
@@ -207,7 +207,7 @@ def {name}(**overrides):
 
         console = Console()
 
-        target = Path("transformations") / f"{name}.py"
+        target = Path("src") / "transformations" / f"{name}.py"
         if target.exists():
             console.print(f"⚠️  File already exists: {target}", style="yellow")
             raise typer.Exit(1)

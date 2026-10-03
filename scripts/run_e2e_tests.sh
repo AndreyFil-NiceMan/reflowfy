@@ -320,7 +320,7 @@ uv run python -m reflowfy.cli.main init . --name e2e_pipeline || {
 }
 
 # Verify files and directories exist
-REQUIRED_DIRS=("pipelines" "sources" "destinations" "transformations" "queries")
+REQUIRED_DIRS=("src/pipelines" "src/sources" "src/destinations" "src/transformations" "src/queries")
 for dir in "${REQUIRED_DIRS[@]}"; do
     if [ ! -d "$dir" ]; then
         log_error "Missing expected directory after init: $dir"
@@ -328,7 +328,7 @@ for dir in "${REQUIRED_DIRS[@]}"; do
     fi
 done
 
-REQUIRED_FILES=("pipelines/e2e_pipeline.py" ".env" "Dockerfile.api" "Dockerfile.reflow-manager" "Dockerfile.worker" "docker-compose.yml" "requirements.txt")
+REQUIRED_FILES=("src/pipelines/e2e_pipeline.py" ".env" "Dockerfile.api" "Dockerfile.reflow-manager" "Dockerfile.worker" "docker-compose.yml" "requirements.txt")
 for file in "${REQUIRED_FILES[@]}"; do
     if [ ! -f "$file" ]; then
         log_error "Missing expected file after init: $file"
@@ -384,13 +384,13 @@ sed -i 's/PIPELINE_MODULE: pipelines/PIPELINE_MODULE: tests.e2e.test_pipelines/g
 # Modify Dockerfiles to also COPY tests folder for E2E pipeline module
 log_info "Adding tests folder to Dockerfiles..."
 for dockerfile in Dockerfile.api Dockerfile.reflow-manager Dockerfile.worker; do
-    # Add COPY tests after COPY pipelines
-    sed -i 's|COPY pipelines/ pipelines/|COPY pipelines/ pipelines/\nCOPY tests/ tests/|' "$dockerfile"
+    # Add COPY tests after COPY src
+    sed -i 's|COPY src/ src/|COPY src/ src/\nCOPY tests/ tests/|' "$dockerfile"
 done
 
 # Copy E2E test pipelines to pipelines/ folder
 log_info "Copying E2E test pipelines..."
-cp -r "$PROJECT_ROOT/tests/e2e/test_pipelines/"* pipelines/ || true
+cp -r "$PROJECT_ROOT/tests/e2e/test_pipelines/"* src/pipelines/ || true
 
 # Copy tests folder for mock servers and test pipelines
 cp -r "$PROJECT_ROOT/tests" .

@@ -30,16 +30,16 @@ def register(app: typer.Typer):
 
         # Create all 4 component directories
         for folder in ["pipelines", "sources", "destinations", "transformations", "queries"]:
-            folder_dir = target_dir / folder
-            folder_dir.mkdir(exist_ok=True)
+            folder_dir = target_dir / "src" / folder
+            folder_dir.mkdir(parents=True, exist_ok=True)
             # Create __init__.py for Python package recognition
             init_file = folder_dir / "__init__.py"
             if not init_file.exists():
                 init_file.write_text("")
-            console.print(f"  ✅ Created {folder}/", style="green")
+            console.print(f"  ✅ Created src/{folder}/", style="green")
 
         # Create sample pipeline
-        pipelines_dir = target_dir / "pipelines"
+        pipelines_dir = target_dir / "src" / "pipelines"
         sample_pipeline = pipelines_dir / f"{name}.py"
         try:
             template_path = get_package_path() / "templates" / "pipeline_template.py"
@@ -66,22 +66,22 @@ class {class_name}(AbstractPipeline):
     def define_transformations(self, records, runtime_params): return []
 ''')
 
-        console.print(f"  ✅ Created pipeline: pipelines/{name}.py", style="green")
+        console.print(f"  ✅ Created pipeline: src/pipelines/{name}.py", style="green")
 
         # Create sample source
-        source_file = target_dir / "sources" / "example_source.py"
+        source_file = target_dir / "src" / "sources" / "example_source.py"
         try:
             template_path = get_package_path() / "templates" / "source_template.py"
             if not template_path.exists():
                 template_path = Path("reflowfy/templates/source_template.py")
             if template_path.exists():
                 source_file.write_text(template_path.read_text())
-                console.print("  ✅ Created source: sources/example_source.py", style="green")
+                console.print("  ✅ Created source: src/sources/example_source.py", style="green")
         except Exception as e:
             console.print(f"  ⚠️ Could not create example source: {e}", style="yellow")
 
         # Create sample destination
-        dest_file = target_dir / "destinations" / "example_destination.py"
+        dest_file = target_dir / "src" / "destinations" / "example_destination.py"
         try:
             template_path = get_package_path() / "templates" / "destination_template.py"
             if not template_path.exists():
@@ -89,13 +89,13 @@ class {class_name}(AbstractPipeline):
             if template_path.exists():
                 dest_file.write_text(template_path.read_text())
                 console.print(
-                    "  ✅ Created destination: destinations/example_destination.py", style="green"
+                    "  ✅ Created destination: src/destinations/example_destination.py", style="green"
                 )
         except Exception as e:
             console.print(f"  ⚠️ Could not create example destination: {e}", style="yellow")
 
         # Create sample transformation
-        transform_file = target_dir / "transformations" / "example_transform.py"
+        transform_file = target_dir / "src" / "transformations" / "example_transform.py"
         try:
             template_path = get_package_path() / "templates" / "transformation_template.py"
             if not template_path.exists():
@@ -103,7 +103,7 @@ class {class_name}(AbstractPipeline):
             if template_path.exists():
                 transform_file.write_text(template_path.read_text())
                 console.print(
-                    "  ✅ Created transformation: transformations/example_transform.py",
+                    "  ✅ Created transformation: src/transformations/example_transform.py",
                     style="green",
                 )
         except Exception as e:
@@ -114,14 +114,14 @@ class {class_name}(AbstractPipeline):
             ("query_template.sql", "example_query.sql"),
             ("query_template.json", "example_query.json"),
         ]:
-            query_file = target_dir / "queries" / out_name
+            query_file = target_dir / "src" / "queries" / out_name
             try:
                 template_path = get_package_path() / "templates" / tpl_name
                 if not template_path.exists():
                     template_path = Path(f"reflowfy/templates/{tpl_name}")
                 if template_path.exists():
                     query_file.write_text(template_path.read_text())
-                    console.print(f"  ✅ Created query: queries/{out_name}", style="green")
+                    console.print(f"  ✅ Created query: src/queries/{out_name}", style="green")
             except Exception as e:
                 console.print(f"  ⚠️ Could not create {out_name}: {e}", style="yellow")
 
@@ -171,16 +171,16 @@ class {class_name}(AbstractPipeline):
 🎉 Project initialized!
 
 Project structure:
-  pipelines/          — Define your data pipelines here
-  sources/            — Reusable source configurations (@source decorator)
-  destinations/       — Reusable destination configurations (@destination decorator)
-  transformations/    — Shared transformations (@transformation decorator)
-  queries/            — Reusable query templates for sources (SQL, Elastic, etc.)
+  src/pipelines/          — Define your data pipelines here
+  src/sources/            — Reusable source configurations (@source decorator)
+  src/destinations/       — Reusable destination configurations (@destination decorator)
+  src/transformations/    — Shared transformations (@transformation decorator)
+  src/queries/            — Reusable query templates for sources (SQL, Elastic, etc.)
 
 Next steps:
   1. cd {target_dir.absolute()}
   2. Edit .env to configure Kafka, Registry, and Database
-  3. Edit pipelines/{name}.py to customize your pipeline
+  3. Edit src/pipelines/{name}.py to customize your pipeline
   4. reflowfy new pipeline|source|destination|transformation <name>
   5. reflowfy test {name} --dry-run   (no Docker, fastest loop)
   6. reflowfy run --build    (run the full stack locally)
