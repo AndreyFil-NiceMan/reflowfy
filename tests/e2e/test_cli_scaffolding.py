@@ -40,32 +40,32 @@ def test_reflowfy_init_creates_directories_and_files(temp_workspace):
     assert result.exit_code == 0
     
     # Verify directories
-    assert os.path.isdir("pipelines")
-    assert os.path.isdir("sources")
-    assert os.path.isdir("destinations")
-    assert os.path.isdir("transformations")
-    assert os.path.isdir("queries")
+    assert os.path.isdir("src/pipelines")
+    assert os.path.isdir("src/sources")
+    assert os.path.isdir("src/destinations")
+    assert os.path.isdir("src/transformations")
+    assert os.path.isdir("src/queries")
     
     # Verify files
-    assert os.path.isfile("pipelines/test_project.py")
-    assert os.path.isfile("sources/example_source.py")
-    assert os.path.isfile("destinations/example_destination.py")
-    assert os.path.isfile("transformations/example_transform.py")
+    assert os.path.isfile("src/pipelines/test_project.py")
+    assert os.path.isfile("src/sources/example_source.py")
+    assert os.path.isfile("src/destinations/example_destination.py")
+    assert os.path.isfile("src/transformations/example_transform.py")
     assert os.path.isfile(".env")
     assert os.path.isfile("docker-compose.yml")
 
 
 def test_reflowfy_new_pipeline(temp_workspace):
     """Verify 'new pipeline' command."""
-    os.mkdir("pipelines")
+    os.makedirs("src/pipelines")
     result = runner.invoke(app, ["new", "pipeline", "my_new_etl"])
     
     assert result.exit_code == 0
-    assert "Created pipeline: pipelines/my_new_etl.py" in result.stdout
-    assert os.path.isfile("pipelines/my_new_etl.py")
+    assert "Created pipeline: src/pipelines/my_new_etl.py" in result.stdout
+    assert os.path.isfile("src/pipelines/my_new_etl.py")
     
     # Verify we can import it (it's valid python)
-    spec = importlib.util.spec_from_file_location("my_new_etl", "pipelines/my_new_etl.py")
+    spec = importlib.util.spec_from_file_location("my_new_etl", "src/pipelines/my_new_etl.py")
     module = importlib.util.module_from_spec(spec)
     sys.modules["my_new_etl"] = module
     
@@ -78,42 +78,42 @@ def test_reflowfy_new_pipeline(temp_workspace):
 
 def test_reflowfy_new_source(temp_workspace):
     """Verify 'new source' command."""
-    os.mkdir("sources")
+    os.makedirs("src/sources")
     result = runner.invoke(app, ["new", "source", "my_custom_api"])
     
     assert result.exit_code == 0
-    assert "Created source: sources/my_custom_api.py" in result.stdout
-    assert os.path.isfile("sources/my_custom_api.py")
+    assert "Created source: src/sources/my_custom_api.py" in result.stdout
+    assert os.path.isfile("src/sources/my_custom_api.py")
     
-    with open("sources/my_custom_api.py") as f:
+    with open("src/sources/my_custom_api.py") as f:
         content = f.read()
         assert '@source("my_custom_api")' in content
 
 
 def test_reflowfy_new_destination(temp_workspace):
     """Verify 'new destination' command."""
-    os.mkdir("destinations")
+    os.makedirs("src/destinations")
     result = runner.invoke(app, ["new", "destination", "my_custom_db"])
     
     assert result.exit_code == 0
-    assert "Created destination: destinations/my_custom_db.py" in result.stdout
-    assert os.path.isfile("destinations/my_custom_db.py")
+    assert "Created destination: src/destinations/my_custom_db.py" in result.stdout
+    assert os.path.isfile("src/destinations/my_custom_db.py")
     
-    with open("destinations/my_custom_db.py") as f:
+    with open("src/destinations/my_custom_db.py") as f:
         content = f.read()
         assert '@destination("my_custom_db")' in content
 
 
 def test_reflowfy_new_transformation(temp_workspace):
     """Verify 'new transformation' command."""
-    os.mkdir("transformations")
+    os.makedirs("src/transformations")
     result = runner.invoke(app, ["new", "transformation", "clean_data"])
     
     assert result.exit_code == 0
-    assert "Created transformation: transformations/clean_data.py" in result.stdout
-    assert os.path.isfile("transformations/clean_data.py")
+    assert "Created transformation: src/transformations/clean_data.py" in result.stdout
+    assert os.path.isfile("src/transformations/clean_data.py")
     
-    with open("transformations/clean_data.py") as f:
+    with open("src/transformations/clean_data.py") as f:
         content = f.read()
         # The template uses a class based approach by default, we look for class name
         assert "class CleanData(BaseTransformation):" in content
@@ -125,12 +125,12 @@ def test_reflowfy_init_with_custom_path(temp_workspace):
     result = runner.invoke(app, ["init", "my_project", "--name", "custom_pipe"])
     
     assert result.exit_code == 0
-    assert os.path.isdir("my_project/pipelines")
-    assert os.path.isdir("my_project/sources")
-    assert os.path.isdir("my_project/destinations")
-    assert os.path.isdir("my_project/transformations")
-    assert os.path.isdir("my_project/queries")
-    assert os.path.isfile("my_project/pipelines/custom_pipe.py")
+    assert os.path.isdir("my_project/src/pipelines")
+    assert os.path.isdir("my_project/src/sources")
+    assert os.path.isdir("my_project/src/destinations")
+    assert os.path.isdir("my_project/src/transformations")
+    assert os.path.isdir("my_project/src/queries")
+    assert os.path.isfile("my_project/src/pipelines/custom_pipe.py")
 
 
 def test_reflowfy_init_idempotency(temp_workspace):
@@ -147,7 +147,7 @@ def test_reflowfy_init_idempotency(temp_workspace):
 
 def test_reflowfy_new_pipeline_rejects_duplicates(temp_workspace):
     """Verify 'new pipeline' rejects creating a file that already exists."""
-    os.mkdir("pipelines")
+    os.makedirs("src/pipelines")
     
     # First creation should succeed
     result1 = runner.invoke(app, ["new", "pipeline", "my_etl"])
@@ -161,13 +161,13 @@ def test_reflowfy_new_pipeline_rejects_duplicates(temp_workspace):
 
 def test_reflowfy_new_multi_word_snake_case(temp_workspace):
     """Verify 'new pipeline' generates correct class name for multi-word names."""
-    os.mkdir("pipelines")
+    os.makedirs("src/pipelines")
     result = runner.invoke(app, ["new", "pipeline", "my_cool_data_pipeline"])
     
     assert result.exit_code == 0
-    assert os.path.isfile("pipelines/my_cool_data_pipeline.py")
+    assert os.path.isfile("src/pipelines/my_cool_data_pipeline.py")
     
-    with open("pipelines/my_cool_data_pipeline.py") as f:
+    with open("src/pipelines/my_cool_data_pipeline.py") as f:
         content = f.read()
         # Class name should be PascalCase; since it already ends with Pipeline,
         # the generator adds Pipeline only if not already present
@@ -176,7 +176,7 @@ def test_reflowfy_new_multi_word_snake_case(temp_workspace):
 
 def test_reflowfy_new_source_rejects_duplicates(temp_workspace):
     """Verify 'new source' rejects creating a file that already exists."""
-    os.mkdir("sources")
+    os.makedirs("src/sources")
     
     result1 = runner.invoke(app, ["new", "source", "my_api"])
     assert result1.exit_code == 0
@@ -188,7 +188,7 @@ def test_reflowfy_new_source_rejects_duplicates(temp_workspace):
 
 def test_reflowfy_new_destination_rejects_duplicates(temp_workspace):
     """Verify 'new destination' rejects creating a file that already exists."""
-    os.mkdir("destinations")
+    os.makedirs("src/destinations")
     
     result1 = runner.invoke(app, ["new", "destination", "my_db"])
     assert result1.exit_code == 0
@@ -200,7 +200,7 @@ def test_reflowfy_new_destination_rejects_duplicates(temp_workspace):
 
 def test_reflowfy_new_transformation_rejects_duplicates(temp_workspace):
     """Verify 'new transformation' rejects creating a file that already exists."""
-    os.mkdir("transformations")
+    os.makedirs("src/transformations")
     
     result1 = runner.invoke(app, ["new", "transformation", "my_transform"])
     assert result1.exit_code == 0
