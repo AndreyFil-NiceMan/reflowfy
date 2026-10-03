@@ -137,6 +137,13 @@ def _create_run_route(
     body_params = [p for p in params if _is_body_param(p)]
     query_params = [p for p in params if not _is_body_param(p)]
 
+    reserved = {"mode", "rate_limit", "body"} & {p.name for p in params}
+    if reserved:
+        raise ValueError(
+            f"Pipeline '{pipeline_name}' declares parameter(s) {sorted(reserved)} that collide "
+            "with the run route's reserved names (mode, rate_limit, body); rename them."
+        )
+
     mode_param = Parameter(
         "mode",
         Parameter.KEYWORD_ONLY,

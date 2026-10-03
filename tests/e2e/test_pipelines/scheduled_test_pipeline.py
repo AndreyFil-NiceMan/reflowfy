@@ -39,7 +39,7 @@ class MultiScheduleParams(RuntimeParams, total=False):
     total_jobs count proves which schedule's params actually reached the run.
     """
 
-    mode: NotRequired[Literal["fast", "full"]]
+    speed: NotRequired[Literal["fast", "full"]]
 
 # Unique per service startup so stale hashes from previous runs never block run 1,
 # but stable within a single service lifetime so run 2 sees run 1's hashes.
@@ -123,12 +123,12 @@ class E2EMultiSchedulePipeline(AbstractPipeline[MultiScheduleParams]):
 
     name = "e2e_multi_schedule_test"
     schedules = [
-        ScheduledRun(name="morning", cron="0 9 1 1 *", params={"mode": "fast"}),
-        ScheduledRun(name="evening", cron="0 17 2 1 *", params={"mode": "full"}),
+        ScheduledRun(name="morning", cron="0 9 1 1 *", params={"speed": "fast"}),
+        ScheduledRun(name="evening", cron="0 17 2 1 *", params={"speed": "full"}),
     ]
 
     def define_source(self, runtime_params: MultiScheduleParams):
-        count = 2 if runtime_params.get("mode") == "fast" else 5
+        count = 2 if runtime_params.get("speed") == "fast" else 5
         return e2e_mock(count=count, batch_size=1)
 
     def define_destination(
@@ -155,12 +155,12 @@ class E2EMultiScheduleFrequentPipeline(AbstractPipeline[MultiScheduleParams]):
 
     name = "e2e_multi_schedule_frequent_test"
     schedules = [
-        ScheduledRun(name="fast", cron="* * * * *", params={"mode": "fast"}),
-        ScheduledRun(name="full", cron="* * * * *", params={"mode": "full"}),
+        ScheduledRun(name="fast", cron="* * * * *", params={"speed": "fast"}),
+        ScheduledRun(name="full", cron="* * * * *", params={"speed": "full"}),
     ]
 
     def define_source(self, runtime_params: MultiScheduleParams):
-        count = 2 if runtime_params.get("mode") == "fast" else 5
+        count = 2 if runtime_params.get("speed") == "fast" else 5
         return e2e_mock(count=count, batch_size=1)
 
     def define_destination(

@@ -457,10 +457,10 @@ class TestMultiSchedulePipeline:
         entries = {e["schedule_name"]: e for e in _get_all_schedules(reflow_client, MULTI_SCHEDULE_PIPELINE)}
 
         assert entries["morning"]["cron_expression"] == "0 9 1 1 *"
-        assert entries["morning"]["runtime_params"] == {"mode": "fast"}
+        assert entries["morning"]["runtime_params"] == {"speed": "fast"}
 
         assert entries["evening"]["cron_expression"] == "0 17 2 1 *"
-        assert entries["evening"]["runtime_params"] == {"mode": "full"}
+        assert entries["evening"]["runtime_params"] == {"speed": "full"}
 
     def test_get_schedule_endpoint_lists_all_named_schedules(self, reflow_client):
         resp = reflow_client.get(f"/schedules/{MULTI_SCHEDULE_PIPELINE}")
@@ -476,7 +476,7 @@ class TestMultiScheduleParamsReachTheFiredExecution:
     The real point of multi-schedule support: each named schedule's stored
     params must actually reach the run the scheduler fires — not just sit in
     the /schedules row. e2e_multi_schedule_frequent_test declares "fast"
-    (params={"mode": "fast"} -> 2 jobs) and "full" (params={"mode": "full"}
+    (params={"speed": "fast"} -> 2 jobs) and "full" (params={"speed": "full"}
     -> 5 jobs) on the same every-minute cron, so a job-count mismatch would
     mean the wrong (or no) params were threaded through.
     """
@@ -511,12 +511,12 @@ class TestMultiScheduleParamsReachTheFiredExecution:
         full_stats = _wait_for_execution(reflow_client, full_execution_id, max_wait=60)
 
         assert fast_stats["total_jobs"] == 2, (
-            f"'fast' schedule (params={{'mode': 'fast'}}) should fire with 2 jobs, "
+            f"'fast' schedule (params={{'speed': 'fast'}}) should fire with 2 jobs, "
             f"got {fast_stats['total_jobs']} — its runtime_params were not threaded "
             "through to the fired execution"
         )
         assert full_stats["total_jobs"] == 5, (
-            f"'full' schedule (params={{'mode': 'full'}}) should fire with 5 jobs, "
+            f"'full' schedule (params={{'speed': 'full'}}) should fire with 5 jobs, "
             f"got {full_stats['total_jobs']} — its runtime_params were not threaded "
             "through to the fired execution"
         )
