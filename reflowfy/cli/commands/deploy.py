@@ -141,6 +141,12 @@ def register(app: typer.Typer):
 
                 # If a custom repository is provided, clear the registry to prevent prepending specific defaults
                 cmd.extend(["--set", "postgresql.image.registry="])
+                # Air-gapped: the TLS copy-certs init container defaults to
+                # bitnami/os-shell on Docker Hub. It only needs sh/cp/chmod, which the
+                # postgres image has, so reuse that image instead of pulling another.
+                cmd.extend(["--set", f"postgresql.volumePermissions.image.repository={repo}"])
+                cmd.extend(["--set", f"postgresql.volumePermissions.image.tag={tag}"])
+                cmd.extend(["--set", "postgresql.volumePermissions.image.registry="])
                 # Enable insecure images to bypass Bitnami's check for unrecognized images
                 cmd.extend(["--set", "global.security.allowInsecureImages=true"])
 
