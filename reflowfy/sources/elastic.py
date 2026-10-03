@@ -7,7 +7,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple, cast
 from elasticsearch import Elasticsearch
 from elasticsearch.exceptions import ApiError
 
-from reflowfy.core.types import Records, wrap_as_record
+from reflowfy.core.types import Record, Records, wrap_as_record
 from reflowfy.observability.logging import get_logger
 from reflowfy.sources.base import BaseSource, SourceError, SourceJob
 
@@ -26,6 +26,18 @@ logger = get_logger(__name__)
 def _pit_keep_alive(config: Dict[str, Any]) -> str:
     """Read the PIT keep_alive, tolerating job payloads serialized before it existed."""
     return str(config.get("pit_keep_alive") or DEFAULT_PIT_KEEP_ALIVE)
+
+
+def _hit_record(hit: Dict[str, Any]) -> Record:
+    """One search hit as a record: ``{"data": _source}``, plus ``fields`` if present.
+
+    ``script_fields`` / ``fields`` / ``stored_fields`` come back in ``hit["fields"]``,
+    and with ``_source: false`` (or ``script_fields`` alone) there is no ``_source``.
+    """
+    record = wrap_as_record(hit.get("_source", {}))
+    if "fields" in hit:
+        record["fields"] = hit["fields"]
+    return record
 
 
 def _sub_aggs(spec: Any) -> Dict[str, Any]:
@@ -177,6 +189,9 @@ class ElasticSource(BaseSource):
         if path:
             return self._fetch_composite(client, resolved_config, path, limit)
 
+        if "search_after" in resolved_config["base_query"] and not resolved_config.get("pit_id"):
+            return self._fetch_search_after(client, resolved_config, limit)
+
         pit_id = resolved_config.get("pit_id")
         window = resolved_config.get("window")
         if pit_id and window is not None:
@@ -202,7 +217,7 @@ class ElasticSource(BaseSource):
                     hits = page["hits"]["hits"]
                     if not hits:
                         break
-                    out.extend(wrap_as_record(h["_source"]) for h in hits)
+                    out.extend(_hit_record(h) for h in hits)
                     search_after = hits[-1]["sort"]
                     if limit and len(out) >= limit:
                         return out[:limit]
@@ -228,7 +243,7 @@ class ElasticSource(BaseSource):
                     hits = resp["hits"]["hits"]
                     if not hits:
                         break
-                    records.extend(wrap_as_record(h["_source"]) for h in hits)
+                    records.extend(_hit_record(h) for h in hits)
                     search_after = hits[-1]["sort"]
                     if limit and len(records) >= limit:
                         return records[:limit]
@@ -255,7 +270,7 @@ class ElasticSource(BaseSource):
 
             records = []
             while hits:
-                records.extend(wrap_as_record(hit["_source"]) for hit in hits)
+                records.extend(_hit_record(hit) for hit in hits)
                 if limit and len(records) >= limit:
                     records = records[:limit]
                     break
@@ -267,6 +282,41 @@ class ElasticSource(BaseSource):
             client.clear_scroll(scroll_id=scroll_id)
             return records
 
+        except ApiError as e:
+            raise SourceError("elasticsearch", f"Failed to fetch data: {e}", e)
+
+    def _fetch_search_after(
+        self, client: Any, resolved: Dict[str, Any], limit: Optional[int]
+    ) -> Records:
+        """Page a query that brings its own ``search_after`` cursor.
+
+        Elasticsearch rejects ``search_after`` inside a scroll, so the default
+        scroll path can't serve it. Resume from the given cursor and keep going
+        with the last hit's ``sort`` until a page comes back empty.
+
+        ponytail: no PIT, so the caller's ``sort`` must end in a unique
+        tiebreaker (e.g. ``_doc`` or an id) or ties can repeat/skip across pages.
+        """
+        body = deepcopy(resolved["base_query"])
+        if not body.get("sort"):
+            raise SourceError(
+                "elasticsearch",
+                "'search_after' needs a 'sort' in the query; it is the cursor's key.",
+                None,
+            )
+        body["size"] = min(limit, resolved["size"]) if limit else resolved["size"]
+        records: Records = []
+        try:
+            while True:
+                raw = client.search(index=resolved["index"], body=body)
+                page = cast(Dict[str, Any], raw.body if hasattr(raw, "body") else raw)
+                hits = page["hits"]["hits"]
+                if not hits:
+                    return records
+                records.extend(_hit_record(h) for h in hits)
+                if limit and len(records) >= limit:
+                    return records[:limit]
+                body["search_after"] = hits[-1]["sort"]
         except ApiError as e:
             raise SourceError("elasticsearch", f"Failed to fetch data: {e}", e)
 
@@ -429,7 +479,7 @@ class ElasticSource(BaseSource):
         resolved = self.resolve_parameters(runtime_params) or self.config
         path = _composite_path(resolved["base_query"])
         if path:
-            if resolved.get("num_slices"):
+            if int(resolved.get("num_slices") or 1) > 1:
                 logger.warning("elastic source: num_slices is ignored for composite aggregations")
             docs_per_job = int(resolved.get("docs_per_job") or 0)
             if docs_per_job:
@@ -578,7 +628,7 @@ class ElasticSource(BaseSource):
 
             while hits:
                 # Extract source documents
-                records = [wrap_as_record(hit["_source"]) for hit in hits]
+                records = [_hit_record(hit) for hit in hits]
 
                 yield SourceJob(
                     records=records,
