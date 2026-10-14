@@ -472,12 +472,16 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
 
     Attributes:
         name: Unique pipeline identifier (must be set by subclass)
+        description: Optional description shown in the Swagger UI
         rate_limit: Optional rate limit in jobs per minute (e.g., 50)
         config: Additional pipeline-specific configuration
     """
 
     # Must be set by concrete subclass
     name: str = ""
+
+    # Optional human-readable description, shown in the Swagger UI
+    description: str = ""
 
     # Optional rate limit in jobs per minute (overridable per-request via define_rate_limit)
     rate_limit: Optional[float] = None
