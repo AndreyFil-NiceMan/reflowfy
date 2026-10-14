@@ -5,6 +5,7 @@
 import asyncio
 import json
 import logging
+import os
 from typing import Any, List, Optional, Union
 
 from aiokafka import AIOKafkaConsumer
@@ -79,6 +80,10 @@ class KafkaJobConsumer:
             "enable_auto_commit": False,  # Manual commit for reliability
             "retry_backoff_ms": 500,
             "metadata_max_age_ms": 30000,
+            # A job is processed inline between polls, so one big job must fit in this
+            # window or the broker evicts us from the group. Default 5 min is too short.
+            "max_poll_interval_ms": int(os.getenv("KAFKA_MAX_POLL_INTERVAL_MS", "3600000")),
+            "max_poll_records": 1,
         }
 
         # Add SASL config if credentials provided
