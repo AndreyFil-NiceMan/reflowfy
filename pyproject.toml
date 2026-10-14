@@ -49,7 +49,7 @@ dependencies = [
     # typing's own versions get __required_keys__ wrong there, and the derived
     # define_parameters() depends on it.
     "typing-extensions>=4.13",
-    "asyncpg>=0.29.0",
+    "asyncpg>=0.29.0,<0.32",  # 0.32.0 failed to install on cp311 for a user (wheel tag mismatch)
     "croniter>=1.4.0",
     "nest_asyncio>=1.5.0",
     # CLI dependencies
