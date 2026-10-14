@@ -153,7 +153,7 @@ def _create_run_route(
     rate_limit_param = Parameter(
         "rate_limit",
         Parameter.KEYWORD_ONLY,
-        default=Query(None, description="Override rate limit (jobs per minute)"),
+        default=Query(None, description=_rate_limit_description(pipeline)),
         annotation=float,
     )
     sig_params = [mode_param, rate_limit_param]
@@ -212,13 +212,23 @@ def _create_run_route(
         response_model=PipelineRunResponse,
         tags=["pipelines"],
         summary=f"Run {pipeline_name}",
-        description=f"Execute {pipeline_name}. Use mode='local' for testing, 'distributed' for production.",
+        description=(
+            (f"{pipeline.description}\n\n" if pipeline.description else "")
+            + f"Execute {pipeline_name}. Use mode='local' for testing, 'distributed' for production."
+        ),
     )(run_pipeline)
 
     body_str = ("body: " + ", ".join(p.name for p in body_params)) if body_params else "no body"
     query_str = "&".join(p.name + "=..." for p in query_params)
     full_query = "?mode=distributed&rate_limit=..." + (f"&{query_str}" if query_str else "")
     logger.debug("Registered POST /pipelines/%s/run%s [%s]", pipeline_name, full_query, body_str)
+
+
+def _rate_limit_description(pipeline: Any) -> str:
+    text = "Override rate limit (jobs per minute)."
+    if pipeline.rate_limit:
+        text += f" Pipeline default: {pipeline.rate_limit:g}; leave empty to use it."
+    return text
 
 
 def create_pipeline_routes(
@@ -246,11 +256,13 @@ def create_pipeline_routes(
         f"/pipelines/{pipeline_name}/status",
         tags=["pipelines"],
         summary=f"Get {pipeline_name} info",
+        description=pipeline.description or None,
     )
     async def get_pipeline_status():
         """Get pipeline configuration and metadata."""
         return {
             "name": pipeline.name,
+            "description": pipeline.description,
             "transformations": pipeline.get_transformation_names(),
             "runtime_parameters": pipeline.get_runtime_parameters(),
             "rate_limit": pipeline.rate_limit,

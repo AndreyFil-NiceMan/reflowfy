@@ -74,6 +74,7 @@ class {class_name}(AbstractPipeline[{class_name}Params]):
     """{class_name} pipeline."""
 
     name = "{name}"
+    description = ""  # shown in the Swagger UI
     rate_limit = 3000  # jobs per minute
 
     # define_parameters() is derived from {class_name}Params. Override it to
