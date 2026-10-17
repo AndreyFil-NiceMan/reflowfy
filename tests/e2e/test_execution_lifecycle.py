@@ -272,3 +272,52 @@ class TestExecutionStatsProgress:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# ============================================================================
+# Test: Retry failed jobs
+# ============================================================================
+
+class TestRetryFailed:
+    """Tests for POST /executions/{id}/retry-failed."""
+
+    def test_retry_requeues_failed_jobs_and_runs_them_again(self, client):
+        """error_pipeline_test always fails: a retry must re-run the failed jobs
+        (they fail again, so the execution ends failed a second time)."""
+        response = client.post("/run", json={"pipeline_name": "error_pipeline_test"})
+        if response.status_code == 404:
+            pytest.skip("error_pipeline_test pipeline not registered")
+        assert response.status_code == 202
+        execution_id = response.json()["execution_id"]
+        _wait_for_state(client, execution_id, "failed", max_wait=60)
+        first = client.get(f"/executions/{execution_id}/stats").json()
+        assert first["jobs_failed"] >= 1
+
+        retry = client.post(f"/executions/{execution_id}/retry-failed")
+
+        assert retry.status_code == 200
+        assert retry.json()["requeued"] == first["jobs_failed"]
+        # the jobs run again to a terminal state; each was claimed once more
+        _wait_for_state(client, execution_id, "failed", max_wait=60)
+        again = client.get(f"/executions/{execution_id}/jobs").json()
+        again_jobs = again["jobs"] if isinstance(again, dict) else again
+        assert again_jobs and all(j["state"] == "failed" for j in again_jobs)
+        assert all(j["attempts"] >= 1 for j in again_jobs)
+
+    def test_retry_with_filter_matching_nothing_requeues_nothing(self, client):
+        response = client.post("/run", json={"pipeline_name": "error_pipeline_test"})
+        if response.status_code == 404:
+            pytest.skip("error_pipeline_test pipeline not registered")
+        execution_id = response.json()["execution_id"]
+        _wait_for_state(client, execution_id, "failed", max_wait=60)
+
+        retry = client.post(
+            f"/executions/{execution_id}/retry-failed", params={"error_contains": "no such text"}
+        )
+
+        assert retry.status_code == 200
+        assert retry.json()["requeued"] == 0
+
+    def test_retry_unknown_execution_is_404(self, client):
+        response = client.post(f"/executions/{uuid.uuid4()}/retry-failed")
+        assert response.status_code == 404

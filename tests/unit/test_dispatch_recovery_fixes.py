@@ -474,3 +474,103 @@ def test_release_drivers_on_host_frees_only_that_hosts_leases(db):
     db.expire_all()
     owners = {e.execution_id: e.driver_id for e in db.query(Execution).all()}
     assert owners == {"e": None, "e2": "pod-b:7:ef01"}
+
+
+# ----- worker heartbeat ----------------------------------------------------------
+
+
+@pytest.mark.real_claim
+async def test_heartbeat_refreshes_updated_at_only_while_running(tmp_path, monkeypatch):
+    """A running job's updated_at is refreshed so the manager's running lease does
+    not expire on a job that is merely long."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    monkeypatch.setenv("JOB_HEARTBEAT_SECONDS", "0.05")
+    url = f"sqlite+aiosqlite:///{tmp_path}/hb.db"
+    engine = create_async_engine(url)
+    old = _now() - timedelta(hours=1)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(
+            Execution.__table__.insert().values(
+                execution_id="e", pipeline_name="p", state="running",
+                created_at=old, updated_at=old,
+            )
+        )
+        for job_id, state in (("run", "running"), ("done", "completed")):
+            await conn.execute(
+                Job.__table__.insert().values(
+                    job_id=job_id, execution_id="e", job_payload={}, state=state,
+                    attempts=1, created_at=old, updated_at=old,
+                )
+            )
+    await engine.dispose()
+
+    ex = WorkerExecutor(database_url=url)
+    try:
+        beats = [asyncio.create_task(ex._heartbeat_job(j)) for j in ("run", "done")]
+        await asyncio.sleep(0.4)
+        for beat in beats:
+            beat.cancel()
+    finally:
+        await ex.close()
+
+    check = create_async_engine(url)
+    async with check.connect() as conn:
+        rows = {r.job_id: r.updated_at for r in (await conn.execute(Job.__table__.select()))}
+    await check.dispose()
+    assert rows["run"] > _now() - timedelta(minutes=1)  # refreshed
+    assert rows["done"] == old  # a finished job is left alone
+
+
+def test_a_beating_job_survives_the_running_lease(db):
+    """The manager side of the contract: a fresh updated_at keeps a running job."""
+    beating = _add_jobs(db, 1, state="running", updated_at=_now(), attempts=1)
+    silent = _add_jobs(db, 1, state="running", updated_at=_now() - timedelta(minutes=10), attempts=1)
+
+    result = JobManager(db).reclaim_expired_leases(
+        "e", running_lease_seconds=300, dispatch_lease_seconds=3600, max_attempts=3
+    )
+
+    assert result["requeued_running"] == 1
+    states = _states(db)
+    assert states[beating[0]] == "running"
+    assert states[silent[0]] == "pending"
+
+
+# ----- retry failed jobs ---------------------------------------------------------
+
+
+def test_requeue_failed_resets_jobs_and_filters_by_error(db):
+    a = _add_jobs(db, 1, state="failed", attempts=3, error_message="No search context found")
+    b = _add_jobs(db, 1, state="failed", attempts=3, error_message="Destination health check failed")
+    ok = _add_jobs(db, 1, state="completed")
+    jm = JobManager(db)
+
+    assert jm.requeue_failed("e", error_contains="search context") == 1
+    states = _states(db)
+    assert (states[a[0]], states[b[0]], states[ok[0]]) == ("pending", "failed", "completed")
+    db.expire_all()
+    job = db.query(Job).filter(Job.job_id == a[0]).one()
+    assert (job.attempts, job.error_message, job.completed_at) == (0, None, None)
+
+    assert jm.requeue_failed("e") == 1  # no filter: the rest
+    assert _states(db)[b[0]] == "pending"
+    assert jm.requeue_failed("e") == 0
+
+
+def test_retry_failed_then_drive_loop_finishes_the_execution(db):
+    """A failed execution, retried, runs its failed jobs and ends completed."""
+    _add_jobs(db, 2, state="completed")
+    _add_jobs(db, 3, state="failed", attempts=1, error_message="boom")
+    ExecutionManager(db).update_execution_state("e", "failed", error_message="1 failed")
+    assert JobManager(db).requeue_failed("e") == 3
+    execution = ExecutionManager(db).reopen_execution("e")
+    assert execution is not None and execution.state == "running"
+    assert execution.completed_at is None and execution.error_message is None
+
+    _runner(db, _FakeDispatcher(db))._drive_execution("e", "p", None)
+
+    assert set(_states(db).values()) == {"completed"}
+    db.expire_all()
+    assert db.query(Execution).one().state == "completed"

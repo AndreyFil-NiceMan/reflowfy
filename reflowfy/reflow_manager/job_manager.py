@@ -90,6 +90,34 @@ class JobManager:
         )
         self.db.commit()
 
+    def requeue_failed(self, execution_id: str, error_contains: Optional[str] = None) -> int:
+        """Put an execution's failed jobs back in the queue for another go.
+
+        Resets attempts, so a retry gets the full JOB_MAX_ATTEMPTS, and clears the
+        recorded error. ``error_contains`` limits it to jobs whose error message
+        contains that text (e.g. retry only the ``No search context`` failures).
+
+        Returns:
+            Number of jobs requeued.
+        """
+        query = self.db.query(Job).filter(Job.execution_id == execution_id, Job.state == "failed")
+        if error_contains:
+            query = query.filter(Job.error_message.contains(error_contains))
+        requeued = query.update(
+            {
+                "state": "pending",
+                "attempts": 0,
+                "error_message": None,
+                "error_traceback": None,
+                "completed_at": None,
+                "stats": None,
+                "updated_at": datetime.now(timezone.utc).replace(tzinfo=None),
+            },
+            synchronize_session=False,
+        )
+        self.db.commit()
+        return requeued
+
     def reclaim_expired_leases(
         self,
         execution_id: str,

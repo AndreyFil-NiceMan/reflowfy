@@ -202,6 +202,7 @@ class WorkerExecutor:
         # log_context() the caller entered — no need to pass them per call.
         claimed_content_hash = None
         destination = None
+        heartbeat: Optional["asyncio.Task[None]"] = None
 
         try:
             # Claim the job before doing any work. Kafka redelivers after a rebalance or
@@ -216,6 +217,11 @@ class WorkerExecutor:
                 stats.success = True
                 stats.end_time = time.time()
                 return True  # job row belongs to the delivery that claimed it
+
+            # Prove liveness while the job runs, so the manager's running lease can be
+            # short (a dead worker is noticed in minutes) without re-running a job that
+            # is merely long.
+            heartbeat = asyncio.create_task(self._heartbeat_job(job_id))
 
             metadata = job_payload.get("metadata", {})
             source_descriptor: Dict[str, Any] = job_payload.get("source") or {}
@@ -274,15 +280,25 @@ class WorkerExecutor:
             dedup_check = bool(job_payload.get("dedup_check", False))
             if dedup_check:
                 transformation_names = [step.name for step in applied]
+                job_params = job_payload.get("job_params") or None
                 content_hash = compute_content_hash(
                     _pipeline_name,
                     transformation_names,
                     records,
-                    job_payload.get("job_params") or None,
+                    job_params,
                     destination_identity(destination),
                 )
+                # Claims made before destinations joined the hash are keyed without one.
+                legacy_hash = compute_content_hash(
+                    _pipeline_name, transformation_names, records, job_params
+                )
                 won = await claim_content_hash(
-                    self._async_session, content_hash, _pipeline_name, job_id, execution_id
+                    self._async_session,
+                    content_hash,
+                    _pipeline_name,
+                    job_id,
+                    execution_id,
+                    legacy_hash=legacy_hash,
                 )
                 if not won:
                     logger.info("Job %s: content already processed — deduplicated", job_id)
@@ -364,6 +380,8 @@ class WorkerExecutor:
             raise
 
         finally:
+            if heartbeat is not None:
+                heartbeat.cancel()
             # Always release the per-job destination's resources (e.g. the
             # Kafka producer started during health_check/send). Without this,
             # every job leaks a broker connection and a background sender task.
@@ -372,6 +390,29 @@ class WorkerExecutor:
                     await destination.close()
                 except Exception as close_err:
                     logger.warning("Job %s: failed to close destination: %s", job_id, close_err)
+
+    async def _heartbeat_job(self, job_id: str) -> None:
+        """Refresh the running job's ``updated_at`` every JOB_HEARTBEAT_SECONDS.
+
+        The manager requeues a ``running`` job whose ``updated_at`` is older than its
+        running lease; this keeps a live job from looking dead. A failed beat is
+        logged and retried — never raised into the job.
+        """
+        from sqlalchemy import update
+
+        interval = float(os.getenv("JOB_HEARTBEAT_SECONDS", "30"))
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                async with self._async_session() as db:
+                    await db.execute(
+                        update(Job)
+                        .where(Job.job_id == job_id, Job.state == "running")
+                        .values(updated_at=datetime.now(timezone.utc).replace(tzinfo=None))
+                    )
+                    await db.commit()
+            except Exception:
+                logger.warning("Job %s: heartbeat failed; will retry", job_id, exc_info=True)
 
     async def _claim_job(self, job_id: str) -> Optional[str]:
         """Claim a job for this delivery: pending/dispatched -> running, attempts + 1.

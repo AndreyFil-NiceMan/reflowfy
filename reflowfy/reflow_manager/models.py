@@ -152,6 +152,7 @@ class Job(Base):
             "job_payload": self.job_payload,
             "state": self.state,
             "batch_number": self.batch_number,
+            "attempts": self.attempts,
             "processed_records": self.processed_records,
             "error_message": self.error_message,
             "error_traceback": self.error_traceback,

@@ -118,3 +118,41 @@ async def test_same_job_reclaims_its_own_hash(session_factory):
     # claim never released (SIGKILL) — the lease re-dispatch runs job1 again
     assert await claim_content_hash(session_factory, "h4", "pipe", "job1", "ex1") is True
     assert await claim_content_hash(session_factory, "h4", "pipe", "job2", "ex1") is False
+
+
+async def test_legacy_claim_blocks_other_jobs_during_transition(session_factory, monkeypatch):
+    """A claim recorded before destinations joined the hash still counts, so an
+    upgrade does not rewrite everything the previous version already wrote."""
+    legacy = "legacy-h"
+    assert await claim_content_hash(session_factory, legacy, "pipe", "old-job", "ex0") is True
+
+    # same content, new-style hash (destination included): blocked by the legacy claim
+    assert (
+        await claim_content_hash(
+            session_factory, "new-h", "pipe", "job1", "ex1", legacy_hash=legacy
+        )
+        is False
+    )
+    # nothing was claimed under the new hash
+    assert await claim_content_hash(session_factory, "new-h", "pipe", "job2", "ex1") is True
+
+
+async def test_legacy_claim_by_same_job_does_not_block(session_factory):
+    legacy = "legacy-h2"
+    assert await claim_content_hash(session_factory, legacy, "pipe", "job1", "ex") is True
+    assert (
+        await claim_content_hash(session_factory, "new-h2", "pipe", "job1", "ex", legacy_hash=legacy)
+        is True
+    )
+
+
+async def test_legacy_claims_can_be_switched_off(session_factory, monkeypatch):
+    monkeypatch.setenv("DEDUP_HONOR_LEGACY_HASH", "false")
+    legacy = "legacy-h3"
+    assert await claim_content_hash(session_factory, legacy, "pipe", "old-job", "ex0") is True
+    assert (
+        await claim_content_hash(
+            session_factory, "new-h3", "pipe", "job1", "ex1", legacy_hash=legacy
+        )
+        is True
+    )

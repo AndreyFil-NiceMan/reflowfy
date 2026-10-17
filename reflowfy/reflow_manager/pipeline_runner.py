@@ -42,9 +42,9 @@ MAX_IN_FLIGHT_JOBS = int(os.getenv("MAX_IN_FLIGHT_JOBS", "1000"))
 # JOB_MAX_ATTEMPTS claims. A job dispatched but never claimed after the dispatch
 # lease lost its message and is sent again. The worker-side claim makes the
 # duplicate message harmless.
-# ponytail: no worker heartbeat — the running lease must exceed the longest job,
-# or a slow-but-alive job is re-run. Add a heartbeat if jobs approach it.
-JOB_RUNNING_LEASE_SECONDS = float(os.getenv("JOB_RUNNING_LEASE_SECONDS", "1800"))
+# The worker refreshes a running job's updated_at every JOB_HEARTBEAT_SECONDS (30),
+# so the running lease only has to exceed a few missed beats, not the longest job.
+JOB_RUNNING_LEASE_SECONDS = float(os.getenv("JOB_RUNNING_LEASE_SECONDS", "300"))
 JOB_DISPATCH_LEASE_SECONDS = float(os.getenv("JOB_DISPATCH_LEASE_SECONDS", "3600"))
 JOB_MAX_ATTEMPTS = int(os.getenv("JOB_MAX_ATTEMPTS", "3"))
 LEASE_CHECK_INTERVAL = 60.0  # seconds between lease sweeps
