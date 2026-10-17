@@ -146,6 +146,9 @@ reflowManager:
 worker:
   enabled: true
   replicaCount: 1
+  # On SIGTERM a worker finishes its current job before exiting; a job longer than
+  # this is killed and re-run once its running lease expires.
+  terminationGracePeriodSeconds: 120
   image:
     repository: image-registry.openshift-image-registry.svc:5000/kofli-dev/reflowfy-worker
     tag: 'latest'

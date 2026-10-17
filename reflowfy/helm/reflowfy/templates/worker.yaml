@@ -33,7 +33,7 @@ spec:
       securityContext:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      terminationGracePeriodSeconds: 30
+      terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds | default 120 }}
       initContainers:
         - name: wait-for-dependencies
           image: {{ .Values.busybox.image }}

@@ -148,6 +148,18 @@ class ExecutionManager:
 
         return self.update_execution_state(execution_id, "running")
 
+    def reopen_execution(self, execution_id: str) -> Optional[Execution]:
+        """Move a settled execution back to running so its dispatch loop can resume it."""
+        execution = self.get_execution(execution_id)
+        if not execution:
+            return None
+        execution.state = "running"
+        execution.completed_at = None
+        execution.error_message = None
+        self.db.commit()
+        self.db.refresh(execution)
+        return execution
+
     def claim_driver(self, execution_id: str, driver_id: str, lease_seconds: float) -> bool:
         """Take ownership of dispatching this execution. True if this driver owns it.
 

@@ -6,6 +6,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple, cast
 
 from elasticsearch import Elasticsearch
 from elasticsearch.exceptions import ApiError
+from elastic_transport import TransportError
 
 from reflowfy.core.types import Record, Records, wrap_as_record
 from reflowfy.observability.logging import get_logger
@@ -22,12 +23,61 @@ from reflowfy.sources.base import BaseSource, SourceError, SourceJob
 # the PIT: every remaining job fails with "No search context found".
 DEFAULT_PIT_KEEP_ALIVE = "30m"
 
+# Lifetime of the PIT a range-mode job opens for itself. It only has to span the
+# paging of one job (seconds to minutes), and is refreshed by every page.
+RANGE_JOB_PIT_KEEP_ALIVE = "5m"
+
+WINDOW_SNAPSHOT = "snapshot"
+WINDOW_RANGE = "range"
+
 logger = get_logger(__name__)
 
 
 def _pit_keep_alive(config: Dict[str, Any]) -> str:
     """Read the PIT keep_alive, tolerating job payloads serialized before it existed."""
     return str(config.get("pit_keep_alive") or DEFAULT_PIT_KEEP_ALIVE)
+
+
+def _first_sort_key(base_query: Dict[str, Any]) -> Tuple[str, str]:
+    """``(field, "asc"|"desc")`` of the query's first sort key, for range windows.
+
+    Range windows cut the result set by value of this key, so it must be a real field.
+    ``_shard_doc`` / ``_doc`` / ``_score`` (and no sort at all) order documents in
+    a way a later query cannot reproduce, so they cannot define a window.
+    """
+    sort: Any = base_query.get("sort")
+    first: Any = sort
+    if isinstance(sort, list) and sort:
+        first = cast(List[Any], sort)[0]
+    field: Optional[str] = None
+    order = "asc"
+    if isinstance(first, str):
+        field = first
+    elif isinstance(first, dict) and len(first) == 1:  # pyright: ignore[reportUnknownArgumentType]
+        spec = cast(Dict[str, Any], first)
+        field, opts = next(iter(spec.items()))
+        if isinstance(opts, str):
+            order = opts
+        elif isinstance(opts, dict):
+            order = str(cast(Dict[str, Any], opts).get("order", "asc"))
+    if not field or field in ("_shard_doc", "_doc", "_score") or order not in ("asc", "desc"):
+        raise SourceError(
+            "elasticsearch",
+            'window_mode="range" needs base_query["sort"] to start with a field, e.g. '
+            '[{"@timestamp": "asc"}] — the windows are ranges of that field',
+            None,
+        )
+    return field, order
+
+
+def _range_clause(field: str, order: str, after: Any, upto: Any) -> Dict[str, Any]:
+    """The ES ``range`` filter for the window ``(after, upto]`` in sort order."""
+    bounds: Dict[str, Any] = {}
+    if after is not None:
+        bounds["gt" if order == "asc" else "lt"] = after
+    if upto is not None:
+        bounds["lte" if order == "asc" else "gte"] = upto
+    return {"range": {field: bounds}}
 
 
 def _hit_record(hit: Dict[str, Any]) -> Record:
@@ -194,8 +244,11 @@ class ElasticSource(BaseSource):
         if "search_after" in resolved_config["base_query"] and not resolved_config.get("pit_id"):
             return self._fetch_search_after(client, resolved_config, limit)
 
-        pit_id = resolved_config.get("pit_id")
         window = resolved_config.get("window")
+        if window is not None and window.get("mode") == WINDOW_RANGE:
+            return self._fetch_range_window(client, resolved_config, window, limit)
+
+        pit_id = resolved_config.get("pit_id")
         if pit_id and window is not None:
             # Deterministic positional window (docs_per_job path): resume from this
             # job's ``search_after`` cursor and pull exactly ``size`` docs. Adjacent
@@ -460,6 +513,104 @@ class ElasticSource(BaseSource):
         resp = resp.body if hasattr(resp, "body") else resp
         return int(resp.get("count", 0))
 
+    def _fetch_range_window(
+        self,
+        client: Elasticsearch,
+        resolved: Dict[str, Any],
+        window: Dict[str, Any],
+        limit: Optional[int],
+    ) -> Records:
+        """Fetch one range window with a PIT opened just for this job.
+
+        Nothing is shared with the plan or with other jobs: an Elasticsearch restart
+        or a long worker stall costs only the jobs in flight, and re-running a failed
+        job just works. The price is that jobs no longer see one snapshot — documents
+        indexed or deleted while the execution runs show up or not depending on when
+        their window is read.
+        """
+        field, order = window["field"], window["order"]
+        base = dict(resolved["base_query"])
+        clause = _range_clause(field, order, window.get("after"), window.get("upto"))
+        user_query: Dict[str, Any] = base.get("query") or {"match_all": {}}
+        base["query"] = {"bool": {"filter": [user_query, clause]}}
+        base.pop("search_after", None)
+        page_size = int(resolved["size"])
+        pit_id: Optional[str] = None
+        try:
+            pit_id = client.open_point_in_time(
+                index=resolved["index"], keep_alive=RANGE_JOB_PIT_KEEP_ALIVE
+            )["id"]
+            base["pit"] = {"id": pit_id, "keep_alive": RANGE_JOB_PIT_KEEP_ALIVE}
+            out: List[Any] = []
+            search_after: Any = None
+            while True:
+                page_body = dict(base)
+                if search_after is not None:
+                    page_body["search_after"] = search_after
+                raw = client.search(body=page_body, size=page_size)
+                page = cast(Dict[str, Any], raw.body if hasattr(raw, "body") else raw)
+                hits = page["hits"]["hits"]
+                if not hits:
+                    return out
+                out.extend(_hit_record(h) for h in hits)
+                search_after = hits[-1]["sort"]
+                if limit and len(out) >= limit:
+                    return out[:limit]
+        except (ApiError, TransportError) as e:
+            raise SourceError("elasticsearch", f"Failed to fetch data: {e}", e)
+        finally:
+            if pit_id:
+                try:
+                    client.close_point_in_time(id=pit_id)
+                except Exception:  # best effort: it expires on its own
+                    logger.debug("Could not close PIT for a range window", exc_info=True)
+
+    def _split_range_windows(
+        self, client: Elasticsearch, resolved: Dict[str, Any], count: int
+    ) -> Iterator["ElasticSource"]:
+        """Plan ``window_mode="range"`` jobs: value ranges of the first sort key.
+
+        One pre-scan under a short PIT finds the key's value at every
+        ``window_size``-th document; window k is ``(value[k-1], value[k]]``. A range
+        takes every document with a value in it, so documents sharing a boundary value
+        all land in one window (windows are therefore approximately, not exactly,
+        ``docs_per_job`` big) and none is skipped or read twice. The PIT is closed
+        before the first job is yielded.
+        """
+        field, order = _first_sort_key(resolved["base_query"])
+        docs_per_job = int(resolved["docs_per_job"])
+        num_windows = min(ceil(count / docs_per_job), int(resolved.get("max_slices", 1024)))
+        if num_windows <= 1:
+            yield self
+            return
+        window_size = ceil(count / num_windows)
+        pit_id = client.open_point_in_time(
+            index=resolved["index"], keep_alive=_pit_keep_alive(resolved)
+        )["id"]
+        try:
+            cursors = self._scan_window_cursors(client, resolved, pit_id, window_size, num_windows)
+        finally:
+            try:
+                client.close_point_in_time(id=pit_id)
+            except Exception:
+                logger.debug("Could not close the planning PIT", exc_info=True)
+        boundaries: List[Any] = []
+        for cursor in cursors[1:]:  # cursors[0] is None: window 0 starts at the beginning
+            value = cursor[0]
+            if not boundaries or value != boundaries[-1]:
+                boundaries.append(value)
+        edges: List[Any] = [None, *boundaries, None]
+        for after, upto in zip(edges[:-1], edges[1:]):
+            sub = self._sub_source(resolved)
+            sub.config["window"] = {
+                "mode": WINDOW_RANGE,
+                "field": field,
+                "order": order,
+                "after": after,
+                "upto": upto,
+            }
+            yield sub
+
     def split(self, runtime_params: Dict[str, Any]) -> Iterator["ElasticSource"]:
         """Open a PIT and yield one narrowed source per job.
 
@@ -495,6 +646,9 @@ class ElasticSource(BaseSource):
             return
 
         docs_per_job = resolved.get("docs_per_job")
+        if docs_per_job and resolved.get("window_mode") == WINDOW_RANGE:
+            yield from self._split_range_windows(client, resolved, count)
+            return
         if docs_per_job:
             max_slices = int(resolved.get("max_slices", 1024))
             num_windows = min(ceil(count / int(docs_per_job)), max_slices)
@@ -686,6 +840,7 @@ def elastic_source(
     docs_per_job: Optional[int] = None,
     max_slices: int = 1024,
     pit_keep_alive: str = DEFAULT_PIT_KEEP_ALIVE,
+    window_mode: str = WINDOW_SNAPSHOT,
     **kwargs: Any,
 ) -> ElasticSource:
     """
@@ -724,6 +879,31 @@ def elastic_source(
         ...     docs_per_job=1000,
         ... )
 
+    Window modes (``docs_per_job`` only):
+
+        ``window_mode="snapshot"`` (default) reads every job from one point-in-time
+        opened at planning, so the whole execution sees the index as it was when it
+        started. The price: that PIT is shared state. An Elasticsearch restart
+        or a worker stall longer than ``pit_keep_alive`` destroys it and every
+        remaining job fails with "No search context found".
+
+        ``window_mode="range"`` cuts the result set into value ranges of the first
+        ``sort`` key and each job opens its own short PIT. An Elasticsearch restart
+        fails only the jobs in flight (re-run them with
+        ``POST /executions/{id}/retry-failed``), and there is no long-lived PIT to
+        expire — use it for long runs. Trade-offs: documents indexed or deleted
+        while the run is in progress may or may not appear, and documents sharing a
+        boundary value stay together, so job sizes are only approximately
+        ``docs_per_job``. Requires ``base_query["sort"]`` to start with a field:
+
+        >>> source = elastic_source(
+        ...     url="https://elastic:9200",
+        ...     index="logs-*",
+        ...     base_query={"query": {"match_all": {}}, "sort": [{"@timestamp": "asc"}]},
+        ...     docs_per_job=1000,
+        ...     window_mode="range",
+        ... )
+
     Note:
         The PIT that ``split()`` opens lives for ``pit_keep_alive`` (default
         ``"30m"``), independent of ``scroll``. Workers search that PIT as their
@@ -750,5 +930,6 @@ def elastic_source(
         docs_per_job=docs_per_job,
         max_slices=max_slices,
         pit_keep_alive=pit_keep_alive,
+        window_mode=window_mode,
         **kwargs,
     )

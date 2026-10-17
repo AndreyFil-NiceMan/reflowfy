@@ -22,4 +22,4 @@ spec:
         {{- toYaml .Values.env | nindent 8 }}
         resources:
           {{- toYaml .Values.resources | nindent 10 }}
-        terminationGracePeriodSeconds: 30
+        terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds | default 120 }}

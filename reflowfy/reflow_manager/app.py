@@ -246,6 +246,42 @@ async def resume_execution(
     return {"message": "Execution resumed", "execution": execution.to_dict()}
 
 
+@app.post("/executions/{execution_id}/retry-failed")
+async def retry_failed_jobs(
+    execution_id: str,
+    background_tasks: BackgroundTasks,
+    error_contains: Optional[str] = None,
+    manager: ReflowManager = Depends(get_reflow_manager),
+) -> Dict[str, Any]:
+    """Re-run an execution's failed jobs (optionally only those whose error contains
+    ``error_contains``) and resume dispatching.
+
+    Retried jobs run again from scratch: a job that had already written part of its
+    records to the destination before failing writes them a second time, unless the
+    execution used ``enable_duplicate_jobs=false`` (content dedup).
+    """
+    execution = manager.get_execution(execution_id)
+    if not execution:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Execution '{execution_id}' not found",
+        )
+    if execution.state == "paused":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Execution '{execution_id}' is paused; resume it first",
+        )
+
+    requeued = manager.job_manager.requeue_failed(execution_id, error_contains)
+    if requeued:
+        was_running = execution.state == "running"
+        manager.execution_manager.reopen_execution(execution_id)
+        if not was_running:
+            # A running execution already has a loop that will pick the jobs up.
+            background_tasks.add_task(_resume_execution_sync, execution_id)
+    return {"execution_id": execution_id, "requeued": requeued}
+
+
 # ===== Jobs =====
 
 

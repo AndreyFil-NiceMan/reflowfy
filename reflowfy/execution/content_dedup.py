@@ -7,6 +7,7 @@ against PostgreSQL using whatever AsyncSession factory the worker provides.
 
 import hashlib
 import json
+import os
 from typing import Any, Dict, List, Optional, cast
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -81,14 +82,30 @@ def compute_content_hash(
     return hashlib.sha256(content.encode()).hexdigest()
 
 
+def honor_legacy_hash() -> bool:
+    """Whether claims recorded before destinations joined the hash still block.
+
+    Those claims carry no destination, so honoring them can wrongly block the same
+    records going somewhere new — but only until the sweeper's retention (24h)
+    has expired them, and the alternative is writing everything a second time at
+    upgrade. Set DEDUP_HONOR_LEGACY_HASH=false once that window has passed.
+    """
+    return os.getenv("DEDUP_HONOR_LEGACY_HASH", "true").strip().lower() not in ("0", "false", "no")
+
+
 async def claim_content_hash(
     session_factory: Any,
     content_hash: str,
     pipeline_name: str,
     job_id: str,
     execution_id: str,
+    legacy_hash: Optional[str] = None,
 ) -> bool:
     """Atomically claim a content hash. True if this job holds it.
+
+    ``legacy_hash`` is the same content hashed the way it was before destinations
+    were included. If another job already holds it (claimed before the upgrade),
+    this is a duplicate and nothing is claimed.
 
     True when this call inserted the claim, or when the claim already belongs to
     this same job_id: a job re-run after its worker died (lease re-dispatch, or a
@@ -96,6 +113,16 @@ async def claim_content_hash(
     that dropped the unwritten rest of the job.
     """
     async with session_factory() as db:
+        if legacy_hash and legacy_hash != content_hash and honor_legacy_hash():
+            legacy_owner = (
+                await db.execute(
+                    select(ProcessedContent.job_id).where(
+                        ProcessedContent.content_hash == legacy_hash
+                    )
+                )
+            ).scalar_one_or_none()
+            if legacy_owner is not None and legacy_owner != job_id:
+                return False
         stmt = (
             pg_insert(ProcessedContent)
             .values(
