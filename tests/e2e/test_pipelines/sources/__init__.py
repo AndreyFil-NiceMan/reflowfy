@@ -20,6 +20,7 @@ def e2e_elastic(
     base_query: Optional[Dict[str, Any]] = None,
     num_slices: int = 1,
     docs_per_job: Optional[int] = None,
+    window_mode: str = "snapshot",
 ):
     """Pre-configured Elasticsearch source for E2E tests.
 
@@ -43,6 +44,7 @@ def e2e_elastic(
         size=size,
         num_slices=num_slices,
         docs_per_job=docs_per_job,
+        window_mode=window_mode,
     )
 
 

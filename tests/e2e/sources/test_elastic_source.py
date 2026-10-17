@@ -323,5 +323,61 @@ class TestElasticOneDocPerJob:
         print(f"✅ one-doc-per-job: {expected} jobs, exact cover, no empties/loss/dup")
 
 
+class TestElasticRangeWindows:
+    """window_mode="range": value-range windows, each job with its own PIT.
+
+    Sorting on ``user_id`` (random 1-100, ~5 docs per value over 500 docs) puts equal
+    values on every window boundary. All docs must still arrive exactly once.
+    """
+
+    def test_range_windows_deliver_every_doc_exactly_once(self, client, check_elasticsearch):
+        try:
+            if httpx.get(f"{MOCK_HTTP_URL}/health", timeout=5.0).status_code != 200:
+                pytest.skip(f"Mock HTTP server not available at {MOCK_HTTP_URL}")
+        except httpx.RequestError:
+            pytest.skip(f"Mock HTTP server not available at {MOCK_HTTP_URL}")
+
+        from elasticsearch import Elasticsearch
+
+        es = Elasticsearch(hosts=[ELASTICSEARCH_URL])
+        try:
+            expected = es.count(index="e2e-test-events")["count"]
+        finally:
+            es.close()
+        assert expected >= 200, f"needs the seeded index, got {expected} docs"
+
+        httpx.delete(f"{MOCK_HTTP_URL}/reset", timeout=5.0)
+        response = client.post("/run", json={
+            "pipeline_name": "e2e_elastic_range_windows_test",
+            "runtime_params": {},
+        })
+        assert response.status_code == 202
+        execution_id = response.json()["execution_id"]
+
+        stats = {}
+        start = time.time()
+        while time.time() - start < 180:
+            stats = client.get(f"/executions/{execution_id}/stats").json()
+            if stats.get("state") in ("completed", "failed"):
+                break
+            time.sleep(POLL_INTERVAL)
+
+        assert stats.get("state") == "completed", f"Expected completed, got {stats}"
+        assert stats["total_jobs"] >= 2, "range mode should fan out into several jobs"
+        assert stats["jobs_failed"] == 0
+
+        mock = {}
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            mock = httpx.get(f"{MOCK_HTTP_URL}/stats", timeout=10.0).json()
+            if mock.get("total_records", 0) >= expected:
+                break
+            time.sleep(1)
+
+        assert mock["total_records"] == expected, (
+            f"expected {expected} records exactly once, got {mock['total_records']}"
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
