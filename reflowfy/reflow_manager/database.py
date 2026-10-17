@@ -67,6 +67,13 @@ def _apply_column_migrations() -> None:
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS error_traceback TEXT",
         # P1.4 — track how many jobs were skipped by content-hash deduplication
         "ALTER TABLE executions ADD COLUMN IF NOT EXISTS deduplicated_jobs INTEGER DEFAULT 0",
+        # Persist the /run rate_limit override so resume_execution can reuse it
+        "ALTER TABLE executions ADD COLUMN IF NOT EXISTS rate_limit DOUBLE PRECISION",
+        # Worker claims per job; bounds re-dispatch of jobs whose worker was lost
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0",
+        # Dispatch-loop ownership lease (one loop per execution, takeover when stale)
+        "ALTER TABLE executions ADD COLUMN IF NOT EXISTS driver_id VARCHAR(255)",
+        "ALTER TABLE executions ADD COLUMN IF NOT EXISTS driver_heartbeat_at TIMESTAMP",
         # Retention sweeper filters on completed_at; partial index skips unfinished rows
         "CREATE INDEX IF NOT EXISTS idx_executions_completed_at "
         "ON executions(completed_at) WHERE completed_at IS NOT NULL",

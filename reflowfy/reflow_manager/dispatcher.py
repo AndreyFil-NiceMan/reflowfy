@@ -6,13 +6,22 @@ import logging
 import json
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional, Union
+from typing import Callable, Dict, Any, List, Optional, Union
 from aiokafka import AIOKafkaProducer
 from aiokafka.errors import KafkaError
 
 from reflowfy.reflow_manager.rate_limiter import RateLimiter
 
 logger = logging.getLogger(__name__)
+
+# Called with each job payload right after its message is sent.
+OnSent = Callable[[Dict[str, Any]], None]
+# Polled before each job; True ends the batch early (execution paused, chunk time up).
+ShouldStop = Callable[[], bool]
+
+# Longest wait for one rate-limit token before handing back to the drive loop, which
+# simply calls again. Short so the loop keeps heartbeating its lease at low rates.
+TOKEN_WAIT_SECONDS = 30.0
 
 
 class BaseDispatcher(ABC):
@@ -37,12 +46,18 @@ class BaseDispatcher(ABC):
         jobs: List[Dict[str, Any]],
         pipeline_name: str,
         rate_limit: Optional[float] = None,
+        on_sent: Optional[OnSent] = None,
+        should_stop: Optional[ShouldStop] = None,
     ) -> int:
-        """Dispatch a batch of jobs."""
+        """Dispatch jobs in order; return how many were sent.
+
+        Stops at the first failure or when ``should_stop`` returns True, so the
+        jobs sent are always the first N of ``jobs``.
+        """
         pass
 
     @abstractmethod
-    async def close(self):
+    async def close(self) -> None:
         """Close resources."""
         pass
 
@@ -157,17 +172,25 @@ class KafkaDispatcher(BaseDispatcher):
         jobs: List[Dict[str, Any]],
         pipeline_name: str,
         rate_limit: Optional[float] = None,
+        on_sent: Optional[OnSent] = None,
+        should_stop: Optional[ShouldStop] = None,
     ) -> int:
-        """Dispatch a batch of jobs to Kafka."""
+        """Dispatch jobs to Kafka in order; see :meth:`BaseDispatcher.dispatch_jobs_batch`."""
         dispatched = 0
         producer = await self._get_producer()
 
         for job in jobs:
+            if should_stop and should_stop():
+                break
             # Atomic token acquisition with rate limiting
-            if not self.rate_limiter.acquire_token(pipeline_name, rate_limit, max_wait=300.0):
-                logger.warning(
-                    "Rate limit timeout after 300s, stopping dispatch after %d jobs", dispatched
-                )
+            if not self.rate_limiter.acquire_token(
+                pipeline_name, rate_limit, max_wait=TOKEN_WAIT_SECONDS
+            ):
+                # Normal below ~2 jobs/min: the drive loop calls again.
+                logger.debug("No rate-limit token yet after %d jobs; returning", dispatched)
+                break
+            # Re-check: a pause may have landed during a long token wait.
+            if should_stop and should_stop():
                 break
 
             # Dispatch
@@ -177,6 +200,8 @@ class KafkaDispatcher(BaseDispatcher):
                     value=json.dumps(job).encode("utf-8"),
                 )
                 dispatched += 1
+                if on_sent:
+                    on_sent(job)
 
             except KafkaError as e:
                 logger.error("Kafka error: %s", e)
@@ -184,7 +209,7 @@ class KafkaDispatcher(BaseDispatcher):
 
         return dispatched
 
-    async def close(self):
+    async def close(self) -> None:
         """Close the producer connection."""
         if self._producer and self._started:
             await self._producer.stop()

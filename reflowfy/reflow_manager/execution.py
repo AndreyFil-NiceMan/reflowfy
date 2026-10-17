@@ -1,7 +1,8 @@
 """Execution management for ReflowManager."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from reflowfy.reflow_manager.models import Execution
 
@@ -17,6 +18,7 @@ class ExecutionManager:
         execution_id: str,
         pipeline_name: str,
         runtime_params: Optional[Dict[str, Any]] = None,
+        rate_limit: Optional[float] = None,
     ) -> Execution:
         """
         Create new execution record.
@@ -25,6 +27,7 @@ class ExecutionManager:
             execution_id: Unique execution identifier
             pipeline_name: Name of the pipeline
             runtime_params: Runtime parameters for the pipeline
+            rate_limit: The request's rate_limit override, if any (jobs/min)
 
         Returns:
             Created Execution object
@@ -34,6 +37,7 @@ class ExecutionManager:
             pipeline_name=pipeline_name,
             state="pending",
             runtime_params=runtime_params or {},
+            rate_limit=rate_limit,
         )
 
         self.db.add(execution)
@@ -129,7 +133,11 @@ class ExecutionManager:
         return execution
 
     def pause_execution(self, execution_id: str) -> Optional[Execution]:
-        """Pause an execution."""
+        """Pause a pending or running execution. None if missing or already settled
+        (pausing a completed execution used to flip it back to non-terminal)."""
+        execution = self.get_execution(execution_id)
+        if not execution or execution.state not in ("pending", "running"):
+            return None
         return self.update_execution_state(execution_id, "paused")
 
     def resume_execution(self, execution_id: str) -> Optional[Execution]:
@@ -139,6 +147,68 @@ class ExecutionManager:
             return None
 
         return self.update_execution_state(execution_id, "running")
+
+    def claim_driver(self, execution_id: str, driver_id: str, lease_seconds: float) -> bool:
+        """Take ownership of dispatching this execution. True if this driver owns it.
+
+        Succeeds when nobody owns it, this driver already does, or the owner's
+        heartbeat is older than ``lease_seconds`` (its loop died). A row lease rather
+        than a Postgres advisory lock: a session lock held by a force-killed pod stays
+        on its zombie connection until TCP keepalive notices (hours), blocking every
+        resume in between.
+        """
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        stale = now - timedelta(seconds=lease_seconds)
+        claimed = (
+            self.db.query(Execution)
+            .filter(
+                Execution.execution_id == execution_id,
+                or_(
+                    Execution.driver_id.is_(None),
+                    Execution.driver_id == driver_id,
+                    Execution.driver_heartbeat_at < stale,
+                ),
+            )
+            .update(
+                {"driver_id": driver_id, "driver_heartbeat_at": now},
+                synchronize_session=False,
+            )
+        )
+        self.db.commit()
+        return claimed == 1
+
+    def heartbeat_driver(self, execution_id: str, driver_id: str) -> bool:
+        """Refresh this driver's lease. False if another loop has taken over."""
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        alive = (
+            self.db.query(Execution)
+            .filter(Execution.execution_id == execution_id, Execution.driver_id == driver_id)
+            .update({"driver_heartbeat_at": now}, synchronize_session=False)
+        )
+        self.db.commit()
+        return alive == 1
+
+    def release_drivers_on_host(self, hostname: str) -> int:
+        """Free every lease whose driver ran on ``hostname`` (``<host>:<pid>:<rand>``).
+
+        Called once at manager startup: such drivers belonged to a previous process
+        on this host and are dead. Two live managers sharing a hostname would only
+        hand an execution over — the old loop's next heartbeat fails and it stops.
+        """
+        released = (
+            self.db.query(Execution)
+            .filter(Execution.driver_id.like(f"{hostname}:%"))
+            .update({"driver_id": None, "driver_heartbeat_at": None}, synchronize_session=False)
+        )
+        self.db.commit()
+        return released
+
+    def release_driver(self, execution_id: str, driver_id: str) -> None:
+        """Give up ownership (only if still the owner), so a resume needn't wait out the lease."""
+        self.db.query(Execution).filter(
+            Execution.execution_id == execution_id, Execution.driver_id == driver_id
+        ).update({"driver_id": None, "driver_heartbeat_at": None}, synchronize_session=False)
+        self.db.commit()
 
     def update_deduplicated_count(self, execution_id: str, count: int) -> None:
         """Set the deduplicated_jobs count for an execution."""

@@ -11,13 +11,15 @@ from reflowfy.core.types import Record, Records, wrap_as_record
 from reflowfy.observability.logging import get_logger
 from reflowfy.sources.base import BaseSource, SourceError, SourceJob
 
-# The manager opens a PIT while planning; workers search it later, one
-# checkpoint batch at a time (25 jobs, up to 300s per batch). Each search
-# extends the keep_alive, so this only has to cover the gap between two
-# consecutive fetches — not the whole execution. It is deliberately NOT the
-# ``scroll`` value: that is a per-page scroll timeout (default 2m), and reusing
-# it here expired the PIT before the later batches ran, surfacing as
-# ApiError(503, 'search_phase_execution_exception') in the worker.
+# The manager opens a PIT while planning; workers search it later, as the
+# rate-limited dispatch loop sends their jobs. Each search extends the
+# keep_alive, so this only has to cover the gap between two consecutive fetches
+# (about 60 / rate_limit seconds, longer if workers stall) — not the whole
+# execution. It is deliberately NOT the ``scroll`` value: that is a per-page
+# scroll timeout (default 2m), and reusing it here expired the PIT before later
+# jobs ran, surfacing as ApiError(503, 'search_phase_execution_exception') in the
+# worker. Workers stopped for longer than this (or an Elasticsearch restart) lose
+# the PIT: every remaining job fails with "No search context found".
 DEFAULT_PIT_KEEP_ALIVE = "30m"
 
 logger = get_logger(__name__)
@@ -724,12 +726,13 @@ def elastic_source(
 
     Note:
         The PIT that ``split()`` opens lives for ``pit_keep_alive`` (default
-        ``"30m"``), independent of ``scroll``. Workers search that PIT one
-        checkpoint batch at a time, so a value shorter than the gap between
-        two consecutive batches expires it mid-execution and the remaining
-        jobs fail with ``ApiError(503, 'search_phase_execution_exception')``.
-        Raise it for executions whose batches are slow; every search on the
-        PIT extends the window, so it need not span the whole run.
+        ``"30m"``), independent of ``scroll``. Workers search that PIT as their
+        jobs are dispatched, so a value shorter than the gap between two
+        consecutive fetches (a very low rate_limit, or workers stopped for a
+        while) expires it mid-execution and the remaining jobs fail with
+        ``ApiError(503, 'search_phase_execution_exception')`` / "No search
+        context found". Raise it for such executions; every search on the PIT
+        extends the window, so it need not span the whole run.
 
         ``docs_per_job=1`` produces one job per matched document. On large
         result sets that is a very large number of jobs (each its own Kafka

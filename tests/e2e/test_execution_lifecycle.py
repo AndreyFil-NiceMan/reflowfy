@@ -101,10 +101,10 @@ class TestPauseExecution:
     
     def test_pause_already_completed_execution(self, client):
         """
-        Pause an already completed execution.
-        
-        The API currently allows pausing completed executions (returns 200),
-        but the state should reflect the pause.
+        Pausing a completed execution is refused (409) and leaves it completed.
+
+        It used to return 200 and flip the execution back to the non-terminal
+        "paused" state.
         """
         # Start a fast pipeline (default high rate)
         response = client.post("/run", json={
@@ -117,9 +117,10 @@ class TestPauseExecution:
         # Wait for completion
         _wait_for_state(client, execution_id, "completed", max_wait=120)
 
-        # Try to pause a completed execution — API accepts it
         response = client.post(f"/executions/{execution_id}/pause")
-        assert response.status_code in [200, 400, 404]
+        assert response.status_code == 409
+        stats = client.get(f"/executions/{execution_id}/stats").json()
+        assert stats["state"] == "completed"
 
 
 # ============================================================================

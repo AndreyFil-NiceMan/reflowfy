@@ -15,7 +15,10 @@ CREATE TABLE IF NOT EXISTS executions (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     completed_at TIMESTAMP,
     error_message TEXT,
-    runtime_params JSONB
+    runtime_params JSONB,
+    rate_limit DOUBLE PRECISION,  -- /run override (jobs/min), reused on resume
+    driver_id VARCHAR(255),        -- dispatch loop that owns the execution
+    driver_heartbeat_at TIMESTAMP  -- its last heartbeat; stale => another loop may take over
 );
 
 -- Indexes for executions
@@ -47,7 +50,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     batch_number INTEGER,
     
     -- State tracking
-    state VARCHAR(50) NOT NULL,  -- pending, dispatched, completed, failed
+    state VARCHAR(50) NOT NULL,  -- pending, dispatched, running, completed, failed, deduplicated
+    attempts INTEGER NOT NULL DEFAULT 0,  -- worker claims; caps lease re-dispatch
     
     -- Worker results
     processed_records INTEGER DEFAULT 0,

@@ -5,6 +5,7 @@ import os
 import signal
 import sys
 from types import FrameType
+from typing import Optional
 
 from reflowfy.core.pipeline_discovery import discover_and_load_pipelines
 from reflowfy.observability import metrics
@@ -17,12 +18,6 @@ from prometheus_client import start_http_server
 logger = logging.getLogger(__name__)
 
 
-def handle_shutdown(signum: int, frame: FrameType):
-    """Handle graceful shutdown."""
-    logger.info("Shutdown signal received, stopping worker")
-    sys.exit(0)
-
-
 def main():
     """Worker main entry point."""
     import asyncio
@@ -31,10 +26,6 @@ def main():
     from reflowfy import __version__
 
     build_version = os.getenv("REFLOWFY_BUILD_VERSION") or os.getenv("GIT_SHA")
-
-    # Register signal handlers
-    signal.signal(signal.SIGTERM, handle_shutdown)  # pyright: ignore[reportArgumentType]
-    signal.signal(signal.SIGINT, handle_shutdown)  # pyright: ignore[reportArgumentType]
 
     # Observability: structured logging, tracing, and a /metrics HTTP server.
     setup_logging(service_name="worker")
@@ -92,6 +83,23 @@ def main():
         sasl_username=sasl_username,
         sasl_password=sasl_password,
     )
+
+    def handle_shutdown(signum: int, frame: Optional[FrameType]) -> None:
+        """Drain: stop taking messages, let the current job finish and commit, exit.
+
+        Exiting mid-job (the old sys.exit here) left a half-written job for the
+        lease to re-run, duplicating what was already sent. A second signal exits
+        at once. A job longer than the pod's terminationGracePeriodSeconds is still
+        SIGKILLed; the manager's running lease re-runs it.
+        """
+        if not consumer._running:  # pyright: ignore[reportPrivateUsage]
+            logger.warning("Second shutdown signal, exiting now")
+            sys.exit(1)
+        logger.info("Shutdown signal received; finishing the current job, then stopping")
+        consumer.request_stop()
+
+    signal.signal(signal.SIGTERM, handle_shutdown)
+    signal.signal(signal.SIGINT, handle_shutdown)
 
     try:
         logger.info("Worker ready, waiting for jobs")
