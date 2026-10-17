@@ -12,12 +12,7 @@ from reflowfy.core.id_based_pipeline import IdBasedPipeline
 from reflowfy.core.registry import pipeline_registry
 from reflowfy.reflow_manager.job_manager import JobManager
 from reflowfy.reflow_manager.models import Base, Execution, Job
-from reflowfy.reflow_manager.pipeline_runner import (
-    CHECKPOINT_BATCH_SIZE,
-    CHECKPOINT_BATCH_TIMEOUT,
-    PipelineRunner,
-    _batch_timeout,
-)
+from reflowfy.reflow_manager.pipeline_runner import CHECKPOINT_BATCH_SIZE, PipelineRunner
 
 
 @pytest.fixture
@@ -79,7 +74,7 @@ def _plan(ids, pipeline_name=_TinyIdPipeline.name, **params):
     )
     assert pipeline_registry.get(pipeline_name) is not None, "pipeline failed to auto-register"
 
-    with patch.object(PipelineRunner, "_dispatch_and_wait_batches", return_value=(0, 0, 0)):
+    with patch.object(PipelineRunner, "_drive_execution", return_value=(0, 0, 0)):
         runner.run_pipeline_jobs(
             execution_id="e1",
             pipeline_name=pipeline_name,
@@ -289,19 +284,3 @@ def test_abstract_path_still_carries_all_params():
         assert params["input_ids"] == [1, 2, 3]  # untouched: no job_params set
         assert params["env"] == "prod"
         assert "current_ids" not in row["job_payload"]["metadata"]
-
-
-class TestBatchTimeout:
-    """The per-batch deadline must outlast the time the rate limiter needs."""
-
-    def test_scales_with_batch_size_and_rate(self):
-        # 5000 jobs at 1000/min take 300s just to dispatch — the old fixed
-        # 300s deadline would expire while the batch was still healthy.
-        assert _batch_timeout(5000, 1000) == pytest.approx(900.0)
-
-    def test_never_below_the_floor(self):
-        assert _batch_timeout(10, 1000) == float(CHECKPOINT_BATCH_TIMEOUT)
-
-    def test_unlimited_rate_uses_the_floor(self):
-        assert _batch_timeout(1_000_000, None) == float(CHECKPOINT_BATCH_TIMEOUT)
-        assert _batch_timeout(1_000_000, 0) == float(CHECKPOINT_BATCH_TIMEOUT)

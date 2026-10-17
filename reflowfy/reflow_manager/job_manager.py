@@ -1,6 +1,6 @@
 """Job management for ReflowManager."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func, insert
@@ -40,17 +40,15 @@ class JobManager:
         """Get job by job_id."""
         return self.db.query(Job).filter(Job.job_id == job_id).first()
 
-    def get_pending_jobs_by_batch_number(
-        self,
-        execution_id: str,
-        batch_number: int,
-    ) -> List[Job]:
-        """Get all pending jobs for a specific batch number."""
-        return self.db.query(Job).filter(
-            Job.execution_id == execution_id,
-            Job.batch_number == batch_number,
-            Job.state == "pending",
-        ).all()
+    def get_pending_jobs(self, execution_id: str, limit: int) -> List[Job]:
+        """Next pending jobs to dispatch, oldest planned first."""
+        return (
+            self.db.query(Job)
+            .filter(Job.execution_id == execution_id, Job.state == "pending")
+            .order_by(Job.batch_number, Job.created_at)
+            .limit(limit)
+            .all()
+        )
 
     def get_jobs(
         self,
@@ -76,41 +74,88 @@ class JobManager:
 
         return query.order_by(Job.created_at).all()
 
-    def mark_jobs_dispatched(self, job_ids: List[str]) -> int:
-        """
-        Mark multiple jobs as dispatched.
+    def mark_job_dispatched(self, job_id: str) -> None:
+        """Record that one job's message was sent, right after the send.
 
-        Sets dispatched_at for all jobs (even if already completed by fast workers).
-        Only updates state to 'dispatched' for jobs still in 'pending' state.
-
-        Args:
-            job_ids: List of job IDs to mark
-
-        Returns:
-            Number of jobs updated
+        Only a pending job becomes dispatched: a fast worker may already have
+        claimed it (running) or finished it. dispatched_at is the send time of the
+        latest dispatch, which the dispatch lease is measured from.
         """
         now = datetime.now(timezone.utc).replace(tzinfo=None)
-
-        # First, set dispatched_at for ALL jobs (regardless of state)
-        self.db.query(Job).filter(
-            Job.job_id.in_(job_ids),
-            Job.dispatched_at.is_(None),  # Only if not already set
-        ).update(
-            {"dispatched_at": now},
-            synchronize_session=False,
+        self.db.query(Job).filter(Job.job_id == job_id).update(
+            {"dispatched_at": now}, synchronize_session=False
         )
-
-        # Then, update state to 'dispatched' only for pending jobs
-        updated = self.db.query(Job).filter(
-            Job.job_id.in_(job_ids),
-            Job.state == "pending",
-        ).update(
-            {"state": "dispatched"},
-            synchronize_session=False,
+        self.db.query(Job).filter(Job.job_id == job_id, Job.state == "pending").update(
+            {"state": "dispatched", "updated_at": now}, synchronize_session=False
         )
-
         self.db.commit()
-        return updated
+
+    def reclaim_expired_leases(
+        self,
+        execution_id: str,
+        running_lease_seconds: float,
+        dispatch_lease_seconds: float,
+        max_attempts: int,
+    ) -> Dict[str, int]:
+        """Put jobs whose worker or message went missing back in the queue.
+
+        - running for longer than the running lease: the worker died mid-job
+          (killed, OOM). Back to pending, or failed once it has been started
+          ``max_attempts`` times.
+        - dispatched for longer than the dispatch lease: no worker ever picked
+          the message up (lost). Back to pending to be sent again.
+
+        A duplicate message this creates is harmless: the worker claims a job
+        (pending/dispatched -> running) before running it and skips any other.
+
+        Returns:
+            Counts of jobs ``failed``, ``requeued_running`` and ``requeued_dispatched``.
+        """
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        running_cutoff = now - timedelta(seconds=running_lease_seconds)
+        dispatch_cutoff = now - timedelta(seconds=dispatch_lease_seconds)
+        stale_running = (
+            Job.execution_id == execution_id,
+            Job.state == "running",
+            Job.updated_at < running_cutoff,
+        )
+
+        failed = (
+            self.db.query(Job)
+            .filter(*stale_running, Job.attempts >= max_attempts)
+            .update(
+                {
+                    "state": "failed",
+                    "error_message": (
+                        f"Worker lost: no result within {running_lease_seconds:.0f}s, "
+                        f"{max_attempts} attempt(s)"
+                    ),
+                    "completed_at": now,
+                    "updated_at": now,
+                },
+                synchronize_session=False,
+            )
+        )
+        requeued_running = (
+            self.db.query(Job)
+            .filter(*stale_running)
+            .update({"state": "pending", "updated_at": now}, synchronize_session=False)
+        )
+        requeued_dispatched = (
+            self.db.query(Job)
+            .filter(
+                Job.execution_id == execution_id,
+                Job.state == "dispatched",
+                Job.dispatched_at < dispatch_cutoff,
+            )
+            .update({"state": "pending", "updated_at": now}, synchronize_session=False)
+        )
+        self.db.commit()
+        return {
+            "failed": failed,
+            "requeued_running": requeued_running,
+            "requeued_dispatched": requeued_dispatched,
+        }
 
     def update_job_state(
         self,
@@ -179,7 +224,8 @@ class JobManager:
         Note: Expires session cache first to see external updates from workers.
 
         Returns:
-            Dictionary with total, pending, dispatched, completed, failed counts
+            Dictionary with total, pending, dispatched, running, completed, failed,
+            deduplicated counts
         """
         # Expire cached objects to see external updates from workers
         self.db.expire_all()
@@ -192,6 +238,7 @@ class JobManager:
             "total": 0,
             "pending": 0,
             "dispatched": 0,
+            "running": 0,
             "completed": 0,
             "failed": 0,
             "deduplicated": 0,
@@ -222,25 +269,3 @@ class JobManager:
             {"val": str(total_batches), "eid": execution_id},
         )
         self.db.commit()
-
-    def get_first_incomplete_batch(self, execution_id: str) -> Optional[int]:
-        """
-        Find the first batch with pending or dispatched jobs.
-
-        Used for crash recovery to resume from where we left off.
-
-        Args:
-            execution_id: Execution identifier
-
-        Returns:
-            Batch number of first incomplete batch, or None if all complete
-        """
-        result = self.db.query(Job.batch_number).filter(
-            Job.execution_id == execution_id,
-            Job.state.in_(["pending", "dispatched"]),
-            Job.batch_number.isnot(None),
-        ).order_by(Job.batch_number).first()
-
-        return result[0] if result else None
-
-

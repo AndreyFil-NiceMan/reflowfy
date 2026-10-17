@@ -81,3 +81,40 @@ async def test_release_only_removes_own_claim(session_factory):
     assert await claim_content_hash(session_factory, "h3", "pipe", "owner", "exO") is True
     await release_content_hash(session_factory, "h3", "not-owner")  # no-op
     assert await claim_content_hash(session_factory, "h3", "pipe", "x", "exX") is False
+
+
+def test_destination_changes_hash():
+    """Same records to a different topic is new work, not a duplicate."""
+    from reflowfy.destinations.kafka import kafka_destination
+    from reflowfy.execution.content_dedup import destination_identity
+
+    a = kafka_destination(bootstrap_servers="k:9092", topic="a")
+    b = kafka_destination(bootstrap_servers="k:9092", topic="b")
+    ha = compute_content_hash("p", [], [{"id": 1}], None, destination_identity(a))
+    hb = compute_content_hash("p", [], [{"id": 1}], None, destination_identity(b))
+    assert ha != hb
+    same = kafka_destination(bootstrap_servers="k:9092", topic="a")
+    assert compute_content_hash("p", [], [{"id": 1}], None, destination_identity(same)) == ha
+
+
+def test_destination_identity_ignores_credentials():
+    """Rotating a password/token must not make written content look new."""
+    from reflowfy.destinations.api import api_destination
+    from reflowfy.execution.content_dedup import destination_identity
+
+    a = api_destination(url="http://x/y", auth_type="bearer", auth_token="old",
+                        headers={"Authorization": "Bearer old", "X-Tenant": "t1"})
+    b = api_destination(url="http://x/y", auth_type="bearer", auth_token="new",
+                        headers={"Authorization": "Bearer new", "X-Tenant": "t1"})
+    assert destination_identity(a) == destination_identity(b)
+    ident = destination_identity(a)
+    assert "auth_token" not in ident["config"]
+    assert ident["config"]["headers"] == {"X-Tenant": "t1"}
+
+
+async def test_same_job_reclaims_its_own_hash(session_factory):
+    """A job re-run after its worker died must not be a duplicate of itself."""
+    assert await claim_content_hash(session_factory, "h4", "pipe", "job1", "ex1") is True
+    # claim never released (SIGKILL) — the lease re-dispatch runs job1 again
+    assert await claim_content_hash(session_factory, "h4", "pipe", "job1", "ex1") is True
+    assert await claim_content_hash(session_factory, "h4", "pipe", "job2", "ex1") is False

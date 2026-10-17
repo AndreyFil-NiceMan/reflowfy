@@ -178,7 +178,7 @@ def _id_based_payloads_over_the_wire(ids):
     runner = PipelineRunner(
         execution_manager=MagicMock(), job_manager=MagicMock(), dispatcher=MagicMock()
     )
-    with patch.object(PipelineRunner, "_dispatch_and_wait_batches", return_value=(0, 0, 0)):
+    with patch.object(PipelineRunner, "_drive_execution", return_value=(0, 0, 0)):
         runner.run_pipeline_jobs(
             execution_id="e",
             pipeline_name=_IdSyncPipeline.name,

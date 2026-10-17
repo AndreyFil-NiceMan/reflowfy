@@ -98,9 +98,15 @@ class ReflowManager:
     # ===== Execution Management (delegated) =====
 
     def create_execution(
-        self, execution_id: str, pipeline_name: str, runtime_params: Optional[Dict[str, Any]] = None
+        self,
+        execution_id: str,
+        pipeline_name: str,
+        runtime_params: Optional[Dict[str, Any]] = None,
+        rate_limit: Optional[float] = None,
     ) -> Execution:
-        return self.execution_manager.create_execution(execution_id, pipeline_name, runtime_params)
+        return self.execution_manager.create_execution(
+            execution_id, pipeline_name, runtime_params, rate_limit
+        )
 
     def get_execution(self, execution_id: str) -> Optional[Execution]:
         return self.execution_manager.get_execution(execution_id)
@@ -193,10 +199,12 @@ class ReflowManager:
             "state": execution.state,
             "total_jobs": execution.total_jobs,
             "jobs_dispatched": job_counts.get("dispatched", 0)
+            + job_counts.get("running", 0)
             + job_counts.get("completed", 0)
             + job_counts.get("failed", 0)
             + job_counts.get("deduplicated", 0),
             "jobs_pending": job_counts.get("pending", 0),
+            "jobs_running": job_counts.get("running", 0),
             "jobs_completed": job_counts.get("completed", 0),
             "jobs_failed": job_counts.get("failed", 0),
             "deduplicated_jobs": execution.deduplicated_jobs or 0,

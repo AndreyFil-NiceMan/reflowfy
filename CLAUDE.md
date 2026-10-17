@@ -193,9 +193,29 @@ JSON, and counts it as `reflowfy_jobs_processed_total{status="skipped"}` — so 
 is not silently indistinguishable from an ordinary completed job. `LocalExecutor`
 logs the same reason.
 
+### Dispatch loop, leases and redelivery
+
+Phase 1 (planning) is unchanged: jobs are streamed into Postgres in groups of `CHECKPOINT_BATCH_SIZE`, each tagged with a `batch_number` that `/executions/{id}/stats` reports as "checkpoints". **Batches no longer gate dispatch.** Phase 2 (`PipelineRunner._drive_execution`) is one continuous loop per execution:
+
+- keeps up to `MAX_IN_FLIGHT_JOBS` (env, default 1000) jobs `dispatched`/`running`, topping the window up as jobs finish; per job: rate-limit token → send → `mark_job_dispatched` immediately (so the DB never shows `pending` for a job already sent, and a send that fails mid-chunk leaves the rest `pending` to retry — it used to strand them as `dispatched`);
+- checks the execution state about once a second: `paused` stops sending (in-flight jobs finish), and `POST /executions/{id}/resume` starts a new loop. One loop per execution, by a lease on the execution row (`executions.driver_id` / `driver_heartbeat_at`): the owner heartbeats about once a second, others stand by and take over once it is older than `DRIVER_LEASE_SECONDS` (default 60), and a loop that finds itself replaced stops. At startup a manager frees leases left by an earlier process on its own hostname (a container restart), so recovery is immediate there; a replacement pod with a new name waits out the lease. Not a Postgres advisory lock: a force-killed pod's session lock lingers on its zombie connection until TCP keepalive (hours) and blocked every resume;
+- has **no batch timeout**: slow or stopped workers never fail the execution; it warns every 10 min with no progress instead;
+- retries database errors with backoff (5 s doubling to 60 s) instead of exiting — the job rows are the state, so a Postgres restart just pauses dispatch;
+- runs in one event loop, so the Kafka producer is created once per execution.
+
+Job states: `pending → dispatched → running → completed | failed | deduplicated`. The **worker claims** a job before running it (`WorkerExecutor._claim_job`: `pending|dispatched → running`, `attempts + 1`). Any other delivery of that job — Kafka redelivery after a rebalance/scale-down/crash, or a lease re-send — sees it `running`/finished and is skipped, committed, logged and counted as `reflowfy_jobs_processed_total{status="redelivered"}`. A job with no row runs anyway, and the claim fails open on a DB error.
+
+On SIGTERM the worker **drains**: it stops taking messages, lets the job in progress finish and commit, then leaves the consumer group (`KafkaJobConsumer.request_stop`; a second signal exits at once). A job longer than the pod's `terminationGracePeriodSeconds` (30 s in the chart) is still killed mid-way and re-run by the running lease, re-sending what it had already written.
+
+**Leases** (swept every 60 s by the drive loop): `running` with no result after `JOB_RUNNING_LEASE_SECONDS` (default 1800) → back to `pending`, or `failed` after `JOB_MAX_ATTEMPTS` (default 3) claims, counted as `status="lease_expired"`; `dispatched` but never claimed after `JOB_DISPATCH_LEASE_SECONDS` (default 3600) → re-sent. There is no worker heartbeat, so the running lease must exceed the longest job.
+
+The `/run` `rate_limit` override is persisted on the execution (`executions.rate_limit`) and reused when a restarted manager resumes it.
+
 ### Content deduplication & DLQ
 
-Job IDs are plain `uuid4`. Idempotency is enforced **worker-side, by content**: when `enable_duplicate_jobs=False` the manager sets `dedup_check` on the payload, and the worker hashes the job's content (`execution/content_dedup.py`: pipeline name + transformation names + fetched records + the job's own `job_params`) and claims that hash in the `processed_content` table. First claimant runs; a later job with the same hash is marked `deduplicated` and never written. Note the hash covers records, not the source descriptor, so it is computed after fetching.
+Job IDs are plain `uuid4`. Idempotency is enforced **worker-side, by content**: when `enable_duplicate_jobs=False` the manager sets `dedup_check` on the payload, and the worker hashes the job's content (`execution/content_dedup.py`: pipeline name + transformation names + fetched records + the job's own `job_params` + `destination_identity()` — the destination's class and config, **minus credentials**, so the same records sent to another topic/URL are new work but a rotated password is not) and claims that hash in the `processed_content` table. First claimant runs; a later job with the same hash is marked `deduplicated` and never written. A claim already held by the *same* `job_id` counts as won (a job re-run after its worker died is not a duplicate of itself), and the worker releases its claim on any exit including shutdown. Note the hash covers records, not the source descriptor, so it is computed after fetching. Changing what the hash covers changes every hash: claims made before the change no longer match.
+
+This is content idempotency across executions. Within one execution, the job-level claim above already stops a redelivered message from running a job twice.
 
 The **DLQ is not a failure sink** despite the name — nothing auto-populates it. It is a "run this pipeline later with these params" queue: `POST /dlq/schedule` takes a `job_payload` that is really *runtime params*, and `dlq_scheduler.py` calls `run_pipeline` with them when due. `dlq_routes.py` handles inspection. `pipeline_scheduler.py` runs cron-scheduled pipelines (5-field cron, validated at class-definition time in the metaclass).
 

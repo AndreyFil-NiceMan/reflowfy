@@ -3,11 +3,13 @@
 import asyncio
 import logging
 import os
+import socket
 import time
 import uuid
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-from sqlalchemy import func
+
+from sqlalchemy.exc import DBAPIError
 
 from reflowfy.core.exceptions import pipeline_step
 from reflowfy.core.serialization import to_json_safe
@@ -23,19 +25,43 @@ from reflowfy.reflow_manager.models import Job
 
 logger = logging.getLogger(__name__)
 
-# Checkpoint batch configuration.
-#
-# Phase 2 dispatches one batch, then blocks until every job in it reports, so
-# the batch size is also the maximum number of jobs in flight — and the poll
-# below adds a fixed cost per batch no matter how few jobs it holds. Small
-# batches make that cost dominate (25 jobs per ~2s poll caps throughput near
-# 750/min however high the rate limit is) and keep Kafka lag too low for KEDA
-# to scale workers up. Size it so the batch takes much longer to dispatch than
-# one poll interval.
+# Planning granularity. Phase 1 writes jobs to the database this many at a time
+# (planning stays streaming) and tags each with a batch_number, which the stats
+# endpoint reports as "checkpoints". It no longer gates dispatch.
 CHECKPOINT_BATCH_SIZE = int(os.getenv("CHECKPOINT_BATCH_SIZE", "1000"))
-CHECKPOINT_BATCH_TIMEOUT = 300  # Floor for the per-batch wait; scaled up by _batch_timeout()
-CHECKPOINT_POLL_INTERVAL = 2.0  # Poll every 2 seconds
+CHECKPOINT_POLL_INTERVAL = 2.0  # seconds between drive-loop polls when nothing can be sent
 
+# Phase 2 is a continuous loop, not a batch barrier: it keeps up to this many jobs
+# in flight (dispatched or running) and tops the window up as jobs finish. This is
+# the throughput lever the batch size used to be — enough queued work for KEDA to
+# see lag and scale, bounded so a stalled worker pool can't absorb the whole plan.
+MAX_IN_FLIGHT_JOBS = int(os.getenv("MAX_IN_FLIGHT_JOBS", "1000"))
+
+# Job leases. A job a worker claimed (running) with no result after the running
+# lease lost its worker (killed, OOM) and goes back to pending — or fails after
+# JOB_MAX_ATTEMPTS claims. A job dispatched but never claimed after the dispatch
+# lease lost its message and is sent again. The worker-side claim makes the
+# duplicate message harmless.
+# ponytail: no worker heartbeat — the running lease must exceed the longest job,
+# or a slow-but-alive job is re-run. Add a heartbeat if jobs approach it.
+JOB_RUNNING_LEASE_SECONDS = float(os.getenv("JOB_RUNNING_LEASE_SECONDS", "1800"))
+JOB_DISPATCH_LEASE_SECONDS = float(os.getenv("JOB_DISPATCH_LEASE_SECONDS", "3600"))
+JOB_MAX_ATTEMPTS = int(os.getenv("JOB_MAX_ATTEMPTS", "3"))
+LEASE_CHECK_INTERVAL = 60.0  # seconds between lease sweeps
+
+# The dispatcher hands control back to the drive loop this often, so lease sweeps
+# and the in-flight cap are re-evaluated even at very low rate limits.
+DISPATCH_CHUNK_SECONDS = 30.0
+DISPATCH_FETCH_LIMIT = 500  # job payloads loaded per drive-loop iteration
+STALL_WARN_SECONDS = 600.0  # warn when jobs are in flight but none finished this long
+
+# One dispatch loop per execution, by a lease on the execution row: the owner
+# heartbeats about once a second; another loop (a restarted manager, a second pod,
+# a resume racing a pausing loop) stands by and takes over once the heartbeat is
+# older than this. Must exceed the longest gap between heartbeats — a rate-limit
+# token wait (TOKEN_WAIT_SECONDS) plus one chunk, or one in-process job in local mode.
+DRIVER_LEASE_SECONDS = float(os.getenv("DRIVER_LEASE_SECONDS", "60"))
+DRIVER_RETRY_SECONDS = 15.0
 
 def _iter_plan(pipeline_name: str, slices: Iterator[Any]) -> Iterator[Any]:
     """Yield planned jobs, naming ``define_jobs`` when the plan itself raises.
@@ -54,25 +80,6 @@ def _iter_plan(pipeline_name: str, slices: Iterator[Any]) -> Iterator[Any]:
             except StopIteration:
                 return
         yield item
-
-
-def _batch_timeout(job_count: int, rate_limit: Optional[float]) -> float:
-    """How long to wait for one batch to finish, as a function of its size.
-
-    A rate-limited batch cannot finish faster than it can be dispatched, so a
-    fixed deadline that suited 25 jobs will expire mid-flight on a batch of
-    1000 — and a batch that times out is reported as unfinished, which
-    :meth:`_finalize_execution_state` turns into a failed execution even
-    though every job was healthy.
-
-    # ponytail: 3x the dispatch window assumes workers keep up with the
-    # dispatch rate. If they can't, the backlog outlives the deadline —
-    # raise CHECKPOINT_BATCH_TIMEOUT or add workers.
-    """
-    if not rate_limit or rate_limit <= 0:
-        return float(CHECKPOINT_BATCH_TIMEOUT)
-    dispatch_seconds = job_count / (rate_limit / 60.0)
-    return max(float(CHECKPOINT_BATCH_TIMEOUT), dispatch_seconds * 3)
 
 
 # Worker job message schema version
@@ -99,12 +106,16 @@ def _run_async(coro: Any) -> Any:
             import nest_asyncio
 
             nest_asyncio.apply()  # pyright: ignore[reportUnknownMemberType]  # no stubs
+        except (ImportError, ValueError):
+            # ValueError: nest_asyncio can't patch uvloop, which uvicorn runs — the
+            # case for the synchronous DLQ "dispatch now" endpoint. Use the thread.
+            pass
+        else:
             return asyncio.get_event_loop().run_until_complete(coro)
-        except ImportError:
-            import concurrent.futures
+        import concurrent.futures
 
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                return pool.submit(asyncio.run, coro).result()
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            return pool.submit(asyncio.run, coro).result()
 
 
 def build_job_payload(
@@ -207,6 +218,7 @@ class PipelineRunner:
             execution_id=execution_id,
             pipeline_name=pipeline_name,
             runtime_params=runtime_params,
+            rate_limit=rate_limit_override,
         )
 
         # Run the job dispatch; always leave execution in a terminal state
@@ -246,8 +258,9 @@ class PipelineRunner:
         """
         Resume an interrupted execution from where it left off.
 
-        Skips Phase 1 (jobs already in DB) and resumes Phase 2
-        from the first incomplete batch. Used for crash recovery.
+        Skips Phase 1 (jobs already in DB) and re-enters the Phase 2 drive loop,
+        which picks up pending jobs and leaves in-flight ones to their leases.
+        Used for crash recovery and by POST /executions/{id}/resume.
 
         Args:
             execution_id: Execution identifier to resume
@@ -281,117 +294,46 @@ class PipelineRunner:
             )
             return
 
-        # Find first incomplete batch
-        first_incomplete_batch = self.job_manager.get_first_incomplete_batch(execution_id)
-        if first_incomplete_batch is None:
-            # All batches complete - just update final state
-            logger.info("Execution %s has no incomplete batches, syncing state", execution_id)
-            self._sync_counts_from_db(execution_id)
-            counts = self.job_manager.get_job_counts(execution_id)
-            final_state = "completed" if counts.get("failed", 0) == 0 else "failed"
-            self.execution_manager.update_execution_state(execution_id, final_state)
+        # Nothing unfinished: settle the final state from the job rows.
+        counts = self.job_manager.get_job_counts(execution_id)
+        unfinished = counts["pending"] + counts["dispatched"] + counts["running"]
+        if unfinished == 0:
+            logger.info("Execution %s has no unfinished jobs, syncing state", execution_id)
+            self._finalize_execution_state(execution_id, counts["total"], (0, 0, 0))
             return
 
-        logger.info("Resuming execution %s from batch %d", execution_id, first_incomplete_batch)
-
-        # Determine effective rate limit
+        # Determine effective rate limit. The original /run override is persisted on the
+        # execution; without it a restart silently fell back to the class rate_limit.
         effective_rate_limit = rate_limit_override
+        if effective_rate_limit is None:
+            effective_rate_limit = execution.rate_limit
         if effective_rate_limit is None and pipeline.rate_limit:
             effective_rate_limit = pipeline.rate_limit
 
-        # In local mode, dispatched jobs that weren't completed are orphaned
-        # (the executor that was processing them died with the restart), so
-        # reset them to pending for re-dispatch.
-        is_local_mode = isinstance(self.dispatcher, LocalDispatcher)
-        if is_local_mode:
+        # Local mode runs jobs in-process, so whatever was dispatched or running died
+        # with the restart. Requeue it now instead of waiting out the leases. In
+        # distributed mode those jobs may still be alive on a worker; the leases decide.
+        if isinstance(self.dispatcher, LocalDispatcher):
             orphaned = (
                 self.job_manager.db.query(Job)
                 .filter(
                     Job.execution_id == execution_id,
-                    Job.state == "dispatched",
+                    Job.state.in_(["dispatched", "running"]),
                 )
-                .all()
+                .update({"state": "pending"}, synchronize_session=False)
             )
+            self.job_manager.db.commit()
             if orphaned:
-                logger.warning(
-                    "Local mode: resetting %d orphaned dispatched jobs to pending", len(orphaned)
-                )
-                for job in orphaned:
-                    job.state = "pending"
-                self.job_manager.db.commit()
+                logger.warning("Local mode: requeued %d orphaned jobs", orphaned)
 
-        # Get total jobs and max batch number from DB
-        job_counts = self.job_manager.get_job_counts(execution_id)
-        total_jobs = job_counts.get("total", 0)
-
-        max_batch_result = (
-            self.job_manager.db.query(func.max(Job.batch_number))
-            .filter(Job.execution_id == execution_id)
-            .scalar()
+        logger.info(
+            "Resuming execution %s: %d pending, %d in flight",
+            execution_id,
+            counts["pending"],
+            counts["dispatched"] + counts["running"],
         )
-        max_batch = max_batch_result or 0
-
-        # Sync current counts
-        total_dispatched, total_completed, total_failed = self._sync_counts_from_db(execution_id)
-
-        # Resume from first incomplete batch
-        for current_batch_num in range(first_incomplete_batch, max_batch + 1):
-            jobs = self.job_manager.get_pending_jobs_by_batch_number(
-                execution_id, current_batch_num
-            )
-
-            if not jobs:
-                # No pending jobs. In distributed mode, workers may still be
-                # processing jobs already dispatched to Kafka — wait for them.
-                dispatched_jobs = (
-                    self.job_manager.db.query(Job)
-                    .filter(
-                        Job.execution_id == execution_id,
-                        Job.batch_number == current_batch_num,
-                        Job.state == "dispatched",
-                    )
-                    .all()
-                )
-                if dispatched_jobs:
-                    job_ids = [job.job_id for job in dispatched_jobs]
-                    logger.info(
-                        "Waiting for %d dispatched jobs in batch %d...",
-                        len(dispatched_jobs),
-                        current_batch_num,
-                    )
-                    completed, failed = self._wait_for_batch_completion(
-                        job_ids=job_ids,
-                        timeout=_batch_timeout(len(job_ids), effective_rate_limit),
-                        poll_interval=CHECKPOINT_POLL_INTERVAL,
-                    )
-                    total_completed += completed
-                    total_failed += failed
-                continue
-
-            logger.info("Dispatching batch %d (%d jobs)...", current_batch_num, len(jobs))
-            dispatched, completed, failed = self._dispatch_one_batch(
-                execution_id,
-                pipeline_name,
-                jobs,
-                effective_rate_limit,
-                is_local_mode,
-                prior_dispatched=total_dispatched,
-            )
-            total_dispatched += dispatched
-            total_completed += completed
-            total_failed += failed
-
-            self._set_job_counts(
-                execution_id,
-                dispatched=total_dispatched,
-                completed=total_completed,
-                failed=total_failed,
-            )
-            logger.info("Batch %d: %d completed, %d failed", current_batch_num, completed, failed)
-
-        # Final state update
-        dispatched, completed, failed = self._finalize_execution_state(
-            execution_id, total_jobs, (total_dispatched, total_completed, total_failed)
+        dispatched, completed, failed = self._drive_execution(
+            execution_id, pipeline_name, effective_rate_limit
         )
         logger.info(
             "Resumed execution %s: %d dispatched, %d completed, %d failed",
@@ -545,9 +487,9 @@ class PipelineRunner:
         self._backfill_total_batches(execution_id, batch_number)
         logger.info("Saved %d jobs to database in %d batches", job_count, batch_number)
 
-        # Phase 2: dispatch and wait for each batch
-        dispatched, completed, failed = self._dispatch_and_wait_batches(
-            execution_id, pipeline_name, batch_number, job_count, effective_rate_limit
+        # Phase 2: keep the in-flight window full until every job has finished
+        dispatched, completed, failed = self._drive_execution(
+            execution_id, pipeline_name, effective_rate_limit
         )
         logger.info(
             "Execution %s: %d dispatched, %d completed, %d failed",
@@ -569,118 +511,261 @@ class PipelineRunner:
                 exc_info=True,
             )
 
-    def _dispatch_one_batch(
+    def _drive_execution(
         self,
         execution_id: str,
         pipeline_name: str,
-        jobs: List[Job],
         effective_rate_limit: Optional[float],
-        is_local_mode: bool,
-        prior_dispatched: int = 0,
     ) -> Tuple[int, int, int]:
-        """
-        Dispatch a single batch of jobs and report its counts.
+        """Phase 2: dispatch jobs until every one has finished, then set the final state.
+
+        Only one loop may drive an execution — a second one would double the dispatch
+        rate. Ownership is a lease on the execution row (see DRIVER_LEASE_SECONDS).
 
         Returns:
-            Tuple of (dispatched, completed, failed) for this batch only.
+            Final (dispatched, completed, failed) counts.
         """
-        job_ids = [job.job_id for job in jobs]
-        job_payloads = [job.job_payload for job in jobs]
+        driver_id = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+        try:
+            result: Tuple[int, int, int] = _run_async(
+                self._drive_async(execution_id, pipeline_name, effective_rate_limit, driver_id)
+            )
+            return result
+        finally:
+            try:
+                self.execution_manager.release_driver(execution_id, driver_id)
+            except Exception:
+                logger.warning("Could not release dispatch lease for %s", execution_id, exc_info=True)
 
-        # Use an execution-scoped rate-limit key so concurrent executions of the
-        # same pipeline don't contend on the same rate limiter bucket.
+    async def _wait_for_driver_lease(self, execution_id: str, driver_id: str) -> bool:
+        """Claim the dispatch lease, standing by while a live loop holds it.
+
+        Returns False if the execution stops running while waiting.
+        """
+        announced = False
+        while True:
+            try:
+                if self.execution_manager.claim_driver(
+                    execution_id, driver_id, DRIVER_LEASE_SECONDS
+                ):
+                    return True
+                if self._execution_state(execution_id) != "running":
+                    return False
+            except DBAPIError:
+                logger.warning(
+                    "Execution %s: database error claiming the dispatch lease; retrying",
+                    execution_id,
+                    exc_info=True,
+                )
+                self.job_manager.db.rollback()
+            if not announced:
+                logger.info(
+                    "Execution %s is being dispatched by another loop; standing by to "
+                    "take over if it stops",
+                    execution_id,
+                )
+                announced = True
+            await asyncio.sleep(DRIVER_RETRY_SECONDS)
+
+    async def _drive_async(
+        self,
+        execution_id: str,
+        pipeline_name: str,
+        effective_rate_limit: Optional[float],
+        driver_id: str,
+    ) -> Tuple[int, int, int]:
+        """The drive loop. One event loop for the whole execution, so the Kafka
+        producer is created once and closed at the end."""
+        if not await self._wait_for_driver_lease(execution_id, driver_id):
+            logger.info("Execution %s is no longer running; not dispatching", execution_id)
+            return self._sync_counts_from_db(execution_id)
+        # Execution-scoped key: concurrent executions of one pipeline don't share a bucket.
         rate_limit_key = f"{pipeline_name}:{execution_id}"
-        dispatched = _run_async(
-            self.dispatcher.dispatch_jobs_batch(
-                jobs=job_payloads,
-                pipeline_name=rate_limit_key,
-                rate_limit=effective_rate_limit,
-            )
-        )
+        started = time.time()
+        # Loop bookkeeping carried between steps.
+        track: Dict[str, float] = {
+            "finished": -1.0,
+            "progress_at": started,
+            "warned_at": started,
+            "lease_checked_at": 0.0,
+        }
+        db_backoff = 0.0
+        try:
+            while True:
+                try:
+                    result = await self._drive_step(
+                        execution_id,
+                        pipeline_name,
+                        effective_rate_limit,
+                        rate_limit_key,
+                        driver_id,
+                        track,
+                    )
+                except DBAPIError:
+                    # Postgres went away (restart, failover, idled namespace). The jobs and
+                    # their states are safe in the database; keep retrying instead of
+                    # ending the loop, which left the execution stuck until a manager restart.
+                    db_backoff = min(max(db_backoff * 2, 5.0), 60.0)
+                    logger.warning(
+                        "Execution %s: database error in dispatch loop; retrying in %.0fs",
+                        execution_id,
+                        db_backoff,
+                        exc_info=True,
+                    )
+                    try:
+                        self.job_manager.db.rollback()
+                    except Exception:
+                        pass
+                    await asyncio.sleep(db_backoff)
+                    continue
+                db_backoff = 0.0
+                if result is not None:
+                    return result
+        finally:
+            try:
+                await self.dispatcher.close()
+            except Exception:
+                logger.warning("Could not close dispatcher for %s", execution_id, exc_info=True)
 
-        # Mark jobs as dispatched and surface progress before the (possibly long) wait.
-        self.job_manager.mark_jobs_dispatched(job_ids)
-        self._set_job_counts(execution_id, dispatched=prior_dispatched + dispatched)
-
-        if is_local_mode:
-            # LocalDispatcher executed jobs synchronously and wrote their states
-            # directly to the DB, so no polling is needed.
-            completed = dispatched
-            failed = len(jobs) - dispatched
-        else:
-            # Distributed mode: jobs sent to Kafka, wait for workers to complete.
-            logger.info("Waiting for batch completion...")
-            completed, failed = self._wait_for_batch_completion(
-                job_ids=job_ids,
-                timeout=_batch_timeout(len(jobs), effective_rate_limit),
-                poll_interval=CHECKPOINT_POLL_INTERVAL,
-            )
-
-        return dispatched, completed, failed
-
-    def _dispatch_and_wait_batches(
+    async def _drive_step(
         self,
         execution_id: str,
         pipeline_name: str,
-        batch_number: int,
-        job_count: int,
         effective_rate_limit: Optional[float],
-    ) -> Tuple[int, int, int]:
-        """
-        Phase 2: dispatch every batch in order, then drive the execution to a terminal state.
-
-        Shared by the standard and ID-based pipeline flows.
-
-        Returns:
-            Final (dispatched, completed, failed) counts synced from the database.
-        """
-        is_local_mode = isinstance(self.dispatcher, LocalDispatcher)
-        if is_local_mode:
-            logger.info("Phase 2: Executing batches locally (in-process)...")
-        else:
-            logger.info("Phase 2: Dispatching batches...")
-
-        total_dispatched = 0
-        total_completed = 0
-        total_failed = 0
-
-        for current_batch_num in range(1, batch_number + 1):
-            jobs = self.job_manager.get_pending_jobs_by_batch_number(
-                execution_id, current_batch_num
+        rate_limit_key: str,
+        driver_id: str,
+        track: Dict[str, float],
+    ) -> Optional[Tuple[int, int, int]]:
+        """One pass of the drive loop. Returns the final counts when the loop should end."""
+        if not self.execution_manager.heartbeat_driver(execution_id, driver_id):
+            # Our heartbeat went stale (a long stall) and another loop took over.
+            logger.warning(
+                "Execution %s: another dispatch loop took over; this one stops", execution_id
             )
-            if not jobs:
-                continue
+            return self._sync_counts_from_db(execution_id)
+        state = self._execution_state(execution_id)
+        if state != "running":
+            # Paused (or settled elsewhere): stop sending. In-flight jobs still finish;
+            # POST /executions/{id}/resume starts a new loop.
+            logger.info("Execution %s is %s; dispatch loop stopping", execution_id, state)
+            return self._sync_counts_from_db(execution_id)
 
-            logger.info(
-                "%s batch %d (%d jobs)...",
-                "Executing" if is_local_mode else "Dispatching",
-                current_batch_num,
-                len(jobs),
+        now = time.time()
+        if now - track["lease_checked_at"] >= LEASE_CHECK_INTERVAL:
+            self._reclaim_expired_leases(execution_id, pipeline_name)
+            track["lease_checked_at"] = now
+
+        counts = self.job_manager.get_job_counts(execution_id)
+        in_flight = counts["dispatched"] + counts["running"]
+        if counts["pending"] == 0 and in_flight == 0:
+            return self._finalize_execution_state(
+                execution_id, counts["total"], self._sync_counts_from_db(execution_id)
             )
 
-            dispatched, completed, failed = self._dispatch_one_batch(
+        finished = _finished_count(counts["completed"], counts["failed"], counts["deduplicated"])
+        if finished != track["finished"]:
+            track["finished"], track["progress_at"] = finished, now
+        elif now - max(track["progress_at"], track["warned_at"]) >= STALL_WARN_SECONDS:
+            # No batch timeout fails the run any more, so say so when it's stuck.
+            logger.warning(
+                "Execution %s: no job finished for %.0f min with %d in flight "
+                "and %d pending — are workers running?",
                 execution_id,
-                pipeline_name,
-                jobs,
-                effective_rate_limit,
-                is_local_mode,
-                prior_dispatched=total_dispatched,
+                (now - track["progress_at"]) / 60,
+                in_flight,
+                counts["pending"],
             )
-            total_dispatched += dispatched
-            total_completed += completed
-            total_failed += failed
+            track["warned_at"] = now
 
-            self._set_job_counts(
-                execution_id,
-                dispatched=total_dispatched,
-                completed=total_completed,
-                failed=total_failed,
+        free_slots = MAX_IN_FLIGHT_JOBS - in_flight
+        sent = 0
+        if counts["pending"] and free_slots > 0:
+            jobs = self.job_manager.get_pending_jobs(
+                execution_id, limit=min(free_slots, DISPATCH_FETCH_LIMIT)
             )
-            logger.info("Batch %d: %d completed, %d failed", current_batch_num, completed, failed)
+            sent = await self._send_jobs(
+                execution_id, rate_limit_key, effective_rate_limit, driver_id, jobs
+            )
+            self._sync_counts_from_db(execution_id)
+        if not sent:
+            # Window full, nothing pending, or the send failed: wait, but return the
+            # pooled connection first (the count query opened a transaction; holding it
+            # across the sleep pins a connection per execution and exhausts the pool
+            # when schedules overlap).
+            self.job_manager.db.commit()
+            await asyncio.sleep(CHECKPOINT_POLL_INTERVAL)
+        return None
 
-        return self._finalize_execution_state(
-            execution_id, job_count, (total_dispatched, total_completed, total_failed)
+    async def _send_jobs(
+        self,
+        execution_id: str,
+        rate_limit_key: str,
+        effective_rate_limit: Optional[float],
+        driver_id: str,
+        jobs: List[Job],
+    ) -> int:
+        """Send jobs in order, marking each dispatched right after its send.
+
+        Hands control back after DISPATCH_CHUNK_SECONDS, and stops within about a
+        second of the execution being paused.
+        """
+        started = time.time()
+        last_check = 0.0
+        stop = False
+
+        def should_stop() -> bool:
+            nonlocal last_check, stop
+            now = time.time()
+            if now - started >= DISPATCH_CHUNK_SECONDS:
+                return True
+            if now - last_check >= 1.0:
+                last_check = now
+                # Heartbeat here too: a chunk can outlast many drive-loop passes.
+                stop = (
+                    not self.execution_manager.heartbeat_driver(execution_id, driver_id)
+                    or self._execution_state(execution_id) != "running"
+                )
+            return stop
+
+        def on_sent(payload: Dict[str, Any]) -> None:
+            self.job_manager.mark_job_dispatched(payload["job_id"])
+
+        sent: int = await self.dispatcher.dispatch_jobs_batch(
+            jobs=[job.job_payload for job in jobs],
+            pipeline_name=rate_limit_key,
+            rate_limit=effective_rate_limit,
+            on_sent=on_sent,
+            should_stop=should_stop,
         )
+        return sent
+
+    def _reclaim_expired_leases(self, execution_id: str, pipeline_name: str) -> None:
+        """Requeue jobs whose worker or message was lost; fail ones out of attempts."""
+        result = self.job_manager.reclaim_expired_leases(
+            execution_id,
+            running_lease_seconds=JOB_RUNNING_LEASE_SECONDS,
+            dispatch_lease_seconds=JOB_DISPATCH_LEASE_SECONDS,
+            max_attempts=JOB_MAX_ATTEMPTS,
+        )
+        if any(result.values()):
+            logger.warning(
+                "Execution %s: lease expired — requeued %d lost-worker and %d "
+                "lost-message jobs, failed %d out of attempts",
+                execution_id,
+                result["requeued_running"],
+                result["requeued_dispatched"],
+                result["failed"],
+            )
+        if result["failed"]:
+            metrics.jobs_processed_total.labels(
+                pipeline=pipeline_name, status="lease_expired"
+            ).inc(result["failed"])
+
+    def _execution_state(self, execution_id: str) -> Optional[str]:
+        """Fresh execution state (pause/resume land from other sessions)."""
+        self.execution_manager.db.expire_all()
+        execution = self.execution_manager.get_execution(execution_id)
+        return execution.state if execution else None
 
     def _finalize_execution_state(
         self,
@@ -767,7 +852,13 @@ class PipelineRunner:
         completed = job_counts.get("completed", 0)
         failed = job_counts.get("failed", 0)
         deduplicated = job_counts.get("deduplicated", 0)
-        dispatched = job_counts.get("dispatched", 0) + completed + failed + deduplicated
+        dispatched = (
+            job_counts.get("dispatched", 0)
+            + job_counts.get("running", 0)
+            + completed
+            + failed
+            + deduplicated
+        )
 
         # Update execution with real counts
         execution = self.execution_manager.get_execution(execution_id)
@@ -779,65 +870,6 @@ class PipelineRunner:
             self.execution_manager.db.commit()
 
         return (dispatched, completed + deduplicated, failed)
-
-    def _wait_for_batch_completion(
-        self,
-        job_ids: List[str],
-        timeout: float = CHECKPOINT_BATCH_TIMEOUT,
-        poll_interval: float = CHECKPOINT_POLL_INTERVAL,
-    ) -> Tuple[int, int]:
-        """
-        Wait for all jobs in a checkpoint batch to complete.
-
-        Args:
-            job_ids: List of batch IDs to wait for
-            timeout: Maximum time to wait in seconds
-            poll_interval: How often to poll for completion
-
-        Returns:
-            Tuple of (completed_count, failed_count)
-        """
-        start_time = time.time()
-
-        while time.time() - start_time < timeout:
-            # Get states for all checkpoints in this batch
-            states = self.job_manager.get_job_states(job_ids)
-
-            completed = 0
-            failed = 0
-            pending = 0
-
-            for job_id in job_ids:
-                state = states.get(job_id, "pending")
-                if state in ("completed", "deduplicated"):
-                    completed += 1
-                elif state == "failed":
-                    failed += 1
-                else:
-                    pending += 1
-
-            # Check if all jobs are done (completed or failed)
-            if pending == 0:
-                return (completed, failed)
-
-            # Release the pooled DB connection before sleeping. The poll query
-            # above opens a read transaction, and holding it across the sleep
-            # pins one connection per in-flight execution for up to `timeout`
-            # seconds. Scheduled pipelines are allowed to overlap and each runs
-            # on its own session, so without this the QueuePool (10 + 20
-            # overflow) is exhausted and every caller times out.
-            self.job_manager.db.commit()
-
-            # Wait before polling again
-            time.sleep(poll_interval)
-
-        # Timeout reached - return current counts
-        logger.warning("Batch timeout after %ss, some jobs may not have completed", timeout)
-        states = self.job_manager.get_job_states(job_ids)
-        completed = sum(1 for s in states.values() if s in ("completed", "deduplicated"))
-        failed = sum(1 for s in states.values() if s == "failed")
-
-        return (completed, failed)
 
     def _serialize_for_json(self, obj: Any) -> Any:
         """Recursively convert objects to JSON-serializable form."""

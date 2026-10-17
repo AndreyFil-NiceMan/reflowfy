@@ -9,7 +9,7 @@ import os
 from typing import Any, List, Optional, Union
 
 from aiokafka import AIOKafkaConsumer
-from aiokafka.errors import KafkaError
+from aiokafka.errors import CommitFailedError, KafkaError
 
 from reflowfy.worker.executor import WorkerExecutor
 
@@ -125,14 +125,25 @@ class KafkaJobConsumer:
         self._running = True
 
         try:
-            async for msg in self.consumer:
-                if not self._running:
-                    break
-                await self._process_message(msg)
-
+            await self._consume_until_stopped()
         finally:
+            # Leaves the group cleanly, so the partitions move to another worker
+            # right away instead of after the session timeout.
             await self.consumer.stop()
             await self.executor.close()
+
+    async def _consume_until_stopped(self) -> None:
+        """Process messages one at a time until :meth:`request_stop`.
+
+        Polls with a 1s timeout so a stop request is noticed while idle, and only
+        between messages, so a job in progress always finishes and commits first.
+        """
+        assert self.consumer is not None  # set by start()
+        while self._running:
+            batch = await self.consumer.getmany(timeout_ms=1000, max_records=1)
+            for messages in batch.values():
+                for msg in messages:
+                    await self._process_message(msg)
 
     async def _process_message(self, msg: Any) -> None:
         """Decode, execute, and commit a single Kafka message."""
@@ -184,10 +195,20 @@ class KafkaJobConsumer:
             # Commit anyway to skip bad message
             await self.consumer.commit()
 
+        except CommitFailedError:
+            # Group rebalanced mid-job. The outcome is already in Postgres; the message
+            # will be redelivered, so a duplicate run is possible (enable_duplicate_jobs=False
+            # dedups by content).
+            logger.warning("Offset commit failed: group rebalanced; message will be redelivered")
+
         except Exception:
             logger.exception("Job processing error")
             # Don't commit - will retry
 
+    def request_stop(self) -> None:
+        """Ask the loop to exit after the current job (safe from a signal handler)."""
+        self._running = False
+
     async def stop(self):
         """Stop consuming."""
-        self._running = False
+        self.request_stop()

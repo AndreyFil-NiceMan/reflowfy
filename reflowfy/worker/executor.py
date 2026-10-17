@@ -1,5 +1,6 @@
 """Worker job executor with async support."""
 
+import asyncio
 import os
 import time
 import traceback
@@ -14,6 +15,7 @@ from reflowfy.core.registry import pipeline_registry
 from reflowfy.execution.content_dedup import (
     claim_content_hash,
     compute_content_hash,
+    destination_identity,
     release_content_hash,
 )
 from reflowfy.execution.job_runner import run_job_records
@@ -44,6 +46,8 @@ class JobStats:
         self.success = False
         self.deduplicated = False
         self.skip_reason: Optional[str] = None
+        # Another delivery of this job already claimed it; this message was skipped.
+        self.redelivered = False
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -120,12 +124,15 @@ class WorkerExecutor:
         duration: float,
         records: int,
         skipped: bool = False,
+        redelivered: bool = False,
     ) -> None:
         """Emit Prometheus metrics for one finished job.
 
         # ponytail: error_type = exception class name only — never the message (cardinality).
         """
-        if deduplicated:
+        if redelivered:
+            status = "redelivered"
+        elif deduplicated:
             status = "deduplicated"
         elif skipped:
             status = "skipped"
@@ -176,6 +183,7 @@ class WorkerExecutor:
                 success=stats.success,
                 deduplicated=stats.deduplicated,
                 skipped=stats.skip_reason is not None,
+                redelivered=stats.redelivered,
                 error_type=stats.error_type,
                 duration=duration,
                 records=stats.records_output,
@@ -196,6 +204,19 @@ class WorkerExecutor:
         destination = None
 
         try:
+            # Claim the job before doing any work. Kafka redelivers after a rebalance or
+            # a crash before commit, and the manager re-sends jobs whose lease expired;
+            # without the claim each delivery ran the job again and wrote it twice.
+            blocking_state = await self._claim_job(job_id)
+            if blocking_state is not None:
+                logger.info(
+                    "Job %s: already %s — skipping redelivered message", job_id, blocking_state
+                )
+                stats.redelivered = True
+                stats.success = True
+                stats.end_time = time.time()
+                return True  # job row belongs to the delivery that claimed it
+
             metadata = job_payload.get("metadata", {})
             source_descriptor: Dict[str, Any] = job_payload.get("source") or {}
 
@@ -214,8 +235,11 @@ class WorkerExecutor:
                 )
 
             # Shared v2 core: fetch this slice, normalize, transform, resolve destination.
-            records, transformed_records, applied, destination = run_job_records(
-                source, pipeline, runtime_params
+            # In a thread: fetch/transform are blocking (sync Elasticsearch client). Run
+            # inline they stall the event loop, starving the Kafka heartbeat so the broker
+            # evicts the worker and the later commit fails with CommitFailedError.
+            records, transformed_records, applied, destination = await asyncio.to_thread(
+                run_job_records, source, pipeline, runtime_params
             )
             stats.records_input = len(records)
 
@@ -255,6 +279,7 @@ class WorkerExecutor:
                     transformation_names,
                     records,
                     job_payload.get("job_params") or None,
+                    destination_identity(destination),
                 )
                 won = await claim_content_hash(
                     self._async_session, content_hash, _pipeline_name, job_id, execution_id
@@ -326,6 +351,18 @@ class WorkerExecutor:
 
             return False
 
+        except BaseException:
+            # Shutdown mid-job (SIGTERM's SystemExit, or the task cancelled on a
+            # scale-down/rollout) bypasses `except Exception`. Release the claim so the
+            # redelivered message runs again; left held, the redelivery was marked
+            # deduplicated and the unwritten rest of the job was silently lost.
+            if claimed_content_hash:
+                try:
+                    await release_content_hash(self._async_session, claimed_content_hash, job_id)
+                except BaseException:
+                    pass
+            raise
+
         finally:
             # Always release the per-job destination's resources (e.g. the
             # Kafka producer started during health_check/send). Without this,
@@ -335,6 +372,42 @@ class WorkerExecutor:
                     await destination.close()
                 except Exception as close_err:
                     logger.warning("Job %s: failed to close destination: %s", job_id, close_err)
+
+    async def _claim_job(self, job_id: str) -> Optional[str]:
+        """Claim a job for this delivery: pending/dispatched -> running, attempts + 1.
+
+        Returns None when this delivery should run the job — it claimed it, or the
+        job has no row (an untracked message). Otherwise returns the state that
+        blocks it (running elsewhere, or already finished).
+
+        Fails open: if the database is unreachable the job runs anyway, which is
+        the at-least-once behaviour from before claims existed.
+        """
+        from sqlalchemy import select, update
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        try:
+            async with self._async_session() as db:
+                result = await db.execute(
+                    update(Job)
+                    .where(Job.job_id == job_id, Job.state.in_(["pending", "dispatched"]))
+                    .values(state="running", attempts=Job.attempts + 1, updated_at=now)
+                )
+                if (getattr(result, "rowcount", 0) or 0) == 1:
+                    await db.commit()
+                    return None
+                state = (
+                    await db.execute(select(Job.state).where(Job.job_id == job_id))
+                ).scalar_one_or_none()
+                await db.commit()
+                return state
+        except Exception:
+            logger.warning(
+                "Job %s: could not claim (database error); running it anyway",
+                job_id,
+                exc_info=True,
+            )
+            return None
 
     async def _update_job_in_db(self, execution_id: str, job_id: str, stats: JobStats):
         """

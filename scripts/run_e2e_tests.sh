@@ -414,9 +414,12 @@ if [ "$SKIP_DOCKER" = false ]; then
     log_info "Step 3: Starting Services..."
     ensure_workspace
 
-    # Clean up any leftover containers/networks from previous runs
+    # Clean up any leftover containers/networks from previous runs. -v drops the
+    # app's Postgres volume too: it is named (e2e_workspace_postgres_data), so it
+    # outlived each run, and the manager resumed the previous run's unfinished
+    # executions at startup — their records landed in this run's mock sinks.
     log_info "Cleaning up previous E2E state..."
-    docker compose down --remove-orphans 2>/dev/null || true
+    docker compose down --remove-orphans -v 2>/dev/null || true
     docker compose -f docker-compose.e2e-infra.yml down --remove-orphans 2>/dev/null || true
     docker network rm e2e_workspace_reflowfy-network 2>/dev/null || true
 

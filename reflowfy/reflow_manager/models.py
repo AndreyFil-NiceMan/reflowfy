@@ -39,6 +39,12 @@ class Execution(Base):
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     runtime_params: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    # The /run rate_limit override (jobs/min); a resume after a manager restart reuses it.
+    rate_limit: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Which dispatch loop owns this execution, and when it last proved it is alive.
+    # A loop takes over only once the heartbeat is stale (see PipelineRunner).
+    driver_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    driver_heartbeat_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     # Relationship to jobs
     jobs: Mapped[List["Job"]] = relationship(
@@ -108,8 +114,11 @@ class Job(Base):
     job_payload: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
     batch_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
-    # State tracking
+    # State tracking: pending -> dispatched (message sent) -> running (a worker
+    # claimed it) -> completed | failed | deduplicated
     state: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    # Times a worker has claimed (started) this job; caps lease re-dispatch.
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
 
     # Worker results
     processed_records: Mapped[int] = mapped_column(Integer, default=0)

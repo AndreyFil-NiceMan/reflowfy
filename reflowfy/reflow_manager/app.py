@@ -2,6 +2,7 @@
 
 import logging
 import os
+import socket
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional
@@ -203,13 +204,18 @@ async def pause_execution(
     execution_id: str,
     manager: ReflowManager = Depends(get_reflow_manager),
 ) -> Dict[str, Any]:
-    """Pause an execution."""
-    execution = manager.pause_execution(execution_id)
-
-    if not execution:
+    """Pause an execution: no new jobs are sent (within about a second, or one
+    rate-limit token wait); jobs already in flight still finish."""
+    if not manager.get_execution(execution_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Execution '{execution_id}' not found",
+        )
+    execution = manager.pause_execution(execution_id)
+    if not execution:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Execution '{execution_id}' is not running",
         )
 
     return {"message": "Execution paused", "execution": execution.to_dict()}
@@ -218,9 +224,16 @@ async def pause_execution(
 @app.post("/executions/{execution_id}/resume")
 async def resume_execution(
     execution_id: str,
+    background_tasks: BackgroundTasks,
     manager: ReflowManager = Depends(get_reflow_manager),
 ) -> Dict[str, Any]:
-    """Resume a paused execution."""
+    """Resume a paused execution: mark it running and restart its dispatch loop.
+
+    The loop of a paused execution exits within about a second of the pause, so
+    the state change alone would leave nothing sending. If the old loop is still
+    winding down, the new one stands by on the execution's dispatch lease instead of
+    doubling the rate.
+    """
     execution = manager.resume_execution(execution_id)
 
     if not execution:
@@ -229,6 +242,7 @@ async def resume_execution(
             detail=f"Execution '{execution_id}' not found or not paused",
         )
 
+    background_tasks.add_task(_resume_execution_sync, execution_id)
     return {"message": "Execution resumed", "execution": execution.to_dict()}
 
 
@@ -330,6 +344,7 @@ async def run_pipeline(
             execution_id=execution_id,
             pipeline_name=request.pipeline_name,
             runtime_params=request.runtime_params or {},
+            rate_limit=request.rate_limit,
         )
 
         # Reset cron schedule timer if this pipeline is scheduled,
@@ -516,6 +531,13 @@ async def _recover_interrupted_executions() -> None:
     db = SessionLocal()
     try:
         manager = _make_manager(db)
+
+        # Dispatch leases held by an earlier process on this host died with it (a
+        # container restart keeps the hostname). Free them so recovery resumes now
+        # instead of standing by until the dead loop's heartbeat goes stale.
+        released = manager.execution_manager.release_drivers_on_host(socket.gethostname())
+        if released:
+            logger.info("Released %d dispatch lease(s) left by a previous process", released)
 
         # Find interrupted executions
         interrupted = manager.execution_manager.get_interrupted_executions()
