@@ -275,6 +275,51 @@ if __name__ == "__main__":
 
 
 # ============================================================================
+# Test: Cancel execution / state override
+# ============================================================================
+
+class TestCancelExecution:
+    """Tests for POST /executions/{id}/cancel and the restricted PATCH /executions/{id}/state."""
+
+    def test_cancel_a_running_execution(self, client):
+        execution_id = _start_slow_pipeline(client)
+        _wait_for_state(client, execution_id, "running", max_wait=30)
+
+        response = client.post(f"/executions/{execution_id}/cancel")
+
+        assert response.status_code == 200, response.text
+        assert response.json()["execution"]["state"] == "cancelled"
+        stats = _wait_for_state(client, execution_id, "cancelled", max_wait=30)
+        assert stats["jobs_cancelled"] > 0
+        # nothing is dispatched afterwards, and the execution never turns completed
+        time.sleep(5)
+        assert client.get(f"/executions/{execution_id}/stats").json()["state"] == "cancelled"
+
+    def test_cancelling_twice_or_an_unknown_execution_is_an_error(self, client):
+        execution_id = _start_slow_pipeline(client)
+        _wait_for_state(client, execution_id, "running", max_wait=30)
+        assert client.post(f"/executions/{execution_id}/cancel").status_code == 200
+
+        assert client.post(f"/executions/{execution_id}/cancel").status_code == 409
+        assert client.post(f"/executions/{uuid.uuid4()}/cancel").status_code == 404
+
+    def test_state_override_refuses_states_that_have_an_owner(self, client):
+        execution_id = _start_slow_pipeline(client)
+        _wait_for_state(client, execution_id, "running", max_wait=30)
+
+        for state in ("completed", "running", "paused", "pending", "bogus"):
+            response = client.patch(f"/executions/{execution_id}/state", json={"state": state})
+            assert response.status_code == 422, f"{state}: {response.status_code} {response.text}"
+        assert client.get(f"/executions/{execution_id}/stats").json()["state"] == "running"
+
+        forced = client.patch(
+            f"/executions/{execution_id}/state", json={"state": "failed", "error_message": "operator"}
+        )
+        assert forced.status_code == 200
+        assert client.get(f"/executions/{execution_id}/stats").json()["state"] == "failed"
+
+
+# ============================================================================
 # Test: Retry failed jobs
 # ============================================================================
 

@@ -90,7 +90,7 @@ class ExecutionManager:
         if error_message:
             execution.error_message = error_message
 
-        if state in ["completed", "failed"]:
+        if state in ["completed", "failed", "cancelled"]:
             execution.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
         self.db.commit()
@@ -148,6 +148,22 @@ class ExecutionManager:
             return None
 
         return self.update_execution_state(execution_id, "running")
+
+    # States an execution can be in, and the ones it never leaves on its own.
+    STATES = ("pending", "running", "paused", "completed", "failed", "cancelled")
+    TERMINAL_STATES = ("completed", "failed", "cancelled")
+
+    def cancel_execution(self, execution_id: str) -> Optional[Execution]:
+        """Mark a pending, running or paused execution ``cancelled``.
+
+        Returns None if it does not exist or is already finished. Cancelling its jobs
+        is the caller's job (see ``JobManager.cancel_unstarted_jobs``): this only moves the
+        execution, which is what stops its dispatch loop and its planner.
+        """
+        execution = self.get_execution(execution_id)
+        if not execution or execution.state in self.TERMINAL_STATES:
+            return None
+        return self.update_execution_state(execution_id, "cancelled", error_message="Cancelled")
 
     def mark_plan_complete(self, execution_id: str) -> None:
         """Record that every job of the execution is saved (planning finished)."""

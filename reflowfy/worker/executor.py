@@ -49,6 +49,8 @@ class JobStats:
         self.skip_reason: Optional[str] = None
         # Another delivery of this job already claimed it; this message was skipped.
         self.redelivered = False
+        # The execution was cancelled before this job started; the message was skipped.
+        self.cancelled = False
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -127,12 +129,15 @@ class WorkerExecutor:
         records: int,
         skipped: bool = False,
         redelivered: bool = False,
+        cancelled: bool = False,
     ) -> None:
         """Emit Prometheus metrics for one finished job.
 
         # ponytail: error_type = exception class name only — never the message (cardinality).
         """
-        if redelivered:
+        if cancelled:
+            status = "cancelled"
+        elif redelivered:
             status = "redelivered"
         elif deduplicated:
             status = "deduplicated"
@@ -186,6 +191,7 @@ class WorkerExecutor:
                 deduplicated=stats.deduplicated,
                 skipped=stats.skip_reason is not None,
                 redelivered=stats.redelivered,
+                cancelled=stats.cancelled,
                 error_type=stats.error_type,
                 duration=duration,
                 records=stats.records_output,
@@ -212,10 +218,14 @@ class WorkerExecutor:
             # without the claim each delivery ran the job again and wrote it twice.
             blocking_state = await self._claim_job(job_id)
             if blocking_state is not None:
-                logger.info(
-                    "Job %s: already %s — skipping redelivered message", job_id, blocking_state
-                )
-                stats.redelivered = True
+                if blocking_state == "cancelled":
+                    logger.info("Job %s: execution was cancelled — skipping", job_id)
+                    stats.cancelled = True
+                else:
+                    logger.info(
+                        "Job %s: already %s — skipping redelivered message", job_id, blocking_state
+                    )
+                    stats.redelivered = True
                 stats.success = True
                 stats.end_time = time.time()
                 return True  # job row belongs to the delivery that claimed it

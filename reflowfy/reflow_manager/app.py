@@ -184,20 +184,80 @@ async def update_execution_state(
     request: UpdateExecutionStateRequest,
     manager: ReflowManager = Depends(get_reflow_manager),
 ) -> Dict[str, Any]:
-    """Update execution state."""
-    execution = manager.update_execution_state(
-        execution_id=execution_id,
-        state=request.state,
-        error_message=request.error_message,
-    )
+    """Administrative override of an execution's state: ``failed`` or ``cancelled`` only.
 
+    This used to set any string and any transition: ``running -> completed`` while a loop was
+    still dispatching, ``completed -> running`` with nothing driving it, or a state that does
+    not exist (which every loop reads as "stop"). Those states have owners — ``completed`` is
+    set by the system once every job finished, ``paused``/``running`` by ``/pause`` and
+    ``/resume`` (which also restart the dispatch loop), a retry by ``/retry-failed``. What is
+    left is force-failing a run that is stuck (with ``error_message``) and cancelling it.
+    """
+    if request.state not in ExecutionManager.STATES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown state '{request.state}'; states are {list(ExecutionManager.STATES)}",
+        )
+    if request.state not in ("failed", "cancelled"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"State '{request.state}' cannot be set directly. Use POST /executions/{{id}}/pause "
+                "or /resume; '/retry-failed' reopens a failed run; 'completed' is set by the "
+                "system when every job has finished. This endpoint only sets 'failed' or "
+                "'cancelled'."
+            ),
+        )
+    execution = manager.get_execution(execution_id)
     if not execution:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Execution '{execution_id}' not found",
         )
+    if execution.state in ExecutionManager.TERMINAL_STATES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Execution '{execution_id}' is already {execution.state}",
+        )
+    if request.state == "cancelled":
+        cancelled = manager.cancel_execution(execution_id)
+        assert cancelled is not None  # checked non-terminal above
+        return cancelled.execution.to_dict()
+    updated = manager.update_execution_state(
+        execution_id=execution_id, state="failed", error_message=request.error_message
+    )
+    assert updated is not None
+    return updated.to_dict()
 
-    return execution.to_dict()
+
+@app.post("/executions/{execution_id}/cancel")
+async def cancel_execution(
+    execution_id: str,
+    manager: ReflowManager = Depends(get_reflow_manager),
+) -> Dict[str, Any]:
+    """Cancel an execution that has not finished.
+
+    Dispatching and planning stop (within about a second, or when a blocking source call
+    returns), and every job no worker has started is marked ``cancelled``; messages already
+    in Kafka are skipped by the workers. Jobs that are already running finish — they cannot be
+    interrupted — so a little more may still be delivered after this returns.
+    """
+    if not manager.get_execution(execution_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Execution '{execution_id}' not found",
+        )
+    cancelled = manager.cancel_execution(execution_id)
+    if cancelled is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Execution '{execution_id}' has already finished",
+        )
+    return {
+        "message": "Execution cancelled",
+        "cancelled_jobs": cancelled.cancelled_jobs,
+        "execution": cancelled.execution.to_dict(),
+    }
 
 
 @app.post("/executions/{execution_id}/pause")

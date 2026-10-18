@@ -241,6 +241,104 @@ class TestPauseResume:
         assert manager.stats(execution)["state"] == "completed"
 
 
+class TestCancelAndStateControl:
+    def test_cancel_stops_a_run_and_cancels_what_has_not_started(
+        self, manager: Manager, sink: Sink, channel: str, params: Params
+    ):
+        execution = manager.run(PIPELINE, params(total=60, per_job=1), rate_limit=60)  # 1 job/s
+        manager.wait_jobs(execution, at_least=5)
+
+        cancel = manager.post(f"/executions/{execution}/cancel")
+
+        assert cancel.status_code == 200 and cancel.json()["cancelled_jobs"] > 0, cancel.text
+        time.sleep(8)  # whatever was already running lands; nothing new starts
+        settled = sink.report(channel)["records"]
+        time.sleep(8)
+        assert sink.report(channel)["records"] == settled, "jobs ran after the cancel"
+        assert 5 <= settled < 60
+        stats = manager.stats(execution)
+        assert stats["state"] == "cancelled" and stats["jobs_cancelled"] > 0, stats
+        states = job_states(manager, execution)
+        assert states.get("pending", 0) == 0 and states.get("dispatched", 0) == 0, states
+        assert states["cancelled"] == stats["jobs_cancelled"]
+
+    def test_a_cancelled_run_cannot_be_resumed_retried_paused_or_cancelled_again(
+        self, manager: Manager, params: Params
+    ):
+        execution = manager.run(PIPELINE, params(total=30, per_job=1), rate_limit=60)
+        manager.wait_jobs(execution, at_least=2)
+        assert manager.post(f"/executions/{execution}/cancel").status_code == 200
+
+        assert manager.post(f"/executions/{execution}/cancel").status_code == 409
+        assert manager.post(f"/executions/{execution}/pause").status_code == 409
+        assert manager.post(f"/executions/{execution}/resume").status_code == 400
+        assert manager.post(f"/executions/{execution}/retry-failed").json()["requeued"] == 0
+        assert manager.stats(execution)["state"] == "cancelled"
+
+    def test_cancelling_a_paused_run(self, manager: Manager, sink: Sink, channel: str, params: Params):
+        execution = manager.run(PIPELINE, params(total=60, per_job=1), rate_limit=60)
+        manager.wait_jobs(execution, at_least=3)
+        manager.post(f"/executions/{execution}/pause")
+
+        assert manager.post(f"/executions/{execution}/cancel").status_code == 200
+
+        time.sleep(6)
+        settled = sink.report(channel)["records"]
+        time.sleep(4)
+        assert sink.report(channel)["records"] == settled
+        assert manager.stats(execution)["state"] == "cancelled"
+
+    def test_the_state_override_only_force_fails_or_cancels(self, manager: Manager, params: Params):
+        execution = manager.run(PIPELINE, params(total=30, per_job=1), rate_limit=60)
+        manager.wait_jobs(execution, at_least=2)
+
+        for state in ("completed", "running", "paused", "pending", "bogus"):
+            response = manager.http.patch(f"/executions/{execution}/state", json={"state": state})
+            assert response.status_code == 422, f"{state}: {response.status_code} {response.text}"
+        assert manager.stats(execution)["state"] == "running"  # none of that touched it
+
+        forced = manager.http.patch(
+            f"/executions/{execution}/state", json={"state": "failed", "error_message": "operator"}
+        )
+        assert forced.status_code == 200
+        assert manager.stats(execution)["state"] == "failed"
+        assert manager.http.patch(f"/executions/{execution}/state", json={"state": "failed"}).status_code == 409
+
+    def test_cancel_during_planning_abandons_the_plan(
+        self, manager: Manager, sink: Sink, channel: str, params: Params
+    ):
+        """The planner is slow (3 s per job). Cancelled at ~7 s, it stops planning: no job is
+        dispatched, the plan is never declared whole, and nothing is delivered."""
+        execution = manager.run(PIPELINE, params(total=100, per_job=10, plan_delay_s=3.0))
+        time.sleep(7)
+
+        assert manager.post(f"/executions/{execution}/cancel").status_code == 200
+
+        time.sleep(15)  # long enough for the planner to notice and a dispatcher to (wrongly) start
+        stats = manager.stats(execution)
+        assert stats["state"] == "cancelled", stats
+        assert stats["jobs_dispatched"] == 0 and stats["jobs_completed"] == 0, stats
+        assert sink.report(channel)["records"] == 0
+
+    def test_pause_during_planning_defers_dispatch_until_resume(
+        self, manager: Manager, sink: Sink, channel: str, params: Params
+    ):
+        """Planning cannot be paused half way (its position lives in the manager's memory), so a
+        pause during it means: finish planning, dispatch nothing until resumed."""
+        execution = manager.run(PIPELINE, params(total=50, per_job=10, plan_delay_s=3.0))
+        time.sleep(4)
+        assert manager.post(f"/executions/{execution}/pause").status_code == 200
+
+        time.sleep(25)  # the plan (15 s) is over by now
+        stats = manager.stats(execution)
+        assert stats["state"] == "paused" and stats["total_jobs"] == 5, stats
+        assert sink.report(channel)["records"] == 0, "dispatched while paused"
+
+        assert manager.post(f"/executions/{execution}/resume").status_code == 200
+        assert manager.wait(execution)["state"] == "completed"
+        assert_exactly_once(sink, channel, ids(50))
+
+
 class TestConcurrency:
     def test_concurrent_executions_do_not_mix(self, manager: Manager, sink: Sink, channel: str, params: Params):
         runs = {}

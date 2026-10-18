@@ -90,6 +90,27 @@ class JobManager:
         )
         self.db.commit()
 
+    def cancel_unstarted_jobs(self, execution_id: str) -> int:
+        """Mark every job that no worker has started — ``pending`` or ``dispatched`` — as
+        ``cancelled``. A dispatched job's message may still be in Kafka; the worker's claim
+        (pending|dispatched -> running) fails for a cancelled job, so it is skipped. Jobs
+        already ``running`` are left to finish.
+
+        Returns:
+            Number of jobs cancelled.
+        """
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        cancelled = (
+            self.db.query(Job)
+            .filter(Job.execution_id == execution_id, Job.state.in_(["pending", "dispatched"]))
+            .update(
+                {"state": "cancelled", "completed_at": now, "updated_at": now},
+                synchronize_session=False,
+            )
+        )
+        self.db.commit()
+        return cancelled
+
     def requeue_failed(self, execution_id: str, error_contains: Optional[str] = None) -> int:
         """Put an execution's failed jobs back in the queue for another go.
 
@@ -253,7 +274,7 @@ class JobManager:
 
         Returns:
             Dictionary with total, pending, dispatched, running, completed, failed,
-            deduplicated counts
+            deduplicated, cancelled counts
         """
         # Expire cached objects to see external updates from workers
         self.db.expire_all()
@@ -270,6 +291,7 @@ class JobManager:
             "completed": 0,
             "failed": 0,
             "deduplicated": 0,
+            "cancelled": 0,
         }
 
         total = 0
