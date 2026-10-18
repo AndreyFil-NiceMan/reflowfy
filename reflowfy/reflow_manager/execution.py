@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 from reflowfy.reflow_manager.models import Execution
 
@@ -38,6 +38,7 @@ class ExecutionManager:
             state="pending",
             runtime_params=runtime_params or {},
             rate_limit=rate_limit,
+            plan_complete=False,
         )
 
         self.db.add(execution)
@@ -148,6 +149,13 @@ class ExecutionManager:
 
         return self.update_execution_state(execution_id, "running")
 
+    def mark_plan_complete(self, execution_id: str) -> None:
+        """Record that every job of the execution is saved (planning finished)."""
+        self.db.query(Execution).filter(Execution.execution_id == execution_id).update(
+            {"plan_complete": True}, synchronize_session=False
+        )
+        self.db.commit()
+
     def reopen_execution(self, execution_id: str) -> Optional[Execution]:
         """Move a settled execution back to running so its dispatch loop can resume it."""
         execution = self.get_execution(execution_id)
@@ -233,12 +241,22 @@ class ExecutionManager:
         """
         Find executions that were running when the service crashed.
 
-        These are executions in 'running' state that need to be resumed.
+        These are executions in 'running' state that need to be resumed, plus
+        'pending' ones whose planning never finished: the manager can die between
+        creating the record and marking it running, which used to leave the execution
+        pending forever.
 
         Returns:
-            List of Execution objects in 'running' state
+            List of Execution objects to recover
         """
-        return self.db.query(Execution).filter(
-            Execution.state == "running"
-        ).all()
+        return (
+            self.db.query(Execution)
+            .filter(
+                or_(
+                    Execution.state == "running",
+                    and_(Execution.state == "pending", Execution.plan_complete.is_(False)),
+                )
+            )
+            .all()
+        )
 

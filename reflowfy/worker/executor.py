@@ -24,6 +24,7 @@ from reflowfy.observability import metrics
 from reflowfy.observability.context import log_context
 from reflowfy.observability.logging import get_logger
 from reflowfy.observability.tracing import extract_and_attach
+from reflowfy.reflow_manager.db_settings import async_connect_args
 from reflowfy.reflow_manager.models import Job
 
 logger = get_logger("worker.executor")
@@ -108,6 +109,7 @@ class WorkerExecutor:
             max_overflow=10,
             pool_pre_ping=True,
             echo=False,
+            connect_args=async_connect_args(self.database_url),
         )
         self._async_session = async_sessionmaker(
             self._engine,

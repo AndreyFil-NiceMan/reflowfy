@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-from sqlalchemy import String, Integer, Float, Text, DateTime, ForeignKey, JSON
+from sqlalchemy import Boolean, String, Integer, Float, Text, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import declarative_base, Mapped, mapped_column, relationship
 
 Base = declarative_base()
@@ -45,6 +45,9 @@ class Execution(Base):
     # A loop takes over only once the heartbeat is stale (see PipelineRunner).
     driver_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     driver_heartbeat_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # False while the manager is still planning (saving) the execution's jobs, True once
+    # every job is saved. NULL: created before this column existed — treated as planned.
+    plan_complete: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
 
     # Relationship to jobs
     jobs: Mapped[List["Job"]] = relationship(
