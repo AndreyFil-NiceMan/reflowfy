@@ -4,12 +4,15 @@ import asyncio
 import logging
 import os
 import socket
+import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.orm import Session
 
 from reflowfy.core.exceptions import pipeline_step
 from reflowfy.core.serialization import to_json_safe
@@ -150,6 +153,72 @@ def build_job_payload(
         "job_params": job_params or {},
         "metadata": enriched_metadata,
     }
+
+
+PLAN_HEARTBEAT_SECONDS = 10.0
+
+
+class _PlanLease:
+    """The planning lease of one execution, kept alive from a thread.
+
+    Planning blocks the manager for as long as the source needs to enumerate its
+    result set (about 40 s for 2M Elasticsearch docs, minutes for much larger ones),
+    so the heartbeat cannot come from the planner itself. While the lease is fresh
+    no other manager treats the execution as abandoned; once the planner dies the
+    heartbeat stops, and recovery can tell (see :meth:`PipelineRunner._recover_plan`).
+    """
+
+    def __init__(self, bind: Any, execution_id: str):
+        self._bind = bind
+        self._execution_id = execution_id
+        self._owner = f"plan:{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._stopped = False
+
+    def start(self) -> None:
+        """Claim the lease and start heartbeating. Best effort: planning goes ahead
+        unprotected rather than not at all if the database refuses."""
+        try:
+            with Session(bind=self._bind) as session:
+                ExecutionManager(session).claim_driver(
+                    self._execution_id, self._owner, DRIVER_LEASE_SECONDS
+                )
+        except Exception:
+            logger.warning(
+                "Could not take the planning lease for %s", self._execution_id, exc_info=True
+            )
+            return
+        self._thread = threading.Thread(
+            target=self._beat, name=f"plan-lease-{self._execution_id[:8]}", daemon=True
+        )
+        self._thread.start()
+
+    def _beat(self) -> None:
+        while not self._stop.wait(PLAN_HEARTBEAT_SECONDS):
+            try:
+                with Session(bind=self._bind) as session:
+                    ExecutionManager(session).heartbeat_driver(self._execution_id, self._owner)
+            except Exception:
+                logger.warning(
+                    "Planning heartbeat failed for %s; will retry", self._execution_id, exc_info=True
+                )
+
+    def stop(self) -> None:
+        """Stop heartbeating and release the lease (the drive loop takes its own)."""
+        if self._stopped:
+            return
+        self._stopped = True
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+            try:
+                with Session(bind=self._bind) as session:
+                    ExecutionManager(session).release_driver(self._execution_id, self._owner)
+            except Exception:
+                logger.warning(
+                    "Could not release the planning lease for %s", self._execution_id, exc_info=True
+                )
 
 
 class PipelineRunner:
@@ -294,6 +363,10 @@ class PipelineRunner:
             )
             return
 
+        if execution.plan_complete is False and not self._recover_plan(execution_id):
+            return
+        self.execution_manager.db.refresh(execution)
+
         # Nothing unfinished: settle the final state from the job rows.
         counts = self.job_manager.get_job_counts(execution_id)
         unfinished = counts["pending"] + counts["dispatched"] + counts["running"]
@@ -364,7 +437,36 @@ class PipelineRunner:
             enable_duplicate_jobs: True = jobs may run multiple times (default);
                 False = each unique job (by content hash) runs at most once.
                 None falls back to the pipeline's own enable_duplicate_jobs setting.
+
+        Planning (resolving the source and saving every job) holds a heartbeated lease
+        on the execution; ``executions.plan_complete`` flips to true once the last job
+        is saved. A manager killed in between leaves ``plan_complete`` false, and
+        recovery then fails the execution instead of dispatching a fragment of its plan.
         """
+        lease = _PlanLease(self.execution_manager.db.get_bind(), execution_id)
+        lease.start()
+        try:
+            self._plan_and_dispatch(
+                execution_id,
+                pipeline_name,
+                runtime_params,
+                rate_limit_override,
+                enable_duplicate_jobs,
+                lease,
+            )
+        finally:
+            lease.stop()
+
+    def _plan_and_dispatch(
+        self,
+        execution_id: str,
+        pipeline_name: str,
+        runtime_params: Dict[str, Any],
+        rate_limit_override: Optional[float],
+        enable_duplicate_jobs: Optional[bool],
+        plan_lease: "_PlanLease",
+    ) -> None:
+        """Phase 1 (plan: save every job) then Phase 2 (dispatch until done)."""
         from reflowfy.core.execution_context import ExecutionContext
         from reflowfy.core.id_based_pipeline import IdBasedPipeline
         from reflowfy.core.registry import pipeline_registry
@@ -484,6 +586,9 @@ class PipelineRunner:
 
         # Set total_jobs correctly (once, after all jobs saved)
         self._set_total_jobs(execution_id, job_count)
+        # The plan is whole: from here on a restarted manager may safely dispatch it.
+        self.execution_manager.mark_plan_complete(execution_id)
+        plan_lease.stop()
         self._backfill_total_batches(execution_id, batch_number)
         logger.info("Saved %d jobs to database in %d batches", job_count, batch_number)
 
@@ -760,6 +865,62 @@ class PipelineRunner:
             metrics.jobs_processed_total.labels(
                 pipeline=pipeline_name, status="lease_expired"
             ).inc(result["failed"])
+
+    def _recover_plan(self, execution_id: str) -> bool:
+        """Deal with an execution whose planning had not finished when we looked.
+
+        The jobs saved so far are a fragment of the plan and the source's position
+        cannot be recovered, so a plan can't be continued. But a manager that is still
+        planning (this pod's neighbour, or the old pod during a rollout) looks the same
+        until its lease says otherwise. So: wait while the planning lease is fresh, and
+        once it is gone — and the execution is older than one lease, so a record
+        created a moment ago is not mistaken for an orphan — fail the execution with a
+        message saying so, instead of dispatching the fragment.
+
+        Returns:
+            True if planning finished while we waited (carry on resuming the execution),
+            False if there is nothing left to resume (failed here, or settled elsewhere).
+        """
+        recovery_id = f"recover:{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+        announced = False
+        while True:
+            self.execution_manager.db.expire_all()
+            execution = self.execution_manager.get_execution(execution_id)
+            if execution is None or execution.state not in ("pending", "running"):
+                return False
+            if execution.plan_complete is not False:
+                return True
+            age = (
+                datetime.now(timezone.utc).replace(tzinfo=None) - execution.created_at
+            ).total_seconds()
+            if age >= DRIVER_LEASE_SECONDS and self.execution_manager.claim_driver(
+                execution_id, recovery_id, DRIVER_LEASE_SECONDS
+            ):
+                saved = self.job_manager.get_job_counts(execution_id)["total"]
+                self.execution_manager.update_execution_state(
+                    execution_id,
+                    "failed",
+                    error_message=(
+                        f"The manager stopped while planning this execution ({saved} of its "
+                        "jobs had been saved, none dispatched). A plan cannot be continued; "
+                        "run it again."
+                    ),
+                )
+                self.execution_manager.release_driver(execution_id, recovery_id)
+                logger.warning(
+                    "Execution %s was abandoned mid-plan (%d jobs saved); marked failed",
+                    execution_id,
+                    saved,
+                )
+                return False
+            if not announced:
+                logger.info(
+                    "Execution %s is still being planned (or was just created); "
+                    "waiting to see whether its planner is alive",
+                    execution_id,
+                )
+                announced = True
+            time.sleep(DRIVER_RETRY_SECONDS)
 
     def _execution_state(self, execution_id: str) -> Optional[str]:
         """Fresh execution state (pause/resume land from other sessions)."""
