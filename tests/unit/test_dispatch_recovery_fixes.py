@@ -78,7 +78,7 @@ class _FakeDispatcher:
         self.calls: List[int] = []
 
     async def dispatch_jobs_batch(self, jobs, pipeline_name, rate_limit=None,
-                                  on_sent=None, should_stop=None):
+                                  on_sent=None, should_stop=None, on_unsendable=None):
         self.calls.append(len(jobs))
         sent = 0
         for payload in jobs:
@@ -193,7 +193,7 @@ def test_pause_mid_chunk_stops_sending(db):
 
     class _PausingDispatcher(_FakeDispatcher):
         async def dispatch_jobs_batch(self, jobs, pipeline_name, rate_limit=None,
-                                      on_sent=None, should_stop=None):
+                                      on_sent=None, should_stop=None, on_unsendable=None):
             sent = 0
             for payload in jobs:
                 if should_stop():
@@ -445,7 +445,7 @@ def test_drive_loop_stops_when_another_loop_took_over(db):
 
     class _Thief(_FakeDispatcher):
         async def dispatch_jobs_batch(self, jobs, pipeline_name, rate_limit=None,
-                                      on_sent=None, should_stop=None):
+                                      on_sent=None, should_stop=None, on_unsendable=None):
             self.db.query(Execution).update({"driver_id": "other"})
             self.db.commit()
             return 0
@@ -574,3 +574,91 @@ def test_retry_failed_then_drive_loop_finishes_the_execution(db):
     assert set(_states(db).values()) == {"completed"}
     db.expire_all()
     assert db.query(Execution).one().state == "completed"
+
+
+# ----- a job that can never be sent --------------------------------------------------
+
+
+class _Producer:
+    """Rejects messages over a size, like a broker's max.request.size."""
+
+    def __init__(self, limit: int):
+        self.limit = limit
+        self.sent: List[str] = []
+
+    async def send_and_wait(self, topic, value):
+        if len(value) > self.limit:
+            from aiokafka.errors import MessageSizeTooLargeError
+
+            raise MessageSizeTooLargeError(f"{len(value)} bytes is more than {self.limit}")
+        import json
+
+        self.sent.append(json.loads(value)["job_id"])
+
+
+def _kafka_dispatcher(producer: _Producer):
+    from reflowfy.reflow_manager.dispatcher import KafkaDispatcher
+
+    rate_limiter = MagicMock()
+    rate_limiter.acquire_token.return_value = True
+    dispatcher = KafkaDispatcher("kafka:9092", "reflow.jobs", rate_limiter)
+
+    async def get_producer():
+        return producer
+
+    dispatcher._get_producer = get_producer  # type: ignore[method-assign]
+    return dispatcher
+
+
+async def test_kafka_dispatcher_reports_an_oversized_job_and_sends_the_rest():
+    producer = _Producer(limit=200)
+    jobs = [{"job_id": "small-1"}, {"job_id": "big", "pad": "x" * 500}, {"job_id": "small-2"}]
+    unsendable: List[str] = []
+
+    sent = await _kafka_dispatcher(producer).dispatch_jobs_batch(
+        jobs, "p", on_unsendable=lambda job, reason: unsendable.append(job["job_id"] + ":" + reason)
+    )
+
+    assert sent == 2 and producer.sent == ["small-1", "small-2"]
+    assert len(unsendable) == 1 and unsendable[0].startswith("big:")
+    assert "too large" in unsendable[0]
+
+
+async def test_a_transient_kafka_error_still_stops_the_batch_for_a_retry():
+    from aiokafka.errors import KafkaConnectionError
+
+    class _Down(_Producer):
+        async def send_and_wait(self, topic, value):
+            raise KafkaConnectionError("broker down")
+
+    unsendable: List[str] = []
+    sent = await _kafka_dispatcher(_Down(10**9)).dispatch_jobs_batch(
+        [{"job_id": "a"}, {"job_id": "b"}], "p", on_unsendable=lambda j, r: unsendable.append(r)
+    )
+
+    assert sent == 0 and unsendable == []  # not poison: the loop will try again
+
+
+def test_an_unsendable_job_fails_the_job_and_the_run_ends(db):
+    """It used to be retried every two seconds for ever, with the execution stuck running."""
+    _add_jobs(db, 3)
+
+    class _Dispatcher(_FakeDispatcher):
+        async def dispatch_jobs_batch(self, jobs, pipeline_name, rate_limit=None, on_sent=None,
+                                      should_stop=None, on_unsendable=None):
+            for payload in jobs:
+                if payload["job_id"] == "j1":
+                    on_unsendable(payload, "The job message is too large for Kafka")
+                    continue
+                on_sent(payload)
+                self.db.query(Job).filter(Job.job_id == payload["job_id"]).update({"state": "completed"})
+                self.db.commit()
+            return 2
+
+    _runner(db, _Dispatcher(db))._drive_execution("e", "p", None)
+
+    states = _states(db)
+    assert (states["j0"], states["j1"], states["j2"]) == ("completed", "failed", "completed")
+    db.expire_all()
+    assert db.query(Execution).one().state == "failed"
+    assert "too large" in db.query(Job).filter(Job.job_id == "j1").one().error_message

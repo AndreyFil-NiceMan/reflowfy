@@ -141,14 +141,11 @@ class TestTypedParams:
         ), f"422 did not mention the derived choices: {response.text}"
 
     def test_required_param_is_required(self, client, check_mock_http):
-        """`env: Required[...]` is derived as required=True, so a run without it fails.
+        """`env: Required[...]` is derived as required=True, so a run without it is rejected.
 
-        The manager accepts the request and validates while dispatching (that is
-        where `pipeline.resolve()` runs), so the rejection shows up as a failed
-        execution rather than a 4xx on the POST.
+        The manager validates before accepting the run (422), so nothing is created that
+        could only fail later.
         """
-        execution_id, stats = _run_pipeline(client, {})
-        assert (
-            stats["state"] == "failed"
-        ), f"Expected the execution to fail without 'env', got {stats}"
-        assert stats["total_jobs"] == 0, f"No job should be dispatched: {stats}"
+        response = _post_run(client, {})
+        assert response.status_code == 422, f"{response.status_code}: {response.text}"
+        assert "env" in response.text

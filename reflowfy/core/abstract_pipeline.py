@@ -26,6 +26,7 @@ Example:
     ...         return [MyTransformation()]
 """
 
+import copy
 import logging
 import re
 import typing
@@ -829,6 +830,19 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
     _source: Any = None
     _destination: Any = None
     _transformations: List[Any] | None = None
+
+    def fork(self) -> "AbstractPipeline[P]":
+        """A private copy of this pipeline for one execution.
+
+        The registry holds a single instance per pipeline and :meth:`resolve` stores the
+        plan on the instance (``_source``, ``_resolved_params``). Two executions of the
+        same pipeline resolving that one instance at the same moment — a burst of
+        ``/run`` calls, two schedules firing together — overwrote each other's plan: of
+        16 simultaneous runs every one got the wrong job count, most of them none, and
+        finished ``completed`` having processed nothing. Resolve a fork, never the
+        registered instance.
+        """
+        return copy.copy(self)
 
     def resolve(self, runtime_params: P) -> "AbstractPipeline[P]":
         """

@@ -71,8 +71,11 @@ class LocalExecutor(BaseExecutor):
         # Resolve pipeline with runtime params (for AbstractPipeline).
         # _resolved_params includes defaults + any keys added by define_source.
         pipeline_obj = cast(Any, pipeline)
+        if hasattr(pipeline_obj, "fork"):
+            pipeline_obj = pipeline_obj.fork()  # never resolve the shared registered instance
         if hasattr(pipeline_obj, "resolve"):
             pipeline_obj.resolve(runtime_params)
+        pipeline = pipeline_obj  # from here on, the resolved private copy
 
         # Create execution context
         resolved_params: Dict[str, Any] = dict(
@@ -195,7 +198,8 @@ class LocalExecutor(BaseExecutor):
         Returns:
             ExecutionStatus with results
         """
-        # Resolve and validate
+        # Resolve and validate (on a private copy: see AbstractPipeline.fork)
+        pipeline = pipeline.fork()
         pipeline.resolve(runtime_params)
         params = pipeline.apply_defaults(runtime_params)
         ids = params.get("input_ids", [])

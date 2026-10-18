@@ -112,6 +112,8 @@ The manager dispatches a JSON message per planned slice on Kafka topic `reflow.j
 
 Pipelines register themselves with **no explicit registry calls**. `AbstractPipeline` uses a metaclass (`PipelineMeta`) that instantiates and registers any subclass defining a `name` attribute at class-definition time. If `__init__` raises (e.g. missing config), registration is **silently skipped** — a pipeline that fails to construct simply won't appear, with no error. The `pipeline_registry` (`core/registry.py`) is a thread-safe singleton and registration is idempotent by name.
 
+**The registered instance is shared — never `resolve()` it.** The registry holds one instance per pipeline and `resolve()` stores the plan on the instance (`_source`, `_resolved_params`). Executions of the same pipeline running at once in one manager process (a burst of `/run` calls, two schedules firing together) overwrote each other's plan: 16 simultaneous runs all got the wrong job count, most of them none, and finished `completed` having processed nothing. Callers resolve a private copy — `pipeline = pipeline.fork()` (`PipelineRunner`, `LocalExecutor`) — and `tests/unit/test_concurrent_executions.py` forces the interleaving. Anything new that stores per-execution state on a pipeline instance has the same problem.
+
 `PipelineMeta` also records the pipeline's params TypedDict (see below) from the subscripted base, reading `namespace["__orig_bases__"]` before it instantiates the class.
 
 `core/pipeline_discovery.py` (`discover_and_load_pipelines`) imports every module under the `PIPELINE_MODULE` directory (default `pipelines`) plus sibling `sources/`, `destinations/`, `transformations/` dirs, which triggers the metaclass and decorator registration. All three services call this on startup. In E2E, `PIPELINE_MODULE` is overridden to `tests.e2e.test_pipelines`.
@@ -231,6 +233,10 @@ Job IDs are plain `uuid4`. Idempotency is enforced **worker-side, by content**: 
 This is content idempotency across executions. Within one execution, the job-level claim above already stops a redelivered message from running a job twice.
 
 The **DLQ is not a failure sink** despite the name — nothing auto-populates it. It is a "run this pipeline later with these params" queue: `POST /dlq/schedule` takes a `job_payload` that is really *runtime params*, and `dlq_scheduler.py` calls `run_pipeline` with them when due. `dlq_routes.py` handles inspection. `pipeline_scheduler.py` runs cron-scheduled pipelines (5-field cron, validated at class-definition time in the metaclass).
+
+### Distributed E2E suite
+
+`tests/e2e_distributed/` tests AbstractPipeline and IdBasedPipeline over **Kafka and real workers** against a deployment you point it at (see its README); `tests/e2e` below only covers local mode. Pipelines write to a sink that keeps a delivery ledger, and each test asserts every record arrived exactly once. It skips as a whole when no deployment is reachable. `pytest -m chaos` kills pods and needs `E2E_DIST_KILL_WORKER_CMD` / `E2E_DIST_RESTART_MANAGER_CMD`.
 
 ## E2E test mechanics
 

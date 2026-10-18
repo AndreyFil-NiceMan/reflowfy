@@ -9,6 +9,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Depends, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
@@ -293,6 +294,11 @@ async def get_jobs(
 ) -> List[Dict[str, Any]]:
     """Get jobs for an execution."""
     jobs = manager.job_manager.get_jobs(execution_id, state)
+    if not jobs and not manager.get_execution(execution_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Execution '{execution_id}' not found",
+        )
     return [job.to_dict() for job in jobs]
 
 
@@ -374,8 +380,37 @@ async def run_pipeline(
                 ),
             )
 
-        # Create initial execution record (pending state)
         manager = _make_manager(db)
+
+        # Reject what can never run now, with a 4xx, instead of accepting it (202) and
+        # failing in the background where the caller has to go and look.
+        runtime_params = request.runtime_params or {}
+        errors = pipeline.validate_parameters(pipeline.apply_defaults(runtime_params))
+        if errors:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid parameters: {'; '.join(errors)}",
+            )
+        if manager.get_execution(execution_id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Execution '{execution_id}' already exists",
+            )
+
+        # A parameter the pipeline does not declare is ignored, which makes a typo
+        # (`totl=5`) run silently on defaults. Say so in the response. Only for pipelines
+        # that declare parameters at all: an untyped legacy pipeline reads whatever it likes.
+        declared = {p.name for p in pipeline.define_parameters()}
+        unknown = sorted(k for k in runtime_params if declared and k not in declared and not k.startswith("_"))
+        if unknown:
+            logger.warning(
+                "Run of %s passed undeclared parameter(s) %s; they are ignored by the pipeline's "
+                "own declaration",
+                request.pipeline_name,
+                unknown,
+            )
+
+        # Create initial execution record (pending state)
         manager.create_execution(
             execution_id=execution_id,
             pipeline_name=request.pipeline_name,
@@ -400,16 +435,27 @@ async def run_pipeline(
         )
 
         # Return immediately with execution details
-        return {
+        accepted: Dict[str, Any] = {
             "execution_id": execution_id,
             "pipeline_name": request.pipeline_name,
             "state": "pending",  # Will become "running" once background task starts
             "message": "Pipeline execution accepted. Jobs are being dispatched in background.",
             "status_url": f"/executions/{execution_id}",
         }
+        if unknown:
+            accepted["warnings"] = [f"parameters not declared by the pipeline (ignored): {unknown}"]
+        return accepted
 
     except HTTPException:
         raise
+
+    except IntegrityError:
+        # Two requests with the same execution_id raced past the existence check above.
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Execution '{request.execution_id}' already exists",
+        )
 
     except Exception as e:
         logger.exception("Failed to start pipeline %s", request.pipeline_name)

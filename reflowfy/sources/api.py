@@ -142,7 +142,14 @@ class IDBasedAPISource(BaseSource):
         return cast(List[Any], result) if isinstance(result, list) else [result]
 
     def _fetch_by_id(self, id_value: Union[str, int]) -> Optional[Any]:
-        """Fetch a single resource by ID (per-ID mode)."""
+        """Fetch a single resource by ID (per-ID mode).
+
+        ``None`` only for a 404 — the API says that ID does not exist, so there is nothing
+        to deliver. Any other failure (5xx, 429, 401/403, a timeout or dropped connection)
+        means the data *could not be read*, and raises ``SourceError`` so the job fails and
+        can be retried. Returning ``None`` for those, as this once did, completed the job
+        with that ID silently missing.
+        """
         client = self._get_client()
         endpoint = self.config["endpoint_template"].format(id=id_value)
         method = self.config["method"]
@@ -169,8 +176,14 @@ class IDBasedAPISource(BaseSource):
                 return None
             response.raise_for_status()
             return response.json()
-        except httpx.HTTPStatusError:
-            return None
+        except httpx.HTTPStatusError as e:
+            raise SourceError(
+                "id_based_api",
+                f"HTTP {e.response.status_code} for id {id_value}: {e.response.text[:200]}",
+                e,
+            )
+        except httpx.RequestError as e:
+            raise SourceError("id_based_api", f"Request failed for id {id_value}: {e}", e)
 
     def _fetch_batch(self, ids_batch: List[Union[str, int]]) -> Records:
         """Send the batch request and return the extracted records.

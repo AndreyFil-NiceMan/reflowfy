@@ -152,6 +152,7 @@ def api_destination(
     body: Optional[Any] = None,
     retry_config: Optional[RetryConfig] = None,
     health_check_enabled: bool = True,
+    dedup_identity: Optional[Any] = None,
 ) -> ApiDestination:
     """
     Factory function for API destination.
@@ -162,8 +163,13 @@ def api_destination(
             body = {"events": records, "tenant": runtime_params["tenant"]}
             return api_destination(url="https://api.example.com/ingest", body=body,
                                    auth_type="basic", auth_token="user:pass")
+
+    With ``enable_duplicate_jobs=False`` the destination's whole config, body included,
+    identifies "where this job writes". If the body carries something that changes on
+    every run (a timestamp, a request id), pass ``dedup_identity`` — any JSON-able value
+    naming the real target, e.g. ``{"url": url, "tenant": tenant}`` — so dedup can match.
     """
-    return ApiDestination(
+    destination = ApiDestination(
         url=url,
         method=method,
         headers=headers,
@@ -175,3 +181,5 @@ def api_destination(
         retry_config=retry_config,
         health_check_enabled=health_check_enabled,
     )
+    destination.dedup_identity = dedup_identity
+    return destination

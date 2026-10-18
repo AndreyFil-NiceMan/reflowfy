@@ -78,7 +78,7 @@ class _Dispatcher:
         self.sent: List[str] = []
 
     async def dispatch_jobs_batch(self, jobs, pipeline_name, rate_limit=None,
-                                  on_sent=None, should_stop=None):
+                                  on_sent=None, should_stop=None, on_unsendable=None):
         for payload in jobs:
             self.sent.append(payload["job_id"])
             on_sent(payload)
