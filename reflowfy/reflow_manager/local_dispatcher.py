@@ -67,6 +67,7 @@ class LocalDispatcher(BaseDispatcher):
         rate_limit: Optional[float] = None,
         on_sent: Optional[OnSent] = None,
         should_stop: Optional[ShouldStop] = None,
+        on_unsendable: Optional[Any] = None,  # nothing is serialized locally: never unsendable
     ) -> int:
         """Dispatch batch locally with rate limiting and a fresh executor."""
         executor = self._create_executor()

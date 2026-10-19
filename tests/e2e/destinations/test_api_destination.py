@@ -163,12 +163,11 @@ class TestInfrastructure:
 
 class TestPipelineExecution:
     def test_pipeline_fails_without_required_tenant_id(self, manager_client):
-        """tenant_id is required — execution should fail when omitted."""
-        execution_id = _run_pipeline(manager_client, {})
-        stats = _wait_for_pipeline(manager_client, execution_id)
-        assert stats["state"] == "failed", (
-            f"Expected failed state when tenant_id missing, got {stats['state']}"
-        )
+        """tenant_id is required — /run rejects the request (422) instead of accepting a run
+        that can only fail."""
+        resp = manager_client.post("/run", json={"pipeline_name": PIPELINE_NAME, "runtime_params": {}})
+        assert resp.status_code == 422, f"{resp.status_code}: {resp.text}"
+        assert "tenant_id" in resp.text
 
     def test_pipeline_completes_with_valid_params(self, manager_client):
         stats = _run_and_wait(manager_client)
@@ -182,13 +181,13 @@ class TestPipelineExecution:
         assert stats["state"] == "completed"
 
     def test_pipeline_rejects_invalid_env_choice(self, manager_client):
-        """env is constrained to ['staging', 'production'] — invalid value should fail."""
-        execution_id = _run_pipeline(manager_client, {
-            "tenant_id": "acme-corp",
-            "env": "dev",
+        """env is constrained to ['staging', 'production'] — an invalid value is rejected (422)."""
+        resp = manager_client.post("/run", json={
+            "pipeline_name": PIPELINE_NAME,
+            "runtime_params": {"tenant_id": "acme-corp", "env": "dev"},
         })
-        stats = _wait_for_pipeline(manager_client, execution_id)
-        assert stats["state"] == "failed"
+        assert resp.status_code == 422, f"{resp.status_code}: {resp.text}"
+        assert "env" in resp.text
 
 
 # ============================================================================

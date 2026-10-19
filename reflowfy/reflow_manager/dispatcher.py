@@ -8,7 +8,7 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import Callable, Dict, Any, List, Optional, Union
 from aiokafka import AIOKafkaProducer
-from aiokafka.errors import KafkaError
+from aiokafka.errors import KafkaError, MessageSizeTooLargeError
 
 from reflowfy.reflow_manager.rate_limiter import RateLimiter
 
@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 OnSent = Callable[[Dict[str, Any]], None]
 # Polled before each job; True ends the batch early (execution paused, chunk time up).
 ShouldStop = Callable[[], bool]
+# Called with a job payload and the reason when that job can never be sent (so retrying it
+# would loop forever); the caller fails the job, the dispatcher moves on to the next.
+OnUnsendable = Callable[[Dict[str, Any], str], None]
 
 # Longest wait for one rate-limit token before handing back to the drive loop, which
 # simply calls again. Short so the loop keeps heartbeating its lease at low rates.
@@ -48,11 +51,12 @@ class BaseDispatcher(ABC):
         rate_limit: Optional[float] = None,
         on_sent: Optional[OnSent] = None,
         should_stop: Optional[ShouldStop] = None,
+        on_unsendable: Optional[OnUnsendable] = None,
     ) -> int:
         """Dispatch jobs in order; return how many were sent.
 
-        Stops at the first failure or when ``should_stop`` returns True, so the
-        jobs sent are always the first N of ``jobs``.
+        Stops at a transient failure (broker down) or when ``should_stop`` returns True;
+        a job that can never be sent is reported through ``on_unsendable`` and skipped.
         """
         pass
 
@@ -174,6 +178,7 @@ class KafkaDispatcher(BaseDispatcher):
         rate_limit: Optional[float] = None,
         on_sent: Optional[OnSent] = None,
         should_stop: Optional[ShouldStop] = None,
+        on_unsendable: Optional[OnUnsendable] = None,
     ) -> int:
         """Dispatch jobs to Kafka in order; see :meth:`BaseDispatcher.dispatch_jobs_batch`."""
         dispatched = 0
@@ -203,6 +208,19 @@ class KafkaDispatcher(BaseDispatcher):
                 if on_sent:
                     on_sent(job)
 
+            except MessageSizeTooLargeError as e:
+                # The records ride inside the job message, so this job can never be sent:
+                # retrying it (as a transient error would be) loops forever and the
+                # execution never ends. Fail the job and carry on with the rest.
+                reason = (
+                    f"The job message is too large for Kafka ({e}). Records travel inside the "
+                    "message: use fewer records per job, or a source that re-fetches on the worker."
+                )
+                logger.error("Job %s cannot be sent: %s", job.get("job_id"), reason)
+                if on_unsendable:
+                    on_unsendable(job, reason)
+                    continue
+                break
             except KafkaError as e:
                 logger.error("Kafka error: %s", e)
                 break

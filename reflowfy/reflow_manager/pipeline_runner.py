@@ -490,6 +490,10 @@ class PipelineRunner:
 
         # Resolve pipeline with runtime params.
         # _resolved_params includes defaults + any keys added by define_source.
+        # On a private copy: resolve() stores the plan on the instance, and the registry's
+        # instance is shared by every execution of this pipeline running in this process.
+        if hasattr(pipeline, "fork"):
+            pipeline = pipeline.fork()
         if hasattr(pipeline, "resolve"):
             pipeline.resolve(runtime_params)
 
@@ -835,12 +839,19 @@ class PipelineRunner:
         def on_sent(payload: Dict[str, Any]) -> None:
             self.job_manager.mark_job_dispatched(payload["job_id"])
 
+        def on_unsendable(payload: Dict[str, Any], reason: str) -> None:
+            self.job_manager.update_job_state(payload["job_id"], "failed", error_message=reason)
+            metrics.jobs_processed_total.labels(
+                pipeline=payload.get("pipeline_name", "unknown"), status="failed"
+            ).inc()
+
         sent: int = await self.dispatcher.dispatch_jobs_batch(
             jobs=[job.job_payload for job in jobs],
             pipeline_name=rate_limit_key,
             rate_limit=effective_rate_limit,
             on_sent=on_sent,
             should_stop=should_stop,
+            on_unsendable=on_unsendable,
         )
         return sent
 

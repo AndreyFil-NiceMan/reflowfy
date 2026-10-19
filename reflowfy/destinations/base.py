@@ -41,6 +41,8 @@ class BaseDestination(ABC):
         """
         self.config = config
         self.retry_config = retry_config or RetryConfig()
+        # What identifies this destination for content dedup; None = the whole config.
+        self.dedup_identity: Optional[Any] = None
 
     @abstractmethod
     async def send(self, records: List[Any], metadata: Optional[Dict[str, Any]] = None) -> None:

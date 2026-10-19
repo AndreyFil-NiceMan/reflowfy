@@ -1,0 +1,39 @@
+# The sink as a pod. Any image with Python works; the Reflowfy worker image is
+# already pullable in the namespace. deploy.sh fills in __IMAGE__ and loads server.py
+# into the e2e-sink-code ConfigMap.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: e2e-sink
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: e2e-sink}
+  template:
+    metadata:
+      labels: {app: e2e-sink}
+    spec:
+      containers:
+      - name: sink
+        image: __IMAGE__
+        command: ["python", "/sink/server.py"]
+        env:
+        - {name: PORT, value: "8080"}
+        ports: [{containerPort: 8080}]
+        readinessProbe:
+          httpGet: {path: /health, port: 8080}
+        resources:
+          requests: {cpu: 50m, memory: 128Mi}
+          limits: {cpu: 500m, memory: 1Gi}
+        volumeMounts: [{name: code, mountPath: /sink}]
+      volumes:
+      - name: code
+        configMap: {name: e2e-sink-code}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: e2e-sink
+spec:
+  selector: {app: e2e-sink}
+  ports: [{port: 8080}]

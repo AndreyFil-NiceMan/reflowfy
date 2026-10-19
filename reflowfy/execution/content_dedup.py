@@ -39,7 +39,16 @@ def destination_identity(destination: Any) -> Dict[str, Any]:
 
     Part of the content hash so the same records sent somewhere else (another
     topic, another URL) are new work, not a duplicate of the first write.
+
+    The whole config counts, including an ``api_destination``'s request body. That errs
+    on the safe side — a body that differs only by a timestamp or request id is treated
+    as new work (a duplicate write, never a lost one) — but it also means dedup never
+    matches such a destination. Declare what actually identifies the destination with
+    ``api_destination(..., dedup_identity=...)`` to opt in.
     """
+    explicit = getattr(destination, "dedup_identity", None)
+    if explicit is not None:
+        return {"type": type(destination).__name__, "identity": _strip_secrets(explicit)}
     config = getattr(destination, "config", None)
     return {
         "type": type(destination).__name__,

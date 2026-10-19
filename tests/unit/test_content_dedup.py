@@ -156,3 +156,38 @@ async def test_legacy_claims_can_be_switched_off(session_factory, monkeypatch):
         )
         is True
     )
+
+
+def _api(body, identity=None, url="http://s/in", params=None):
+    from reflowfy.destinations.api import api_destination
+
+    return api_destination(url=url, body=body, params=params, dedup_identity=identity)
+
+
+def test_a_changing_request_body_is_new_work_by_default():
+    """Safe side: a timestamp in the body makes two otherwise identical writes look
+    different — a duplicate write, never a lost one."""
+    from reflowfy.execution.content_dedup import destination_identity
+
+    a = destination_identity(_api({"ts": 1, "records": [1]}))
+    b = destination_identity(_api({"ts": 2, "records": [1]}))
+    assert a != b
+
+
+def test_a_declared_dedup_identity_replaces_the_whole_config():
+    from reflowfy.execution.content_dedup import destination_identity
+
+    a = destination_identity(_api({"ts": 1}, identity={"url": "http://s/in", "tenant": "t1"}))
+    b = destination_identity(_api({"ts": 2}, identity={"url": "http://s/in", "tenant": "t1"}))
+    other = destination_identity(_api({"ts": 1}, identity={"url": "http://s/in", "tenant": "t2"}))
+    assert a == b  # the volatile body no longer matters
+    assert a != other  # but a different declared target is still different work
+    assert "ts" not in str(a)
+
+
+def test_a_declared_identity_is_still_scrubbed_of_credentials():
+    from reflowfy.execution.content_dedup import destination_identity
+
+    one = destination_identity(_api({}, identity={"url": "u", "auth_token": "old"}))
+    two = destination_identity(_api({}, identity={"url": "u", "auth_token": "new"}))
+    assert one == two
