@@ -537,7 +537,22 @@ class PipelineRunner:
 
         base_source = pipeline.source
         plan = _iter_plan(pipeline_name, plan_slices(base_source, enriched_params))
+        last_state_check = 0.0
         for sub_source in plan:
+            # A cancelled (or force-failed) execution must not keep planning: a plan can take
+            # minutes to hours, and its jobs would just be cancelled again as they are saved.
+            # The check cannot interrupt a source call that blocks (the enumeration before the
+            # first slice); it takes effect as soon as that returns.
+            if time.time() - last_state_check >= 1.0:
+                last_state_check = time.time()
+                if self._execution_state(execution_id) in ("cancelled", "failed"):
+                    cancelled_jobs = self.job_manager.cancel_unstarted_jobs(execution_id)
+                    logger.info(
+                        "Execution %s was stopped while planning (%d jobs cancelled); planning aborted",
+                        execution_id,
+                        cancelled_jobs,
+                    )
+                    return
             context.batch_number = batch_number
             context_dict = context.to_dict()
             # A planned source may narrow the params its own job receives — an

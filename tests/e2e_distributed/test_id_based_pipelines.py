@@ -238,6 +238,24 @@ class TestRateLimitAndPause:
         assert_exactly_once(sink, channel, ids(40))
 
 
+class TestCancel:
+    def test_cancel_stops_an_id_run_and_cancels_the_unstarted_ids(
+        self, manager: Manager, sink: Sink, channel: str, params: Params
+    ):
+        execution = manager.run("dist_ids_b1", params(input_ids=ids(60)), rate_limit=60)
+        manager.wait_jobs(execution, at_least=5)
+
+        cancel = manager.post(f"/executions/{execution}/cancel")
+
+        assert cancel.status_code == 200 and cancel.json()["cancelled_jobs"] > 0, cancel.text
+        time.sleep(8)
+        settled = sink.report(channel)["records"]
+        time.sleep(6)
+        assert sink.report(channel)["records"] == settled, "ids were processed after the cancel"
+        assert 5 <= settled < 60
+        assert manager.stats(execution)["state"] == "cancelled"
+
+
 class TestConcurrency:
     def test_id_runs_started_at_the_same_instant_each_get_their_own_plan(
         self, manager: Manager, sink: Sink, channel: str, params: Params
