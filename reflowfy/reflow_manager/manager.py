@@ -10,7 +10,7 @@ This is a slim coordinator that composes the following modules:
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, NamedTuple, Optional
 from sqlalchemy.orm import Session
 
 from reflowfy.reflow_manager.models import Execution, Job
@@ -22,6 +22,13 @@ from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner
 
 logger = logging.getLogger(__name__)
+
+
+class CancelResult(NamedTuple):
+    """What cancelling an execution did."""
+
+    execution: Execution
+    cancelled_jobs: int
 
 
 class ReflowManager:
@@ -135,6 +142,15 @@ class ReflowManager:
 
     # ===== Job/Checkpoint Management (delegated to unified JobManager) =====
 
+    def cancel_execution(self, execution_id: str) -> Optional["CancelResult"]:
+        """Cancel an execution: stop dispatching and planning, cancel every job no worker
+        has started. Jobs already running finish. None if it is unknown or already finished."""
+        execution = self.execution_manager.cancel_execution(execution_id)
+        if not execution:
+            return None
+        cancelled = self.job_manager.cancel_unstarted_jobs(execution_id)
+        return CancelResult(execution=execution, cancelled_jobs=cancelled)
+
     def get_checkpoints(self, execution_id: str, state: Optional[str] = None) -> List[Job]:
         """Get jobs (formerly checkpoints) for an execution."""
         return self.job_manager.get_jobs(execution_id, state)
@@ -205,6 +221,7 @@ class ReflowManager:
             + job_counts.get("deduplicated", 0),
             "jobs_pending": job_counts.get("pending", 0),
             "jobs_running": job_counts.get("running", 0),
+            "jobs_cancelled": job_counts.get("cancelled", 0),
             "jobs_completed": job_counts.get("completed", 0),
             "jobs_failed": job_counts.get("failed", 0),
             "deduplicated_jobs": execution.deduplicated_jobs or 0,
