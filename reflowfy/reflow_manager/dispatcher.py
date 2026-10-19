@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 # Called with each job payload right after its message is sent.
 OnSent = Callable[[Dict[str, Any]], None]
 # Polled before each job; True ends the batch early (execution paused, chunk time up).
-ShouldStop = Callable[[], bool]
+ShouldStop = Callable[..., bool]  # should_stop(chunk=False) ignores the chunk time limit
 # Called with a job payload and the reason when that job can never be sent (so retrying it
 # would loop forever); the caller fails the job, the dispatcher moves on to the next.
 OnUnsendable = Callable[[Dict[str, Any], str], None]
@@ -194,8 +194,10 @@ class KafkaDispatcher(BaseDispatcher):
                 # Normal below ~2 jobs/min: the drive loop calls again.
                 logger.debug("No rate-limit token yet after %d jobs; returning", dispatched)
                 break
-            # Re-check: a pause may have landed during a long token wait.
-            if should_stop and should_stop():
+            # Re-check: a pause may have landed during a long token wait. The chunk
+            # limit is ignored here: at rates below ~2 jobs/min the token only arrives
+            # after the chunk is spent, and stopping now would burn it without a send.
+            if should_stop and should_stop(chunk=False):
                 break
 
             # Dispatch

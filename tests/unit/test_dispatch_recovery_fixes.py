@@ -624,6 +624,22 @@ async def test_kafka_dispatcher_reports_an_oversized_job_and_sends_the_rest():
     assert "too large" in unsendable[0]
 
 
+async def test_a_token_that_arrives_after_the_chunk_is_spent_still_sends_its_job():
+    """At 1 job/min the token only arrives once the 30 s chunk is over. The re-check
+    after the token must ignore the chunk limit, or every token is burned unsent."""
+    producer = _Producer(limit=10_000)
+    top_checks = iter([False])  # the loop-top check passes; the token wait then outlasts the chunk
+
+    def should_stop(chunk: bool = True) -> bool:
+        return next(top_checks, True) if chunk else False  # chunk=False: no pause, no lost lease
+
+    sent = await _kafka_dispatcher(producer).dispatch_jobs_batch(
+        [{"job_id": "j1"}], "p", should_stop=should_stop
+    )
+
+    assert sent == 1 and producer.sent == ["j1"]
+
+
 async def test_a_transient_kafka_error_still_stops_the_batch_for_a_retry():
     from aiokafka.errors import KafkaConnectionError
 
