@@ -140,15 +140,6 @@ def test_poll_with_nothing_due_runs_nothing(db):
     assert metrics.dlq_depth._value.get() == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: _dispatch_jobs runs a pipeline's whole group of due DLQ jobs with the "
-        "first job's payload only. Jobs scheduled with different runtime params that "
-        "fall due in the same poll are marked completed without ever running with "
-        "their own params."
-    ),
-)
 def test_every_due_job_runs_with_its_own_params(db):
     _dlq(db, "a", current_id=1)
     _dlq(db, "a", current_id=2)
@@ -304,9 +295,11 @@ def test_process_pipeline_immediately_runs_that_pipelines_pending_jobs(db):
     other = _dlq(db, "b")
     calls: List[Dict[str, Any]] = []
 
-    count, execution_id = _scheduler(calls).process_pipeline_immediately(db, "a")
+    count, execution_ids = _scheduler(calls).process_pipeline_immediately(db, "a")
 
     assert count == 2
+    assert len(execution_ids) == 1  # same params: one execution
+    execution_id = execution_ids[0]
     assert [c["pipeline"] for c in calls] == ["a"]
     assert calls[0]["params"]["_dlq_job_ids"] == mine
     for job_id in mine:
@@ -321,8 +314,20 @@ def test_process_pipeline_immediately_runs_that_pipelines_pending_jobs(db):
 def test_process_pipeline_immediately_with_nothing_pending(db):
     _dlq(db, "a", status="completed")
     calls: List[Dict[str, Any]] = []
-    assert _scheduler(calls).process_pipeline_immediately(db, "a") == (0, None)
+    assert _scheduler(calls).process_pipeline_immediately(db, "a") == (0, [])
     assert calls == []
+
+
+def test_process_pipeline_immediately_runs_each_distinct_params_once(db):
+    ids = [_dlq(db, "a", k=1), _dlq(db, "a", k=2), _dlq(db, "a", k=1)]
+    calls: List[Dict[str, Any]] = []
+
+    count, execution_ids = _scheduler(calls).process_pipeline_immediately(db, "a")
+
+    assert count == 3 and len(execution_ids) == 2
+    assert sorted(c["params"]["k"] for c in calls) == [1, 2]
+    assert _job(db, ids[0]).execution_id == _job(db, ids[2]).execution_id == execution_ids[0]
+    assert _job(db, ids[1]).execution_id == execution_ids[1]
 
 
 def test_process_pipeline_immediately_failure_retries_every_job(db):

@@ -345,14 +345,6 @@ def test_dlq_stats_filtered_by_pipeline(client, mixed):
     assert [p["pipeline_name"] for p in gamma["pipelines"]] == ["gamma"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: get_dlq_stats computes avg(retry_count) per (pipeline, status) group and "
-        "overwrites the pipeline's avg_retry_count with whichever status row comes last, "
-        "so it is the average of one arbitrary status, not of the pipeline's DLQ jobs"
-    ),
-)
 def test_dlq_avg_retry_count_covers_every_status(client, mixed):
     alpha = _by_name(client.get("/stats/dlq").json()["pipelines"])["alpha"]
     # alpha's DLQ jobs have retry counts 0, 0 and 3

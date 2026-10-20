@@ -406,6 +406,9 @@ async def get_dlq_stats(
 
     # Build per-pipeline map
     pipeline_map: Dict[str, Any] = {}
+    # avg_retry_count is per (pipeline, status) row; weight it by the row's count so
+    # the pipeline's figure covers all of its jobs, not whichever status came last.
+    retry_totals: Dict[str, List[float]] = {}  # pipeline -> [sum of retries, job count]
     for pname, dlq_status, count, avg_retry, oldest in pipeline_rows:
         if pname not in pipeline_map:
             pipeline_map[pname] = {
@@ -422,7 +425,10 @@ async def get_dlq_stats(
         if dlq_status in p:
             p[dlq_status] = count
         if avg_retry is not None:
-            p["avg_retry_count"] = round(float(avg_retry), 1)
+            totals = retry_totals.setdefault(pname, [0.0, 0])
+            totals[0] += float(avg_retry) * count
+            totals[1] += count
+            p["avg_retry_count"] = round(totals[0] / totals[1], 1) if totals[1] else 0.0
         if dlq_status == "pending" and oldest:
             p["oldest_pending_at"] = oldest.isoformat()
 

@@ -315,14 +315,6 @@ def test_resume_stops_when_another_loop_takes_over(db, registry):
     assert execution.driver_id == "other"  # and its lease is not released by us
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: resume_execution never checks the execution's state. A /resume whose "
-        "background task runs after a /cancel finds no unfinished jobs and "
-        "_finalize_execution_state overwrites the terminal 'cancelled' with 'failed'."
-    ),
-)
 def test_resume_does_not_overwrite_a_cancelled_execution(db, registry):
     _execution(db)
     _add_jobs(db, 1, state="completed")

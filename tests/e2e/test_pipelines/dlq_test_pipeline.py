@@ -65,3 +65,60 @@ class DLQTestPipelineDispatch(AbstractPipeline[RuntimeParams]):
         self, records: Records, runtime_params: RuntimeParams
     ) -> Transformations:
         return []
+
+
+class _DLQConsolePipeline(AbstractPipeline[RuntimeParams]):
+    """Base for the pipelines below: no name, so not registered itself.
+
+    POST /dlq/schedule rejects a pipeline that is not registered (as /run does), so
+    every name test_dlq.py schedules must exist.
+    """
+
+    def define_source(self, runtime_params):
+        return e2e_mock(data=[{"dlq_test": True}])
+
+    def define_destination(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> BaseDestination:
+        return e2e_console(pretty_print=False)
+
+    def define_transformations(
+        self, records: Records, runtime_params: RuntimeParams
+    ) -> Transformations:
+        return []
+
+
+class DLQTestPipelineSchedule(_DLQConsolePipeline):
+    name = "test_pipeline_schedule"
+
+
+class DLQTestPipelineDefault(_DLQConsolePipeline):
+    name = "test_pipeline_default"
+
+
+class DLQTestPipelineZeroDelay(_DLQConsolePipeline):
+    name = "test_pipeline_zero_delay"
+
+
+class DLQTestPipelineGet(_DLQConsolePipeline):
+    name = "test_pipeline_get"
+
+
+class DLQTestPipelineCancel(_DLQConsolePipeline):
+    name = "test_pipeline_cancel"
+
+
+class DLQTestPipelineEdge(_DLQConsolePipeline):
+    name = "test_pipeline_edge"
+
+
+class DLQTestPipelineListA(_DLQConsolePipeline):
+    name = "test_pipeline_list_a"
+
+
+class DLQTestPipelineListB(_DLQConsolePipeline):
+    name = "test_pipeline_list_b"
+
+
+class DLQTestPipelinePagination(_DLQConsolePipeline):
+    name = "test_pipeline_pagination"

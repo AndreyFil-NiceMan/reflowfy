@@ -66,6 +66,7 @@ STALL_WARN_SECONDS = 600.0  # warn when jobs are in flight but none finished thi
 DRIVER_LEASE_SECONDS = float(os.getenv("DRIVER_LEASE_SECONDS", "60"))
 DRIVER_RETRY_SECONDS = 15.0
 
+
 def _iter_plan(pipeline_name: str, slices: Iterator[Any]) -> Iterator[Any]:
     """Yield planned jobs, naming ``define_jobs`` when the plan itself raises.
 
@@ -201,7 +202,9 @@ class _PlanLease:
                     ExecutionManager(session).heartbeat_driver(self._execution_id, self._owner)
             except Exception:
                 logger.warning(
-                    "Planning heartbeat failed for %s; will retry", self._execution_id, exc_info=True
+                    "Planning heartbeat failed for %s; will retry",
+                    self._execution_id,
+                    exc_info=True,
                 )
 
     def stop(self) -> None:
@@ -341,6 +344,11 @@ class PipelineRunner:
         execution = self.execution_manager.get_execution(execution_id)
         if not execution:
             logger.warning("Execution %s not found, skipping resume", execution_id)
+            return
+        if execution.state in ExecutionManager.TERMINAL_STATES:
+            # Settled while this resume was queued (e.g. /cancel after /resume):
+            # driving it would finalize it again and overwrite "cancelled".
+            logger.info("Execution %s is already %s; not resuming", execution_id, execution.state)
             return
 
         pipeline_name = execution.pipeline_name
@@ -659,7 +667,9 @@ class PipelineRunner:
             try:
                 self.execution_manager.release_driver(execution_id, driver_id)
             except Exception:
-                logger.warning("Could not release dispatch lease for %s", execution_id, exc_info=True)
+                logger.warning(
+                    "Could not release dispatch lease for %s", execution_id, exc_info=True
+                )
 
     async def _wait_for_driver_lease(self, execution_id: str, driver_id: str) -> bool:
         """Claim the dispatch lease, standing by while a live loop holds it.
@@ -890,9 +900,9 @@ class PipelineRunner:
                 result["failed"],
             )
         if result["failed"]:
-            metrics.jobs_processed_total.labels(
-                pipeline=pipeline_name, status="lease_expired"
-            ).inc(result["failed"])
+            metrics.jobs_processed_total.labels(pipeline=pipeline_name, status="lease_expired").inc(
+                result["failed"]
+            )
 
     def _recover_plan(self, execution_id: str) -> bool:
         """Deal with an execution whose planning had not finished when we looked.

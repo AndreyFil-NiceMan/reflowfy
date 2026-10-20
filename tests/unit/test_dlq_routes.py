@@ -45,6 +45,20 @@ def db(engine) -> Session:
     session.close()
 
 
+@pytest.fixture(autouse=True)
+def _registered_pipelines():
+    """POST /dlq/schedule only accepts registered pipelines; register the names used here."""
+    from reflowfy.core.registry import pipeline_registry
+
+    names = ["p", "q", "a", "b", "other"]
+    added = [n for n in names if pipeline_registry.get(n) is None]
+    for name in added:
+        pipeline_registry._pipelines[name] = object()
+    yield
+    for name in added:
+        pipeline_registry._pipelines.pop(name, None)
+
+
 @pytest.fixture
 def client(engine):
     factory = sessionmaker(bind=engine)
@@ -145,14 +159,6 @@ def test_schedule_rejects_an_invalid_request(client, db, payload):
     assert db.query(DLQJob).count() == 0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: POST /dlq/schedule accepts a pipeline that is not registered (201); the job "
-        "only fails when it comes due, is retried DLQ_MAX_RETRIES times and archived. "
-        "/run rejects the same request up front with 404"
-    ),
-)
 def test_schedule_rejects_an_unknown_pipeline(client):
     response = client.post(
         "/dlq/schedule",
@@ -299,13 +305,6 @@ def test_dispatch_failure_is_500_and_schedules_a_retry(client, db, runner):
     assert row.status == "pending"  # rescheduled with backoff, not lost
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: dispatch_dlq_job raises HTTPException(404) inside its try block and the "
-        "trailing `except Exception` turns it into a 500 'Failed to dispatch job: 404: ...'"
-    ),
-)
 def test_dispatch_unknown_job_is_404(client, runner):
     assert client.post("/dlq/jobs/999/dispatch").status_code == 404
 
@@ -328,8 +327,10 @@ def test_dispatch_all_pending_for_a_pipeline(client, db, runner):
     assert response.status_code == 200
     body = response.json()
     assert body["dispatched_count"] == 2 and body["execution_id"].startswith("dlq-")
-    assert len(runner.calls) == 1  # one execution for the batch
-    assert sorted(runner.calls[0]["params"]["_dlq_job_ids"]) == sorted(ids[:2])
+    # Different params: one execution each, each run with its own params.
+    assert len(runner.calls) == 2 and body["execution_ids"][0] == body["execution_id"]
+    assert sorted(c["params"]["n"] for c in runner.calls) == [0, 1]
+    assert sorted(i for c in runner.calls for i in c["params"]["_dlq_job_ids"]) == sorted(ids[:2])
     assert [_row(db, i).status for i in ids] == ["completed", "completed", "cancelled"]
     assert _row(db, other).status == "pending"
 
