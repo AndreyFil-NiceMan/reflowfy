@@ -11,8 +11,13 @@ Reflowfy is a horizontally scalable data movement and transformation framework. 
 This project uses **uv**. Prefix Python commands with `uv run`.
 
 ```bash
-# Unit tests (no services required)
+# Unit tests (no services required). pytest/pytest-cov live in the `dev` EXTRA,
+# not the dev dependency group, so a plain `uv sync` leaves them out.
+uv sync --all-extras
 uv run pytest tests/unit/ -v
+uv run pytest tests/unit/ --cov     # line+branch; fails under [tool.coverage.report]
+                                    # fail_under (99) — CI (.github/workflows/tests.yml)
+                                    # runs ruff, pyright and this on every PR
 uv run pytest tests/unit/test_api_destination.py::TestClassName::test_name -v   # single test
 
 # E2E tests (build wheel, spin up full Docker stack, run, teardown)
@@ -238,7 +243,7 @@ Job IDs are plain `uuid4`. Idempotency is enforced **worker-side, by content**: 
 
 This is content idempotency across executions. Within one execution, the job-level claim above already stops a redelivered message from running a job twice.
 
-The **DLQ is not a failure sink** despite the name — nothing auto-populates it. It is a "run this pipeline later with these params" queue: `POST /dlq/schedule` takes a `job_payload` that is really *runtime params*, and `dlq_scheduler.py` calls `run_pipeline` with them when due. `dlq_routes.py` handles inspection. `pipeline_scheduler.py` runs cron-scheduled pipelines (5-field cron, validated at class-definition time in the metaclass).
+The **DLQ is not a failure sink** despite the name — nothing auto-populates it. It is a "run this pipeline later with these params" queue: `POST /dlq/schedule` takes a `job_payload` that is really *runtime params* (an unregistered pipeline answers 404, as `/run` does), and `dlq_scheduler.py` calls `run_pipeline` with them when due. Due jobs of one pipeline are grouped by identical params — one execution per distinct set, so every job runs with its own params (`/dlq/pipelines/{name}/dispatch` returns all of them as `execution_ids`). `dlq_routes.py` handles inspection. `pipeline_scheduler.py` runs cron-scheduled pipelines (5-field cron, validated at class-definition time in the metaclass).
 
 ### Distributed E2E suite
 

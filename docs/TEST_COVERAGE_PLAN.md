@@ -1,6 +1,44 @@
 # Test coverage plan
 
-Status: proposal · Baseline measured 2026-10-20 on `claude/project-test-coverage-uhpgmp`
+Status: **phases 0–5 done**, phase 6 partly (see *Outcome*) · Baseline measured
+2026-10-20 on `claude/project-test-coverage-uhpgmp`
+
+## Outcome
+
+| | Before | After |
+|---|---:|---:|
+| Unit tests | 435 | 1,337 |
+| Unit coverage (line+branch) | 58.7% | 99.5% |
+| Coverage gate (`fail_under`) | none | 99 |
+| E2E (local mode, full Docker stack) | not run in CI | 346 passed, 0 skipped |
+| CI on pull requests | none | ruff + pyright + unit tests with the gate |
+
+Writing the tests found **19 bugs**, every one fixed on this branch with a regression
+test (each was first pinned as a strict xfail):
+
+- **Kafka destination:** `security_protocol="SSL"` without SASL was dropped
+  (plaintext); SSL had no `ssl_context`; `**producer_config` never reached the
+  producer (now forwarded when aiokafka accepts it, warned about once otherwise).
+- **Kafka consumer:** non-UTF-8 or non-object payloads were never committed and came
+  back after every rebalance; they are committed and counted as `status="invalid"`.
+- **Content dedup:** an `X-API-Key` header stayed in the destination identity, so
+  rotating it made written content look new (previous-release claims are honored).
+- **`DestinationFactory.create`** could not rebuild any built-in destination.
+- **`ConsoleDestination`** crashed on datetimes with the default `pretty_print`.
+- **`SqlSource`** ignored its documented `**engine_kwargs`.
+- **API run route:** an unreachable manager answered 422 (now 502); optional
+  list/dict params still required a JSON body.
+- **`reflowfy deploy`** printed Kafka/Postgres/Elastic passwords in the helm command.
+- **`resume_execution`** finalized an already-cancelled execution as `failed`.
+- **DLQ:** jobs due together ran with the first job's params; dispatching an unknown
+  job answered 500 instead of 404; scheduling an unregistered pipeline was accepted;
+  `/stats/dlq` `avg_retry_count` was the last status row's, not the pipeline's.
+- **E2E infra:** the Elasticsearch test node refused shards on a host past the 90%
+  disk watermark, so every Elastic E2E test was skipped.
+
+Still open from phase 6: distributed E2E in CI (it runs locally via
+`scripts/e2e-distributed.override.yml`), the kind/k3d chaos suite, a real-Postgres
+integration suite, Helm snapshot tests and benchmarks.
 
 ## Baseline
 
