@@ -146,6 +146,20 @@ def test_shipping_problems_are_reported_at_most_once_a_minute(
     assert "first" in err and "second" not in err
 
 
+def test_the_first_warning_is_printed_on_a_host_up_for_under_a_minute(
+    handlers: List[ElasticLogHandler],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # time.monotonic() counts from boot: a fresh node or CI runner reads ~5s here.
+    h = _handler(handlers, client=object())
+    monkeypatch.setattr(eh.time, "monotonic", lambda: 5.0)
+
+    h._warn_once("shipping failed")
+
+    assert "shipping failed" in capsys.readouterr().err
+
+
 def test_a_paused_shipper_does_not_drain_the_queue(
     monkeypatch: pytest.MonkeyPatch, handlers: List[ElasticLogHandler]
 ) -> None:
