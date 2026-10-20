@@ -137,7 +137,9 @@ def _pin_range(spec: Any, now: datetime) -> Any:
     for bound in ("gte", "gt", "lte", "lt", "from", "to"):
         expr = pinned.get(bound)
         if isinstance(expr, str) and expr.startswith("now"):
-            resolved = _resolve_now(expr, bound, now)
+            # Elasticsearch rounds in the clause's time_zone; we only round in UTC.
+            zoned_rounding = "time_zone" in pinned and "/" in expr
+            resolved = None if zoned_rounding else _resolve_now(expr, bound, now)
             if resolved is None:
                 logger.warning(
                     "elastic source: cannot pin %r; it is re-evaluated on every job, so a "

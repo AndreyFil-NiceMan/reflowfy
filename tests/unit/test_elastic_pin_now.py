@@ -41,3 +41,10 @@ def test_leaves_absolute_dates_formats_and_input_alone():
 
 def test_unsupported_math_is_left_unchanged():
     assert _bounds(_pin_now(_range(gte="now-1M"), NOW))["gte"] == "now-1M"
+
+
+def test_rounding_with_time_zone_is_left_to_elasticsearch():
+    q = _range(gte="now/d", lte="now-1h", time_zone="+03:00")
+    out = _bounds(_pin_now(q, NOW))
+    assert out["gte"] == "now/d"  # would round at UTC midnight, not +03:00
+    assert out["lte"] == "2026-10-20T11:34:56.000+00:00"  # plain offsets are zone-independent
