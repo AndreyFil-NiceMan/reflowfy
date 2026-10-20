@@ -837,10 +837,12 @@ class PipelineRunner:
         last_check = 0.0
         stop = False
 
-        def should_stop() -> bool:
+        def should_stop(chunk: bool = True) -> bool:
+            # chunk=False: a token is already spent, so only a pause or a lost lease
+            # may stop the send; the chunk running out must not drop the job.
             nonlocal last_check, stop
             now = time.time()
-            if now - started >= DISPATCH_CHUNK_SECONDS:
+            if chunk and now - started >= DISPATCH_CHUNK_SECONDS:
                 return True
             if now - last_check >= 1.0:
                 last_check = now
