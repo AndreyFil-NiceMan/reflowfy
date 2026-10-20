@@ -1,6 +1,8 @@
 """Elasticsearch source with scroll-based pagination."""
 
+import re
 from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 from math import ceil
 from typing import Any, Dict, Iterator, List, Optional, Tuple, cast
 
@@ -78,6 +80,75 @@ def _range_clause(field: str, order: str, after: Any, upto: Any) -> Dict[str, An
     if upto is not None:
         bounds["lte" if order == "asc" else "gte"] = upto
     return {"range": {field: bounds}}
+
+
+_NOW_MATH = re.compile(r"^now((?:[+-]\d+[wdhHms])*)(?:/([dhHms]))?$")
+_UNIT_SECONDS = {"w": 604800, "d": 86400, "h": 3600, "H": 3600, "m": 60, "s": 1}
+_ROUND_UP_BOUNDS = ("lte", "gt", "to")  # Elasticsearch rounds these up, the rest down
+
+
+def _resolve_now(expr: str, bound: str, now: datetime) -> Optional[str]:
+    """``now-120m`` → an ISO timestamp, or ``None`` if ``expr`` is not date math we handle."""
+    match = _NOW_MATH.match(expr)
+    if not match:
+        return None
+    moment = now
+    for sign, amount, unit in re.findall(r"([+-])(\d+)([wdhHms])", match.group(1)):
+        delta = timedelta(seconds=int(amount) * _UNIT_SECONDS[unit])
+        moment = moment + delta if sign == "+" else moment - delta
+    if match.group(2):
+        step = _UNIT_SECONDS[match.group(2)]
+        floored = moment.timestamp() // step * step
+        if bound in _ROUND_UP_BOUNDS:
+            floored += step - 0.001
+        moment = datetime.fromtimestamp(floored, tz=timezone.utc)
+    return moment.isoformat(timespec="milliseconds")
+
+
+def _pin_now(node: Any, now: datetime) -> Any:
+    """Copy of a query with ``now`` date math in ``range`` bounds fixed to ``now``.
+
+    Elasticsearch evaluates ``now`` on every search, so a job that runs two hours
+    after planning would see a window two hours later than the one it was planned
+    for, and match nothing. Pinned once at planning, every job sees the same bounds.
+    """
+    if isinstance(node, list):
+        return [_pin_now(item, now) for item in cast(List[Any], node)]
+    if not isinstance(node, dict):
+        return node
+    out: Dict[str, Any] = {}
+    for key, value in cast(Dict[str, Any], node).items():
+        if key == "range" and isinstance(value, dict):
+            out[key] = {
+                field: _pin_range(spec, now) for field, spec in cast(Dict[str, Any], value).items()
+            }
+        else:
+            out[key] = _pin_now(value, now)
+    return out
+
+
+def _pin_range(spec: Any, now: datetime) -> Any:
+    # A custom ``format`` says how the bounds are written; an ISO string may not parse.
+    if not isinstance(spec, dict):
+        return spec
+    pinned = dict(cast(Dict[str, Any], spec))
+    if "format" in pinned:
+        return pinned
+    for bound in ("gte", "gt", "lte", "lt", "from", "to"):
+        expr = pinned.get(bound)
+        if isinstance(expr, str) and expr.startswith("now"):
+            # Elasticsearch rounds in the clause's time_zone; we only round in UTC.
+            zoned_rounding = "time_zone" in pinned and "/" in expr
+            resolved = None if zoned_rounding else _resolve_now(expr, bound, now)
+            if resolved is None:
+                logger.warning(
+                    "elastic source: cannot pin %r; it is re-evaluated on every job, so a "
+                    "long run may drift off its planned windows",
+                    expr,
+                )
+            else:
+                pinned[bound] = resolved
+    return pinned
 
 
 def _hit_record(hit: Dict[str, Any]) -> Record:
@@ -630,6 +701,10 @@ class ElasticSource(BaseSource):
         matching no documents yields no jobs. A single job yields ``self``.
         """
         resolved = self.resolve_parameters(runtime_params) or self.config
+        resolved = {
+            **resolved,
+            "base_query": _pin_now(resolved["base_query"], datetime.now(timezone.utc)),
+        }
         path = _composite_path(resolved["base_query"])
         if path:
             if int(resolved.get("num_slices") or 1) > 1:
