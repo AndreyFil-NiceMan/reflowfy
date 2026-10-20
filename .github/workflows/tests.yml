@@ -29,6 +29,10 @@ jobs:
       - name: Lint
         run: uv run ruff check reflowfy/
 
+      - name: Type check
+        # Must stay at 0 errors (CLAUDE.md).
+        run: uv run pyright
+
       - name: Unit tests with coverage
         # fail_under in [tool.coverage.report] is the gate.
         run: uv run pytest tests/unit --cov --cov-report=term --cov-report=xml

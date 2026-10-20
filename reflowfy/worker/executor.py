@@ -5,7 +5,7 @@ import os
 import time
 import traceback
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import AsyncAdaptedQueuePool
@@ -165,17 +165,19 @@ class WorkerExecutor:
             from opentelemetry import trace
 
             # Inside try so a malformed trace carrier can't skip metric recording.
-            metadata = job_payload.get("metadata") or {}
+            metadata: Dict[str, Any] = job_payload.get("metadata") or {}
             parent = extract_and_attach(metadata)
             # ponytail: log the count of current_ids, not the list — it can be huge.
-            job_params = metadata.get("runtime_params") or {}
-            current_ids = metadata.get("current_ids")
+            job_params: Dict[str, Any] = metadata.get("runtime_params") or {}
+            current_ids: Any = metadata.get("current_ids")
             with log_context(
                 execution_id=execution_id,
                 job_id=job_id,
                 pipeline_name=pipeline_name,
                 current_id=job_params.get("current_id"),
-                current_ids_count=len(current_ids) if isinstance(current_ids, list) else None,
+                current_ids_count=(
+                    len(cast(List[Any], current_ids)) if isinstance(current_ids, list) else None
+                ),
             ):
                 with trace.get_tracer("worker").start_as_current_span(
                     "process_job", context=parent
