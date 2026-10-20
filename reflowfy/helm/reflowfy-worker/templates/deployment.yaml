@@ -14,6 +14,8 @@ spec:
       labels:
         app: reflowfy-worker
     spec:
+      # Never calls the Kubernetes API: don't mount a service account token.
+      automountServiceAccountToken: false
       containers:
       - name: worker
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
