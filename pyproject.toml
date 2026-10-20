@@ -146,6 +146,23 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 asyncio_mode = "auto"
 
+[tool.coverage.run]
+source = ["reflowfy"]
+branch = true
+omit = ["reflowfy/helm/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+# Ratchet: raise as coverage grows (docs/TEST_COVERAGE_PLAN.md), never lower.
+fail_under = 58
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "@(abc\\.)?abstractmethod",
+]
+
 [dependency-groups]
 dev = [
     "aiosqlite>=0.22.1",

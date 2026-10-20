@@ -161,7 +161,7 @@ These don't add to the unit figure, but they cover what unit tests cannot.
 
 | Milestone | Phases | Expected unit coverage | Gate |
 |---|---|---:|---:|
-| M0 | 0 | 62% | 62 |
+| M0 | 0 | 62% line / 58.7% line+branch | 58 |
 | M1 | 1 | ~71% | 70 |
 | M2 | 2 | ~77% | 76 |
 | M3 | 3, 4 | ~83% | 82 |
