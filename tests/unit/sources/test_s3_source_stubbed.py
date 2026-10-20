@@ -15,6 +15,8 @@ import pytest
 boto3 = pytest.importorskip("boto3")
 
 from botocore.response import StreamingBody  # noqa: E402
+from botocore import UNSIGNED  # noqa: E402
+from botocore.config import Config  # noqa: E402
 from botocore.stub import ANY, Stubber  # noqa: E402
 
 from reflowfy.sources.base import SourceError  # noqa: E402
@@ -33,12 +35,9 @@ def _body(payload: bytes) -> StreamingBody:
 
 @pytest.fixture
 def stubbed() -> Iterator[Tuple[Any, Stubber]]:
-    client = boto3.client(
-        "s3",
-        region_name="us-east-1",
-        aws_access_key_id="testing",
-        aws_secret_access_key="testing",
-    )
+    # Unsigned: the Stubber answers every call, so no credentials are needed (and a
+    # hard-coded key pair reads as a leaked secret to SonarCloud).
+    client = boto3.client("s3", region_name="us-east-1", config=Config(signature_version=UNSIGNED))
     with Stubber(client) as stub:
         yield client, stub
         stub.assert_no_pending_responses()
