@@ -34,7 +34,7 @@ from reflowfy.sources.decorators import source, source_registry
 from reflowfy.destinations.decorators import destination, destination_registry
 from reflowfy.transformations.decorators import transformation
 
-__version__ = "1.0.43"
+__version__ = "1.0.44"
 
 __all__ = [
     "load_query",
