@@ -23,6 +23,9 @@ services:
       - 'ES_JAVA_OPTS=-Xms512m -Xmx512m'
       - xpack.security.enabled=false
       - xpack.security.enrollment.enabled=false
+      # A throwaway test node: don't refuse shards because the HOST disk is past the
+      # 90% watermark (the index stays red and every Elastic E2E test fails).
+      - cluster.routing.allocation.disk.threshold_enabled=false
       - network.host=0.0.0.0
     ports:
       - '9201:9200'
