@@ -13,7 +13,7 @@ Status: **phases 0–5 done**, phase 6 partly (see *Outcome*) · Baseline measur
 | E2E (local mode, full Docker stack) | not run in CI | 346 passed, 0 skipped |
 | CI on pull requests | none | ruff + pyright + unit tests with the gate |
 
-Writing the tests found **19 bugs**, every one fixed on this branch with a regression
+Writing the tests found **21 bugs**, every one fixed on this branch with a regression
 test (each was first pinned as a strict xfail):
 
 - **Kafka destination:** `security_protocol="SSL"` without SASL was dropped
@@ -35,6 +35,10 @@ test (each was first pinned as a strict xfail):
   `/stats/dlq` `avg_retry_count` was the last status row's, not the pipeline's.
 - **E2E infra:** the Elasticsearch test node refused shards on a host past the 90%
   disk watermark, so every Elastic E2E test was skipped.
+- **Helm:** the standalone `reflowfy-api` / `reflowfy-worker` charts rendered invalid
+  YAML with their default `env: []` (caught by CI's `helm lint`).
+- **Elastic log handler:** the first shipping-failure warning was swallowed on a host
+  up for under a minute (`time.monotonic()` counts from boot).
 
 Still open from phase 6: distributed E2E in CI (it runs locally via
 `scripts/e2e-distributed.override.yml`), the kind/k3d chaos suite, a real-Postgres
