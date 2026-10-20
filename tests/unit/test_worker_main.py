@@ -11,6 +11,11 @@ import pytest
 import reflowfy.worker.main as main_mod
 from reflowfy.observability import metrics
 
+# Built into URLs at runtime: a credentialed URL literal reads as a leaked secret
+# to secret scanners (SonarCloud).
+_DB_PW = "pw"
+_SECRET_DB_PW = "not-logged-pw"
+
 _ENV = (
     "KAFKA_BOOTSTRAP_SERVERS",
     "KAFKA_TOPIC",
@@ -129,7 +134,7 @@ def test_env_overrides(harness, monkeypatch):
         "KAFKA_BOOTSTRAP_SERVERS": "b1:9092,b2:9092",
         "KAFKA_TOPIC": "jobs.v2",
         "KAFKA_GROUP_ID": "grp",
-        "DATABASE_URL": "postgresql://u:pw@db:5432/x",
+        "DATABASE_URL": f"postgresql://u:{_DB_PW}@db:5432/x",
         "KAFKA_SECURITY_PROTOCOL": "SASL_SSL",
         "KAFKA_SASL_MECHANISM": "SCRAM-SHA-512",
         "KAFKA_SASL_USERNAME": "svc",
@@ -145,7 +150,7 @@ def test_env_overrides(harness, monkeypatch):
         "bootstrap_servers": "b1:9092,b2:9092",
         "topic": "jobs.v2",
         "group_id": "grp",
-        "database_url": "postgresql://u:pw@db:5432/x",
+        "database_url": f"postgresql://u:{_DB_PW}@db:5432/x",
         "security_protocol": "SASL_SSL",
         "sasl_mechanism": "SCRAM-SHA-512",
         "sasl_username": "svc",
@@ -160,7 +165,7 @@ def test_observability_and_discovery_run_before_the_consumer(harness):
 
 
 def test_startup_log_names_the_db_host_but_never_credentials(harness, monkeypatch):
-    monkeypatch.setenv("DATABASE_URL", "postgresql://user:hunter2@db.internal:5432/r")
+    monkeypatch.setenv("DATABASE_URL", f"postgresql://user:{_SECRET_DB_PW}@db.internal:5432/r")
     monkeypatch.setenv("KAFKA_SASL_USERNAME", "svc")
     monkeypatch.setenv("KAFKA_SASL_PASSWORD", "kafka-secret")
 
@@ -169,7 +174,7 @@ def test_startup_log_names_the_db_host_but_never_credentials(harness, monkeypatc
 
     text = "\n".join(logs)
     assert "database=db.internal:5432/r" in text
-    assert "hunter2" not in text and "kafka-secret" not in text
+    assert _SECRET_DB_PW not in text and "kafka-secret" not in text
     assert "SASL enabled: SASL_PLAINTEXT / SCRAM-SHA-256" in logs
     assert "Worker ready, waiting for jobs" in logs
 
