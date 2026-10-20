@@ -208,12 +208,14 @@ def test_a_just_created_execution_is_not_mistaken_for_an_orphan(db, monkeypatch)
     """Created 1s ago and not yet owned (the planner has not claimed its lease): wait
     until it is older than a lease before calling it abandoned."""
     monkeypatch.setattr(runner_mod, "DRIVER_LEASE_SECONDS", 2.0)
+    # Taken before the row exists: setup time (slow under coverage) must not count
+    # against the wait, which is measured from created_at, not from the call.
+    before_insert = time.time()
     _execution(db, plan_complete=False, state="pending", age_s=1)
-    started = time.time()
 
     _runner(db).resume_execution("e")
 
-    assert time.time() - started >= 0.9  # waited out the remainder of the lease
+    assert time.time() - before_insert >= 0.95  # waited out the remainder of the lease
     assert _state(db).state == "failed"
 
 
