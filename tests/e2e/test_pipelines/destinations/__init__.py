@@ -80,7 +80,7 @@ def e2e_kafka(
     ),
     topic: str = os.getenv("E2E_KAFKA_DEST_TOPIC", "e2e-test-destination"),
     compression_type: str = "gzip",
-    batch_size: int = 16384,
+    max_batch_size: int = 16384,
     linger_ms: int = 10,
 ):
     """Pre-configured Kafka destination for E2E tests."""
@@ -90,6 +90,6 @@ def e2e_kafka(
         bootstrap_servers=bootstrap_servers,
         topic=topic,
         compression_type=compression_type,
-        batch_size=batch_size,
+        max_batch_size=max_batch_size,
         linger_ms=linger_ms,
     )

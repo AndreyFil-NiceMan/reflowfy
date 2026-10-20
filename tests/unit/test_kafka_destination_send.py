@@ -170,6 +170,15 @@ class TestProducer:
         assert len(fake_producer.instances) == 2
         assert fake_producer.instances[1].sent
 
+    async def test_unknown_producer_setting_is_ignored_with_a_warning(self, fake_producer, caplog):
+        # The Java client's batch_size is not an AIOKafkaProducer parameter: passing
+        # it through would fail every job with a TypeError.
+        with caplog.at_level(logging.WARNING, logger="reflowfy.destinations.kafka"):
+            await _dest(batch_size=16384, acks="all").send([{"a": 1}])
+        kwargs = fake_producer.instances[0].kwargs
+        assert "batch_size" not in kwargs and kwargs["acks"] == "all"
+        assert "ignoring producer setting 'batch_size'" in caplog.text
+
     async def test_extra_producer_config_reaches_the_producer(self, fake_producer):
         await _dest(acks="all", linger_ms=5).send([{"a": 1}])
         kwargs = fake_producer.instances[0].kwargs

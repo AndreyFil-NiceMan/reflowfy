@@ -4,6 +4,8 @@
 """Kafka destination connector using aiokafka."""
 
 import asyncio
+import functools
+import inspect
 import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -32,6 +34,14 @@ _NAMED_CONFIG_KEYS = frozenset(
         "key_field",
     }
 )
+
+
+@functools.lru_cache(maxsize=1)
+def _producer_parameters() -> frozenset[str]:
+    import aiokafka  # the library's class, even where this module's name is patched
+
+    params = inspect.signature(aiokafka.AIOKafkaProducer.__init__).parameters
+    return frozenset(params) - {"self"}
 
 
 class KafkaDestination(BaseDestination):
@@ -154,9 +164,21 @@ class KafkaDestination(BaseDestination):
                 producer_kwargs["client_id"] = username
             # **producer_config (acks, linger_ms, ...) — everything the constructor
             # did not name. Explicit producer settings win over the defaults above.
-            producer_kwargs.update(
-                {k: v for k, v in self.config.items() if k not in _NAMED_CONFIG_KEYS}
-            )
+            # A key AIOKafkaProducer does not take (e.g. the Java client's batch_size,
+            # which aiokafka calls max_batch_size) was always ignored; keep ignoring
+            # it, loudly, rather than failing every job with a TypeError.
+            accepted = _producer_parameters()
+            for key, value in self.config.items():
+                if key in _NAMED_CONFIG_KEYS:
+                    continue
+                if key in accepted:
+                    producer_kwargs[key] = value
+                else:
+                    logger.warning(
+                        "Kafka destination: ignoring producer setting %r "
+                        "(not an AIOKafkaProducer parameter)",
+                        key,
+                    )
 
             self._producer = AIOKafkaProducer(**producer_kwargs)
             await self._producer.start()
