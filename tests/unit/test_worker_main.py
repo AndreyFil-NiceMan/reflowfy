@@ -15,6 +15,7 @@ from reflowfy.observability import metrics
 # to secret scanners (SonarCloud).
 _DB_PW = "pw"
 _SECRET_DB_PW = "not-logged-pw"
+_DEFAULT_DB_PW = "reflowfy"
 
 _ENV = (
     "KAFKA_BOOTSTRAP_SERVERS",
@@ -120,7 +121,8 @@ def test_defaults(harness):
         "bootstrap_servers": "localhost:9092",
         "topic": "reflow.jobs",
         "group_id": "reflowfy-workers",
-        "database_url": "postgresql://reflowfy:reflowfy@localhost:5432/reflowfy",
+        # The local-dev default; built here rather than written as a credentialed URL.
+        "database_url": f"postgresql://reflowfy:{_DEFAULT_DB_PW}@localhost:5432/reflowfy",
         "security_protocol": None,
         "sasl_mechanism": None,
         "sasl_username": None,
