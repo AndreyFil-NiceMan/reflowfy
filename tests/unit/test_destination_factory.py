@@ -72,12 +72,6 @@ _BUILTINS = [
 ]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BUG: DestinationFactory.create() calls cls(config) — the dict lands in the "
-    "first positional parameter (url / pretty_print / bootstrap_servers) — instead of "
-    "cls(**config) as SourceFactory.create does, so no built-in destination round-trips",
-)
 @pytest.mark.parametrize("name,build", _BUILTINS, ids=[n for n, _ in _BUILTINS])
 def test_builtin_round_trip(name: str, build: Any) -> None:
     original = build()

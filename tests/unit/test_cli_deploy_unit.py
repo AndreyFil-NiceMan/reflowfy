@@ -360,14 +360,6 @@ class TestExecution:
         assert "Helm Command:" in result.output
         assert "helm" in result.output and "upgrade" in result.output
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "BUG: deploy prints the full helm command, including --set values for "
-            "kafka.sasl.password, postgresql.auth.* and observability.elasticLog.password, "
-            "so secrets land in the terminal and CI logs"
-        ),
-    )
     def test_printed_helm_command_masks_secrets(self, calls):
         result = deploy(
             *BASE,

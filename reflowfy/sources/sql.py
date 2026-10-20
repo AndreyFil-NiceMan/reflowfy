@@ -7,6 +7,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from reflowfy.core.types import Records, wrap_as_record
 from reflowfy.sources.base import BaseSource, SourceJob, SourceError
 
+# Config keys that are not SQLAlchemy engine arguments: the named constructor
+# parameters plus the window split() bakes into each slice.
+_NAMED_CONFIG_KEYS = frozenset(
+    {"connection_url", "query", "id_column", "time_column", "batch_size", "slice"}
+)
+
 
 class SqlSource(BaseSource):
     """
@@ -50,13 +56,17 @@ class SqlSource(BaseSource):
         super().__init__(config)
         self._engine: Optional[Engine] = None
 
+    def _engine_kwargs(self) -> Dict[str, Any]:
+        return {k: v for k, v in self.config.items() if k not in _NAMED_CONFIG_KEYS}
+
     def _get_engine(self) -> Engine:
         """Get or create SQLAlchemy engine."""
         if self._engine is None:
-            self._engine = create_engine(
-                self.config["connection_url"],
-                pool_pre_ping=True,
-            )
+            # **engine_kwargs live in config beside the named settings (so the source
+            # round-trips through SourceFactory); hand only those to SQLAlchemy.
+            engine_kwargs = self._engine_kwargs()
+            engine_kwargs.setdefault("pool_pre_ping", True)
+            self._engine = create_engine(self.config["connection_url"], **engine_kwargs)
         return self._engine
 
     def fetch(self, runtime_params: Dict[str, Any], limit: Optional[int] = None) -> Records:
@@ -137,6 +147,7 @@ class SqlSource(BaseSource):
                 id_column=None,
                 time_column=resolved.get("time_column"),
                 batch_size=batch_size,
+                **self._engine_kwargs(),
             )
             sub.config["slice"] = {"lo": cur, "hi": nxt}
             yield sub

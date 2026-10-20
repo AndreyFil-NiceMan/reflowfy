@@ -15,20 +15,21 @@ from sqlalchemy import delete, select
 
 from reflowfy.reflow_manager.models import ProcessedContent
 
-
 # Config keys left out of a destination's identity: rotating a credential must not
-# make already-written content look new. Matched as substrings, case-insensitive.
-_SECRET_MARKERS = ("password", "secret", "token", "credential", "auth", "api_key", "apikey")
+# make already-written content look new. Matched as substrings of the key lowercased
+# with "-" and "_" removed, so api_key, apiKey and an X-API-Key header all match.
+_SECRET_MARKERS = ("password", "secret", "token", "credential", "auth", "apikey")
+
+
+def _is_secret_key(key: Any) -> bool:
+    normalized = str(key).lower().replace("-", "").replace("_", "")
+    return any(m in normalized for m in _SECRET_MARKERS)
 
 
 def _strip_secrets(value: Any) -> Any:
     if isinstance(value, dict):
         mapping = cast(Dict[Any, Any], value)
-        return {
-            k: _strip_secrets(v)
-            for k, v in mapping.items()
-            if not any(m in str(k).lower() for m in _SECRET_MARKERS)
-        }
+        return {k: _strip_secrets(v) for k, v in mapping.items() if not _is_secret_key(k)}
     if isinstance(value, list):
         return [_strip_secrets(v) for v in cast(List[Any], value)]
     return value

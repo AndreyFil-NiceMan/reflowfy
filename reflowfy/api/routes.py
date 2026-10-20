@@ -25,10 +25,10 @@ class PipelineRunResponse(BaseModel):
 
 
 def _check_status(status: Any) -> None:
-    """Raise HTTP 422 if the execution failed."""
+    """Raise HTTP 422 if the execution failed, 502 if the ReflowManager did."""
     if status.state == ExecutionState.FAILED:
         raise HTTPException(
-            status_code=422,
+            status_code=502 if status.metadata.get("upstream_error") else 422,
             detail={"error": status.error_message, "execution_id": status.execution_id},
         )
 
@@ -69,7 +69,8 @@ def _run_body(
         )
     except Exception as e:
         logger.exception(
-            "Execution raised for pipeline %s", pipeline_name,
+            "Execution raised for pipeline %s",
+            pipeline_name,
             extra={"pipeline_name": pipeline_name},
         )
         raise HTTPException(status_code=500, detail=str(e))
@@ -164,12 +165,20 @@ def _create_run_route(
             default = ... if p.required else p.default
             fields[p.name] = (
                 _param_annotation(p),
-                pydantic.Field(default, description=p.description or f"Runtime parameter: {p.name}"),
+                pydantic.Field(
+                    default, description=p.description or f"Runtime parameter: {p.name}"
+                ),
             )
         BodyModel = pydantic.create_model(f"{pipeline_name}_Body", **fields)
         sig_params.insert(
             0,
-            Parameter("body", Parameter.KEYWORD_ONLY, default=..., annotation=BodyModel),
+            Parameter(
+                "body",
+                Parameter.KEYWORD_ONLY,
+                # Required only if a body parameter is: otherwise omitting it is valid.
+                default=... if any(p.required for p in body_params) else None,
+                annotation=BodyModel,
+            ),
         )
 
     sig_params += [

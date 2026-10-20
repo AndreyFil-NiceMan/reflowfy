@@ -202,12 +202,6 @@ def test_explicit_dedup_identity_wins_and_is_stripped_too() -> None:
     assert destination_identity(dest) == {"type": "ApiDestination", "identity": {"url": "u"}}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BUG: _SECRET_MARKERS matches 'api_key'/'apikey' but not the conventional "
-    "'X-API-Key' header (hyphenated), so a key passed via headers= stays in the dedup "
-    "identity and rotating it makes already-written content look like new work",
-)
 def test_identity_ignores_a_rotated_api_key_header() -> None:
     old = api_destination(url="https://sink.test/in", headers={"X-API-Key": "old"})
     new = api_destination(url="https://sink.test/in", headers={"X-API-Key": "new"})

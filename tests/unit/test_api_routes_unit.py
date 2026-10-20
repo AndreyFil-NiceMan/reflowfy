@@ -272,13 +272,6 @@ class TestRunRouteRequests:
         # Tracked even though it failed, so /executions/{id}/status can find it.
         assert execution_tracker.get_status("exec-1").state == ExecutionState.FAILED
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "BUG: a pipeline whose only list/dict params are optional still requires a "
-            "JSON body (the body Parameter defaults to ...), so POST without one is 422"
-        ),
-    )
     def test_optional_body_params_do_not_require_a_body(self, make_pipeline):
         pipeline = make_pipeline("routes_optional_body", OptionalBodyParams)
         client = TestClient(_app(pipeline))
@@ -351,13 +344,6 @@ class TestForwardingToManager:
         assert resp.status_code >= 400
         assert "connection refused" in json.dumps(resp.json())
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "BUG: an unreachable ReflowManager is reported as 422 Unprocessable Entity "
-            "(blaming the caller's input) instead of a 502/503 upstream error"
-        ),
-    )
     def test_manager_unreachable_is_a_gateway_error(self, make_pipeline):
         def handler(request: httpx.Request) -> httpx.Response:
             raise httpx.ConnectError("connection refused", request=request)

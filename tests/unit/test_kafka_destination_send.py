@@ -133,12 +133,6 @@ class TestConnectionKwargs:
             "bootstrap_servers": "k:9092"
         }
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="BUG: security_protocol is only applied together with SASL credentials, so "
-        "security_protocol='SSL' (TLS without SASL) is silently dropped and the producer "
-        "connects in PLAINTEXT",
-    )
     def test_ssl_without_sasl_keeps_the_security_protocol(self):
         kwargs = _dest(security_protocol="SSL")._build_connection_kwargs()
         assert kwargs.get("security_protocol") == "SSL"
@@ -176,11 +170,6 @@ class TestProducer:
         assert len(fake_producer.instances) == 2
         assert fake_producer.instances[1].sent
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="BUG: **producer_config is documented as 'Additional producer configuration' "
-        "and stored in config, but _get_producer never passes it to AIOKafkaProducer",
-    )
     async def test_extra_producer_config_reaches_the_producer(self, fake_producer):
         await _dest(acks="all", linger_ms=5).send([{"a": 1}])
         kwargs = fake_producer.instances[0].kwargs

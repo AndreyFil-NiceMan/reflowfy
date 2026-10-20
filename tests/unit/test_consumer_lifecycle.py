@@ -274,21 +274,10 @@ class TestConsumeLoop:
         assert consumer.events.count("commit") == 1
         worker.executor.execute_job.assert_not_awaited()  # type: ignore[attr-defined]
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="BUG: a payload that is not UTF-8 raises UnicodeDecodeError, which is not a "
-        "JSONDecodeError, so the poison message falls into the generic handler and is never "
-        "committed; it is redelivered after every restart/rebalance",
-    )
     async def test_non_utf8_payload_is_committed_like_malformed_json(self, fake_kafka):
         consumer = await _run(_worker(), [_msg(b"\xff\xfe\x00garbage")])
         assert consumer.events.count("commit") == 1
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="BUG: valid JSON that is not an object (e.g. a list) raises AttributeError on "
-        ".get() and is never committed; it is redelivered after every restart/rebalance",
-    )
     async def test_non_object_json_is_committed_like_malformed_json(self, fake_kafka):
         consumer = await _run(_worker(), [_msg(b"[1, 2, 3]")])
         assert consumer.events.count("commit") == 1

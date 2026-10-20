@@ -16,6 +16,10 @@ from reflowfy.worker.executor import WorkerExecutor
 logger = logging.getLogger(__name__)
 
 
+class _InvalidPayload(Exception):
+    """A message that can never be a job (not UTF-8, not JSON, not an object)."""
+
+
 class KafkaJobConsumer:
     """
     Async Kafka consumer that processes Reflowfy jobs.
@@ -155,7 +159,14 @@ class KafkaJobConsumer:
                 await self.consumer.commit()
                 return
 
-            job_payload = json.loads(msg.value.decode("utf-8"))
+            try:
+                job_payload = json.loads(msg.value.decode("utf-8"))
+            except UnicodeDecodeError as e:
+                raise _InvalidPayload(f"not UTF-8: {e}") from e
+            except json.JSONDecodeError as e:
+                raise _InvalidPayload(str(e)) from e
+            if not isinstance(job_payload, dict):
+                raise _InvalidPayload(f"expected a JSON object, got {type(job_payload).__name__}")
 
             job_id = job_payload.get("job_id", "unknown")
             log_ctx = {
@@ -166,9 +177,7 @@ class KafkaJobConsumer:
 
             version = job_payload.get("schema_version")
             if version != 2:
-                logger.error(
-                    "Unsupported job schema_version=%r; skipping", version, extra=log_ctx
-                )
+                logger.error("Unsupported job schema_version=%r; skipping", version, extra=log_ctx)
                 await self.consumer.commit()
                 return
 
@@ -190,7 +199,8 @@ class KafkaJobConsumer:
                 logger.warning("Job %s failed; recorded to DB", job_id, extra=log_ctx)
             await self.consumer.commit()
 
-        except json.JSONDecodeError as e:
+        except _InvalidPayload as e:
+            # Malformed for good: redelivery cannot fix it, so commit past it.
             logger.error("Invalid job payload: %s", e)
             # Commit anyway to skip bad message
             await self.consumer.commit()

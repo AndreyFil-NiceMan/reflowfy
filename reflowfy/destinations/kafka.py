@@ -14,6 +14,26 @@ from reflowfy.destinations.base import BaseDestination, DestinationError, RetryC
 logger = logging.getLogger(__name__)
 
 
+# Config keys KafkaDestination.__init__ names; anything else came in via **producer_config.
+_NAMED_CONFIG_KEYS = frozenset(
+    {
+        "bootstrap_servers",
+        "topic",
+        "compression_type",
+        "security_protocol",
+        "sasl_mechanism",
+        "sasl_username",
+        "sasl_password",
+        "ssl_context",
+        "lag_health_check_enabled",
+        "consumer_group_id",
+        "lag_threshold",
+        "lag_check_timeout",
+        "key_field",
+    }
+)
+
+
 class KafkaDestination(BaseDestination):
     """
     Kafka destination connector using aiokafka.
@@ -101,15 +121,24 @@ class KafkaDestination(BaseDestination):
         }
         username = self.config.get("sasl_username")
         password = self.config.get("sasl_password")
+        security_protocol = self.config.get("security_protocol")
         if username and password:
             kwargs.update(
                 {
-                    "security_protocol": self.config.get("security_protocol") or "SASL_PLAINTEXT",
+                    "security_protocol": security_protocol or "SASL_PLAINTEXT",
                     "sasl_mechanism": self.config.get("sasl_mechanism") or "SCRAM-SHA-256",
                     "sasl_plain_username": username,
                     "sasl_plain_password": password,
                 }
             )
+        elif security_protocol:
+            # TLS without SASL: dropping it would silently connect in plaintext.
+            kwargs["security_protocol"] = security_protocol
+        if kwargs.get("security_protocol") in ("SSL", "SASL_SSL"):
+            # aiokafka refuses SSL without an explicit context; default to system CAs.
+            from aiokafka.helpers import create_ssl_context
+
+            kwargs["ssl_context"] = self.config.get("ssl_context") or create_ssl_context()
         return kwargs
 
     async def _get_producer(self) -> AIOKafkaProducer:
@@ -123,6 +152,11 @@ class KafkaDestination(BaseDestination):
             username = self.config.get("sasl_username")
             if username:
                 producer_kwargs["client_id"] = username
+            # **producer_config (acks, linger_ms, ...) — everything the constructor
+            # did not name. Explicit producer settings win over the defaults above.
+            producer_kwargs.update(
+                {k: v for k, v in self.config.items() if k not in _NAMED_CONFIG_KEYS}
+            )
 
             self._producer = AIOKafkaProducer(**producer_kwargs)
             await self._producer.start()

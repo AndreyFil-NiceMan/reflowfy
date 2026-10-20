@@ -218,11 +218,6 @@ def test_source_factory_round_trip_of_a_planned_slice(db_url: str) -> None:
     assert _ids(rebuilt.fetch({})) == [5, 6, 7, 8]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="BUG: SqlSource documents **engine_kwargs as 'Additional SQLAlchemy engine "
-    "parameters' but _get_engine() never passes them to create_engine()",
-)
 def test_engine_kwargs_reach_create_engine(db_url: str) -> None:
     src = SqlSource(connection_url=db_url, query="SELECT 1", echo=True)
     assert src._get_engine().echo is True

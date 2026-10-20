@@ -72,13 +72,6 @@ async def test_non_json_record_prints_in_compact_mode(capsys) -> None:
     assert "datetime.datetime(2026, 1, 2" in out and "{'x'}" in out
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=TypeError,
-    reason="BUG: ConsoleDestination(pretty_print=True), the default, json.dumps() every "
-    "record without default=str, so a record holding a datetime (any SQL timestamp "
-    "column from Postgres) or a set crashes the job with 'not JSON serializable'",
-)
 async def test_pretty_print_survives_a_datetime_in_a_record(capsys) -> None:
     when = datetime(2026, 1, 2, tzinfo=timezone.utc)
     await console_destination().send([{"at": when}])

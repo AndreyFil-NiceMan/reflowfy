@@ -5,11 +5,31 @@ import subprocess
 import typer
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 from urllib.parse import urlparse
 
 import reflowfy
 from reflowfy.cli.utils import console, get_helm_chart_path
+
+
+_SECRET_KEY_MARKERS = ("password", "secret", "token")
+
+
+def _masked(cmd: List[str]) -> List[str]:
+    """The helm command for display: --set values of secret keys replaced by ****."""
+    shown: List[str] = []
+    for arg in cmd:
+        key, sep, value = arg.partition("=")
+        if (
+            sep
+            and value
+            and shown
+            and shown[-1] == "--set"
+            and any(m in key.lower() for m in _SECRET_KEY_MARKERS)
+        ):
+            arg = f"{key}=****"
+        shown.append(arg)
+    return shown
 
 
 def register(app: typer.Typer):
@@ -212,7 +232,7 @@ def register(app: typer.Typer):
             cmd.extend(["--set", f"observability.elasticLog.password={elastic_log_password}"])
 
         console.print("\n📋 [bold]Helm Command:[/bold]")
-        console.print(" \\\n  ".join(cmd), style="cyan")
+        console.print(" \\\n  ".join(_masked(cmd)), style="cyan")
 
         console.print("\n🔧 Running Helm upgrade...", style="yellow")
         try:
