@@ -80,6 +80,7 @@ dev = [
     "types-croniter>=1.4.0",
     "testcontainers>=3.7.1",
     "build>=1.0.0",
+    "hypothesis>=6.100",
 ]
 
 [project.scripts]
