@@ -18,6 +18,9 @@ import pytest
 
 REFLOW_MANAGER_URL = os.getenv("E2E_REFLOW_MANAGER_URL", "http://localhost:8002")
 MOCK_URL = os.getenv("E2E_MOCK_HTTP_URL", "http://localhost:8091")
+# In distributed mode the worker drops the job, so the counter is in the worker's
+# registry (scripts/e2e-distributed.override.yml publishes it here). Not up in local mode.
+WORKER_METRICS_URL = os.getenv("E2E_WORKER_METRICS_URL", "http://localhost:9102/metrics")
 POLL_INTERVAL = 2
 MAX_WAIT = 60
 
@@ -60,8 +63,18 @@ def _delivered(marker):
 
 
 def _skipped_metric(client):
-    match = SKIPPED_METRIC.search(client.get("/metrics").text)
-    return float(match.group(1)) if match else 0.0
+    """The skipped counter summed over the manager and, when one is up, the worker:
+    the job is dropped in whichever process ran it."""
+    texts = [client.get("/metrics").text]
+    try:
+        texts.append(httpx.get(WORKER_METRICS_URL, timeout=5.0).text)
+    except httpx.HTTPError:
+        pass  # local mode: no worker
+    total = 0.0
+    for text in texts:
+        match = SKIPPED_METRIC.search(text)
+        total += float(match.group(1)) if match else 0.0
+    return total
 
 
 @pytest.fixture(scope="module")
