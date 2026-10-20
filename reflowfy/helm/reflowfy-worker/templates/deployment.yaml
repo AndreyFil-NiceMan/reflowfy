@@ -18,8 +18,10 @@ spec:
       - name: worker
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
         imagePullPolicy: {{ .Values.image.pullPolicy }}
+        {{- with .Values.env }}
         env:
-        {{- toYaml .Values.env | nindent 8 }}
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
         resources:
           {{- toYaml .Values.resources | nindent 10 }}
         terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds | default 120 }}

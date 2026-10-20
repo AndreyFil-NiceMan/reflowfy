@@ -106,8 +106,13 @@ def test_helm_lint_and_template(chart: Path):
     assert _helm is not None
     lint = subprocess.run([_helm, "lint", str(chart)], capture_output=True, text=True, timeout=120)
     assert lint.returncode == 0, lint.stdout + lint.stderr
+    # The umbrella chart refuses to render with SASL on (its default) and no password,
+    # by design; give it one. Subcharts ignore the value.
     rendered = subprocess.run(
-        [_helm, "template", "smoke", str(chart)], capture_output=True, text=True, timeout=120
+        [_helm, "template", "smoke", str(chart), "--set", "kafka.sasl.password=smoke"],
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     assert rendered.returncode == 0, rendered.stdout + rendered.stderr
     assert re.search(r"^kind: ", rendered.stdout, re.MULTILINE)
@@ -122,8 +127,10 @@ def test_cli_help_lists_every_command():
     result = CliRunner().invoke(app, ["--help"])
 
     assert result.exit_code == 0, result.output
+    # Rich colours its output on CI (GITHUB_ACTIONS); "\x1b[1minit" has no \b before "init".
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
     for command in CLI_COMMANDS:
-        assert re.search(rf"\b{command}\b", result.output), command
+        assert re.search(rf"\b{command}\b", plain), command
 
 
 @pytest.mark.parametrize("command", CLI_COMMANDS[:-1])
