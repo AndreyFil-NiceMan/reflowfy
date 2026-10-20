@@ -138,8 +138,10 @@ async def cancel_dlq_job(
     return {"message": f"DLQ job {job_id} cancelled"}
 
 
+# Plain def, not async: run_pipeline blocks until the run is planned and driven, so
+# FastAPI runs these in its threadpool instead of on the event loop.
 @router.post("/jobs/{job_id}/dispatch", response_model=DispatchDLQResponse)
-async def dispatch_dlq_job(
+def dispatch_dlq_job(
     job_id: int,
     db: Session = Depends(get_db),
 ):
@@ -182,7 +184,7 @@ async def dispatch_dlq_job(
 
 
 @router.post("/pipelines/{pipeline_name}/dispatch", response_model=DispatchDLQResponse)
-async def dispatch_pipeline_dlq_jobs(
+def dispatch_pipeline_dlq_jobs(
     pipeline_name: str,
     db: Session = Depends(get_db),
 ):

@@ -16,6 +16,7 @@ from reflowfy.execution.content_dedup import (
     claim_content_hash,
     compute_content_hash,
     destination_identity,
+    previous_destination_identity,
     release_content_hash,
 )
 from reflowfy.execution.job_runner import run_job_records
@@ -295,16 +296,29 @@ class WorkerExecutor:
             if dedup_check:
                 transformation_names = [step.name for step in applied]
                 job_params = job_payload.get("job_params") or None
+                identity = destination_identity(destination)
                 content_hash = compute_content_hash(
-                    _pipeline_name,
-                    transformation_names,
-                    records,
-                    job_params,
-                    destination_identity(destination),
+                    _pipeline_name, transformation_names, records, job_params, identity
                 )
                 # Claims made before destinations joined the hash are keyed without one.
                 legacy_hash = compute_content_hash(
                     _pipeline_name, transformation_names, records, job_params
+                )
+                # ...and before an X-API-Key header counted as a credential, with it
+                # (hashed only when that changes the identity: hashing is per record).
+                previous_identity = previous_destination_identity(destination)
+                previous_hashes = (
+                    (
+                        compute_content_hash(
+                            _pipeline_name,
+                            transformation_names,
+                            records,
+                            job_params,
+                            previous_identity,
+                        ),
+                    )
+                    if previous_identity != identity
+                    else ()
                 )
                 won = await claim_content_hash(
                     self._async_session,
@@ -313,6 +327,7 @@ class WorkerExecutor:
                     job_id,
                     execution_id,
                     legacy_hash=legacy_hash,
+                    previous_hashes=previous_hashes,
                 )
                 if not won:
                     logger.info("Job %s: content already processed — deduplicated", job_id)

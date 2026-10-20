@@ -15,6 +15,7 @@ import pytest
 from aiokafka.errors import CommitFailedError, KafkaConnectionError
 
 import reflowfy.worker.consumer as consumer_mod
+from reflowfy.observability import metrics
 from reflowfy.worker.consumer import KafkaJobConsumer
 
 
@@ -281,6 +282,12 @@ class TestConsumeLoop:
     async def test_non_object_json_is_committed_like_malformed_json(self, fake_kafka):
         consumer = await _run(_worker(), [_msg(b"[1, 2, 3]")])
         assert consumer.events.count("commit") == 1
+
+    async def test_a_dropped_invalid_payload_is_counted(self, fake_kafka):
+        counter = metrics.jobs_processed_total.labels(pipeline="unknown", status="invalid")
+        before = counter._value.get()
+        await _run(_worker(), [_msg(b"\xff\xfe"), _msg(b"[1]"), _msg(b"{not json")])
+        assert counter._value.get() == before + 3
 
     async def test_executor_crash_is_not_committed_and_the_loop_continues(self, fake_kafka):
         worker = _worker()

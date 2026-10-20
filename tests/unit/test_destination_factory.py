@@ -78,3 +78,22 @@ def test_builtin_round_trip(name: str, build: Any) -> None:
     rebuilt = DestinationFactory.create(name, dict(original.config))
     assert type(rebuilt) is type(original)
     assert rebuilt.config == original.config
+
+
+class _OwnInitDest(BaseDestination):
+    """A subclass that overrides __init__ but still takes the config dict."""
+
+    def __init__(self, config: Dict[str, Any], retry_config: Any = None) -> None:
+        super().__init__(config, retry_config)
+
+    async def send(self, records: List[Any], metadata: Optional[Dict[str, Any]] = None) -> None:
+        return None
+
+    async def health_check(self) -> bool:
+        return True
+
+
+def test_a_config_taking_init_override_gets_the_dict(clean_registry) -> None:
+    DestinationFactory.register("own_init", _OwnInitDest)
+    dest = DestinationFactory.create("own_init", {"url": "https://x"})
+    assert isinstance(dest, _OwnInitDest) and dest.config == {"url": "https://x"}

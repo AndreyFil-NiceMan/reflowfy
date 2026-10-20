@@ -308,7 +308,8 @@ class DLQScheduler:
 
         Returns:
             Tuple of (count of jobs dispatched, execution_ids) — one execution per
-            distinct set of params.
+            distinct set of params. A group that fails goes to the retry path and
+            the rest still run; the error is raised only if no group ran.
         """
         # Lock rows to prevent concurrent processing by another RM pod
         jobs = (
@@ -325,23 +326,25 @@ class DLQScheduler:
             job.status = "processing"
         db.flush()
 
-        groups = _group_by_params(jobs)
         execution_ids: List[str] = []
-        for i, group in enumerate(groups):
+        last_error: Optional[Exception] = None
+        for group in _group_by_params(jobs):
             try:
                 execution_id = self._dispatch_jobs(db, pipeline_name, group)
             except Exception as e:
-                # This group and the ones not yet run go back to the retry path;
-                # groups already dispatched stay completed.
-                for pending in groups[i:]:
-                    for job in pending:
-                        self._handle_job_failure(db, job, str(e))
-                db.commit()
-                raise
+                # Only this group's jobs go to the retry path; the others still run,
+                # as in _process_pipeline_jobs.
+                last_error = e
+                for job in group:
+                    self._handle_job_failure(db, job, str(e))
+                continue
             _mark_completed(group, execution_id)
             execution_ids.append(execution_id)
         db.commit()
-        return len(jobs), execution_ids
+        if last_error is not None and not execution_ids:
+            raise last_error
+        dispatched = sum(1 for job in jobs if job.status == "completed")
+        return dispatched, execution_ids
 
 
 def _group_by_params(jobs: List[DLQJob]) -> List[List[DLQJob]]:

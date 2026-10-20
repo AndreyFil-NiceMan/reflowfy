@@ -170,14 +170,35 @@ class TestProducer:
         assert len(fake_producer.instances) == 2
         assert fake_producer.instances[1].sent
 
-    async def test_unknown_producer_setting_is_ignored_with_a_warning(self, fake_producer, caplog):
+    async def test_unknown_producer_setting_is_ignored_with_a_warning(
+        self, fake_producer, caplog, monkeypatch
+    ):
+        monkeypatch.setattr(kafka_mod, "_warned_producer_keys", set())
         # The Java client's batch_size is not an AIOKafkaProducer parameter: passing
         # it through would fail every job with a TypeError.
         with caplog.at_level(logging.WARNING, logger="reflowfy.destinations.kafka"):
             await _dest(batch_size=16384, acks="all").send([{"a": 1}])
+            # A destination is built per job: the second one does not warn again.
+            await _dest(batch_size=16384).send([{"a": 1}])
         kwargs = fake_producer.instances[0].kwargs
         assert "batch_size" not in kwargs and kwargs["acks"] == "all"
-        assert "ignoring producer setting 'batch_size'" in caplog.text
+        assert caplog.text.count("ignoring producer setting 'batch_size'") == 1
+
+    async def test_serializers_are_never_forwarded(self, fake_producer, monkeypatch):
+        # send() hands the producer bytes already; a serializer would encode them twice.
+        monkeypatch.setattr(kafka_mod, "_warned_producer_keys", set())
+        await _dest(value_serializer=lambda v: v, key_serializer=lambda k: k).send([{"a": 1}])
+        kwargs = fake_producer.instances[0].kwargs
+        assert "value_serializer" not in kwargs and "key_serializer" not in kwargs
+
+    def test_ssl_context_is_used_but_kept_out_of_config(self):
+        import ssl
+
+        ctx = ssl.create_default_context()
+        dest = _dest(security_protocol="SSL", ssl_context=ctx)
+        # Not config: its repr is an address, which would change the dedup identity.
+        assert "ssl_context" not in dest.config
+        assert dest._build_connection_kwargs()["ssl_context"] is ctx
 
     async def test_extra_producer_config_reaches_the_producer(self, fake_producer):
         await _dest(acks="all", linger_ms=5).send([{"a": 1}])

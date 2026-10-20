@@ -1,17 +1,13 @@
 """SQL database source connector."""
 
+import inspect
 from typing import Any, Dict, Iterator, Optional
+
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from reflowfy.core.types import Records, wrap_as_record
 from reflowfy.sources.base import BaseSource, SourceJob, SourceError
-
-# Config keys that are not SQLAlchemy engine arguments: the named constructor
-# parameters plus the window split() bakes into each slice.
-_NAMED_CONFIG_KEYS = frozenset(
-    {"connection_url", "query", "id_column", "time_column", "batch_size", "slice"}
-)
 
 
 class SqlSource(BaseSource):
@@ -57,7 +53,9 @@ class SqlSource(BaseSource):
         self._engine: Optional[Engine] = None
 
     def _engine_kwargs(self) -> Dict[str, Any]:
-        return {k: v for k, v in self.config.items() if k not in _NAMED_CONFIG_KEYS}
+        """**engine_kwargs: config minus the named parameters and split()'s window."""
+        named = set(inspect.signature(SqlSource.__init__).parameters) | {"slice"}
+        return {k: v for k, v in self.config.items() if k not in named}
 
     def _get_engine(self) -> Engine:
         """Get or create SQLAlchemy engine."""

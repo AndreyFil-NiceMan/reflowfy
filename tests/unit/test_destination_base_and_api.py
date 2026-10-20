@@ -206,3 +206,14 @@ def test_identity_ignores_a_rotated_api_key_header() -> None:
     old = api_destination(url="https://sink.test/in", headers={"X-API-Key": "old"})
     new = api_destination(url="https://sink.test/in", headers={"X-API-Key": "new"})
     assert destination_identity(old) == destination_identity(new)
+
+
+def test_previous_identity_keeps_a_hyphenated_key_header() -> None:
+    # Content claimed by the previous release was hashed with the X-API-Key header in
+    # its identity; the worker honors that hash so an upgrade does not rewrite it.
+    from reflowfy.execution.content_dedup import previous_destination_identity
+
+    dest = api_destination(url="https://sink.test/in", headers={"X-API-Key": "k"})
+    assert previous_destination_identity(dest) != destination_identity(dest)
+    plain = api_destination(url="https://sink.test/in", headers={"api_key": "k"})
+    assert previous_destination_identity(plain) == destination_identity(plain)

@@ -156,11 +156,13 @@ omit = ["reflowfy/helm/*"]
 show_missing = true
 skip_covered = true
 # Ratchet: raise as coverage grows (docs/TEST_COVERAGE_PLAN.md), never lower.
-fail_under = 58
+fail_under = 99
 exclude_also = [
     "if TYPE_CHECKING:",
     "if __name__ == .__main__.:",
     "raise NotImplementedError",
+    # Fallbacks for optional imports whose packages are always installed in dev/CI.
+    "except ImportError:",
     "@(abc\\.)?abstractmethod",
 ]
 

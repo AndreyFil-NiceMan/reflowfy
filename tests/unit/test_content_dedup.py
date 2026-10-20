@@ -191,3 +191,17 @@ def test_a_declared_identity_is_still_scrubbed_of_credentials():
     one = destination_identity(_api({}, identity={"url": "u", "auth_token": "old"}))
     two = destination_identity(_api({}, identity={"url": "u", "auth_token": "new"}))
     assert one == two
+
+
+async def test_previous_release_claim_blocks_other_jobs(session_factory):
+    """A claim under the previous release's destination identity (an X-API-Key header
+    still in it) counts like the legacy hash, so upgrading does not rewrite content."""
+    previous = "previous-h"
+    assert await claim_content_hash(session_factory, previous, "pipe", "old-job", "ex0") is True
+    assert (
+        await claim_content_hash(
+            session_factory, "new-h5", "pipe", "job1", "ex1", previous_hashes=(previous,)
+        )
+        is False
+    )
+    assert await claim_content_hash(session_factory, "new-h5", "pipe", "job2", "ex1") is True

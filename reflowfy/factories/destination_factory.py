@@ -1,5 +1,6 @@
 """Factory for creating destination instances by type name."""
 
+import inspect
 from typing import Any, Dict, Type, List
 from reflowfy.destinations.base import BaseDestination
 
@@ -52,8 +53,10 @@ class DestinationFactory:
             )
         dest_cls = cls._registry[type_name]
         # The built-ins take keyword arguments (as SourceFactory assumes for sources);
-        # a subclass that keeps BaseDestination.__init__ takes the config dict itself.
-        if dest_cls.__init__ is BaseDestination.__init__:
+        # a destination whose constructor takes the config dict itself — as
+        # BaseDestination.__init__(self, config) does — gets the dict.
+        params = list(inspect.signature(dest_cls.__init__).parameters)[1:]
+        if params and params[0] == "config":
             return dest_cls(config)
         return dest_cls(**config)
 

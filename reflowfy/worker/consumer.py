@@ -11,6 +11,7 @@ from typing import Any, List, Optional, Union
 from aiokafka import AIOKafkaConsumer
 from aiokafka.errors import CommitFailedError, KafkaError
 
+from reflowfy.observability import metrics
 from reflowfy.worker.executor import WorkerExecutor
 
 logger = logging.getLogger(__name__)
@@ -200,8 +201,10 @@ class KafkaJobConsumer:
             await self.consumer.commit()
 
         except _InvalidPayload as e:
-            # Malformed for good: redelivery cannot fix it, so commit past it.
+            # Malformed for good: redelivery cannot fix it, so commit past it — and
+            # count it, so dropped messages show on the dashboards, not just in logs.
             logger.error("Invalid job payload: %s", e)
+            metrics.jobs_processed_total.labels(pipeline="unknown", status="invalid").inc()
             # Commit anyway to skip bad message
             await self.consumer.commit()
 

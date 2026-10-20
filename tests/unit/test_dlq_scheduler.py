@@ -330,6 +330,27 @@ def test_process_pipeline_immediately_runs_each_distinct_params_once(db):
     assert _job(db, ids[1]).execution_id == execution_ids[1]
 
 
+def test_process_pipeline_immediately_a_failed_group_does_not_cost_the_others(db):
+    ids = [_dlq(db, "a", k=1), _dlq(db, "a", k=2), _dlq(db, "a", k=3)]
+    calls: List[Dict[str, Any]] = []
+
+    class _FailsOnTwo(_Runner):
+        def run_pipeline(self, pipeline_name, runtime_params, execution_id):
+            super().run_pipeline(pipeline_name, runtime_params, execution_id)
+            if runtime_params["k"] == 2:
+                raise RuntimeError("k=2 exploded")
+            return {"execution_id": execution_id}
+
+    scheduler = DLQScheduler(pipeline_runner_factory=lambda: _FailsOnTwo(calls))
+    count, execution_ids = scheduler.process_pipeline_immediately(db, "a")
+
+    # The group after the failing one still ran, and is not charged a retry.
+    assert sorted(c["params"]["k"] for c in calls) == [1, 2, 3]
+    assert count == 2 and len(execution_ids) == 2
+    assert [_job(db, i).status for i in ids] == ["completed", "pending", "completed"]
+    assert (_job(db, ids[1]).retry_count, _job(db, ids[2]).retry_count) == (1, 0)
+
+
 def test_process_pipeline_immediately_failure_retries_every_job(db):
     ids = [_dlq(db, "a"), _dlq(db, "a", retry_count=4, max_retries=5)]
 

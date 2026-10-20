@@ -8,7 +8,7 @@ against PostgreSQL using whatever AsyncSession factory the worker provides.
 import hashlib
 import json
 import os
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Callable, Dict, List, Optional, Sequence, cast
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy import delete, select
@@ -21,18 +21,41 @@ from reflowfy.reflow_manager.models import ProcessedContent
 _SECRET_MARKERS = ("password", "secret", "token", "credential", "auth", "apikey")
 
 
+# How keys were matched before hyphenated keys (an X-API-Key header) counted as secrets.
+_PREVIOUS_SECRET_MARKERS = (
+    "password",
+    "secret",
+    "token",
+    "credential",
+    "auth",
+    "api_key",
+    "apikey",
+)
+
+
 def _is_secret_key(key: Any) -> bool:
     normalized = str(key).lower().replace("-", "").replace("_", "")
     return any(m in normalized for m in _SECRET_MARKERS)
 
 
-def _strip_secrets(value: Any) -> Any:
+def _was_secret_key(key: Any) -> bool:
+    return any(m in str(key).lower() for m in _PREVIOUS_SECRET_MARKERS)
+
+
+def _strip_secrets(value: Any, is_secret: Callable[[Any], bool] = _is_secret_key) -> Any:
     if isinstance(value, dict):
         mapping = cast(Dict[Any, Any], value)
-        return {k: _strip_secrets(v) for k, v in mapping.items() if not _is_secret_key(k)}
+        return {k: _strip_secrets(v, is_secret) for k, v in mapping.items() if not is_secret(k)}
     if isinstance(value, list):
-        return [_strip_secrets(v) for v in cast(List[Any], value)]
+        return [_strip_secrets(v, is_secret) for v in cast(List[Any], value)]
     return value
+
+
+def previous_destination_identity(destination: Any) -> Dict[str, Any]:
+    """destination_identity as the previous release computed it (hyphenated secret
+    keys kept). Claims made under it are honored like the legacy hash, so upgrading
+    does not rewrite content already written to such a destination."""
+    return _identity(destination, _was_secret_key)
 
 
 def destination_identity(destination: Any) -> Dict[str, Any]:
@@ -47,13 +70,20 @@ def destination_identity(destination: Any) -> Dict[str, Any]:
     matches such a destination. Declare what actually identifies the destination with
     ``api_destination(..., dedup_identity=...)`` to opt in.
     """
+    return _identity(destination, _is_secret_key)
+
+
+def _identity(destination: Any, is_secret: Callable[[Any], bool]) -> Dict[str, Any]:
     explicit = getattr(destination, "dedup_identity", None)
     if explicit is not None:
-        return {"type": type(destination).__name__, "identity": _strip_secrets(explicit)}
+        return {
+            "type": type(destination).__name__,
+            "identity": _strip_secrets(explicit, is_secret),
+        }
     config = getattr(destination, "config", None)
     return {
         "type": type(destination).__name__,
-        "config": _strip_secrets(config) if isinstance(config, dict) else {},
+        "config": _strip_secrets(config, is_secret) if isinstance(config, dict) else {},
     }
 
 
@@ -110,12 +140,14 @@ async def claim_content_hash(
     job_id: str,
     execution_id: str,
     legacy_hash: Optional[str] = None,
+    previous_hashes: Sequence[str] = (),
 ) -> bool:
     """Atomically claim a content hash. True if this job holds it.
 
     ``legacy_hash`` is the same content hashed the way it was before destinations
-    were included. If another job already holds it (claimed before the upgrade),
-    this is a duplicate and nothing is claimed.
+    were included, and ``previous_hashes`` the way earlier releases hashed it with
+    a destination. If another job already holds any of them (claimed before the
+    upgrade), this is a duplicate and nothing is claimed.
 
     True when this call inserted the claim, or when the claim already belongs to
     this same job_id: a job re-run after its worker died (lease re-dispatch, or a
@@ -123,16 +155,18 @@ async def claim_content_hash(
     that dropped the unwritten rest of the job.
     """
     async with session_factory() as db:
-        if legacy_hash and legacy_hash != content_hash and honor_legacy_hash():
-            legacy_owner = (
-                await db.execute(
-                    select(ProcessedContent.job_id).where(
-                        ProcessedContent.content_hash == legacy_hash
+        older = [h for h in (legacy_hash, *previous_hashes) if h and h != content_hash]
+        if older and honor_legacy_hash():
+            for older_hash in dict.fromkeys(older):
+                legacy_owner = (
+                    await db.execute(
+                        select(ProcessedContent.job_id).where(
+                            ProcessedContent.content_hash == older_hash
+                        )
                     )
-                )
-            ).scalar_one_or_none()
-            if legacy_owner is not None and legacy_owner != job_id:
-                return False
+                ).scalar_one_or_none()
+                if legacy_owner is not None and legacy_owner != job_id:
+                    return False
         stmt = (
             pg_insert(ProcessedContent)
             .values(
