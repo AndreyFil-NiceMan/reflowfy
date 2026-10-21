@@ -11,6 +11,8 @@ permissions: {}
 jobs:
   unit:
     runs-on: ubuntu-latest
+    # The suite takes ~2 minutes; a hang must fail, not hold a runner for hours.
+    timeout-minutes: 20
     permissions:
       contents: read
     env:
@@ -49,10 +51,12 @@ jobs:
         run: uv run --locked --no-build --no-sync pyright
 
       - name: Unit tests with coverage
-        # fail_under in [tool.coverage.report] is the gate.
+        # fail_under in [tool.coverage.report] is the gate. --timeout fails a hung test
+        # and dumps every thread's stack, so the log shows where it stuck.
         run: >-
           uv run --locked --no-build --no-sync
-          pytest tests/unit --cov --cov-report=term --cov-report=xml
+          pytest tests/unit --timeout=300 --timeout-method=thread
+          --cov --cov-report=term --cov-report=xml
 
       - name: Upload coverage report
         if: always() && matrix.python-version == '3.13'
