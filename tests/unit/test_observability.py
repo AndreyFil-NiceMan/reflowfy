@@ -4,7 +4,6 @@ import json
 import logging
 import time
 
-import pytest
 
 from reflowfy.observability import metrics as m
 from reflowfy.observability.context import log_context
@@ -283,3 +282,76 @@ def test_record_job_metrics_skips_records_on_failure():
                           error_type="ValueError", duration=0.1, records=7)
     after = m.records_processed_total.labels(pipeline="pf")._value.get()
     assert after == before  # no records counted for a failed job
+
+
+# --- hermetic fields, event names, context binding ---
+
+def _fmt(rec, **kw):
+    return json.loads(ECSJSONFormatter(**kw).format(rec))
+
+
+def test_formatter_emits_every_extra_field_not_just_an_allowlist():
+    rec = _record()
+    rec.schedule_name = "nightly"  # was silently dropped before
+    rec.jobs_total = 7
+    out = _fmt(rec)
+    assert out["schedule_name"] == "nightly"
+    assert out["jobs_total"] == 7
+
+
+def test_formatter_maps_event_and_uses_record_time():
+    rec = _record()
+    rec.event = "job_completed"
+    rec.created = 0
+    out = _fmt(rec)
+    assert out["event.action"] == "job_completed"
+    assert out["@timestamp"].startswith("1970-01-01")
+    for key in ("service.version", "host.name", "process.pid", "log.origin.function"):
+        assert key in out
+
+
+def test_formatter_survives_unserializable_extra():
+    rec = _record()
+    rec.blob = object()
+    assert "blob" in _fmt(rec)
+
+
+def test_formatter_adds_error_fields():
+    try:
+        raise ValueError("boom")
+    except ValueError:
+        import sys
+
+        rec = logging.LogRecord("r", logging.ERROR, __file__, 1, "x", (), sys.exc_info())
+    out = _fmt(rec)
+    assert out["error.type"] == "ValueError"
+    assert out["error.message"] == "boom"
+    assert "error.stack_trace" in out
+
+
+def test_text_formatter_shows_context():
+    from reflowfy.observability.logging import TextFormatter
+
+    rec = _record("hello")
+    rec.execution_id = "e1"
+    rec.event = "x"
+    assert TextFormatter().format(rec).endswith("[execution_id=e1 event=x]")
+    assert "[" not in TextFormatter().format(_record("plain"))
+
+
+def test_bind_log_context_sync_async_and_kwargs():
+    import asyncio
+
+    from reflowfy.observability.context import bind_log_context, get_log_context
+
+    @bind_log_context("execution_id", "pipeline_name", "missing")
+    def sync(execution_id, pipeline_name=None):
+        return get_log_context()
+
+    @bind_log_context("execution_id")
+    async def asy(execution_id):
+        return get_log_context()
+
+    assert sync("e1", pipeline_name="p") == {"execution_id": "e1", "pipeline_name": "p"}
+    assert asyncio.run(asy(execution_id="e2")) == {"execution_id": "e2"}
+    assert get_log_context() == {}

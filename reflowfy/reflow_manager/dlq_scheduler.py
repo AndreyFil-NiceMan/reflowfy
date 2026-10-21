@@ -109,7 +109,11 @@ class DLQScheduler:
             if not due_jobs:
                 return
 
-            logger.info("DLQ Scheduler found %d due jobs", len(due_jobs))
+            logger.info(
+                "DLQ Scheduler found %d due jobs",
+                len(due_jobs),
+                extra={"event": "dlq_due", "jobs_due": len(due_jobs)},
+            )
             for j in due_jobs:
                 logger.debug(
                     "Job %s: pipeline=%s, scheduled_at=%s, retry=%s",
@@ -117,6 +121,11 @@ class DLQScheduler:
                     j.pipeline_name,
                     j.scheduled_at,
                     j.retry_count,
+                    extra={
+                        "event": "dlq_job_due",
+                        "dlq_job_id": j.id,
+                        "pipeline_name": j.pipeline_name,
+                    },
                 )
 
             # Group jobs by pipeline
@@ -132,7 +141,7 @@ class DLQScheduler:
 
         except Exception:
             db.rollback()
-            logger.error("DLQ poll error", exc_info=True)
+            logger.error("DLQ poll error", exc_info=True, extra={"event": "dlq_poll_error"})
             raise
         finally:
             db.close()
@@ -149,7 +158,11 @@ class DLQScheduler:
             "Processing %d DLQ jobs for pipeline: %s",
             len(jobs),
             pipeline_name,
-            extra={"pipeline_name": pipeline_name},
+            extra={
+                "event": "dlq_process",
+                "pipeline_name": pipeline_name,
+                "jobs_due": len(jobs),
+            },
         )
 
         # Mark jobs as processing
@@ -167,7 +180,11 @@ class DLQScheduler:
                     pipeline_name,
                     error_msg,
                     exc_info=True,
-                    extra={"pipeline_name": pipeline_name},
+                    extra={
+                        "event": "dlq_dispatch_error",
+                        "pipeline_name": pipeline_name,
+                        "jobs_due": len(group),
+                    },
                 )
                 for job in group:
                     self._handle_job_failure(db, job, error_msg)
@@ -177,7 +194,12 @@ class DLQScheduler:
             logger.info(
                 "DLQ jobs dispatched to execution: %s",
                 execution_id,
-                extra={"execution_id": execution_id, "pipeline_name": pipeline_name},
+                extra={
+                    "event": "dlq_dispatched",
+                    "execution_id": execution_id,
+                    "pipeline_name": pipeline_name,
+                    "jobs_due": len(group),
+                },
             )
 
     def _dispatch_jobs(self, db: Session, pipeline_name: str, jobs: List[DLQJob]) -> str:
@@ -222,7 +244,17 @@ class DLQScheduler:
         if job.retry_count >= job.max_retries:
             # Move to archive
             self._archive_job(db, job)
-            logger.info("DLQ job %s archived after %d retries", job.id, job.retry_count)
+            logger.info(
+                "DLQ job %s archived after %d retries",
+                job.id,
+                job.retry_count,
+                extra={
+                    "event": "dlq_archived",
+                    "dlq_job_id": job.id,
+                    "pipeline_name": job.pipeline_name,
+                    "retry_count": job.retry_count,
+                },
+            )
         else:
             # Reschedule with exponential backoff
             backoff_minutes = self._calculate_backoff(job.retry_count)
@@ -235,6 +267,13 @@ class DLQScheduler:
                 job.id,
                 job.retry_count,
                 job.max_retries,
+                extra={
+                    "event": "dlq_rescheduled",
+                    "dlq_job_id": job.id,
+                    "pipeline_name": job.pipeline_name,
+                    "retry_count": job.retry_count,
+                    "backoff_minutes": backoff_minutes,
+                },
             )
 
     def _calculate_backoff(self, retry_count: int) -> int:

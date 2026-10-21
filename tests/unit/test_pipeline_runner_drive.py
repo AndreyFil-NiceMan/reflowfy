@@ -656,7 +656,7 @@ def test_drive_step_sweeps_expired_leases_once_per_interval(db, monkeypatch, cap
     assert dispatcher.sent == lost_worker
     assert counter._value.get() == before + 1
     assert track["lease_checked_at"] == clock.now
-    assert any("lease expired" in r.getMessage() for r in caplog.records)
+    assert any("ease expired" in r.getMessage() for r in caplog.records)
 
     # Within the interval no second sweep runs, even with another stale job.
     db.query(Job).filter(Job.job_id == alive[0]).update({"updated_at": old, "attempts": 3})
@@ -682,7 +682,7 @@ def test_drive_step_warns_after_ten_minutes_without_progress(db, monkeypatch, ca
     track["lease_checked_at"] = 1e18  # keep the lease sweep out of this test
 
     def warnings() -> List[str]:
-        return [r.getMessage() for r in caplog.records if "no job finished" in r.getMessage()]
+        return [r.getMessage() for r in caplog.records if "o job finished" in r.getMessage()]
 
     with caplog.at_level(logging.WARNING, logger=runner_mod.__name__):
         _step(runner, track)  # first pass records the finished count as progress
@@ -695,7 +695,7 @@ def test_drive_step_warns_after_ten_minutes_without_progress(db, monkeypatch, ca
         clock.now = start + runner_mod.STALL_WARN_SECONDS
         _step(runner, track)
         assert len(warnings()) == 1
-        assert "no job finished for 10 min with 2 in flight and 0 pending" in warnings()[0]
+        assert "No job finished for 10 min with 2 in flight and 0 pending" in warnings()[0]
         assert track["warned_at"] == clock.now
 
         clock.now += runner_mod.STALL_WARN_SECONDS / 2
@@ -876,7 +876,7 @@ def test_run_pipeline_re_raises_the_original_error_when_marking_failed_fails(
             runner.run_pipeline("p", {}, "e")
 
     assert _exec(db).state == "pending"
-    assert any("Failed to mark execution e as failed" in r.getMessage() for r in caplog.records)
+    assert any("Failed to mark execution as failed" in r.getMessage() for r in caplog.records)
 
 
 def test_run_pipeline_jobs_for_an_unregistered_pipeline_raises_and_releases_the_lease(

@@ -119,10 +119,14 @@ def setup_pipeline_routes(app: FastAPI) -> None:
     pipelines = pipeline_registry.list_all()
 
     if not pipelines:
-        logger.warning("No pipelines registered")
+        logger.warning("No pipelines registered", extra={"event": "no_pipelines"})
         return
 
-    logger.info("Setting up routes for %d pipeline(s)", len(pipelines))
+    logger.info(
+        "Setting up routes for %d pipeline(s)",
+        len(pipelines),
+        extra={"event": "routes_setup", "pipelines_registered": len(pipelines)},
+    )
 
     # Get ReflowManager URL from environment
     reflow_manager_url = os.getenv("REFLOW_MANAGER_URL", "http://localhost:8001")

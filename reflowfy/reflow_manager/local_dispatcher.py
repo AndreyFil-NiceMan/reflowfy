@@ -47,7 +47,10 @@ class LocalDispatcher(BaseDispatcher):
         if rate_limit is not None:
             acquired = self.rate_limiter.acquire_token(pipeline_name, rate_limit, max_wait=300.0)
             if not acquired:
-                logger.warning("Rate limit timeout, skipping job")
+                logger.warning(
+                    "Rate limit timeout, skipping job",
+                    extra={"event": "rate_limit_timeout", "job_id": job_payload.get("job_id")},
+                )
                 return False
 
         executor = self._create_executor()
@@ -55,7 +58,11 @@ class LocalDispatcher(BaseDispatcher):
             await executor.execute_job(job_payload)
             return True
         except Exception:
-            logger.error("Local dispatch failed", exc_info=True)
+            logger.error(
+                "Local dispatch failed",
+                exc_info=True,
+                extra={"event": "local_dispatch_error", "job_id": job_payload.get("job_id")},
+            )
             return False
         finally:
             await executor.close()
@@ -84,14 +91,20 @@ class LocalDispatcher(BaseDispatcher):
                     )
                     if not acquired:
                         logger.debug(
-                            "No rate-limit token yet after %d jobs; returning", dispatched
+                            "No rate-limit token yet after %d jobs; returning",
+                            dispatched,
+                            extra={"event": "rate_limit_wait", "jobs_dispatched": dispatched},
                         )
                         break
 
                 try:
                     await executor.execute_job(job)
                 except Exception:
-                    logger.error("Local job execution failed", exc_info=True)
+                    logger.error(
+                        "Local job execution failed",
+                        exc_info=True,
+                        extra={"event": "local_dispatch_error", "job_id": job.get("job_id")},
+                    )
                 # Counted whatever the outcome: the executor already recorded it on the
                 # job row, and the caller needs "first N handled" to stay true.
                 dispatched += 1

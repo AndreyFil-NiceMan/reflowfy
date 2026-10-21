@@ -467,6 +467,7 @@ class ElasticSource(BaseSource):
                     "/".join(path),
                     len(records),
                     pages,
+                    extra={"event": "source_planned", "source_type": "elastic", "pages": pages},
                 )
                 return records
             composite["after"] = after_key
@@ -500,7 +501,12 @@ class ElasticSource(BaseSource):
             if len(buckets) < page_size or not after_key:
                 break
             cursor = composite["after"] = after_key
-        logger.info("elastic composite '%s': planned %d jobs", "/".join(path), pages)
+        logger.info(
+            "elastic composite '%s': planned %d jobs",
+            "/".join(path),
+            pages,
+            extra={"event": "source_planned", "source_type": "elastic", "jobs_planned": pages},
+        )
 
     def _count_documents(self, client: Any, resolved: Dict[str, Any]) -> int:
         """Return how many documents the base query matches (metadata only)."""

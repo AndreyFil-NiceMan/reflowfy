@@ -19,6 +19,7 @@ from reflowfy.core.serialization import to_json_safe
 from reflowfy.execution.job_runner import plan_slices
 from reflowfy.factories.source_factory import SourceFactory
 from reflowfy.observability import metrics
+from reflowfy.observability.context import bind_log_context
 from reflowfy.observability.tracing import inject_trace_context
 from reflowfy.reflow_manager.dispatcher import JobDispatcher
 from reflowfy.reflow_manager.execution import ExecutionManager
@@ -187,7 +188,9 @@ class _PlanLease:
                 )
         except Exception:
             logger.warning(
-                "Could not take the planning lease for %s", self._execution_id, exc_info=True
+                "Could not take the planning lease",
+                exc_info=True,
+                extra={"event": "plan_lease_error", "execution_id": self._execution_id},
             )
             return
         self._thread = threading.Thread(
@@ -202,9 +205,9 @@ class _PlanLease:
                     ExecutionManager(session).heartbeat_driver(self._execution_id, self._owner)
             except Exception:
                 logger.warning(
-                    "Planning heartbeat failed for %s; will retry",
-                    self._execution_id,
+                    "Planning heartbeat failed; will retry",
                     exc_info=True,
+                    extra={"event": "plan_heartbeat_error", "execution_id": self._execution_id},
                 )
 
     def stop(self) -> None:
@@ -220,7 +223,9 @@ class _PlanLease:
                     ExecutionManager(session).release_driver(self._execution_id, self._owner)
             except Exception:
                 logger.warning(
-                    "Could not release the planning lease for %s", self._execution_id, exc_info=True
+                    "Could not release the planning lease",
+                    exc_info=True,
+                    extra={"event": "plan_lease_error", "execution_id": self._execution_id},
                 )
 
 
@@ -252,6 +257,7 @@ class PipelineRunner:
         self.job_manager = job_manager
         self.dispatcher = dispatcher
 
+    @bind_log_context("execution_id", "pipeline_name")
     def run_pipeline(
         self,
         pipeline_name: str,
@@ -283,7 +289,7 @@ class PipelineRunner:
                 f"{pipeline_registry.describe_missing(pipeline_name)}"
             )
 
-        logger.info("Running pipeline: %s (execution %s)", pipeline_name, execution_id)
+        logger.info("Running pipeline", extra={"event": "execution_start"})
 
         # Create execution record
         self.execution_manager.create_execution(
@@ -307,7 +313,10 @@ class PipelineRunner:
                     execution_id, "failed", error_message=str(exc)
                 )
             except Exception:
-                logger.exception("Failed to mark execution %s as failed", execution_id)
+                logger.exception(
+                    "Failed to mark execution as failed",
+                    extra={"event": "execution_mark_failed_error"},
+                )
             raise
 
         # Refresh execution to get final counts
@@ -322,6 +331,7 @@ class PipelineRunner:
             "rate_limit": rate_limit_override,
         }
 
+    @bind_log_context("execution_id")
     def resume_execution(
         self,
         execution_id: str,
@@ -343,12 +353,18 @@ class PipelineRunner:
         # Get execution record
         execution = self.execution_manager.get_execution(execution_id)
         if not execution:
-            logger.warning("Execution %s not found, skipping resume", execution_id)
+            logger.warning(
+                "Execution not found, skipping resume", extra={"event": "resume_skipped"}
+            )
             return
         if execution.state in ExecutionManager.TERMINAL_STATES:
             # Settled while this resume was queued (e.g. /cancel after /resume):
             # driving it would finalize it again and overwrite "cancelled".
-            logger.info("Execution %s is already %s; not resuming", execution_id, execution.state)
+            logger.info(
+                "Execution is already %s; not resuming",
+                execution.state,
+                extra={"event": "resume_skipped", "state": execution.state},
+            )
             return
 
         pipeline_name = execution.pipeline_name
@@ -357,9 +373,8 @@ class PipelineRunner:
         pipeline = pipeline_registry.get(pipeline_name)
         if not pipeline:
             logger.warning(
-                "Pipeline '%s' not in registry, marking execution %s as failed",
-                pipeline_name,
-                execution_id,
+                "Pipeline not in registry, marking execution as failed",
+                extra={"event": "resume_pipeline_missing", "pipeline_name": pipeline_name},
             )
             self.execution_manager.update_execution_state(
                 execution_id,
@@ -379,7 +394,10 @@ class PipelineRunner:
         counts = self.job_manager.get_job_counts(execution_id)
         unfinished = counts["pending"] + counts["dispatched"] + counts["running"]
         if unfinished == 0:
-            logger.info("Execution %s has no unfinished jobs, syncing state", execution_id)
+            logger.info(
+                "Execution has no unfinished jobs, syncing state",
+                extra={"event": "resume_nothing_to_do", "jobs_total": counts["total"]},
+            )
             self._finalize_execution_state(execution_id, counts["total"], (0, 0, 0))
             return
 
@@ -405,25 +423,39 @@ class PipelineRunner:
             )
             self.job_manager.db.commit()
             if orphaned:
-                logger.warning("Local mode: requeued %d orphaned jobs", orphaned)
+                logger.warning(
+                    "Local mode: requeued %d orphaned jobs",
+                    orphaned,
+                    extra={"event": "orphaned_jobs_requeued", "jobs_requeued": orphaned},
+                )
 
         logger.info(
-            "Resuming execution %s: %d pending, %d in flight",
-            execution_id,
+            "Resuming execution: %d pending, %d in flight",
             counts["pending"],
             counts["dispatched"] + counts["running"],
+            extra={
+                "event": "execution_resume",
+                "jobs_pending": counts["pending"],
+                "jobs_in_flight": counts["dispatched"] + counts["running"],
+            },
         )
         dispatched, completed, failed = self._drive_execution(
             execution_id, pipeline_name, effective_rate_limit
         )
         logger.info(
-            "Resumed execution %s: %d dispatched, %d completed, %d failed",
-            execution_id,
+            "Resumed execution drive ended: %d dispatched, %d completed, %d failed",
             dispatched,
             completed,
             failed,
+            extra={
+                "event": "execution_drive_end",
+                "jobs_dispatched": dispatched,
+                "jobs_completed": completed,
+                "jobs_failed": failed,
+            },
         )
 
+    @bind_log_context("execution_id", "pipeline_name")
     def run_pipeline_jobs(
         self,
         execution_id: str,
@@ -465,6 +497,7 @@ class PipelineRunner:
         finally:
             lease.stop()
 
+    @bind_log_context("execution_id", "pipeline_name")
     def _plan_and_dispatch(
         self,
         execution_id: str,
@@ -505,7 +538,7 @@ class PipelineRunner:
         if hasattr(pipeline, "resolve"):
             pipeline.resolve(runtime_params)
 
-        logger.info("Job dispatch starting: %s (execution %s)", pipeline_name, execution_id)
+        logger.info("Job dispatch starting", extra={"event": "plan_start"})
 
         # Update state to running
         self.execution_manager.update_execution_state(execution_id, "running")
@@ -526,10 +559,14 @@ class PipelineRunner:
         if effective_rate_limit is None and pipeline.rate_limit:
             effective_rate_limit = pipeline.rate_limit
 
-        logger.info("Splitting source data into jobs (rate: %s/min)...", effective_rate_limit)
+        logger.info(
+            "Splitting source data into jobs (rate: %s/min)",
+            effective_rate_limit,
+            extra={"event": "plan_split", "rate_limit": effective_rate_limit},
+        )
 
         # Phase 1: Stream all jobs to database (not RAM)
-        logger.info("Phase 1: Saving jobs to database...")
+        logger.debug("Phase 1: saving jobs to database", extra={"event": "plan_save"})
         batch_number = 1
         job_count = 0
         current_job_ids: List[str] = []
@@ -556,9 +593,9 @@ class PipelineRunner:
                 if self._execution_state(execution_id) in ("cancelled", "failed"):
                     cancelled_jobs = self.job_manager.cancel_unstarted_jobs(execution_id)
                     logger.info(
-                        "Execution %s was stopped while planning (%d jobs cancelled); planning aborted",
-                        execution_id,
+                        "Execution was stopped while planning (%d jobs cancelled); planning aborted",
                         cancelled_jobs,
+                        extra={"event": "plan_aborted", "jobs_cancelled": cancelled_jobs},
                     )
                     return
             context.batch_number = batch_number
@@ -617,18 +654,28 @@ class PipelineRunner:
         self.execution_manager.mark_plan_complete(execution_id)
         plan_lease.stop()
         self._backfill_total_batches(execution_id, batch_number)
-        logger.info("Saved %d jobs to database in %d batches", job_count, batch_number)
+        logger.info(
+            "Saved %d jobs to database in %d batches",
+            job_count,
+            batch_number,
+            extra={"event": "plan_complete", "jobs_total": job_count, "batches": batch_number},
+        )
 
         # Phase 2: keep the in-flight window full until every job has finished
         dispatched, completed, failed = self._drive_execution(
             execution_id, pipeline_name, effective_rate_limit
         )
         logger.info(
-            "Execution %s: %d dispatched, %d completed, %d failed",
-            execution_id,
+            "Execution drive ended: %d dispatched, %d completed, %d failed",
             dispatched,
             completed,
             failed,
+            extra={
+                "event": "execution_drive_end",
+                "jobs_dispatched": dispatched,
+                "jobs_completed": completed,
+                "jobs_failed": failed,
+            },
         )
 
     def _backfill_total_batches(self, execution_id: str, total_batches: int) -> None:
@@ -638,11 +685,12 @@ class PipelineRunner:
         except Exception:
             self.job_manager.db.rollback()
             logger.warning(
-                "Could not back-fill total_batches for %s; continuing",
-                execution_id,
+                "Could not back-fill total_batches; continuing",
                 exc_info=True,
+                extra={"event": "backfill_batches_error"},
             )
 
+    @bind_log_context("execution_id", "pipeline_name")
     def _drive_execution(
         self,
         execution_id: str,
@@ -668,9 +716,12 @@ class PipelineRunner:
                 self.execution_manager.release_driver(execution_id, driver_id)
             except Exception:
                 logger.warning(
-                    "Could not release dispatch lease for %s", execution_id, exc_info=True
+                    "Could not release dispatch lease",
+                    exc_info=True,
+                    extra={"event": "driver_release_error"},
                 )
 
+    @bind_log_context("execution_id")
     async def _wait_for_driver_lease(self, execution_id: str, driver_id: str) -> bool:
         """Claim the dispatch lease, standing by while a live loop holds it.
 
@@ -687,20 +738,21 @@ class PipelineRunner:
                     return False
             except DBAPIError:
                 logger.warning(
-                    "Execution %s: database error claiming the dispatch lease; retrying",
-                    execution_id,
+                    "Database error claiming the dispatch lease; retrying",
                     exc_info=True,
+                    extra={"event": "driver_claim_db_error"},
                 )
                 self.job_manager.db.rollback()
             if not announced:
                 logger.info(
-                    "Execution %s is being dispatched by another loop; standing by to "
+                    "Execution is being dispatched by another loop; standing by to "
                     "take over if it stops",
-                    execution_id,
+                    extra={"event": "driver_standby"},
                 )
                 announced = True
             await asyncio.sleep(DRIVER_RETRY_SECONDS)
 
+    @bind_log_context("execution_id", "pipeline_name")
     async def _drive_async(
         self,
         execution_id: str,
@@ -711,7 +763,10 @@ class PipelineRunner:
         """The drive loop. One event loop for the whole execution, so the Kafka
         producer is created once and closed at the end."""
         if not await self._wait_for_driver_lease(execution_id, driver_id):
-            logger.info("Execution %s is no longer running; not dispatching", execution_id)
+            logger.info(
+                "Execution is no longer running; not dispatching",
+                extra={"event": "dispatch_skipped"},
+            )
             return self._sync_counts_from_db(execution_id)
         # Execution-scoped key: concurrent executions of one pipeline don't share a bucket.
         rate_limit_key = f"{pipeline_name}:{execution_id}"
@@ -741,10 +796,10 @@ class PipelineRunner:
                     # ending the loop, which left the execution stuck until a manager restart.
                     db_backoff = min(max(db_backoff * 2, 5.0), 60.0)
                     logger.warning(
-                        "Execution %s: database error in dispatch loop; retrying in %.0fs",
-                        execution_id,
+                        "Database error in dispatch loop; retrying in %.0fs",
                         db_backoff,
                         exc_info=True,
+                        extra={"event": "dispatch_db_error", "retry_in_s": db_backoff},
                     )
                     try:
                         self.job_manager.db.rollback()
@@ -759,7 +814,11 @@ class PipelineRunner:
             try:
                 await self.dispatcher.close()
             except Exception:
-                logger.warning("Could not close dispatcher for %s", execution_id, exc_info=True)
+                logger.warning(
+                    "Could not close dispatcher",
+                    exc_info=True,
+                    extra={"event": "dispatcher_close_error"},
+                )
 
     async def _drive_step(
         self,
@@ -774,14 +833,19 @@ class PipelineRunner:
         if not self.execution_manager.heartbeat_driver(execution_id, driver_id):
             # Our heartbeat went stale (a long stall) and another loop took over.
             logger.warning(
-                "Execution %s: another dispatch loop took over; this one stops", execution_id
+                "Another dispatch loop took over; this one stops",
+                extra={"event": "driver_replaced"},
             )
             return self._sync_counts_from_db(execution_id)
         state = self._execution_state(execution_id)
         if state != "running":
             # Paused (or settled elsewhere): stop sending. In-flight jobs still finish;
             # POST /executions/{id}/resume starts a new loop.
-            logger.info("Execution %s is %s; dispatch loop stopping", execution_id, state)
+            logger.info(
+                "Execution is %s; dispatch loop stopping",
+                state,
+                extra={"event": "dispatch_stopped", "state": state},
+            )
             return self._sync_counts_from_db(execution_id)
 
         now = time.time()
@@ -802,12 +866,17 @@ class PipelineRunner:
         elif now - max(track["progress_at"], track["warned_at"]) >= STALL_WARN_SECONDS:
             # No batch timeout fails the run any more, so say so when it's stuck.
             logger.warning(
-                "Execution %s: no job finished for %.0f min with %d in flight "
+                "No job finished for %.0f min with %d in flight "
                 "and %d pending — are workers running?",
-                execution_id,
                 (now - track["progress_at"]) / 60,
                 in_flight,
                 counts["pending"],
+                extra={
+                    "event": "dispatch_stalled",
+                    "stalled_minutes": round((now - track["progress_at"]) / 60),
+                    "jobs_in_flight": in_flight,
+                    "jobs_pending": counts["pending"],
+                },
             )
             track["warned_at"] = now
 
@@ -882,6 +951,7 @@ class PipelineRunner:
         )
         return sent
 
+    @bind_log_context("execution_id", "pipeline_name")
     def _reclaim_expired_leases(self, execution_id: str, pipeline_name: str) -> None:
         """Requeue jobs whose worker or message was lost; fail ones out of attempts."""
         result = self.job_manager.reclaim_expired_leases(
@@ -892,18 +962,24 @@ class PipelineRunner:
         )
         if any(result.values()):
             logger.warning(
-                "Execution %s: lease expired — requeued %d lost-worker and %d "
+                "Lease expired — requeued %d lost-worker and %d "
                 "lost-message jobs, failed %d out of attempts",
-                execution_id,
                 result["requeued_running"],
                 result["requeued_dispatched"],
                 result["failed"],
+                extra={
+                    "event": "lease_expired",
+                    "jobs_requeued_running": result["requeued_running"],
+                    "jobs_requeued_dispatched": result["requeued_dispatched"],
+                    "jobs_failed": result["failed"],
+                },
             )
         if result["failed"]:
             metrics.jobs_processed_total.labels(pipeline=pipeline_name, status="lease_expired").inc(
                 result["failed"]
             )
 
+    @bind_log_context("execution_id")
     def _recover_plan(self, execution_id: str) -> bool:
         """Deal with an execution whose planning had not finished when we looked.
 
@@ -946,9 +1022,9 @@ class PipelineRunner:
                 )
                 self.execution_manager.release_driver(execution_id, recovery_id)
                 logger.warning(
-                    "Execution %s was abandoned mid-plan (%d jobs saved); marked failed",
-                    execution_id,
+                    "Execution was abandoned mid-plan (%d jobs saved); marked failed",
                     saved,
+                    extra={"event": "plan_abandoned", "jobs_total": saved},
                 )
                 return False
             if not announced:
@@ -966,6 +1042,7 @@ class PipelineRunner:
         execution = self.execution_manager.get_execution(execution_id)
         return execution.state if execution else None
 
+    @bind_log_context("execution_id")
     def _finalize_execution_state(
         self,
         execution_id: str,
@@ -993,9 +1070,9 @@ class PipelineRunner:
             )
         except Exception:
             logger.warning(
-                "Could not sync counts for %s; using in-memory totals",
-                execution_id,
+                "Could not sync counts; using in-memory totals",
                 exc_info=True,
+                extra={"event": "sync_counts_error"},
             )
             dispatched, completed, failed = fallback_counts
             # completed from the loop already includes any deduplicated jobs.
@@ -1006,10 +1083,31 @@ class PipelineRunner:
         else:
             final_state = "failed"
             logger.warning(
-                "Only %d of %d jobs finished for %s", total_finished, expected_total, execution_id
+                "Only %d of %d jobs finished",
+                total_finished,
+                expected_total,
+                extra={
+                    "event": "jobs_missing",
+                    "jobs_finished": total_finished,
+                    "jobs_total": expected_total,
+                },
             )
 
         self.execution_manager.update_execution_state(execution_id, final_state)
+        logger.info(
+            "Execution %s: %d completed, %d failed of %d jobs",
+            final_state,
+            completed,
+            failed,
+            expected_total,
+            extra={
+                "event": "execution_finished",
+                "state": final_state,
+                "jobs_total": expected_total,
+                "jobs_completed": completed,
+                "jobs_failed": failed,
+            },
+        )
         return dispatched, completed, failed
 
     def _set_total_jobs(self, execution_id: str, total: int) -> None:

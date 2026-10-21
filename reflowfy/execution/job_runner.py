@@ -187,6 +187,11 @@ def run_job_records(
         # Reason rides on runtime_params (a per-job dict) so the caller can put it
         # in the job's stats/metrics without run_job_records growing a 5th return.
         runtime_params["skip_reason"] = str(exc)
-        logger.info("Pipeline '%s': job dropped (%s)", name, exc)
+        logger.debug(
+            "Pipeline '%s': job dropped (%s)",
+            name,
+            exc,
+            extra={"event": "skipjob_raised", "pipeline_name": name, "skip_reason": str(exc)},
+        )
         return [], [], [], None
     return records, transformed_records, applied, destination

@@ -150,7 +150,11 @@ class LocalExecutor(BaseExecutor):
                 total_sent += len(transformed_records)
 
             if total_fetched == 0:
-                logger.info("Execution %s: no records fetched", execution_id)
+                logger.info(
+                    "Execution %s: no records fetched",
+                    execution_id,
+                    extra={"event": "execution_empty", "execution_id": execution_id},
+                )
                 status.state = ExecutionState.COMPLETED
                 status.completed_jobs = 1
                 status.metadata["records_count"] = 0
@@ -161,6 +165,13 @@ class LocalExecutor(BaseExecutor):
                 execution_id,
                 total_fetched,
                 total_sent,
+                extra={
+                    "event": "execution_finished",
+                    "execution_id": execution_id,
+                    "state": "completed",
+                    "records_in": total_fetched,
+                    "records_out": total_sent,
+                },
             )
             status.state = ExecutionState.COMPLETED
             status.completed_jobs = 1
@@ -170,7 +181,17 @@ class LocalExecutor(BaseExecutor):
             return status
 
         except Exception as e:
-            logger.error("Execution %s failed: %s", execution_id, e, exc_info=True)
+            logger.error(
+                "Execution %s failed: %s",
+                execution_id,
+                e,
+                exc_info=True,
+                extra={
+                    "event": "execution_finished",
+                    "execution_id": execution_id,
+                    "state": "failed",
+                },
+            )
 
             status.state = ExecutionState.FAILED
             status.failed_jobs = 1
@@ -298,11 +319,28 @@ class LocalExecutor(BaseExecutor):
                 execution_id,
                 len(ids),
                 total_records_sent,
+                extra={
+                    "event": "execution_finished",
+                    "execution_id": execution_id,
+                    "state": "completed",
+                    "ids_processed": len(ids),
+                    "records_out": total_records_sent,
+                },
             )
             return status
 
         except Exception as e:
-            logger.error("IdBasedPipeline %s execution failed: %s", execution_id, e, exc_info=True)
+            logger.error(
+                "IdBasedPipeline %s execution failed: %s",
+                execution_id,
+                e,
+                exc_info=True,
+                extra={
+                    "event": "execution_finished",
+                    "execution_id": execution_id,
+                    "state": "failed",
+                },
+            )
             status.state = ExecutionState.FAILED
             status.failed_jobs = len(ids) - status.completed_jobs
             status.error_message = str(e)

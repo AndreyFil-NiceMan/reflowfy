@@ -37,6 +37,7 @@ def main():
         __version__,
         build_version or "unknown",
         reflowfy_pkg.__file__,
+        extra={"event": "service_start", "build_version": build_version or "unknown"},
     )
 
     # Auto-discover and load pipelines (module from PIPELINE_MODULE env)
@@ -64,6 +65,11 @@ def main():
         kafka_topic,
         kafka_group_id,
         db_target,
+        extra={
+            "event": "service_config",
+            "kafka_topic": kafka_topic,
+            "kafka_group_id": kafka_group_id,
+        },
     )
     if sasl_username:
         logger.info(
@@ -93,25 +99,30 @@ def main():
         SIGKILLed; the manager's running lease re-runs it.
         """
         if not consumer._running:  # pyright: ignore[reportPrivateUsage]
-            logger.warning("Second shutdown signal, exiting now")
+            logger.warning(
+                "Second shutdown signal, exiting now", extra={"event": "shutdown_forced"}
+            )
             sys.exit(1)
-        logger.info("Shutdown signal received; finishing the current job, then stopping")
+        logger.info(
+            "Shutdown signal received; finishing the current job, then stopping",
+            extra={"event": "shutdown_drain"},
+        )
         consumer.request_stop()
 
     signal.signal(signal.SIGTERM, handle_shutdown)
     signal.signal(signal.SIGINT, handle_shutdown)
 
     try:
-        logger.info("Worker ready, waiting for jobs")
+        logger.info("Worker ready, waiting for jobs", extra={"event": "worker_ready"})
         # This process is one active worker; Prometheus sums the gauge across
         # all scraped worker replicas.
         metrics.active_workers.set(1)
         # Run async consumer in event loop
         asyncio.run(consumer.start())
     except KeyboardInterrupt:
-        logger.info("Worker stopped by user")
+        logger.info("Worker stopped by user", extra={"event": "service_stop"})
     except Exception:
-        logger.exception("Worker crashed")
+        logger.exception("Worker crashed", extra={"event": "worker_crashed"})
         sys.exit(1)
     finally:
         metrics.active_workers.set(0)

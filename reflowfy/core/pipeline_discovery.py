@@ -120,8 +120,12 @@ def discover_and_load_pipelines(module_name: Optional[str] = None) -> int:
     total_loaded += _scan_directory(module_name, "pipeline")
 
     if total_loaded == 0:
-        logger.warning("No component files found")
+        logger.warning("No component files found", extra={"event": "discovery_empty"})
     else:
-        logger.info("Loaded %d component file(s) total", total_loaded)
+        logger.info(
+            "Loaded %d component file(s) total",
+            total_loaded,
+            extra={"event": "discovery_done", "components_loaded": total_loaded},
+        )
 
     return total_loaded
