@@ -631,6 +631,17 @@ class TestEndToEndOnSqlite:
         assert len(seen) == 2 and seen[1] > seen[0]
         assert (await _rows(url))["j"].state == "completed"
 
+    async def test_heartbeat_has_stopped_when_the_job_returns(self, register, stub_worker):
+        """Cancelled but not awaited, the heartbeat could still be writing while the
+        worker closed its engine."""
+        register(FakePipeline("p2-hb-stop", FakeDest()))
+        tasks_before = asyncio.all_tasks()
+
+        assert await stub_worker.execute_job(_payload("p2-hb-stop")) is True
+
+        leftover = asyncio.all_tasks() - tasks_before - {asyncio.current_task()}
+        assert [t for t in leftover if not t.done()] == []
+
     async def test_heartbeat_failure_is_logged_and_retried(self, monkeypatch):
         monkeypatch.setenv("JOB_HEARTBEAT_SECONDS", "0.01")
         worker = WorkerExecutor(database_url="postgresql://x/y")

@@ -411,6 +411,10 @@ class WorkerExecutor:
         finally:
             if heartbeat is not None:
                 heartbeat.cancel()
+                # Let it actually stop: cancelled mid-write, it still held a database
+                # connection while the job (and close()) went on. asyncio.wait never
+                # raises the task's CancelledError, and an outer cancel still propagates.
+                await asyncio.wait({heartbeat})
             # Always release the per-job destination's resources (e.g. the
             # Kafka producer started during health_check/send). Without this,
             # every job leaks a broker connection and a background sender task.
