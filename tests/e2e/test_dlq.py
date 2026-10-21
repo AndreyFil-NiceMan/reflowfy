@@ -47,6 +47,20 @@ def cleanup_dlq_jobs(dlq_client):
             pass  # Ignore cleanup errors
 
 
+def _cancel_pending(dlq_client, pipeline_name):
+    """Cancel leftover pending jobs of a (registered, so fixed-name) test pipeline,
+    so a test can count exactly the jobs it schedules."""
+    while True:
+        jobs = dlq_client.get(
+            "/dlq/jobs",
+            params={"pipeline_name": pipeline_name, "status_filter": "pending", "limit": 100},
+        ).json()["jobs"]
+        if not jobs:
+            return
+        for job in jobs:
+            dlq_client.delete(f"/dlq/jobs/{job['id']}")
+
+
 # ============================================================================
 # Test: Schedule DLQ Job
 # ============================================================================
@@ -111,12 +125,12 @@ class TestListDLQJobs:
     
     def test_list_dlq_jobs_with_filters(self, dlq_client, cleanup_dlq_jobs):
         """Schedule multiple jobs, test filtering by pipeline and status."""
-        import uuid
-        
-        # Use unique pipeline names to avoid collision with previous test runs
-        unique_id = uuid.uuid4().hex[:8]
-        pipeline_a = f"test_pipeline_list_a_{unique_id}"
-        pipeline_b = f"test_pipeline_list_b_{unique_id}"
+        # Scheduling needs registered pipelines, so the names are fixed: clear what
+        # earlier runs left pending and count pending jobs only.
+        pipeline_a = "test_pipeline_list_a"
+        pipeline_b = "test_pipeline_list_b"
+        _cancel_pending(dlq_client, pipeline_a)
+        _cancel_pending(dlq_client, pipeline_b)
         
         # Arrange - create jobs for different pipelines
         for i in range(3):
@@ -134,7 +148,9 @@ class TestListDLQJobs:
             })
         
         # Act & Assert - filter by pipeline
-        response = dlq_client.get("/dlq/jobs", params={"pipeline_name": pipeline_a})
+        response = dlq_client.get(
+            "/dlq/jobs", params={"pipeline_name": pipeline_a, "status_filter": "pending"}
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["total"] == 3
@@ -439,10 +455,8 @@ class TestDLQEdgeCases:
         """
         Test that DLQ list endpoint supports pagination correctly.
         """
-        import uuid
-        
-        unique_id = uuid.uuid4().hex[:8]
-        pipeline_name = f"test_pipeline_pagination_{unique_id}"
+        pipeline_name = "test_pipeline_pagination"
+        _cancel_pending(dlq_client, pipeline_name)
         
         # Create 12 jobs
         for i in range(12):
@@ -455,6 +469,7 @@ class TestDLQEdgeCases:
         # Page 1: limit=5, offset=0
         page1 = dlq_client.get("/dlq/jobs", params={
             "pipeline_name": pipeline_name,
+            "status_filter": "pending",
             "limit": 5,
             "offset": 0,
         }).json()
@@ -465,6 +480,7 @@ class TestDLQEdgeCases:
         # Page 2: limit=5, offset=5
         page2 = dlq_client.get("/dlq/jobs", params={
             "pipeline_name": pipeline_name,
+            "status_filter": "pending",
             "limit": 5,
             "offset": 5,
         }).json()
@@ -475,6 +491,7 @@ class TestDLQEdgeCases:
         # Page 3: limit=5, offset=10
         page3 = dlq_client.get("/dlq/jobs", params={
             "pipeline_name": pipeline_name,
+            "status_filter": "pending",
             "limit": 5,
             "offset": 10,
         }).json()

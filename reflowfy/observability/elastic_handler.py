@@ -44,7 +44,9 @@ class ElasticLogHandler(logging.Handler):
         self._client = client if client is not None else self._build_client()
         self._stop = threading.Event()
         self._paused = False  # test hook
-        self._last_warn = 0.0
+        # -inf, not 0.0: time.monotonic() counts from boot, so on a host up for under
+        # a minute (a fresh node or CI runner) 0.0 swallowed the first warning.
+        self._last_warn = float("-inf")
         self._thread = threading.Thread(target=self._run, name="es-log-shipper", daemon=True)
         self._thread.start()
 

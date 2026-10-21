@@ -25,6 +25,10 @@ services:
       args:
         REFLOWFY_BASE_IMAGE: ${REFLOWFY_BASE_IMAGE:-reflowfy-base:latest}
     container_name: reflofy-e2e-worker
+    ports:
+      # Prometheus metrics (worker/main.py METRICS_PORT): tests read job outcomes
+      # counted in the worker, e.g. test_skip_job's status="skipped".
+      - "9102:9100"
     depends_on:
       postgres:
         condition: service_healthy

@@ -20,7 +20,6 @@ from reflowfy.reflow_manager.dlq_scheduler import (
     DLQ_MAX_RETRIES,
 )
 
-
 # Create router with /dlq prefix
 router = APIRouter(prefix="/dlq", tags=["DLQ"])
 
@@ -35,8 +34,24 @@ async def schedule_dlq_job(
 
     The job will be processed after the specified delay (or default delay).
     """
-    delay_minutes = request.delay_minutes if request.delay_minutes is not None else DLQ_DEFAULT_DELAY_MINUTES
-    scheduled_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=delay_minutes)
+    from reflowfy.core.registry import pipeline_registry
+
+    # Reject now, as /run does, rather than failing every retry when the job comes due.
+    if not pipeline_registry.get(request.pipeline_name):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"Pipeline '{request.pipeline_name}' not found in registry"
+                f"{pipeline_registry.describe_missing(request.pipeline_name)}"
+            ),
+        )
+
+    delay_minutes = (
+        request.delay_minutes if request.delay_minutes is not None else DLQ_DEFAULT_DELAY_MINUTES
+    )
+    scheduled_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
+        minutes=delay_minutes
+    )
 
     dlq_job = DLQJob(
         job_payload=request.job_payload,
@@ -123,8 +138,10 @@ async def cancel_dlq_job(
     return {"message": f"DLQ job {job_id} cancelled"}
 
 
+# Plain def, not async: run_pipeline blocks until the run is planned and driven, so
+# FastAPI runs these in its threadpool instead of on the event loop.
 @router.post("/jobs/{job_id}/dispatch", response_model=DispatchDLQResponse)
-async def dispatch_dlq_job(
+def dispatch_dlq_job(
     job_id: int,
     db: Session = Depends(get_db),
 ):
@@ -152,6 +169,8 @@ async def dispatch_dlq_job(
             "message": f"DLQ job {job_id} dispatched successfully",
         }
 
+    except HTTPException:
+        raise  # e.g. the 404 above: not a dispatch failure
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -165,7 +184,7 @@ async def dispatch_dlq_job(
 
 
 @router.post("/pipelines/{pipeline_name}/dispatch", response_model=DispatchDLQResponse)
-async def dispatch_pipeline_dlq_jobs(
+def dispatch_pipeline_dlq_jobs(
     pipeline_name: str,
     db: Session = Depends(get_db),
 ):
@@ -179,18 +198,21 @@ async def dispatch_pipeline_dlq_jobs(
         )
 
     try:
-        count, execution_id = scheduler.process_pipeline_immediately(db, pipeline_name)
+        count, execution_ids = scheduler.process_pipeline_immediately(db, pipeline_name)
 
         if count == 0:
             return {
                 "dispatched_count": 0,
                 "execution_id": None,
+                "execution_ids": execution_ids,  # empty
                 "message": f"No pending DLQ jobs found for pipeline '{pipeline_name}'",
             }
 
         return {
             "dispatched_count": count,
-            "execution_id": execution_id,
+            # One execution per distinct set of params; execution_id is the first.
+            "execution_id": execution_ids[0],
+            "execution_ids": execution_ids,
             "message": f"Dispatched {count} DLQ job(s) for pipeline '{pipeline_name}'",
         }
 

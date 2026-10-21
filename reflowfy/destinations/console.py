@@ -50,7 +50,7 @@ class ConsoleDestination(BaseDestination):
         if metadata:
             print("📋 Metadata:")
             if pretty_print:
-                print(json.dumps(metadata, indent=2))
+                print(json.dumps(metadata, indent=2, default=str))
             else:
                 print(metadata)
             print()
@@ -63,7 +63,7 @@ class ConsoleDestination(BaseDestination):
         for i, record in enumerate(records_to_show, 1):
             if pretty_print:
                 print(f"Record {i}:")
-                print(json.dumps(record, indent=2))
+                print(json.dumps(record, indent=2, default=str))
             else:
                 print(f"Record {i}: {record}")
             print()

@@ -5,7 +5,7 @@ import os
 import time
 import traceback
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import AsyncAdaptedQueuePool
@@ -16,6 +16,7 @@ from reflowfy.execution.content_dedup import (
     claim_content_hash,
     compute_content_hash,
     destination_identity,
+    previous_destination_identity,
     release_content_hash,
 )
 from reflowfy.execution.job_runner import run_job_records
@@ -165,17 +166,19 @@ class WorkerExecutor:
             from opentelemetry import trace
 
             # Inside try so a malformed trace carrier can't skip metric recording.
-            metadata = job_payload.get("metadata") or {}
+            metadata: Dict[str, Any] = job_payload.get("metadata") or {}
             parent = extract_and_attach(metadata)
             # ponytail: log the count of current_ids, not the list — it can be huge.
-            job_params = metadata.get("runtime_params") or {}
-            current_ids = metadata.get("current_ids")
+            job_params: Dict[str, Any] = metadata.get("runtime_params") or {}
+            current_ids: Any = metadata.get("current_ids")
             with log_context(
                 execution_id=execution_id,
                 job_id=job_id,
                 pipeline_name=pipeline_name,
                 current_id=job_params.get("current_id"),
-                current_ids_count=len(current_ids) if isinstance(current_ids, list) else None,
+                current_ids_count=(
+                    len(cast(List[Any], current_ids)) if isinstance(current_ids, list) else None
+                ),
             ):
                 with trace.get_tracer("worker").start_as_current_span(
                     "process_job", context=parent
@@ -293,16 +296,29 @@ class WorkerExecutor:
             if dedup_check:
                 transformation_names = [step.name for step in applied]
                 job_params = job_payload.get("job_params") or None
+                identity = destination_identity(destination)
                 content_hash = compute_content_hash(
-                    _pipeline_name,
-                    transformation_names,
-                    records,
-                    job_params,
-                    destination_identity(destination),
+                    _pipeline_name, transformation_names, records, job_params, identity
                 )
                 # Claims made before destinations joined the hash are keyed without one.
                 legacy_hash = compute_content_hash(
                     _pipeline_name, transformation_names, records, job_params
+                )
+                # ...and before an X-API-Key header counted as a credential, with it
+                # (hashed only when that changes the identity: hashing is per record).
+                previous_identity = previous_destination_identity(destination)
+                previous_hashes = (
+                    (
+                        compute_content_hash(
+                            _pipeline_name,
+                            transformation_names,
+                            records,
+                            job_params,
+                            previous_identity,
+                        ),
+                    )
+                    if previous_identity != identity
+                    else ()
                 )
                 won = await claim_content_hash(
                     self._async_session,
@@ -311,6 +327,7 @@ class WorkerExecutor:
                     job_id,
                     execution_id,
                     legacy_hash=legacy_hash,
+                    previous_hashes=previous_hashes,
                 )
                 if not won:
                     logger.info("Job %s: content already processed — deduplicated", job_id)
@@ -394,6 +411,10 @@ class WorkerExecutor:
         finally:
             if heartbeat is not None:
                 heartbeat.cancel()
+                # Let it actually stop: cancelled mid-write, it still held a database
+                # connection while the job (and close()) went on. asyncio.wait never
+                # raises the task's CancelledError, and an outer cancel still propagates.
+                await asyncio.wait({heartbeat})
             # Always release the per-job destination's resources (e.g. the
             # Kafka producer started during health_check/send). Without this,
             # every job leaks a broker connection and a background sender task.

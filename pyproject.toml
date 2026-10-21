@@ -69,6 +69,7 @@ dev = [
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.1.0",
     "pytest-mock>=3.12.0",
+    "pytest-timeout>=2.3.1",
     "black>=23.11.0",
     "ruff>=0.1.6",
     "mypy>=1.7.0",
@@ -80,6 +81,7 @@ dev = [
     "types-croniter>=1.4.0",
     "testcontainers>=3.7.1",
     "build>=1.0.0",
+    "hypothesis>=6.100",
 ]
 
 [project.scripts]
@@ -145,6 +147,25 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["reflowfy"]
+branch = true
+omit = ["reflowfy/helm/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+# Ratchet: raise as coverage grows (docs/TEST_COVERAGE_PLAN.md), never lower.
+fail_under = 99
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    # Fallbacks for optional imports whose packages are always installed in dev/CI.
+    "except ImportError:",
+    "@(abc\\.)?abstractmethod",
+]
 
 [dependency-groups]
 dev = [

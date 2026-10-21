@@ -1,5 +1,6 @@
 """Factory for creating destination instances by type name."""
 
+import inspect
 from typing import Any, Dict, Type, List
 from reflowfy.destinations.base import BaseDestination
 
@@ -50,7 +51,14 @@ class DestinationFactory:
             raise ValueError(
                 f"Unknown destination type: '{type_name}'. Available types: {available}"
             )
-        return cls._registry[type_name](config)
+        dest_cls = cls._registry[type_name]
+        # The built-ins take keyword arguments (as SourceFactory assumes for sources);
+        # a destination whose constructor takes the config dict itself — as
+        # BaseDestination.__init__(self, config) does — gets the dict.
+        params = list(inspect.signature(dest_cls.__init__).parameters)[1:]
+        if params and params[0] == "config":
+            return dest_cls(config)
+        return dest_cls(**config)
 
     @classmethod
     def list_types(cls) -> List[str]:
@@ -67,18 +75,21 @@ def _register_builtin_destinations() -> None:
     """Register built-in destination types."""
     try:
         from reflowfy.destinations.kafka import KafkaDestination
+
         DestinationFactory.register("kafka", KafkaDestination)
     except ImportError:
         pass
 
     try:
         from reflowfy.destinations.api import ApiDestination
+
         DestinationFactory.register("api", ApiDestination)
     except ImportError:
         pass
 
     try:
         from reflowfy.destinations.console import ConsoleDestination
+
         DestinationFactory.register("console", ConsoleDestination)
     except ImportError:
         pass

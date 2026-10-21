@@ -1,6 +1,8 @@
 """SQL database source connector."""
 
+import inspect
 from typing import Any, Dict, Iterator, Optional
+
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -50,13 +52,19 @@ class SqlSource(BaseSource):
         super().__init__(config)
         self._engine: Optional[Engine] = None
 
+    def _engine_kwargs(self) -> Dict[str, Any]:
+        """**engine_kwargs: config minus the named parameters and split()'s window."""
+        named = set(inspect.signature(SqlSource.__init__).parameters) | {"slice"}
+        return {k: v for k, v in self.config.items() if k not in named}
+
     def _get_engine(self) -> Engine:
         """Get or create SQLAlchemy engine."""
         if self._engine is None:
-            self._engine = create_engine(
-                self.config["connection_url"],
-                pool_pre_ping=True,
-            )
+            # **engine_kwargs live in config beside the named settings (so the source
+            # round-trips through SourceFactory); hand only those to SQLAlchemy.
+            engine_kwargs = self._engine_kwargs()
+            engine_kwargs.setdefault("pool_pre_ping", True)
+            self._engine = create_engine(self.config["connection_url"], **engine_kwargs)
         return self._engine
 
     def fetch(self, runtime_params: Dict[str, Any], limit: Optional[int] = None) -> Records:
@@ -137,6 +145,7 @@ class SqlSource(BaseSource):
                 id_column=None,
                 time_column=resolved.get("time_column"),
                 batch_size=batch_size,
+                **self._engine_kwargs(),
             )
             sub.config["slice"] = {"lo": cur, "hi": nxt}
             yield sub

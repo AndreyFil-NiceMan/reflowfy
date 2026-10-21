@@ -3,6 +3,7 @@
 Background scheduler that polls for due DLQ jobs and processes them.
 """
 
+import json
 import logging
 import os
 import threading
@@ -140,7 +141,9 @@ class DLQScheduler:
         """
         Process a batch of DLQ jobs for a single pipeline.
 
-        Creates a new execution and dispatches all jobs.
+        Jobs scheduled with the same params share one execution; each distinct set
+        of params gets its own, so no job is marked completed without having run
+        with its own params.
         """
         logger.info(
             "Processing %d DLQ jobs for pipeline: %s",
@@ -154,36 +157,28 @@ class DLQScheduler:
             job.status = "processing"
         db.flush()
 
-        try:
-            # Create execution and dispatch jobs
-            execution_id = self._dispatch_jobs(db, pipeline_name, jobs)
+        for group in _group_by_params(jobs):
+            try:
+                execution_id = self._dispatch_jobs(db, pipeline_name, group)
+            except Exception as e:
+                error_msg = str(e)
+                logger.error(
+                    "Failed to dispatch DLQ jobs for %s: %s",
+                    pipeline_name,
+                    error_msg,
+                    exc_info=True,
+                    extra={"pipeline_name": pipeline_name},
+                )
+                for job in group:
+                    self._handle_job_failure(db, job, error_msg)
+                continue
 
-            # Mark jobs as completed
-            now = datetime.now(timezone.utc).replace(tzinfo=None)
-            for job in jobs:
-                job.status = "completed"
-                job.processed_at = now
-                job.execution_id = execution_id
-
+            _mark_completed(group, execution_id)
             logger.info(
                 "DLQ jobs dispatched to execution: %s",
                 execution_id,
                 extra={"execution_id": execution_id, "pipeline_name": pipeline_name},
             )
-
-        except Exception as e:
-            error_msg = str(e)
-            logger.error(
-                "Failed to dispatch DLQ jobs for %s: %s",
-                pipeline_name,
-                error_msg,
-                exc_info=True,
-                extra={"pipeline_name": pipeline_name},
-            )
-
-            # Handle retries
-            for job in jobs:
-                self._handle_job_failure(db, job, error_msg)
 
     def _dispatch_jobs(self, db: Session, pipeline_name: str, jobs: List[DLQJob]) -> str:
         """
@@ -198,9 +193,8 @@ class DLQScheduler:
         # Generate execution ID
         execution_id = f"dlq-{uuid.uuid4().hex[:12]}"
 
-        # For DLQ, the job_payload IS the runtime_params
-        # For single-job dispatch (most common), use that job's payload
-        # For batch dispatch, use the first job's payload (they should have compatible params)
+        # For DLQ, the job_payload IS the runtime_params. Callers pass a group whose
+        # jobs all have the same payload (_group_by_params).
         runtime_params = jobs[0].job_payload if jobs else {}
 
         # Add DLQ metadata to runtime params
@@ -304,7 +298,7 @@ class DLQScheduler:
 
     def process_pipeline_immediately(
         self, db: Session, pipeline_name: str
-    ) -> tuple[int, Optional[str]]:
+    ) -> tuple[int, List[str]]:
         """
         Process all pending DLQ jobs for a pipeline immediately.
 
@@ -313,7 +307,9 @@ class DLQScheduler:
             pipeline_name: Pipeline to dispatch jobs for
 
         Returns:
-            Tuple of (count of jobs dispatched, execution_id)
+            Tuple of (count of jobs dispatched, execution_ids) — one execution per
+            distinct set of params. A group that fails goes to the retry path and
+            the rest still run; the error is raised only if no group ran.
         """
         # Lock rows to prevent concurrent processing by another RM pod
         jobs = (
@@ -324,27 +320,48 @@ class DLQScheduler:
         )
 
         if not jobs:
-            return 0, None
+            return 0, []
 
         for job in jobs:
             job.status = "processing"
         db.flush()
 
-        try:
-            execution_id = self._dispatch_jobs(db, pipeline_name, jobs)
-            now = datetime.now(timezone.utc).replace(tzinfo=None)
-            for job in jobs:
-                job.status = "completed"
-                job.processed_at = now
-                job.execution_id = execution_id
-            db.commit()
-            return len(jobs), execution_id
-        except Exception as e:
-            db.rollback()
-            for job in jobs:
-                self._handle_job_failure(db, job, str(e))
-            db.commit()
-            raise
+        execution_ids: List[str] = []
+        last_error: Optional[Exception] = None
+        for group in _group_by_params(jobs):
+            try:
+                execution_id = self._dispatch_jobs(db, pipeline_name, group)
+            except Exception as e:
+                # Only this group's jobs go to the retry path; the others still run,
+                # as in _process_pipeline_jobs.
+                last_error = e
+                for job in group:
+                    self._handle_job_failure(db, job, str(e))
+                continue
+            _mark_completed(group, execution_id)
+            execution_ids.append(execution_id)
+        db.commit()
+        if last_error is not None and not execution_ids:
+            raise last_error
+        dispatched = sum(1 for job in jobs if job.status == "completed")
+        return dispatched, execution_ids
+
+
+def _group_by_params(jobs: List[DLQJob]) -> List[List[DLQJob]]:
+    """Jobs with identical params, in first-seen order."""
+    groups: Dict[str, List[DLQJob]] = {}
+    for job in jobs:
+        key = json.dumps(job.job_payload or {}, sort_keys=True, default=str)
+        groups.setdefault(key, []).append(job)
+    return list(groups.values())
+
+
+def _mark_completed(jobs: List[DLQJob], execution_id: str) -> None:
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    for job in jobs:
+        job.status = "completed"
+        job.processed_at = now
+        job.execution_id = execution_id
 
 
 # Global scheduler instance

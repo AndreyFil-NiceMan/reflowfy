@@ -4,14 +4,40 @@
 """Kafka destination connector using aiokafka."""
 
 import asyncio
+import functools
+import inspect
 import json
 import logging
-from typing import Any, Dict, List, Optional, Tuple, Union
+import ssl
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from aiokafka import AIOKafkaProducer
 from aiokafka.errors import KafkaError
 from reflowfy.destinations.base import BaseDestination, DestinationError, RetryConfig
 
 logger = logging.getLogger(__name__)
+
+
+@functools.lru_cache(maxsize=1)
+def _producer_parameters() -> frozenset[str]:
+    import aiokafka  # the library's class, even where this module's name is patched
+
+    params = inspect.signature(aiokafka.AIOKafkaProducer.__init__).parameters
+    return frozenset(params) - {"self"} - _MANAGED_PRODUCER_PARAMS
+
+
+# AIOKafkaProducer parameters KafkaDestination sets itself: send() hands the producer
+# bytes already, so a configured serializer would encode them a second time.
+_MANAGED_PRODUCER_PARAMS = frozenset({"value_serializer", "key_serializer"})
+
+# producer_config keys already warned about, so a pipeline keeping one does not log
+# a warning per job (a destination is built per job).
+_warned_producer_keys: Set[str] = set()
+
+
+def _named_config_keys() -> frozenset[str]:
+    """Config keys KafkaDestination.__init__ names; anything else is **producer_config."""
+    params = inspect.signature(KafkaDestination.__init__).parameters
+    return frozenset(params) - {"self", "retry_config", "producer_config"}
 
 
 class KafkaDestination(BaseDestination):
@@ -90,6 +116,10 @@ class KafkaDestination(BaseDestination):
                 s.strip() for s in bootstrap_servers.split(",") if s.strip()
             ]
 
+        # An SSLContext is not config: it is not JSON, and its repr (an address)
+        # would make destination_identity, and so the dedup hash, differ per process.
+        self._ssl_context = config.pop("ssl_context", None)
+
         super().__init__(config, retry_config)
         self._producer: Optional[AIOKafkaProducer] = None
         self._started = False
@@ -101,15 +131,22 @@ class KafkaDestination(BaseDestination):
         }
         username = self.config.get("sasl_username")
         password = self.config.get("sasl_password")
+        security_protocol = self.config.get("security_protocol")
         if username and password:
             kwargs.update(
                 {
-                    "security_protocol": self.config.get("security_protocol") or "SASL_PLAINTEXT",
+                    "security_protocol": security_protocol or "SASL_PLAINTEXT",
                     "sasl_mechanism": self.config.get("sasl_mechanism") or "SCRAM-SHA-256",
                     "sasl_plain_username": username,
                     "sasl_plain_password": password,
                 }
             )
+        elif security_protocol:
+            # TLS without SASL: dropping it would silently connect in plaintext.
+            kwargs["security_protocol"] = security_protocol
+        if kwargs.get("security_protocol") in ("SSL", "SASL_SSL"):
+            # aiokafka refuses SSL without an explicit context; default to system CAs.
+            kwargs["ssl_context"] = self._ssl_context or ssl.create_default_context()
         return kwargs
 
     async def _get_producer(self) -> AIOKafkaProducer:
@@ -123,6 +160,25 @@ class KafkaDestination(BaseDestination):
             username = self.config.get("sasl_username")
             if username:
                 producer_kwargs["client_id"] = username
+            # **producer_config (acks, linger_ms, ...) — everything the constructor
+            # did not name. Explicit producer settings win over the defaults above.
+            # A key AIOKafkaProducer does not take (e.g. the Java client's batch_size,
+            # which aiokafka calls max_batch_size) was always ignored; keep ignoring
+            # it, loudly, rather than failing every job with a TypeError.
+            accepted = _producer_parameters()
+            named = _named_config_keys()
+            for key, value in self.config.items():
+                if key in named:
+                    continue
+                if key in accepted:
+                    producer_kwargs[key] = value
+                elif key not in _warned_producer_keys:
+                    _warned_producer_keys.add(key)
+                    logger.warning(
+                        "Kafka destination: ignoring producer setting %r "
+                        "(not an AIOKafkaProducer parameter, or one it sets itself)",
+                        key,
+                    )
 
             self._producer = AIOKafkaProducer(**producer_kwargs)
             await self._producer.start()

@@ -165,7 +165,7 @@ class S3Source(BaseSource):
         prefix = resolved_config["prefix"]
         read_content = resolved_config["read_content"]
 
-        records: Records = []
+        records = []
 
         try:
             paginator = client.get_paginator("list_objects_v2")
