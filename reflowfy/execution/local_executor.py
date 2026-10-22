@@ -14,6 +14,15 @@ from reflowfy.execution.job_runner import job_runtime_params, plan_slices, run_j
 logger = logging.getLogger(__name__)
 
 
+def _log_record_skips(applied: Any) -> None:
+    """Say which records a per-record step dropped with SkipRecord, and why."""
+    for step in applied:
+        if step.records_skipped:
+            logger.info(
+                "%s skipped %d records: %s", step.name, step.records_skipped, step.skip_reasons
+            )
+
+
 class LocalExecutor(BaseExecutor):
     """
     Local executor for /test mode.
@@ -140,6 +149,7 @@ class LocalExecutor(BaseExecutor):
                         step.records_in,
                         step.records_out,
                     )
+                _log_record_skips(applied)
 
                 logger.debug("Sending %d records to destination", len(transformed_records))
                 destination.send_with_retry(
@@ -271,6 +281,7 @@ class LocalExecutor(BaseExecutor):
                             step.records_in,
                             step.records_out,
                         )
+                    _log_record_skips(applied)
                     destination.send_with_retry(
                         transformed_records,
                         metadata=flat_id_params,

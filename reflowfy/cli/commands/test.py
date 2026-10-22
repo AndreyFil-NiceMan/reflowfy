@@ -177,6 +177,8 @@ def render_steps(report: BatchReport, opts: TestOptions, indent: str = "") -> No
             f"{step.records_in} → {step.records_out} records  ({change}){timing}"
         )
         console.print(line)
+        for reason, times in sorted((step.skip_reasons or {}).items(), key=lambda kv: -kv[1]):
+            console.print(f"{indent}    [dim]skipped {times}: {reason}[/dim]")
 
         # An empty batch after a step is the most common silent bug: everything
         # downstream is a no-op and the run still "succeeds".

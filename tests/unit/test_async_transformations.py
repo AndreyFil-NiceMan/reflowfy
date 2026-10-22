@@ -18,6 +18,7 @@ from reflowfy import (
     BaseTransformation,
     RecordTransformation,
     SkipJob,
+    SkipRecord,
     TransformationError,
     record_transformation,
     transformation,
@@ -29,8 +30,14 @@ from reflowfy.execution.transformation_runner import (
     apply_transformations_iteratively_async,
 )
 from reflowfy.sources.static import StaticSource
-from reflowfy.transformations.base import default_record_concurrency
-from reflowfy.worker.executor import JobStats, WorkerExecutor
+from reflowfy.transformations.base import (
+    MAX_SKIP_REASON_LENGTH,
+    MAX_SKIP_REASONS,
+    OTHER_SKIP_REASON,
+    count_skip_reason,
+    default_record_concurrency,
+)
+from reflowfy.worker.executor import JobStats, WorkerExecutor, _top_reasons
 
 
 class _Pipeline:
@@ -305,6 +312,79 @@ async def test_skip_job_from_one_record_drops_the_whole_job():
     assert params["skip_reason"] == "record 1 is not ready"
 
 
+@record_transformation("ut_rec_skip_record", concurrency=4)
+async def skip_odd(record: Any, runtime_params: Any) -> Any:
+    if record["id"] % 2:
+        raise SkipRecord("odd id")
+    if record["id"] == 4:
+        raise SkipRecord("four")
+    return record
+
+
+async def test_skip_record_drops_only_that_record_and_keeps_why():
+    params: Dict[str, Any] = {}
+    out, applied = await apply_transformations_iteratively_async(
+        _Pipeline([skip_odd(), tag()]), _records(7), params
+    )
+    assert [r["id"] for r in out] == [0, 2, 6]
+    step = applied[0]
+    assert step.records_skipped == 4
+    assert step.skip_reasons == {"odd id": 3, "four": 1}
+    assert (step.records_in, step.records_out) == (7, 3)
+    assert applied[1].records_skipped == 0 and applied[1].skip_reasons is None
+    assert "skip_reason" not in params  # the job itself was not dropped
+
+
+async def test_none_still_drops_silently_without_a_reason():
+    @record_transformation("ut_rec_none_drop")
+    async def drop_all(record: Any, runtime_params: Any) -> Any:
+        return None
+
+    out, applied = await apply_transformations_iteratively_async(
+        _Pipeline([drop_all()]), _records(3), {}
+    )
+    assert out == [] and applied[0].records_skipped == 0 and applied[0].skip_reasons == {}
+
+
+async def test_apply_async_on_its_own_returns_only_the_kept_records():
+    assert [r["id"] for r in await skip_odd().apply_async(_records(4), {})] == [0, 2]
+
+
+@pytest.mark.parametrize("kind", ["sync", "async"])
+async def test_skip_record_from_a_batch_step_fails_the_job_saying_why(kind: str):
+    @transformation(f"ut_batch_skip_record_{kind}")
+    def sync_step(records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
+        raise SkipRecord("not here")
+
+    @transformation(f"ut_batch_skip_record_async_{kind}")
+    async def async_step(records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
+        raise SkipRecord("not here")
+
+    step = sync_step() if kind == "sync" else async_step()
+    with pytest.raises(TransformationError) as info:
+        await apply_transformations_iteratively_async(_Pipeline([step]), _records(2), {})
+    assert f"raised from a {kind} transformation" in str(info.value)
+    assert "@record_transformation" in str(info.value)
+    assert isinstance(info.value.original_error, SkipRecord)
+
+
+def test_skip_reasons_stay_bounded():
+    reasons: Dict[str, int] = {}
+    for n in range(MAX_SKIP_REASONS + 5):
+        count_skip_reason(reasons, f"reason {n}")
+    count_skip_reason(reasons, "reason 0", times=2)
+    count_skip_reason(reasons, "x" * (MAX_SKIP_REASON_LENGTH + 50))
+    count_skip_reason(reasons, "")
+    assert len(reasons) == MAX_SKIP_REASONS + 1
+    assert reasons["reason 0"] == 3
+    assert reasons[OTHER_SKIP_REASON] == 7  # 5 overflow + the long one + the empty one
+
+
+def test_top_reasons_names_the_most_frequent():
+    assert _top_reasons({"a": 1, "b": 5}) == "'b' x5, 'a' x1"
+    assert _top_reasons({"a": 4, "b": 3, "c": 2, "d": 1}) == "'a' x4, 'b' x3, 'c' x2, +1 more"
+
+
 async def test_a_record_that_exceeds_its_timeout_fails_the_job():
     @record_transformation("ut_rec_timeout", timeout=0.05)
     async def hang_on_2(record: Any, runtime_params: Any) -> Any:
@@ -571,3 +651,43 @@ async def test_a_failing_record_fails_the_worker_job_naming_it(monkeypatch: pyte
     assert dest.sent == []
     assert stats.error_type == "TransformationError"
     assert "record 1: RuntimeError: users API answered 500" in stats.error
+
+
+async def test_the_worker_stores_and_counts_skipped_records(monkeypatch: pytest.MonkeyPatch):
+    from reflowfy.core.registry import pipeline_registry
+    from reflowfy.observability import metrics
+
+    dest = _Dest()
+    monkeypatch.setattr(
+        pipeline_registry, "get", lambda name: _Pipeline([skip_odd()], destination=dest)
+    )
+    ex = WorkerExecutor(database_url="postgresql://x/y")
+    saved: List[JobStats] = []
+
+    async def save(execution_id: str, job_id: str, stats: JobStats) -> None:
+        saved.append(stats)
+
+    monkeypatch.setattr(ex, "_update_job_in_db", save)
+    counter = metrics.records_skipped_total.labels(
+        pipeline="ut_async_pipeline", transformation="ut_rec_skip_record"
+    )
+    before = counter._value.get()
+
+    assert await ex.execute_job(_payload([{"id": i} for i in range(5)])) is True
+
+    assert [r["id"] for r in dest.sent] == [0, 2]
+    stats = saved[-1]
+    assert stats.records_skipped == 3
+    assert stats.to_dict()["record_skip_reasons"] == {"odd id": 2, "four": 1}
+    assert counter._value.get() == before + 3
+
+
+def test_local_mode_logs_why_records_were_skipped(caplog: pytest.LogCaptureFixture):
+    from reflowfy.execution.local_executor import LocalExecutor
+
+    pipeline = _Pipeline([skip_odd()], destination=_Dest())
+    pipeline.source = StaticSource(_records(4))  # type: ignore[attr-defined]
+    pipeline.name = "ut_async_local"
+    with caplog.at_level("INFO"):
+        LocalExecutor().execute(pipeline=pipeline, runtime_params={})
+    assert "ut_rec_skip_record skipped 2 records: {'odd id': 2}" in caplog.text

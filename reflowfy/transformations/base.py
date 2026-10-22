@@ -3,9 +3,9 @@
 import asyncio
 import os
 from abc import ABCMeta, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
-from reflowfy.core.exceptions import SkipJob
+from reflowfy.core.exceptions import SkipJob, SkipRecord
 from reflowfy.core.query_loader import QueryLoaderMixin
 
 
@@ -169,13 +169,43 @@ class RecordFailure(Exception):
         super().__init__(f"record {index}: {type(error).__name__}: {error}")
 
 
+MAX_SKIP_REASONS = 20
+"""Distinct ``SkipRecord`` reasons kept per step; the rest are counted as ``OTHER_SKIP_REASON``."""
+MAX_SKIP_REASON_LENGTH = 200
+OTHER_SKIP_REASON = "(other reasons)"
+
+
+def count_skip_reason(reasons: Dict[str, int], reason: str, times: int = 1) -> None:
+    """Add ``times`` skips for ``reason`` to ``reasons``, keeping the dict bounded."""
+    reason = reason[:MAX_SKIP_REASON_LENGTH] or "(no reason)"
+    if reason not in reasons and len(reasons) >= MAX_SKIP_REASONS:
+        reason = OTHER_SKIP_REASON
+    reasons[reason] = reasons.get(reason, 0) + times
+
+
+class _Skipped:
+    """Marks a record its transformation dropped with ``SkipRecord``."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+
+
+class RecordResults(NamedTuple):
+    """What a per-record step produced: the kept records, and why the others went."""
+
+    records: List[Any]
+    skip_reasons: Dict[str, int]
+    """``SkipRecord`` reason -> records skipped for it (bounded, see ``MAX_SKIP_REASONS``)."""
+
+
 class RecordTransformation(AsyncTransformation):
     """Awaits :meth:`apply_record` once per record, ``concurrency`` records at a time.
 
     Output keeps input order; a record for which ``apply_record`` returns ``None``
     is dropped. The first record that raises stops the step: the records still in
     flight are cancelled and the job fails naming that record's index.
-    ``SkipJob`` from any record drops the whole job. ``timeout`` (seconds) bounds
+    ``SkipRecord`` drops that record and records why; ``SkipJob`` from any record
+    drops the whole job. ``timeout`` (seconds) bounds
     each record's call.
 
     The concurrent calls share one ``runtime_params``: read it, don't write it.
@@ -232,17 +262,33 @@ class RecordTransformation(AsyncTransformation):
                 raise RecordFailure(index, record, timed_out) from exc
         except (SkipJob, RecordFailure):
             raise
+        except SkipRecord as exc:
+            return _Skipped(str(exc))
         except Exception as exc:
             raise RecordFailure(index, record, exc) from exc
 
     async def apply_async(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
+        return (await self.apply_records(records, runtime_params)).records
+
+    async def apply_records(
+        self, records: List[Any], runtime_params: Dict[str, Any]
+    ) -> RecordResults:
+        """Run the step and also report the records it skipped (the runner uses this)."""
         if not records:
-            return []
+            return RecordResults([], {})
         await self.setup(runtime_params)
         try:
-            return await self._apply_all(records, runtime_params)
+            results = await self._apply_all(records, runtime_params)
         finally:
             await self.teardown()
+        kept: List[Any] = []
+        skip_reasons: Dict[str, int] = {}
+        for result in results:
+            if isinstance(result, _Skipped):
+                count_skip_reason(skip_reasons, result.reason)
+            elif result is not None:
+                kept.append(result)
+        return RecordResults(kept, skip_reasons)
 
     async def _apply_all(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
         results: List[Any] = [None] * len(records)
@@ -266,7 +312,7 @@ class RecordTransformation(AsyncTransformation):
                 task.cancel()
             await asyncio.gather(*workers, return_exceptions=True)
             raise
-        return [result for result in results if result is not None]
+        return results
 
 
 class TransformationError(Exception):

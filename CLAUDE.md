@@ -196,7 +196,8 @@ already running, e.g. inside FastAPI). Three kinds of step, freely mixed in one 
   awaited, `concurrency` at a time (default `TRANSFORM_CONCURRENCY`, 16) by a fixed pool of
   workers, not a task per record. Order is kept, `None` drops the record, the first failure
   cancels the rest and raises `TransformationError` with the exact `culprit_index` (via
-  `RecordFailure`), `SkipJob` from any record drops the job. Subclass it for a client shared by
+  `RecordFailure`), `SkipJob` from any record drops the job, and `raise SkipRecord("why")`
+  drops just that record *with* a reason (see below). Subclass it for a client shared by
   the step's records: `setup()` / `teardown()` run once around them. An `httpx.AsyncClient`
   costs ~40 ms of CPU to build, so one per record is slow *and* stalls the loop.
 
@@ -211,6 +212,21 @@ per-step durations stay in `JobStats.transformation_times`. No new metric or job
 step's outcomes are the existing ones. Tests: `tests/unit/test_async_transformations.py`,
 `tests/e2e/test_async_transform.py` (the mock API counts lookups in flight),
 `tests/e2e_distributed/test_async_pipelines.py` (`dist_async`, per-job peak from the sink).
+
+### Dropping a record
+
+`raise SkipRecord("why")` inside a per-record transformation drops that one record; the job goes
+on. Returning `None` drops it silently (a filter); `SkipRecord` keeps the reason. The step
+returns its skips beside its records (`RecordTransformation.apply_records` → `RecordResults`), so
+nothing is stored on the shared transformation instance. Raised from a sync or whole-batch async
+step it fails the job saying to use `@record_transformation` (there is no "current record"
+there). Observability: `AppliedStep.skip_reasons`; the worker logs `Job <id>: <step> skipped N
+records ('reason' xN, …)`, stores `records_skipped` and `record_skip_reasons` in the job's
+`stats`, and counts `reflowfy_records_skipped_total{pipeline, transformation}` — a new counter,
+because a record outcome has no place on the per-job `jobs_processed_total` and adding a label to
+`records_processed_total` would break its existing series. Reasons are counted, so they must be
+short fixed phrases: at most 20 distinct per step (the rest go to "(other reasons)"), 200
+characters each. `LocalExecutor` and `reflowfy test -v` show them too.
 
 ### Execution modes
 

@@ -66,6 +66,20 @@ class TestAsyncDelivery:
         assert sink.api_stats(channel)["peak_by_job"] == {"0": 1}
         assert_exactly_once(sink, channel, ids(30))
 
+    def test_skip_record_drops_those_records_and_each_job_keeps_the_count(
+        self, manager: Manager, sink: Sink, channel: str, params: Params
+    ):
+        execution = manager.run(PIPELINE, params(total=100, per_job=25, skip_ids="3,4,60"))
+
+        assert manager.wait(execution)["state"] == "completed"
+        assert_exactly_once(sink, channel, [i for i in ids(100) if i not in (3, 4, 60)])
+        by_job = {
+            item["stats"]["records_skipped"]: item["stats"]["record_skip_reasons"]
+            for item in manager.jobs(execution)
+            if item["stats"]["records_skipped"]
+        }
+        assert by_job == {2: {"skip requested": 2}, 1: {"skip requested": 1}}, by_job
+
     def test_a_404_drops_only_that_record(self, manager: Manager, sink: Sink, channel: str, params: Params):
         sink.api_rules(channel, missing_ids=[7, 42])
         execution = manager.run(PIPELINE, params(total=100, per_job=25))

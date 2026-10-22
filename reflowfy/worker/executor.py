@@ -27,8 +27,17 @@ from reflowfy.observability.logging import get_logger
 from reflowfy.observability.tracing import extract_and_attach
 from reflowfy.reflow_manager.db_settings import async_connect_args
 from reflowfy.reflow_manager.models import Job
+from reflowfy.transformations.base import count_skip_reason
 
 logger = get_logger("worker.executor")
+
+
+def _top_reasons(reasons: Dict[str, int], limit: int = 3) -> str:
+    """``"user inactive" x3, "no email" x1`` — the most frequent reasons, for one log line."""
+    top = sorted(reasons.items(), key=lambda item: -item[1])[:limit]
+    more = len(reasons) - len(top)
+    text = ", ".join(f"{reason!r} x{times}" for reason, times in top)
+    return f"{text}, +{more} more" if more > 0 else text
 
 
 class JobStats:
@@ -48,6 +57,9 @@ class JobStats:
         self.success = False
         self.deduplicated = False
         self.skip_reason: Optional[str] = None
+        # Records dropped with SkipRecord, and why (reason -> count, bounded).
+        self.records_skipped = 0
+        self.record_skip_reasons: Dict[str, int] = {}
         # Another delivery of this job already claimed it; this message was skipped.
         self.redelivered = False
         # The execution was cancelled before this job started; the message was skipped.
@@ -70,6 +82,8 @@ class JobStats:
             "destination_write_time": round(self.destination_write_time, 3),
             "error": self.error,
             "skip_reason": self.skip_reason,
+            "records_skipped": self.records_skipped,
+            "record_skip_reasons": self.record_skip_reasons,
             "success": self.success,
         }
 
@@ -290,6 +304,20 @@ class WorkerExecutor:
                     step.records_in,
                     step.records_out,
                 )
+                if step.records_skipped:
+                    stats.records_skipped += step.records_skipped
+                    for reason, times in (step.skip_reasons or {}).items():
+                        count_skip_reason(stats.record_skip_reasons, reason, times)
+                    logger.info(
+                        "Job %s: %s skipped %d records (%s)",
+                        job_id,
+                        step.name,
+                        step.records_skipped,
+                        _top_reasons(step.skip_reasons or {}),
+                    )
+                    metrics.records_skipped_total.labels(
+                        pipeline=_pipeline_name, transformation=step.name
+                    ).inc(step.records_skipped)
 
             stats.records_output = len(transformed_records)
 

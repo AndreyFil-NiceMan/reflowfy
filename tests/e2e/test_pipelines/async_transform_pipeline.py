@@ -7,6 +7,7 @@ ran concurrently. ``e2e_async_label`` is a whole-batch ``async def``;
 ``e2e_sync_stamp`` is a plain sync step in the same chain.
 
 Behaviour switches: ``drop_id`` (the API answers 404 → that record is dropped),
+``skip_id`` (that record raises SkipRecord, so its reason is kept),
 ``fail_id`` (500 → the job fails naming the record), ``skip`` (the async step
 raises SkipJob).
 """
@@ -27,6 +28,7 @@ from reflowfy import (
     RecordTransformation,
     RuntimeParams,
     SkipJob,
+    SkipRecord,
     Transformations,
     transformation,
 )
@@ -44,6 +46,7 @@ class AsyncTransformParams(RuntimeParams, total=False):
     delay_ms: Annotated[NotRequired[int], Param("Mock API latency per lookup", default=200)]
     drop_id: Annotated[NotRequired[int], Param("Id the API answers 404 for", default=0)]
     fail_id: Annotated[NotRequired[int], Param("Id the API answers 500 for", default=0)]
+    skip_id: Annotated[NotRequired[int], Param("Id dropped with SkipRecord", default=0)]
     skip: Annotated[NotRequired[bool], Param("The async step raises SkipJob", default=False)]
 
 
@@ -81,6 +84,8 @@ class EnrichFromSlowUsers(RecordTransformation):
         if resp.status_code == 404:
             return None
         resp.raise_for_status()
+        if user_id == runtime_params.get("skip_id"):
+            raise SkipRecord("user inactive")
         return {"data": {**data, "user": resp.json()["name"]}}
 
 

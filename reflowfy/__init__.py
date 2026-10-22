@@ -10,7 +10,7 @@ It is Kafka-based, Kubernetes-native, and order-independent for maximum parallel
 """
 
 from reflowfy.core.abstract_pipeline import AbstractPipeline, PipelineParameter, ScheduledRun
-from reflowfy.core.exceptions import PipelineError, SkipJob
+from reflowfy.core.exceptions import PipelineError, SkipJob, SkipRecord
 from reflowfy.core.id_based_pipeline import IdBasedPipeline
 from reflowfy.core.types import Record, Records, Transformations
 from reflowfy.core.query_loader import load_query, load_query_text
@@ -74,6 +74,7 @@ __all__ = [
     # Exceptions
     "PipelineError",
     "SkipJob",
+    "SkipRecord",
     "SourceError",
     "DestinationError",
     "TransformationError",

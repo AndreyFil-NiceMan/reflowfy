@@ -31,6 +31,12 @@ records_processed_total = Counter(
     ["pipeline"],
 )
 
+records_skipped_total = Counter(
+    "reflowfy_records_skipped_total",
+    "Records a per-record transformation dropped with SkipRecord",
+    ["pipeline", "transformation"],
+)
+
 # Worker metrics
 active_workers = Gauge(
     "reflowfy_active_workers",

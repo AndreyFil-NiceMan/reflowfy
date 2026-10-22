@@ -17,11 +17,12 @@ import time
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple, cast
 
 from reflowfy.core.async_utils import run_coroutine_sync
-from reflowfy.core.exceptions import SkipJob
+from reflowfy.core.exceptions import SkipJob, SkipRecord
 from reflowfy.observability.logging import get_logger
 from reflowfy.transformations.base import (
     AsyncTransformation,
     RecordFailure,
+    RecordResults,
     RecordTransformation,
     TransformationError,
 )
@@ -48,6 +49,13 @@ class AppliedStep(NamedTuple):
     """How the step ran: ``"sync"`` (in a thread), ``"async"`` or ``"per_record"``."""
     concurrency: Optional[int] = None
     """Records in flight at once, for a ``"per_record"`` step."""
+    skip_reasons: Optional[Dict[str, int]] = None
+    """``SkipRecord`` reason -> records dropped for it, for a ``"per_record"`` step."""
+
+    @property
+    def records_skipped(self) -> int:
+        """Records this step dropped with ``SkipRecord``."""
+        return sum((self.skip_reasons or {}).values())
 
     @property
     def delta(self) -> int:
@@ -98,10 +106,13 @@ def _run_sync_step(transformation: Any, records: List[Any], runtime_params: Dict
 
 async def _run_async_step(
     transformation: AsyncTransformation, records: List[Any], runtime_params: Dict[str, Any]
-) -> List[Any]:
+) -> RecordResults:
     transformation.validate_input(records)
-    result = await transformation.apply_async(records, runtime_params)
-    transformation.validate_output(result)
+    if isinstance(transformation, RecordTransformation):
+        result = await transformation.apply_records(records, runtime_params)
+    else:
+        result = RecordResults(await transformation.apply_async(records, runtime_params), {})
+    transformation.validate_output(result.records)
     return result
 
 
@@ -176,6 +187,7 @@ async def apply_transformations_iteratively_async(
         records_in = len(transformed)
         mode = "sync"
         concurrency: Optional[int] = None
+        skip_reasons: Optional[Dict[str, int]] = None
         start = time.time()
         try:
             if isinstance(transformation, RecordTransformation):
@@ -189,13 +201,30 @@ async def apply_transformations_iteratively_async(
             elif isinstance(transformation, AsyncTransformation):
                 mode = "async"
             if isinstance(transformation, AsyncTransformation):
-                transformed = await _run_async_step(transformation, transformed, runtime_params)
+                result = await _run_async_step(transformation, transformed, runtime_params)
+                transformed = result.records
+                if mode == "per_record":
+                    skip_reasons = result.skip_reasons
             else:
                 transformed = await asyncio.to_thread(
                     _run_sync_step, transformation, transformed, runtime_params
                 )
         except (TransformationError, SkipJob):
             raise
+        except SkipRecord as exc:
+            # Only a per-record step knows which record it is working on.
+            raise TransformationError(
+                transformation_name=getattr(transformation, "name", "<unknown>"),
+                message=(
+                    f"SkipRecord({str(exc)!r}) raised from a {mode} transformation; it only "
+                    "works in a per-record one (@record_transformation). Filter the record "
+                    "out of the list instead, or raise SkipJob to drop the whole job."
+                ),
+                original_error=exc,
+                step_index=applied_count,
+                records_in=records_in,
+                applied_steps=list(applied),
+            ) from exc
         except RecordFailure as exc:
             # A per-record step knows exactly which record broke; no guessing.
             raise TransformationError(
@@ -232,6 +261,7 @@ async def apply_transformations_iteratively_async(
                 records_out=len(transformed),
                 mode=mode,
                 concurrency=concurrency,
+                skip_reasons=skip_reasons,
             )
         )
         applied_count += 1

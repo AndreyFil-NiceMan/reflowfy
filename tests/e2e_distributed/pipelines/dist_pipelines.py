@@ -39,6 +39,7 @@ from reflowfy import (
     RecordTransformation,
     RuntimeParams,
     SkipJob,
+    SkipRecord,
     Transformations,
     chunk,
     job,
@@ -183,13 +184,15 @@ class DistAbstract(AbstractPipeline[DistParams]):
 class DistAsyncParams(DistParams, total=False):
     concurrency: Annotated[NotRequired[int], Param("Lookups in flight at once, per job", default=8)]
     retries: Annotated[NotRequired[int], Param("Retries per lookup on a 5xx (the author's own)", default=0)]
+    skip_ids: Annotated[NotRequired[str], Param("CSV of ids dropped with SkipRecord", default="")]
 
 
 class DistLookupUser(RecordTransformation):
     """Per-record GET of the mock users API, ``concurrency`` at a time, one client per job.
 
     Each call carries ``?job=<job_index>`` so the sink can report peak concurrency per job.
-    A 404 drops the record; a 5xx is retried ``retries`` times, then fails the job.
+    A 404 drops the record; a 5xx is retried ``retries`` times, then fails the job;
+    an id in ``skip_ids`` is dropped with SkipRecord after its lookup.
     """
 
     name = "dist_lookup_user"
@@ -219,6 +222,8 @@ class DistLookupUser(RecordTransformation):
         if resp.status_code == 404:
             return None
         resp.raise_for_status()
+        if record["id"] in _csv_ints(runtime_params.get("skip_ids")):
+            raise SkipRecord("skip requested")
         return {**record, "user": resp.json()["name"]}
 
 

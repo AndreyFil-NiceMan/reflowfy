@@ -165,6 +165,16 @@ class TestRenderSteps:
         assert "explode_rows  2 → 5 records  (+3)  1.2ms" in text
         assert "total transform time: 1.2ms" in text
 
+    def test_a_per_record_step_lists_why_it_skipped_records(self) -> None:
+        step = AppliedStep(
+            "enrich", 0.5, 10, 7, "per_record", 8, {"user inactive": 2, "no email": 1}
+        )
+
+        text = _render(test_cmd.render_steps, BatchReport(applied=[step]), Opts(verbose=1))
+
+        assert "enrich  10 → 7 records  (-3)  500.0ms, per_record ×8" in text
+        assert text.index("skipped 2: user inactive") < text.index("skipped 1: no email")
+
 
 class TestRenderFailure:
     def test_the_failing_record_is_truncated_without_verbose(self) -> None:

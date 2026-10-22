@@ -7,11 +7,13 @@ an ``async def`` batch step, and a sync step. Observed end to end:
 - every record arrives enriched by all three steps, in input order
 - the lookups really overlap, and never exceed the cap (the mock counts them)
 - a 404 drops one record; a 500 fails the job naming the record's index
+- SkipRecord drops one record and keeps why: job stats and a metric
 - SkipJob from the async step completes the job with nothing delivered
 - ``reflowfy test`` runs the same pipeline outside the stack
 """
 
 import os
+import re
 import time
 from typing import Any, Dict, List
 
@@ -23,6 +25,13 @@ MOCK_HTTP_URL = os.getenv("E2E_MOCK_HTTP_URL", "http://localhost:8091")
 MOCK_API_URL = os.getenv("E2E_MOCK_API_URL", "http://localhost:8092")
 PIPELINE = "e2e_async_transform"
 STEPS = {"e2e_enrich_slow_user", "e2e_async_label", "e2e_sync_stamp"}
+# In distributed mode the worker runs the job, so the counter is in its registry
+# (scripts/e2e-distributed.override.yml publishes it here). Not up in local mode.
+WORKER_METRICS_URL = os.getenv("E2E_WORKER_METRICS_URL", "http://localhost:9102/metrics")
+SKIPPED_RECORDS_METRIC = re.compile(
+    r'reflowfy_records_skipped_total\{[^}]*pipeline="e2e_async_transform"[^}]*'
+    r'transformation="e2e_enrich_slow_user"[^}]*\}\s+([0-9.e+]+)'
+)
 POLL_INTERVAL = 1
 MAX_WAIT = 90
 
@@ -73,6 +82,20 @@ def _delivered(marker: str) -> List[Dict[str, Any]]:
     ]
 
 
+def _skipped_records_metric(client: httpx.Client) -> float:
+    """reflowfy_records_skipped_total, summed over the manager and (if up) the worker."""
+    texts = [client.get("/metrics").text]
+    try:
+        texts.append(httpx.get(WORKER_METRICS_URL, timeout=5.0).text)
+    except httpx.HTTPError:
+        pass  # local mode: no worker
+    total = 0.0
+    for text in texts:
+        match = SKIPPED_RECORDS_METRIC.search(text)
+        total += float(match.group(1)) if match else 0.0
+    return total
+
+
 def _api_stats(marker: str) -> Dict[str, int]:
     return httpx.get(f"{MOCK_API_URL}/slow-users/{marker}/stats", timeout=10).json()
 
@@ -120,6 +143,20 @@ class TestAsyncTransformations:
 
         assert _wait(client, execution_id)["state"] == "completed"
         assert [r["id"] for r in _delivered(marker)] == [1, 2, 3, 4, 6, 7, 8, 9, 10]
+
+    def test_skip_record_drops_one_record_and_keeps_the_reason(self, client):
+        marker = _marker("skiprecord")
+        before = _skipped_records_metric(client)
+        execution_id = _run(client, marker, count=10, delay_ms=10, skip_id=4)
+
+        stats = _wait(client, execution_id)
+
+        assert stats["state"] == "completed", stats
+        assert [r["id"] for r in _delivered(marker)] == [1, 2, 3, 5, 6, 7, 8, 9, 10]
+        (job,) = _jobs(client, execution_id)
+        assert job["stats"]["records_skipped"] == 1
+        assert job["stats"]["record_skip_reasons"] == {"user inactive": 1}
+        assert _skipped_records_metric(client) == before + 1
 
     def test_a_500_fails_the_job_naming_the_transformation_and_the_record(self, client):
         marker = _marker("fail")
