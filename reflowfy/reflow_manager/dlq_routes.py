@@ -1,5 +1,6 @@
 """DLQ (Dead Letter Queue) API Routes for ReflowManager."""
 
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -20,6 +21,8 @@ from reflowfy.reflow_manager.dlq_scheduler import (
     DLQ_MAX_RETRIES,
 )
 
+logger = logging.getLogger(__name__)
+
 # Create router with /dlq prefix
 router = APIRouter(prefix="/dlq", tags=["DLQ"])
 
@@ -38,6 +41,15 @@ async def schedule_dlq_job(
 
     # Reject now, as /run does, rather than failing every retry when the job comes due.
     if not pipeline_registry.get(request.pipeline_name):
+        logger.warning(
+            "DLQ schedule rejected: pipeline '%s' is not registered",
+            request.pipeline_name,
+            extra={
+                "event": "dlq_schedule_rejected",
+                "pipeline_name": request.pipeline_name,
+                "reason": "pipeline_not_found",
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=(
@@ -67,6 +79,18 @@ async def schedule_dlq_job(
     db.commit()
     db.refresh(dlq_job)
 
+    # The payload is the pipeline's runtime params: log how many, never the values.
+    logger.info(
+        "DLQ job scheduled (due in %d min)",
+        delay_minutes,
+        extra={
+            "event": "dlq_scheduled",
+            "dlq_job_id": dlq_job.id,
+            "pipeline_name": request.pipeline_name,
+            "delay_minutes": delay_minutes,
+            "param_count": len(request.job_payload or {}),
+        },
+    )
     return dlq_job.to_dict()
 
 
@@ -127,6 +151,16 @@ async def cancel_dlq_job(
         )
 
     if job.status != "pending":
+        logger.warning(
+            "DLQ cancel rejected: job is %s",
+            job.status,
+            extra={
+                "event": "dlq_cancel_rejected",
+                "dlq_job_id": job_id,
+                "pipeline_name": job.pipeline_name,
+                "state": job.status,
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Cannot cancel job with status '{job.status}'",
@@ -134,6 +168,10 @@ async def cancel_dlq_job(
 
     job.status = "cancelled"
     db.commit()
+    logger.info(
+        "DLQ job cancelled",
+        extra={"event": "dlq_cancelled", "dlq_job_id": job_id, "pipeline_name": job.pipeline_name},
+    )
 
     return {"message": f"DLQ job {job_id} cancelled"}
 
@@ -154,6 +192,10 @@ def dispatch_dlq_job(
             detail="DLQ scheduler not initialized",
         )
 
+    logger.info(
+        "Manual dispatch of DLQ job requested",
+        extra={"event": "dlq_dispatch_requested", "dlq_job_id": job_id, "trigger": "manual"},
+    )
     try:
         execution_id = scheduler.process_job_immediately(db, job_id)
 
@@ -172,11 +214,22 @@ def dispatch_dlq_job(
     except HTTPException:
         raise  # e.g. the 404 above: not a dispatch failure
     except ValueError as e:
+        logger.warning(
+            "DLQ dispatch rejected: %s",
+            e,
+            extra={"event": "dlq_dispatch_rejected", "dlq_job_id": job_id, "trigger": "manual"},
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
     except Exception as e:
+        logger.error(
+            "DLQ dispatch failed: %s",
+            e,
+            exc_info=True,
+            extra={"event": "dlq_dispatch_error", "dlq_job_id": job_id, "trigger": "manual"},
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to dispatch job: {str(e)}",
@@ -197,10 +250,26 @@ def dispatch_pipeline_dlq_jobs(
             detail="DLQ scheduler not initialized",
         )
 
+    logger.info(
+        "Manual dispatch of the pipeline's DLQ jobs requested",
+        extra={
+            "event": "dlq_dispatch_requested",
+            "pipeline_name": pipeline_name,
+            "trigger": "manual",
+        },
+    )
     try:
         count, execution_ids = scheduler.process_pipeline_immediately(db, pipeline_name)
 
         if count == 0:
+            logger.info(
+                "No pending DLQ jobs to dispatch",
+                extra={
+                    "event": "dlq_dispatch_empty",
+                    "pipeline_name": pipeline_name,
+                    "trigger": "manual",
+                },
+            )
             return {
                 "dispatched_count": 0,
                 "execution_id": None,
@@ -217,6 +286,16 @@ def dispatch_pipeline_dlq_jobs(
         }
 
     except Exception as e:
+        logger.error(
+            "DLQ dispatch failed: %s",
+            e,
+            exc_info=True,
+            extra={
+                "event": "dlq_dispatch_error",
+                "pipeline_name": pipeline_name,
+                "trigger": "manual",
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to dispatch jobs: {str(e)}",

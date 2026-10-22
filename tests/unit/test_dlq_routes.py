@@ -7,6 +7,7 @@ dispatching hands its payload to `PipelineRunner.run_pipeline` (faked here) as r
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
+import logging
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -351,3 +352,115 @@ def test_dispatch_all_failure_is_500_and_retries_each_job(client, db, runner):
 
     assert response.status_code == 500
     assert [_row(db, i).retry_count for i in ids] == [1, 1]
+
+
+# ----- logging ----------------------------------------------------------------------
+
+
+class _Records(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__(logging.DEBUG)
+        self.records: List[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+    def events(self, name: str) -> List[logging.LogRecord]:
+        return [r for r in self.records if getattr(r, "event", None) == name]
+
+
+@pytest.fixture
+def logs():
+    """Collect the routes' and the scheduler's records (the 'reflowfy' logger may not propagate)."""
+    handler = _Records()
+    targets = [dlq_routes.logger, logging.getLogger("reflowfy.reflow_manager.dlq_scheduler")]
+    old = [t.level for t in targets]
+    for t in targets:
+        t.addHandler(handler)
+        t.setLevel(logging.DEBUG)
+    yield handler
+    for t, level in zip(targets, old):
+        t.removeHandler(handler)
+        t.setLevel(level)
+
+
+def test_schedule_is_logged_with_a_count_and_never_the_payload(client, logs):
+    job = _schedule(client, delay_minutes=30, job_payload={"password": "hunter2", "n": 1})
+
+    (rec,) = logs.events("dlq_scheduled")
+    assert rec.dlq_job_id == job["id"] and rec.pipeline_name == "p"
+    assert rec.delay_minutes == 30 and rec.param_count == 2
+    assert all("hunter2" not in r.getMessage() for r in logs.records)
+    assert all("hunter2" not in str(r.__dict__) for r in logs.records)
+
+
+def test_rejected_schedule_is_logged(client, logs):
+    client.post("/dlq/schedule", json={"pipeline_name": "nope", "job_payload": {}})
+
+    (rec,) = logs.events("dlq_schedule_rejected")
+    assert rec.pipeline_name == "nope" and rec.reason == "pipeline_not_found"
+
+
+def test_cancel_and_a_refused_cancel_are_logged(client, logs):
+    job_id = _schedule(client)["id"]
+    client.delete(f"/dlq/jobs/{job_id}")
+    client.delete(f"/dlq/jobs/{job_id}")
+
+    (done,) = logs.events("dlq_cancelled")
+    (refused,) = logs.events("dlq_cancel_rejected")
+    assert done.dlq_job_id == refused.dlq_job_id == job_id
+    assert refused.state == "cancelled"
+
+
+def test_manual_dispatch_of_one_job_is_logged(client, runner, logs):
+    job_id = _schedule(client)["id"]
+    body = client.post(f"/dlq/jobs/{job_id}/dispatch").json()
+
+    assert logs.events("dlq_dispatch_requested")[0].trigger == "manual"
+    (rec,) = logs.events("dlq_dispatched")
+    assert rec.trigger == "manual" and rec.dlq_job_id == job_id
+    assert rec.execution_id == body["execution_id"] and rec.jobs_due == 1
+
+
+def test_manual_dispatch_failure_logs_the_cause_and_the_retry(client, runner, logs):
+    runner.fail = True
+    job_id = _schedule(client)["id"]
+    client.post(f"/dlq/jobs/{job_id}/dispatch")
+
+    causes = logs.events("dlq_dispatch_error")
+    assert {r.trigger for r in causes} == {"manual"} and len(causes) == 2  # scheduler + route
+    assert any(r.exc_info for r in causes)
+    assert any("source unreachable" in r.getMessage() for r in causes)
+    (retry,) = logs.events("dlq_rescheduled")
+    assert retry.dlq_job_id == job_id and retry.retry_count == 1
+
+
+def test_refused_dispatch_is_logged(client, runner, logs):
+    job_id = _schedule(client)["id"]
+    client.delete(f"/dlq/jobs/{job_id}")
+    client.post(f"/dlq/jobs/{job_id}/dispatch")
+
+    (rec,) = logs.events("dlq_dispatch_rejected")
+    assert rec.dlq_job_id == job_id
+
+
+def test_pipeline_dispatch_logs_one_line_per_execution_and_the_empty_case(client, runner, logs):
+    _schedule(client, pipeline="a", job_payload={"k": 1})
+    _schedule(client, pipeline="a", job_payload={"k": 2})
+    client.post("/dlq/pipelines/a/dispatch")
+    client.post("/dlq/pipelines/b/dispatch")
+
+    dispatched = logs.events("dlq_dispatched")
+    assert len(dispatched) == 2 and {r.jobs_due for r in dispatched} == {1}
+    assert all(r.trigger == "manual" and r.pipeline_name == "a" for r in dispatched)
+    (empty,) = logs.events("dlq_dispatch_empty")
+    assert empty.pipeline_name == "b"
+
+
+def test_pipeline_dispatch_failure_is_logged(client, runner, logs):
+    runner.fail = True
+    _schedule(client, pipeline="a")
+    client.post("/dlq/pipelines/a/dispatch")
+
+    assert {r.event for r in logs.records if hasattr(r, "event")} >= {"dlq_dispatch_error"}
+    assert all(r.trigger == "manual" for r in logs.events("dlq_dispatch_error"))

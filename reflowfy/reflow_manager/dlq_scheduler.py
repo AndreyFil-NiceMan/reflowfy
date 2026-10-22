@@ -192,6 +192,7 @@ class DLQScheduler:
                         "event": "dlq_dispatch_error",
                         "pipeline_name": pipeline_name,
                         "jobs_due": len(group),
+                        "trigger": "scheduler",
                     },
                 )
                 for job in group:
@@ -207,6 +208,7 @@ class DLQScheduler:
                     "execution_id": execution_id,
                     "pipeline_name": pipeline_name,
                     "jobs_due": len(group),
+                    "trigger": "scheduler",
                 },
             )
 
@@ -336,9 +338,32 @@ class DLQScheduler:
             job.processed_at = datetime.now(timezone.utc).replace(tzinfo=None)
             job.execution_id = execution_id
             db.commit()
+            logger.info(
+                "DLQ job dispatched to execution: %s",
+                execution_id,
+                extra={
+                    "event": "dlq_dispatched",
+                    "execution_id": execution_id,
+                    "pipeline_name": job.pipeline_name,
+                    "dlq_job_id": job_id,
+                    "jobs_due": 1,
+                    "trigger": "manual",
+                },
+            )
             return execution_id
         except Exception as e:
             db.rollback()
+            logger.error(
+                "Failed to dispatch DLQ job: %s",
+                e,
+                exc_info=True,
+                extra={
+                    "event": "dlq_dispatch_error",
+                    "pipeline_name": job.pipeline_name,
+                    "dlq_job_id": job_id,
+                    "trigger": "manual",
+                },
+            )
             self._handle_job_failure(db, job, str(e))
             db.commit()
             raise
@@ -382,11 +407,34 @@ class DLQScheduler:
                 # Only this group's jobs go to the retry path; the others still run,
                 # as in _process_pipeline_jobs.
                 last_error = e
+                logger.error(
+                    "Failed to dispatch DLQ jobs for %s: %s",
+                    pipeline_name,
+                    e,
+                    exc_info=True,
+                    extra={
+                        "event": "dlq_dispatch_error",
+                        "pipeline_name": pipeline_name,
+                        "jobs_due": len(group),
+                        "trigger": "manual",
+                    },
+                )
                 for job in group:
                     self._handle_job_failure(db, job, str(e))
                 continue
             _mark_completed(group, execution_id)
             execution_ids.append(execution_id)
+            logger.info(
+                "DLQ jobs dispatched to execution: %s",
+                execution_id,
+                extra={
+                    "event": "dlq_dispatched",
+                    "execution_id": execution_id,
+                    "pipeline_name": pipeline_name,
+                    "jobs_due": len(group),
+                    "trigger": "manual",
+                },
+            )
         db.commit()
         if last_error is not None and not execution_ids:
             raise last_error

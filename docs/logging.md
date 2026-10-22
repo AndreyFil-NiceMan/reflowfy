@@ -46,6 +46,7 @@ Every log line is one ECS-shaped JSON object (`LOG_JSON=false` gives text with t
 - `reflow_manager/content_dedup_scheduler.py`: `dedup_hashes_purged`, `executions_purged`, `sweeper_error`, `sweeper_start`
 - `reflow_manager/database.py`: `db_connect_retry`, `migration_skipped`
 - `reflow_manager/dispatcher.py`: `job_unsendable`, `kafka_send_error`, `producer_reset`, `rate_limit_wait`
+- `reflow_manager/dlq_routes.py`: `dlq_cancel_rejected`, `dlq_cancelled`, `dlq_dispatch_empty`, `dlq_dispatch_error`, `dlq_dispatch_rejected`, `dlq_dispatch_requested`, `dlq_schedule_rejected`, `dlq_scheduled`
 - `reflow_manager/dlq_scheduler.py`: `dlq_archived`, `dlq_dispatch_error`, `dlq_dispatched`, `dlq_due`, `dlq_job_due`, `dlq_poll_error`, `dlq_process`, `dlq_rescheduled`, `scheduler_already_running`, `scheduler_error`, `scheduler_start`, `scheduler_stopped`, `scheduler_stopping`
 - `reflow_manager/local_dispatcher.py`: `local_dispatch_error`, `rate_limit_timeout`, `rate_limit_wait`
 - `reflow_manager/manager.py`: `manager_init`
