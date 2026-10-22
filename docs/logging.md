@@ -5,6 +5,7 @@ Every log line is one ECS-shaped JSON object (`LOG_JSON=false` gives text with t
 ## How a line gets its fields
 
 - **Always**: `@timestamp` (the record's own time), `log.level`, `logger`, `log.origin.*`, `message`, `service.name`/`.version`/`.environment`, `host.name`, `process.pid`.
+- **Where it ran**: `host.name` and, in Kubernetes, `kubernetes.pod.name` (the replica that wrote the line), `kubernetes.namespace`, `kubernetes.node.name`. The Helm chart passes them from the downward API for the api, manager and workers; outside Kubernetes they are omitted.
 - **Bound context** (`log_context(...)` / `@bind_log_context(...)` in `observability/context.py`): `execution_id`, `job_id`, `pipeline_name`, `current_id`, `current_ids_count`, trace ids. Bound once per job (worker) or per execution (manager), so messages don't repeat them.
 - **`extra={...}`**: any key is emitted as-is (nothing is dropped). `event` becomes `event.action`.
 - **Errors**: `error.type`, `error.message`, `error.stack_trace` when `exc_info` is set.

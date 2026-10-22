@@ -30,6 +30,24 @@ _TEXT_CONTEXT = ("execution_id", "job_id", "pipeline_name", "event")
 _ECS_RENAMES = {"event": "event.action", "reason": "event.reason"}
 
 
+def _kubernetes_fields() -> Dict[str, Any]:
+    """Where in the cluster this process runs: pod, namespace and node.
+
+    The chart passes them from the downward API (POD_NAME, POD_NAMESPACE, NODE_NAME).
+    Without POD_NAME, a process that is in Kubernetes still has its pod name as
+    HOSTNAME. Outside Kubernetes (docker compose, a laptop) none of these are set, so
+    nothing is emitted rather than a container id posing as a pod.
+    """
+    in_cluster = bool(os.getenv("KUBERNETES_SERVICE_HOST"))
+    pod = os.getenv("POD_NAME") or (os.getenv("HOSTNAME") if in_cluster else None)
+    fields = {
+        "kubernetes.pod.name": pod,
+        "kubernetes.namespace": os.getenv("POD_NAMESPACE"),
+        "kubernetes.node.name": os.getenv("NODE_NAME"),
+    }
+    return {k: v for k, v in fields.items() if v}
+
+
 def _service_version() -> str:
     try:
         from reflowfy import __version__
@@ -43,7 +61,7 @@ class ECSJSONFormatter(logging.Formatter):
     """Render a LogRecord as a single ECS-shaped JSON line.
 
     Beyond the message it carries: where the line came from (service, version, host,
-    pid, logger, file:line), when it happened (the record's own time, not the time it
+    pid, pod/namespace/node in Kubernetes, logger, file:line), when it happened (the record's own time, not the time it
     was formatted), the bound ``log_context`` / ``extra=`` fields (execution_id,
     job_id, pipeline_name, ...), ``event`` as ``event.action`` for a stable name to
     filter on, and ``error.type`` / ``error.message`` / ``error.stack_trace``.
@@ -59,6 +77,7 @@ class ECSJSONFormatter(logging.Formatter):
             "service.version": _service_version(),
             "host.name": os.getenv("HOSTNAME") or socket.gethostname(),
             "process.pid": os.getpid(),
+            **_kubernetes_fields(),
         }
 
     def format(self, record: logging.LogRecord) -> str:

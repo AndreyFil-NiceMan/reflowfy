@@ -377,3 +377,61 @@ def test_entry_point_modules_log_under_the_reflowfy_logger():
                 break
         else:
             raise AssertionError(f"no module-level logger in {rel}")
+
+
+# --- pod identity ---
+
+_K8S_VARS = ("KUBERNETES_SERVICE_HOST", "POD_NAME", "POD_NAMESPACE", "NODE_NAME", "HOSTNAME")
+
+
+def _clean_k8s(monkeypatch):
+    for var in _K8S_VARS:
+        monkeypatch.delenv(var, raising=False)
+
+
+def test_pod_fields_come_from_the_downward_api(monkeypatch):
+    _clean_k8s(monkeypatch)
+    monkeypatch.setenv("POD_NAME", "worker-7d9f-abcde")
+    monkeypatch.setenv("POD_NAMESPACE", "reflowfy-prod")
+    monkeypatch.setenv("NODE_NAME", "node-3")
+    out = _fmt(_record())
+    assert out["kubernetes.pod.name"] == "worker-7d9f-abcde"
+    assert out["kubernetes.namespace"] == "reflowfy-prod"
+    assert out["kubernetes.node.name"] == "node-3"
+
+
+def test_pod_name_falls_back_to_hostname_inside_kubernetes(monkeypatch):
+    _clean_k8s(monkeypatch)
+    monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+    monkeypatch.setenv("HOSTNAME", "manager-5c8d-xyz12")
+    out = _fmt(_record())
+    assert out["kubernetes.pod.name"] == "manager-5c8d-xyz12"
+    assert "kubernetes.namespace" not in out
+
+
+def test_no_pod_fields_outside_kubernetes(monkeypatch):
+    """A docker-compose container id must not pose as a pod name."""
+    _clean_k8s(monkeypatch)
+    monkeypatch.setenv("HOSTNAME", "3f2a9c1d4e5b")
+    out = _fmt(_record())
+    assert not [k for k in out if k.startswith("kubernetes.")]
+    assert out["host.name"] == "3f2a9c1d4e5b"
+
+
+def test_chart_passes_the_pod_identity_to_every_service():
+    """One shared helper feeds the api, the manager and the workers."""
+    from pathlib import Path
+
+    templates = Path(__file__).parents[2] / "reflowfy/helm/reflowfy/templates"
+    helper = (templates / "_helpers.tpl").read_text()
+    start = helper.index('define "reflowfy.observability.env"')
+    end = helper.find('{{- define "', start + 1)
+    block = helper[start : end if end != -1 else len(helper)]
+    for var, path in (
+        ("POD_NAME", "metadata.name"),
+        ("POD_NAMESPACE", "metadata.namespace"),
+        ("NODE_NAME", "spec.nodeName"),
+    ):
+        assert f"name: {var}" in block and f"fieldPath: {path}" in block
+    for service in ("api.yaml", "reflow-manager.yaml", "worker.yaml"):
+        assert 'include "reflowfy.observability.env"' in (templates / service).read_text()

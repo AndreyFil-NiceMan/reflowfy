@@ -31,7 +31,7 @@ automatically once APM Server ingests traces.
 3. Open **Dashboards → Reflowfy logs**. To narrow it, type e.g. `pipeline_name: my_pipeline`
    or `execution_id: abc` in the query bar; every panel filters on those fields.
 
-Sections: headline counts; job health (outcomes, p95 duration, records written, failures by
+Sections: headline counts; per-pod jobs and errors (`kubernetes.pod.name`, so you can see which of several workers is failing); job health (outcomes, p95 duration, records written, failures by
 error type); execution tracking (finished by state, runs accepted, stalls/lost leases);
 warnings and errors by service and event, plus the error stream; schedulers and DLQ.
 
