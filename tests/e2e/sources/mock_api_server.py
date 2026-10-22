@@ -15,9 +15,13 @@ Endpoints:
     PATCH /users/bulk - Bulk fetch with active_only filter
     POST /users/{id}/enrich - Per-ID POST enrichment
     POST /products/lookup - Batch lookup products by product_ids key
+    GET /slow-users/{run}/{id}?delay_ms=&status= - Slow per-record lookup for the async
+        transformation tests; answers `status` (200 by default) after `delay_ms`
+    GET /slow-users/{run}/stats - {"calls", "peak_concurrency"} seen for that run
 """
 
-from typing import List, Optional
+import asyncio
+from typing import Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Query, Header, Request
 from pydantic import BaseModel
 import uvicorn
@@ -37,6 +41,9 @@ class ProductLookupRequest(BaseModel):
 
 
 app = FastAPI(title="Mock API Server for E2E Tests")
+
+# Per-run counters for /slow-users: how many calls, and the most in flight at once.
+SLOW_USER_STATS: Dict[str, Dict[str, int]] = {}
 
 
 # ============================================================================
@@ -111,6 +118,29 @@ async def list_users(
         "limit": limit,
         "has_more": offset + limit < total,
     }
+
+
+@app.get("/slow-users/{run}/stats")
+async def slow_user_stats(run: str):
+    """What the async transformation tests check: calls made and peak concurrency."""
+    stats = SLOW_USER_STATS.get(run, {})
+    return {"calls": stats.get("calls", 0), "peak_concurrency": stats.get("peak", 0)}
+
+
+@app.get("/slow-users/{run}/{user_id}")
+async def get_slow_user(run: str, user_id: int, delay_ms: int = 0, status: int = 200):
+    """A user lookup that takes `delay_ms`, counting how many are in flight per run."""
+    stats = SLOW_USER_STATS.setdefault(run, {"calls": 0, "in_flight": 0, "peak": 0})
+    stats["calls"] += 1
+    stats["in_flight"] += 1
+    stats["peak"] = max(stats["peak"], stats["in_flight"])
+    try:
+        await asyncio.sleep(delay_ms / 1000)
+    finally:
+        stats["in_flight"] -= 1
+    if status != 200:
+        raise HTTPException(status_code=status, detail=f"injected {status} for {user_id}")
+    return {"id": user_id, "name": f"User {user_id}"}
 
 
 @app.get("/users/{user_id}")

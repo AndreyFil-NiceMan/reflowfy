@@ -18,7 +18,12 @@ from reflowfy.core.registry import pipeline_registry
 from reflowfy.core.runtime_params import Param, RuntimeParams
 from reflowfy.execution.job_runner import chunk, job
 from reflowfy.observability.logging import get_logger
-from reflowfy.transformations.base import BaseTransformation, TransformationError
+from reflowfy.transformations.base import (
+    AsyncTransformation,
+    BaseTransformation,
+    RecordTransformation,
+    TransformationError,
+)
 from reflowfy.sources.base import BaseSource
 from reflowfy.destinations.base import BaseDestination
 from reflowfy.sources.base import SourceError
@@ -32,7 +37,7 @@ from reflowfy.destinations.console import console_destination
 # Decorators for reusable components
 from reflowfy.sources.decorators import source, source_registry
 from reflowfy.destinations.decorators import destination, destination_registry
-from reflowfy.transformations.decorators import transformation
+from reflowfy.transformations.decorators import record_transformation, transformation
 
 __version__ = "1.0.45"
 
@@ -59,6 +64,10 @@ __all__ = [
     "chunk",
     "job",
     "BaseTransformation",
+    # Async transformations: `async def apply_async`, or one coroutine per record
+    # run concurrently (`@record_transformation`).
+    "AsyncTransformation",
+    "RecordTransformation",
     # Logging — module-level, works anywhere (no `self` needed):
     #   logger = get_logger(__name__)
     "get_logger",
@@ -77,6 +86,7 @@ __all__ = [
     "source",
     "destination",
     "transformation",
+    "record_transformation",
     "source_registry",
     "destination_registry",
 ]

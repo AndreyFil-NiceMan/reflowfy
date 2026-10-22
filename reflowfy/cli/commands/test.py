@@ -167,7 +167,10 @@ def render_steps(report: BatchReport, opts: TestOptions, indent: str = "") -> No
         else:
             change = "[dim]±0[/dim]"
 
-        timing = f"  [dim]{step.duration * 1000:.1f}ms[/dim]" if opts.verbose >= 1 else ""
+        timing = ""
+        if opts.verbose >= 1:
+            mode = step.mode if step.concurrency is None else f"{step.mode} ×{step.concurrency}"
+            timing = f"  [dim]{step.duration * 1000:.1f}ms, {mode}[/dim]"
         marker = "[green]✓[/green]"
         line = (
             f"{indent}  {marker} [bold]{step.name}[/bold]  "

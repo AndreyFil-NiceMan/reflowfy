@@ -8,6 +8,7 @@ file into a project's ``src/pipelines/`` and build it into the images
 AbstractPipeline
     dist_abstract         ``total`` records in jobs of ``per_job``; behaviour switches below
     dist_abstract_es      the same delivery from an Elasticsearch index (needs ES + a seeded index)
+    dist_async            dist_abstract plus a per-record async lookup against the mock users API
 IdBasedPipeline
     dist_ids_b1 / _b7 / _b100   IDs are the records; ids_batch_size 1 / 7 / 100
     dist_ids_fanout             every input ID fans out into three jobs via define_jobs
@@ -21,7 +22,9 @@ a test makes a failure that it later "fixes" before retry-failed), ``drop_even``
 """
 
 import time
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, Iterator, List, Optional, Set
+
+import httpx
 
 from typing_extensions import Annotated, NotRequired, Required
 
@@ -31,7 +34,9 @@ from reflowfy import (
     BaseSource,
     IdBasedPipeline,
     Param,
+    Record,
     Records,
+    RecordTransformation,
     RuntimeParams,
     SkipJob,
     Transformations,
@@ -134,21 +139,26 @@ def dist_behaviors(records: Records, runtime_params: DistParams) -> Records:
     return out
 
 
+def _generated_jobs(runtime_params: DistParams) -> Iterator[Any]:
+    """``total`` generated records in jobs of ``per_job``, each tagged with its job_index."""
+    pad = "x" * (runtime_params.get("pad_kb", 0) * 1024)
+    records = [
+        {"id": i, "run": runtime_params["run"], **({"pad": pad} if pad else {})}
+        for i in range(1, runtime_params.get("total", 1000) + 1)
+    ]
+    for index, part in enumerate(chunk(records, runtime_params.get("per_job", 100))):
+        if runtime_params.get("plan_delay_s"):
+            time.sleep(float(runtime_params["plan_delay_s"]))  # a slow planner
+        yield job(part, job_index=index)
+
+
 class DistAbstract(AbstractPipeline[DistParams]):
     name = "dist_abstract"
     description = "Distributed E2E: generated records -> sink"
     rate_limit = 6000
 
     def define_jobs(self, runtime_params: DistParams):
-        pad = "x" * (runtime_params.get("pad_kb", 0) * 1024)
-        records = [
-            {"id": i, "run": runtime_params["run"], **({"pad": pad} if pad else {})}
-            for i in range(1, runtime_params.get("total", 1000) + 1)
-        ]
-        for index, part in enumerate(chunk(records, runtime_params.get("per_job", 100))):
-            if runtime_params.get("plan_delay_s"):
-                time.sleep(float(runtime_params["plan_delay_s"]))  # a slow planner
-            yield job(part, job_index=index)
+        return _generated_jobs(runtime_params)
 
     def define_transformations(self, records: Records, runtime_params: DistParams) -> Transformations:
         return [dist_behaviors()]
@@ -168,6 +178,73 @@ class DistAbstract(AbstractPipeline[DistParams]):
             params={"tag": tag} if tag else None,
             dedup_identity={"url": url, "tag": tag} if runtime_params.get("stable_identity") else None,
         )
+
+
+class DistAsyncParams(DistParams, total=False):
+    concurrency: Annotated[NotRequired[int], Param("Lookups in flight at once, per job", default=8)]
+    retries: Annotated[NotRequired[int], Param("Retries per lookup on a 5xx (the author's own)", default=0)]
+
+
+class DistLookupUser(RecordTransformation):
+    """Per-record GET of the mock users API, ``concurrency`` at a time, one client per job.
+
+    Each call carries ``?job=<job_index>`` so the sink can report peak concurrency per job.
+    A 404 drops the record; a 5xx is retried ``retries`` times, then fails the job.
+    """
+
+    name = "dist_lookup_user"
+
+    def __init__(self, concurrency: int, retries: int):
+        self.concurrency = concurrency
+        self.retries = retries
+        self.timeout = 120.0
+        self.client: Optional[httpx.AsyncClient] = None
+
+    async def setup(self, runtime_params: Dict[str, Any]) -> None:
+        self.client = httpx.AsyncClient(base_url=runtime_params.get("sink_url", SINK), timeout=60.0)
+
+    async def teardown(self) -> None:
+        if self.client is not None:
+            await self.client.aclose()
+
+    async def apply_record(self, record: Any, runtime_params: Dict[str, Any]) -> Optional[Record]:
+        assert self.client is not None  # opened by setup()
+        path = f"/api/{runtime_params['run']}/users/{record['id']}"
+        query = {"job": runtime_params.get("job_index")}
+        resp = await self.client.get(path, params=query)
+        for _ in range(self.retries):
+            if resp.status_code < 500:
+                break
+            resp = await self.client.get(path, params=query)
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return {**record, "user": resp.json()["name"]}
+
+
+class DistAsync(AbstractPipeline[DistAsyncParams]):
+    name = "dist_async"
+    description = "Distributed E2E: generated records -> per-record async lookup -> sink"
+    rate_limit = 6000
+
+    def define_jobs(self, runtime_params: DistAsyncParams):
+        return _generated_jobs(runtime_params)
+
+    def define_transformations(self, records: Records, runtime_params: DistAsyncParams) -> Transformations:
+        return [
+            dist_behaviors(),
+            DistLookupUser(runtime_params.get("concurrency", 8), runtime_params.get("retries", 0)),
+        ]
+
+    def define_destination(self, records: Records, runtime_params: DistAsyncParams) -> BaseDestination:
+        sink = runtime_params.get("sink_url", SINK)
+        body: Dict[str, Any] = {
+            "job_index": runtime_params.get("job_index"),
+            "records": [{"id": r["id"]} for r in records],
+            # the lookup's result rides beside the records, so a test can check it arrived
+            "users": {str(r["id"]): r["user"] for r in records},
+        }
+        return api_destination(url=f"{sink}/ingest/{runtime_params['run']}", body=body)
 
 
 class DistAbstractEs(AbstractPipeline[EsParams]):

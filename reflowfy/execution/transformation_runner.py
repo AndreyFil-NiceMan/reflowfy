@@ -4,13 +4,29 @@
 that runtime_params mutated by one transformation can reveal transformations
 that should run later. See
 docs/superpowers/specs/2026-06-09-dynamic-transformation-resolution-design.md.
+
+The loop is async so a transformation can await (an ``AsyncTransformation``, or
+a ``RecordTransformation`` running its records concurrently) on the worker's
+event loop. Synchronous user code — plain ``apply``, ``define_transformations`` —
+runs in a thread, so it never stalls that loop (and with it the Kafka heartbeat).
+The sync :func:`apply_transformations_iteratively` drives the same loop.
 """
 
+import asyncio
 import time
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple, cast
 
+from reflowfy.core.async_utils import run_coroutine_sync
 from reflowfy.core.exceptions import SkipJob
-from reflowfy.transformations.base import TransformationError
+from reflowfy.observability.logging import get_logger
+from reflowfy.transformations.base import (
+    AsyncTransformation,
+    RecordFailure,
+    RecordTransformation,
+    TransformationError,
+)
+
+logger = get_logger("execution.transformation_runner")
 
 DEFAULT_MAX_STEPS = 1000
 
@@ -28,6 +44,10 @@ class AppliedStep(NamedTuple):
     duration: float
     records_in: int
     records_out: int
+    mode: str = "sync"
+    """How the step ran: ``"sync"`` (in a thread), ``"async"`` or ``"per_record"``."""
+    concurrency: Optional[int] = None
+    """Records in flight at once, for a ``"per_record"`` step."""
 
     @property
     def delta(self) -> int:
@@ -63,7 +83,43 @@ def find_culprit_record(
     return None, None
 
 
+def _run_sync_step(transformation: Any, records: List[Any], runtime_params: Dict[str, Any]) -> Any:
+    # validate_input/validate_output are optional hooks; duck-typed
+    # transformations may implement only `apply`.
+    validate_input = getattr(transformation, "validate_input", None)
+    if callable(validate_input):
+        validate_input(records)
+    result = transformation.apply(records, runtime_params)
+    validate_output = getattr(transformation, "validate_output", None)
+    if callable(validate_output):
+        validate_output(result)
+    return result
+
+
+async def _run_async_step(
+    transformation: AsyncTransformation, records: List[Any], runtime_params: Dict[str, Any]
+) -> List[Any]:
+    transformation.validate_input(records)
+    result = await transformation.apply_async(records, runtime_params)
+    transformation.validate_output(result)
+    return result
+
+
 def apply_transformations_iteratively(
+    pipeline: Any,
+    original_records: List[Any],
+    runtime_params: Dict[str, Any],
+    max_steps: int = DEFAULT_MAX_STEPS,
+) -> Tuple[List[Any], List[AppliedStep]]:
+    """Synchronous form of :func:`apply_transformations_iteratively_async`."""
+    return run_coroutine_sync(
+        apply_transformations_iteratively_async(
+            pipeline, original_records, runtime_params, max_steps=max_steps
+        )
+    )
+
+
+async def apply_transformations_iteratively_async(
     pipeline: Any,
     original_records: List[Any],
     runtime_params: Dict[str, Any],
@@ -75,6 +131,9 @@ def apply_transformations_iteratively(
     records; only ``runtime_params`` changes between re-resolutions. The list must
     be append-only: re-resolution may only grow it, and already-applied steps
     (positions < applied_count) are never re-applied or un-applied.
+
+    Steps run one after another whatever their kind; only the records inside one
+    ``RecordTransformation`` step run concurrently.
 
     Args:
         pipeline: A resolved pipeline exposing ``name`` and ``define_transformations``.
@@ -96,8 +155,11 @@ def apply_transformations_iteratively(
     applied: List[AppliedStep] = []
     applied_count = 0
 
+    def resolve() -> List[Any]:
+        return list(pipeline.define_transformations(original_records, runtime_params))
+
     while True:
-        current = list(pipeline.define_transformations(original_records, runtime_params))
+        current = await asyncio.to_thread(resolve)
         if len(current) <= applied_count:
             break
 
@@ -112,19 +174,40 @@ def apply_transformations_iteratively(
 
         transformation = current[applied_count]
         records_in = len(transformed)
+        mode = "sync"
+        concurrency: Optional[int] = None
         start = time.time()
         try:
-            # validate_input/validate_output are optional hooks; duck-typed
-            # transformations may implement only `apply`.
-            validate_input = getattr(transformation, "validate_input", None)
-            if callable(validate_input):
-                validate_input(transformed)
-            transformed = transformation.apply(transformed, runtime_params)
-            validate_output = getattr(transformation, "validate_output", None)
-            if callable(validate_output):
-                validate_output(transformed)
+            if isinstance(transformation, RecordTransformation):
+                mode, concurrency = "per_record", transformation.effective_concurrency()
+                logger.debug(
+                    "Transformation %s: %d records, %d at a time",
+                    transformation.name,
+                    records_in,
+                    concurrency,
+                )
+            elif isinstance(transformation, AsyncTransformation):
+                mode = "async"
+            if isinstance(transformation, AsyncTransformation):
+                transformed = await _run_async_step(transformation, transformed, runtime_params)
+            else:
+                transformed = await asyncio.to_thread(
+                    _run_sync_step, transformation, transformed, runtime_params
+                )
         except (TransformationError, SkipJob):
             raise
+        except RecordFailure as exc:
+            # A per-record step knows exactly which record broke; no guessing.
+            raise TransformationError(
+                transformation_name=getattr(transformation, "name", "<unknown>"),
+                message=str(exc),
+                original_error=exc.error,
+                step_index=applied_count,
+                records_in=records_in,
+                culprit_index=exc.index,
+                culprit_record=exc.record,
+                applied_steps=list(applied),
+            ) from exc.error
         except Exception as exc:
             culprit_index, culprit = find_culprit_record(exc, transformed)
             raise TransformationError(
@@ -147,6 +230,8 @@ def apply_transformations_iteratively(
                 duration=time.time() - start,
                 records_in=records_in,
                 records_out=len(transformed),
+                mode=mode,
+                concurrency=concurrency,
             )
         )
         applied_count += 1

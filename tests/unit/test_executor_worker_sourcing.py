@@ -140,11 +140,11 @@ async def test_worker_applies_transformations(monkeypatch):
     from reflowfy.execution import job_runner
     from reflowfy.execution.transformation_runner import AppliedStep
 
-    def _fake_iter(pipeline, records, runtime_params):
+    async def _fake_iter(pipeline, records, runtime_params):
         out = [{**r, "v": r["v"].upper()} for r in records]
         return out, [AppliedStep("upper", 0.0, len(records), len(out))]
 
-    monkeypatch.setattr(job_runner, "apply_transformations_iteratively", _fake_iter)
+    monkeypatch.setattr(job_runner, "apply_transformations_iteratively_async", _fake_iter)
 
     from reflowfy.core.registry import pipeline_registry
 

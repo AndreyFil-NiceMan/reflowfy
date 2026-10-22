@@ -13,13 +13,15 @@ normalize → transform → resolve-destination sequence lives here so the
 test/preview paths cannot drift from what the worker actually runs.
 """
 
+import asyncio
 from typing import Any, Dict, Iterator, List, Optional, Tuple, cast
 
+from reflowfy.core.async_utils import run_coroutine_sync
 from reflowfy.core.exceptions import SkipJob, pipeline_step
 from reflowfy.core.serialization import to_json_safe
 from reflowfy.execution.transformation_runner import (
     AppliedStep,
-    apply_transformations_iteratively,
+    apply_transformations_iteratively_async,
 )
 from reflowfy.observability.logging import get_logger
 
@@ -146,6 +148,19 @@ def run_job_records(
     runtime_params: Dict[str, Any],
     limit: Optional[int] = None,
 ) -> Tuple[List[Any], List[Any], List[AppliedStep], Any]:
+    """Synchronous form of :func:`run_job_records_async`, for the local/preview callers.
+
+    One event loop per call, so every async step of one job shares it.
+    """
+    return run_coroutine_sync(run_job_records_async(source, pipeline, runtime_params, limit))
+
+
+async def run_job_records_async(
+    source: Any,
+    pipeline: Any,
+    runtime_params: Dict[str, Any],
+    limit: Optional[int] = None,
+) -> Tuple[List[Any], List[Any], List[AppliedStep], Any]:
     """Run the v2 per-job core for one (already-narrowed) source.
 
     Fetches the source's records, normalizes them to JSON-safe form (so
@@ -153,6 +168,11 @@ def run_job_records(
     ``json.dumps`` receives), applies the pipeline's transformations
     dynamically, and resolves the destination against the transformed
     records.
+
+    Synchronous user code (the fetch, sync transformations, ``define_destination``)
+    runs in a thread and async transformations are awaited, so the caller's event
+    loop stays free: on the worker, a blocked loop starves the Kafka heartbeat and
+    the broker evicts the worker mid-job.
 
     The worker never passes ``limit`` (it processes the whole slice the
     manager assigned). The ``reflowfy test`` / local-preview callers pass a
@@ -168,7 +188,7 @@ def run_job_records(
     name = getattr(pipeline, "name", "<unknown>")
     try:
         with pipeline_step("source fetch", name):
-            records = to_json_safe(source.fetch(runtime_params))
+            records = await asyncio.to_thread(lambda: to_json_safe(source.fetch(runtime_params)))
         if limit is not None:
             records = records[:limit]
         if not records:
@@ -176,11 +196,13 @@ def run_job_records(
             # slice can match zero docs). Nothing to transform; skip so transformations
             # aren't invoked on []. Every caller already treats empty records as a no-op.
             return records, [], [], None
-        transformed_records, applied = apply_transformations_iteratively(
+        transformed_records, applied = await apply_transformations_iteratively_async(
             pipeline, records, runtime_params
         )
         with pipeline_step("define_destination", name):
-            destination = pipeline.define_destination(transformed_records, runtime_params)
+            destination = await asyncio.to_thread(
+                pipeline.define_destination, transformed_records, runtime_params
+            )
     except SkipJob as exc:
         # The pipeline dropped this job. Same shape as an empty slice, which every
         # caller already treats as a no-op — no destination write, no failure.

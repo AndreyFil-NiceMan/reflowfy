@@ -176,6 +176,42 @@ The package ships `reflowfy/py.typed` (PEP 561), so installs are type-checked by
 Where a third-party library genuinely has no types, the suppression is **file-scoped, never repo-wide**, with a header comment naming the library: `destinations/kafka.py`, `worker/consumer.py` and `reflow_manager/dispatcher.py` (aiokafka ships no stubs), and `sources/s3.py` (`reportTypedDictNotRequiredAccess`, because boto3-stubs marks `Key`/`Size`/`ETag` NotRequired). That rule stays live everywhere else on purpose — it is what catches `runtime_params["execution_id"]` subscripting on the all-optional `RuntimeParams`. `boto3.client("s3", ...)` passes every argument explicitly: boto3 is typed by overloads on the literal service name, and a `**kwargs` splat matches none of them, making the client and everything derived from it Unknown.
 
 
+### Async transformations
+
+A transformation may be a coroutine. The per-job core is async
+(`run_job_records_async` / `apply_transformations_iteratively_async`) and the worker awaits it on
+its own event loop; the sync `run_job_records` / `apply_transformations_iteratively` that
+`LocalExecutor` and `reflowfy test` call drive the same coroutine through
+`core/async_utils.run_coroutine_sync` (one loop per job; on a helper thread when a loop is
+already running, e.g. inside FastAPI). Three kinds of step, freely mixed in one chain:
+
+- **sync** (`apply`): run in `asyncio.to_thread`, as are `source.fetch`, `define_transformations`
+  and `define_destination`. The loop must stay free: a blocked loop starves aiokafka's heartbeat,
+  the group rebalances and the job runs twice.
+- **async** (`AsyncTransformation.apply_async`, or `@transformation` on an `async def`): awaited.
+  `AsyncTransformation.apply` still works for sync callers. It is a separate method name
+  because overriding sync `apply` with an `async def` is an LSP error.
+- **per_record** (`RecordTransformation.apply_record`, or `@record_transformation(name,
+  concurrency=, timeout=)` on an `async def f(record, params) -> record | None`): every record
+  awaited, `concurrency` at a time (default `TRANSFORM_CONCURRENCY`, 16) by a fixed pool of
+  workers, not a task per record. Order is kept, `None` drops the record, the first failure
+  cancels the rest and raises `TransformationError` with the exact `culprit_index` (via
+  `RecordFailure`), `SkipJob` from any record drops the job. Subclass it for a client shared by
+  the step's records: `setup()` / `teardown()` run once around them. An `httpx.AsyncClient`
+  costs ~40 ms of CPU to build, so one per record is slow *and* stalls the loop.
+
+Steps stay sequential (re-resolution reads what earlier steps wrote to `runtime_params`), and the
+concurrent records of one step share `runtime_params`: read it, don't write it. Retries and rate
+limits on remote calls are the author's job; the framework only caps concurrency and the
+per-record timeout. Don't keep async clients at module level: `reflowfy test` and local mode use
+a new loop per job. Sources stay sync (an async `fetch` is a possible follow-up).
+
+Observability: `AppliedStep.mode` / `.concurrency` (worker debug log, `reflowfy test -v`);
+per-step durations stay in `JobStats.transformation_times`. No new metric or job state: an async
+step's outcomes are the existing ones. Tests: `tests/unit/test_async_transformations.py`,
+`tests/e2e/test_async_transform.py` (the mock API counts lookups in flight),
+`tests/e2e_distributed/test_async_pipelines.py` (`dist_async`, per-job peak from the sink).
+
 ### Execution modes
 
 `EXECUTION_MODE` env var selects `local` (in-process via `LocalDispatcher`, used by the default docker-compose) or `distributed` (Kafka via `KafkaDispatcher`). Same pipeline code runs in both.

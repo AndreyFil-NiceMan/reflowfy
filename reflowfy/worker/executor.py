@@ -19,7 +19,7 @@ from reflowfy.execution.content_dedup import (
     previous_destination_identity,
     release_content_hash,
 )
-from reflowfy.execution.job_runner import run_job_records
+from reflowfy.execution.job_runner import run_job_records_async
 from reflowfy.factories.source_factory import SourceFactory
 from reflowfy.observability import metrics
 from reflowfy.observability.context import log_context
@@ -256,11 +256,12 @@ class WorkerExecutor:
                 )
 
             # Shared v2 core: fetch this slice, normalize, transform, resolve destination.
-            # In a thread: fetch/transform are blocking (sync Elasticsearch client). Run
+            # Async transformations are awaited on this loop; the blocking parts (sync
+            # Elasticsearch client, sync transformations) run in threads inside it. Run
             # inline they stall the event loop, starving the Kafka heartbeat so the broker
             # evicts the worker and the later commit fails with CommitFailedError.
-            records, transformed_records, applied, destination = await asyncio.to_thread(
-                run_job_records, source, pipeline, runtime_params
+            records, transformed_records, applied, destination = await run_job_records_async(
+                source, pipeline, runtime_params
             )
             stats.records_input = len(records)
 
@@ -282,8 +283,9 @@ class WorkerExecutor:
             for step in applied:
                 stats.transformation_times[step.name] = round(step.duration, 3)
                 logger.debug(
-                    "Applied transformation %s (%.3fs, %d -> %d records)",
+                    "Applied transformation %s (%s, %.3fs, %d -> %d records)",
                     step.name,
+                    step.mode if step.concurrency is None else f"{step.mode} x{step.concurrency}",
                     step.duration,
                     step.records_in,
                     step.records_out,
