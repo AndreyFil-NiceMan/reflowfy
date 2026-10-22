@@ -367,14 +367,25 @@ class TestOutcomes:
 # ---------------------------------------------------------------- content dedup
 
 
+def _claims(monkeypatch, won: bool = True, legacy_held: bool = False):
+    """Stub the record claim: every hash is won (or none is). Returns the claim mock."""
+
+    async def claim(session_factory, hashes, job_id):
+        return set(hashes) if won else set()
+
+    claim_mock = AsyncMock(side_effect=claim)
+    monkeypatch.setattr(executor_mod, "claim_record_hashes", claim_mock)
+    monkeypatch.setattr(executor_mod, "held_by_other_job", AsyncMock(return_value=legacy_held))
+    return claim_mock
+
+
 class TestContentDedup:
-    async def test_lost_claim_is_deduplicated_and_not_written(
+    async def test_lost_claims_are_deduplicated_and_not_written(
         self, register, stub_worker, monkeypatch
     ):
         dest = FakeDest()
         register(FakePipeline("p2-dedup", dest))
-        claim = AsyncMock(return_value=False)
-        monkeypatch.setattr(executor_mod, "claim_content_hash", claim)
+        claim = _claims(monkeypatch, won=False)
         before = processed("p2-dedup", "deduplicated")
 
         with capture_logs() as logs:
@@ -383,56 +394,94 @@ class TestContentDedup:
         assert ok is True
         (stats,) = stub_worker.updates
         assert stats.deduplicated is True and stats.records_output == 0
+        assert stats.records_deduplicated == 2
         assert "Job j: content already processed — deduplicated" in logs
         assert processed("p2-dedup", "deduplicated") == before + 1
         assert dest.sent == []
-        # the claim carries the job identity and the pre-destination legacy hash
-        args, kwargs = claim.await_args
-        assert args[2:] == ("p2-dedup", "j", "e")
-        assert kwargs["legacy_hash"] != args[1]
+        # one hash per record, claimed under this job
+        args = claim.await_args.args
+        assert len(args[1]) == 2 and args[2] == "j"
+
+    async def test_a_job_the_previous_release_wrote_is_deduplicated(
+        self, register, stub_worker, monkeypatch
+    ):
+        dest = FakeDest()
+        register(FakePipeline("p2-legacy", dest))
+        claim = _claims(monkeypatch, legacy_held=True)
+
+        assert await stub_worker.execute_job(_payload("p2-legacy", dedup_check=True)) is True
+        assert stub_worker.updates[0].deduplicated is True
+        assert dest.sent == []
+        claim.assert_not_awaited()
+
+    async def test_the_legacy_guard_can_be_switched_off(
+        self, register, stub_worker, monkeypatch
+    ):
+        monkeypatch.setenv("DEDUP_HONOR_LEGACY_HASH", "false")
+        dest = FakeDest()
+        register(FakePipeline("p2-legacy-off", dest))
+        _claims(monkeypatch, legacy_held=True)
+
+        assert await stub_worker.execute_job(_payload("p2-legacy-off", dedup_check=True)) is True
+        executor_mod.held_by_other_job.assert_not_awaited()  # type: ignore[attr-defined]
+        assert dest.sent == [{"id": 1}, {"id": 2}]
+
+    async def test_the_guard_checks_the_previous_releases_destination_identity(
+        self, register, stub_worker, monkeypatch
+    ):
+        """The release before last kept an X-API-Key header in the identity; a job it
+        wrote is still found by that hash."""
+        dest = FakeDest()
+        dest.config = {"url": "http://x", "headers": {"X-API-Key": "k"}}
+        register(FakePipeline("p2-legacy-prev", dest))
+        _claims(monkeypatch)
+
+        assert await stub_worker.execute_job(_payload("p2-legacy-prev", dedup_check=True))
+        job_hashes = executor_mod.held_by_other_job.await_args.args[1]  # type: ignore[attr-defined]
+        assert len(job_hashes) == 3 and len(set(job_hashes)) == 3
 
     async def test_no_claim_without_dedup_check(self, register, stub_worker, monkeypatch):
         register(FakePipeline("p2-nodedup", FakeDest()))
-        claim = AsyncMock(return_value=False)
-        monkeypatch.setattr(executor_mod, "claim_content_hash", claim)
+        claim = _claims(monkeypatch, won=False)
 
         assert await stub_worker.execute_job(_payload("p2-nodedup")) is True
         claim.assert_not_awaited()
 
-    async def test_won_claim_is_released_when_the_destination_is_unhealthy(
+    async def test_won_claims_are_released_when_the_destination_is_unhealthy(
         self, register, stub_worker, monkeypatch
     ):
         register(FakePipeline("p2-release-h", FakeDest(healthy=False)))
-        monkeypatch.setattr(executor_mod, "claim_content_hash", AsyncMock(return_value=True))
+        _claims(monkeypatch)
         release = AsyncMock()
-        monkeypatch.setattr(executor_mod, "release_content_hash", release)
+        monkeypatch.setattr(executor_mod, "release_record_hashes", release)
 
         assert await stub_worker.execute_job(_payload("p2-release-h", dedup_check=True)) is False
         release.assert_awaited_once()
+        assert len(release.await_args.args[1]) == 2
         assert release.await_args.args[2] == "j"
 
-    async def test_won_claim_is_released_when_the_send_fails(
+    async def test_won_claims_are_released_when_the_send_fails(
         self, register, stub_worker, monkeypatch
     ):
         register(FakePipeline("p2-release-f", FakeDest(send_error=DestinationError("x", "y"))))
-        monkeypatch.setattr(executor_mod, "claim_content_hash", AsyncMock(return_value=True))
+        _claims(monkeypatch)
         release = AsyncMock(side_effect=RuntimeError("db down too"))  # swallowed
-        monkeypatch.setattr(executor_mod, "release_content_hash", release)
+        monkeypatch.setattr(executor_mod, "release_record_hashes", release)
 
         assert await stub_worker.execute_job(_payload("p2-release-f", dedup_check=True)) is False
         release.assert_awaited_once()
         assert stub_worker.updates[0].error_type == "DestinationError"
 
-    async def test_shutdown_mid_send_releases_the_claim_and_propagates(
+    async def test_shutdown_mid_send_releases_the_claims_and_propagates(
         self, register, stub_worker, monkeypatch
     ):
-        """A cancelled task (scale-down) bypasses `except Exception`; the claim must
+        """A cancelled task (scale-down) bypasses `except Exception`; the claims must
         still be released so the redelivered message is not marked deduplicated."""
         dest = FakeDest(send_error=asyncio.CancelledError())
         register(FakePipeline("p2-release-c", dest))
-        monkeypatch.setattr(executor_mod, "claim_content_hash", AsyncMock(return_value=True))
+        _claims(monkeypatch)
         release = AsyncMock(side_effect=asyncio.CancelledError())  # swallowed as well
-        monkeypatch.setattr(executor_mod, "release_content_hash", release)
+        monkeypatch.setattr(executor_mod, "release_record_hashes", release)
 
         with pytest.raises(asyncio.CancelledError):
             await stub_worker.execute_job(_payload("p2-release-c", dedup_check=True))

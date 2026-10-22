@@ -1,4 +1,4 @@
-"""Background sweeper that purges expired processed_content rows.
+"""Background sweeper that purges expired dedup claims (processed_records, processed_content).
 
 Mirrors pipeline_scheduler.py: a daemon thread polling at an interval.
 Retention defaults to 24h; the same window bounds the rare case of a
@@ -9,12 +9,12 @@ import logging
 import os
 import threading
 from datetime import datetime, timezone, timedelta
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from reflowfy.reflow_manager.models import Execution, Job, ProcessedContent
+from reflowfy.reflow_manager.models import Execution, Job, ProcessedContent, ProcessedRecord
 from reflowfy.reflow_manager.database import SessionLocal
 
 logger = logging.getLogger(__name__)
@@ -25,12 +25,40 @@ EXECUTION_RETENTION_HOURS = int(os.getenv("EXECUTION_RETENTION_HOURS", "24"))
 CONTENT_DEDUP_SWEEP_INTERVAL = int(os.getenv("CONTENT_DEDUP_SWEEP_INTERVAL_SECONDS", "3600"))
 
 
-def purge_expired_content(db: Session, retention_hours: int, now: Optional[datetime] = None) -> int:
-    """Delete processed_content rows older than retention_hours. Returns count."""
+# Rows per DELETE. A 4M-record run leaves 4M processed_records rows; one statement
+# for all of them is one huge transaction and a burst of WAL and dead tuples.
+PURGE_CHUNK_SIZE = int(os.getenv("CONTENT_DEDUP_PURGE_CHUNK_SIZE", "10000"))
+
+
+def _purge_in_chunks(db: Session, key: Any, created_at: Any, cutoff: datetime, chunk: int) -> int:
+    table = key.table
+    total = 0
+    while True:
+        expired = select(key).where(created_at < cutoff).limit(chunk)
+        result = db.execute(delete(table).where(key.in_(expired)))
+        db.commit()
+        deleted = getattr(result, "rowcount", 0) or 0
+        total += deleted
+        if deleted < chunk:
+            return total
+
+
+def purge_expired_content(
+    db: Session,
+    retention_hours: int,
+    now: Optional[datetime] = None,
+    chunk_size: Optional[int] = None,
+) -> int:
+    """Delete dedup claims (processed_records, and the legacy processed_content)
+    older than retention_hours, committing every ``chunk_size`` rows. Returns count."""
     now = now or datetime.now(timezone.utc).replace(tzinfo=None)
     cutoff = now - timedelta(hours=retention_hours)
-    result = db.execute(delete(ProcessedContent).where(ProcessedContent.created_at < cutoff))
-    return getattr(result, "rowcount", 0) or 0
+    chunk = chunk_size or PURGE_CHUNK_SIZE
+    return _purge_in_chunks(
+        db, ProcessedRecord.record_hash, ProcessedRecord.created_at, cutoff, chunk
+    ) + _purge_in_chunks(
+        db, ProcessedContent.content_hash, ProcessedContent.created_at, cutoff, chunk
+    )
 
 
 def purge_expired_executions(

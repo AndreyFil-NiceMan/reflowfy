@@ -165,9 +165,10 @@ def api_destination(
                                    auth_type="basic", auth_token="user:pass")
 
     With ``enable_duplicate_jobs=False`` the destination's whole config, body included,
-    identifies "where this job writes". If the body carries something that changes on
-    every run (a timestamp, a request id), pass ``dedup_identity`` — any JSON-able value
-    naming the real target, e.g. ``{"url": url, "tenant": tenant}`` — so dedup can match.
+    is part of every record's dedup hash ("where this record is written"). If the body
+    carries the records themselves, or something that changes on every run (a timestamp,
+    a request id), pass ``dedup_identity`` — any JSON-able value naming the real target,
+    e.g. ``{"url": url, "tenant": tenant}`` — so dedup can match.
     """
     destination = ApiDestination(
         url=url,

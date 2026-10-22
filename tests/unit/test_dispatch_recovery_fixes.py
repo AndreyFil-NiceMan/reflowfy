@@ -292,9 +292,12 @@ async def test_claim_released_when_job_cancelled(monkeypatch):
     import reflowfy.worker.executor as executor_mod
 
     _register(monkeypatch, _CancellingDest())
-    monkeypatch.setattr(executor_mod, "claim_content_hash", AsyncMock(return_value=True))
+    monkeypatch.setattr(executor_mod, "held_by_other_job", AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        executor_mod, "claim_record_hashes", AsyncMock(side_effect=lambda sf, h, j: set(h))
+    )
     released = AsyncMock()
-    monkeypatch.setattr(executor_mod, "release_content_hash", released)
+    monkeypatch.setattr(executor_mod, "release_record_hashes", released)
 
     ex = WorkerExecutor(database_url="postgresql://x/y")
     monkeypatch.setattr(ex, "_claim_job", AsyncMock(return_value=None))

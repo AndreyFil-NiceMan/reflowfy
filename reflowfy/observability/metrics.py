@@ -31,6 +31,13 @@ records_processed_total = Counter(
     ["pipeline"],
 )
 
+# Records dropped by enable_duplicate_jobs=False: another job already sent them
+records_deduplicated_total = Counter(
+    "reflowfy_records_deduplicated_total",
+    "Total number of records not sent because another job already sent them",
+    ["pipeline"],
+)
+
 # Worker metrics
 active_workers = Gauge(
     "reflowfy_active_workers",

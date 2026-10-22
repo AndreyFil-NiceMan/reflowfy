@@ -18,12 +18,12 @@ from test_worker_executor_paths import (  # type: ignore[import-not-found]  # no
 async def test_shutdown_mid_send_without_dedup_propagates_and_releases_nothing(
     register, stub_worker, monkeypatch  # noqa: F811
 ):
-    """Without `dedup_check` no content hash was claimed, so there is nothing to release —
+    """Without `dedup_check` no record hash was claimed, so there is nothing to release —
     the cancellation still propagates and the job row is left for the redelivery."""
     dest = FakeDest(send_error=asyncio.CancelledError())
     register(FakePipeline("gaps-cancel-nodedup", dest))
     release = AsyncMock()
-    monkeypatch.setattr(executor_mod, "release_content_hash", release)
+    monkeypatch.setattr(executor_mod, "release_record_hashes", release)
 
     with pytest.raises(asyncio.CancelledError):
         await stub_worker.execute_job(_payload("gaps-cancel-nodedup"))
