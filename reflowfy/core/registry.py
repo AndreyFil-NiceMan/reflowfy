@@ -79,7 +79,9 @@ class PipelineRegistry:
                 return
 
             self._pipelines[pipeline.name] = pipeline
-            logger.debug("Registered pipeline: %s", pipeline.name)
+            logger.debug(
+                "Registered pipeline: %s", pipeline.name, extra={"event": "pipeline_registered"}
+            )
 
     def get(self, name: str) -> Optional["AbstractPipeline"]:
         """

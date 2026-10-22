@@ -120,7 +120,11 @@ class LocalExecutor(BaseExecutor):
                 remaining = self.max_records - total_fetched
                 if remaining <= 0:
                     break
-                logger.debug("Fetching data from source (limit: %d)", remaining)
+                logger.debug(
+                    "Fetching data from source (limit: %d)",
+                    remaining,
+                    extra={"event": "source_fetch"},
+                )
                 slice_params = job_runtime_params(sub, flat_runtime_params)
                 records, transformed_records, applied, destination = run_job_records(
                     sub, pipeline, slice_params, limit=remaining
@@ -129,19 +133,29 @@ class LocalExecutor(BaseExecutor):
                 if not records:
                     skip_reason = slice_params.get("skip_reason")
                     if skip_reason:
-                        logger.info("Execution %s: job dropped (%s)", execution_id, skip_reason)
+                        logger.info(
+                            "Execution %s: job dropped (%s)",
+                            execution_id,
+                            skip_reason,
+                            extra={"event": "job_dropped"},
+                        )
                     continue
 
-                logger.debug("Fetched %d records", len(records))
+                logger.debug("Fetched %d records", len(records), extra={"event": "source_fetched"})
                 for step in applied:
                     logger.debug(
                         "Applied transformation: %s (%d -> %d records)",
                         step.name,
                         step.records_in,
                         step.records_out,
+                        extra={"event": "transform_done"},
                     )
 
-                logger.debug("Sending %d records to destination", len(transformed_records))
+                logger.debug(
+                    "Sending %d records to destination",
+                    len(transformed_records),
+                    extra={"event": "destination_send"},
+                )
                 destination.send_with_retry(
                     transformed_records,
                     metadata=slice_params,
@@ -239,14 +253,19 @@ class LocalExecutor(BaseExecutor):
             total_jobs=len(ids),
         )
 
-        logger.info("IdBasedPipeline %s local execution: %d IDs", execution_id, len(ids))
+        logger.info(
+            "IdBasedPipeline %s local execution: %d IDs",
+            execution_id,
+            len(ids),
+            extra={"event": "execution_start"},
+        )
 
         total_records_fetched = 0
         total_records_sent = 0
 
         try:
             for current_id in ids:
-                logger.debug("Processing ID: %s", current_id)
+                logger.debug("Processing ID: %s", current_id, extra={"event": "id_processing"})
 
                 # Resolve source for this ID.
                 # batch_params is a per-ID copy enriched by define_source.
@@ -283,7 +302,12 @@ class LocalExecutor(BaseExecutor):
                     if not records:
                         skip_reason = flat_id_params.get("skip_reason")
                         if skip_reason:
-                            logger.info("ID %s: job dropped (%s)", current_id, skip_reason)
+                            logger.info(
+                                "ID %s: job dropped (%s)",
+                                current_id,
+                                skip_reason,
+                                extra={"event": "job_dropped"},
+                            )
                         continue
                     for step in applied:
                         logger.debug(
@@ -291,6 +315,7 @@ class LocalExecutor(BaseExecutor):
                             step.name,
                             step.records_in,
                             step.records_out,
+                            extra={"event": "id_transform_done"},
                         )
                     destination.send_with_retry(
                         transformed_records,
@@ -300,14 +325,20 @@ class LocalExecutor(BaseExecutor):
                     id_sent += len(transformed_records)
 
                 if id_fetched == 0:
-                    logger.debug("No records for ID: %s", current_id)
+                    logger.debug("No records for ID: %s", current_id, extra={"event": "id_empty"})
                     status.completed_jobs += 1
                     continue
 
                 total_records_fetched += id_fetched
                 total_records_sent += id_sent
                 status.completed_jobs += 1
-                logger.debug("ID %s: fetched %d, sent %d", current_id, id_fetched, id_sent)
+                logger.debug(
+                    "ID %s: fetched %d, sent %d",
+                    current_id,
+                    id_fetched,
+                    id_sent,
+                    extra={"event": "id_done"},
+                )
 
             status.state = ExecutionState.COMPLETED
             status.metadata["ids_processed"] = len(ids)

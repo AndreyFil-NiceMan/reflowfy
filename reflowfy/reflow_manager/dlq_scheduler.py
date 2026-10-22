@@ -55,21 +55,27 @@ class DLQScheduler:
     def start(self):
         """Start the background polling thread."""
         if self._running:
-            logger.warning("DLQ Scheduler already running")
+            logger.warning(
+                "DLQ Scheduler already running", extra={"event": "scheduler_already_running"}
+            )
             return
 
         self._running = True
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
-        logger.info("DLQ Scheduler started (polling every %ss)", self.poll_interval)
+        logger.info(
+            "DLQ Scheduler started (polling every %ss)",
+            self.poll_interval,
+            extra={"event": "scheduler_start"},
+        )
 
     def stop(self):
         """Stop the scheduler gracefully."""
         if not self._running:
             return
 
-        logger.info("Stopping DLQ Scheduler")
+        logger.info("Stopping DLQ Scheduler", extra={"event": "scheduler_stopping"})
         self._running = False
         self._stop_event.set()
 
@@ -77,7 +83,7 @@ class DLQScheduler:
             self._thread.join(timeout=10)
             self._thread = None
 
-        logger.info("DLQ Scheduler stopped")
+        logger.info("DLQ Scheduler stopped", extra={"event": "scheduler_stopped"})
 
     def _run_loop(self):
         """Main polling loop."""
@@ -85,7 +91,9 @@ class DLQScheduler:
             try:
                 self._poll_and_process()
             except Exception:
-                logger.error("DLQ Scheduler error", exc_info=True)
+                logger.error(
+                    "DLQ Scheduler error", exc_info=True, extra={"event": "scheduler_error"}
+                )
 
             # Wait for poll interval or stop event
             self._stop_event.wait(timeout=self.poll_interval)

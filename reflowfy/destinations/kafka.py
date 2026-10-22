@@ -178,6 +178,7 @@ class KafkaDestination(BaseDestination):
                         "Kafka destination: ignoring producer setting %r "
                         "(not an AIOKafkaProducer parameter, or one it sets itself)",
                         key,
+                        extra={"event": "producer_setting_ignored"},
                     )
 
             self._producer = AIOKafkaProducer(**producer_kwargs)

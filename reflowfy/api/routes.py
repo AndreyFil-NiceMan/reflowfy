@@ -241,7 +241,13 @@ def _create_run_route(
     body_str = ("body: " + ", ".join(p.name for p in body_params)) if body_params else "no body"
     query_str = "&".join(p.name + "=..." for p in query_params)
     full_query = "?mode=distributed&rate_limit=..." + (f"&{query_str}" if query_str else "")
-    logger.debug("Registered POST /pipelines/%s/run%s [%s]", pipeline_name, full_query, body_str)
+    logger.debug(
+        "Registered POST /pipelines/%s/run%s [%s]",
+        pipeline_name,
+        full_query,
+        body_str,
+        extra={"event": "route_registered"},
+    )
 
 
 def _rate_limit_description(pipeline: Any) -> str:
@@ -289,4 +295,6 @@ def create_pipeline_routes(
             "config": pipeline.config,
         }
 
-    logger.debug("Registered GET /pipelines/%s/status", pipeline_name)
+    logger.debug(
+        "Registered GET /pipelines/%s/status", pipeline_name, extra={"event": "route_registered"}
+    )

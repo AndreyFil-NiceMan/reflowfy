@@ -76,6 +76,7 @@ def main():
             "SASL enabled: %s / %s",
             security_protocol or "SASL_PLAINTEXT",
             sasl_mechanism or "SCRAM-SHA-256",
+            extra={"event": "service_config"},
         )
 
     # Create consumer

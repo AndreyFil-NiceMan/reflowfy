@@ -299,6 +299,7 @@ class WorkerExecutor:
                     step.duration,
                     step.records_in,
                     step.records_out,
+                    extra={"event": "transform_applied"},
                 )
 
             stats.records_output = len(transformed_records)
@@ -368,7 +369,11 @@ class WorkerExecutor:
                 return False
 
             # Send to destination and track time (async)
-            logger.debug("Sending %d records to destination", len(transformed_records))
+            logger.debug(
+                "Sending %d records to destination",
+                len(transformed_records),
+                extra={"event": "destination_send"},
+            )
             dest_start = time.time()
             await destination.send_with_retry(transformed_records, runtime_params)
             stats.destination_write_time = time.time() - dest_start

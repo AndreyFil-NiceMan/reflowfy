@@ -650,10 +650,10 @@ async def _startup() -> None:
 
     # Initialize database (retries internally until DB is ready)
     global _db_ready
-    logger.info("Initializing database...")
+    logger.info("Initializing database...", extra={"event": "db_init"})
     init_db()
     _db_ready = True
-    logger.info("Database initialized")
+    logger.info("Database initialized", extra={"event": "db_ready"})
 
     # Load pipelines using global discovery (module from PIPELINE_MODULE env)
     from reflowfy.core.pipeline_discovery import discover_and_load_pipelines
@@ -665,18 +665,21 @@ async def _startup() -> None:
         os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
         os.getenv("KAFKA_TOPIC", "reflow.jobs"),
         os.getenv("MAX_JOBS_PER_MINUTE", "6000"),
+        extra={"event": "service_config"},
     )
 
     # Check for interrupted executions and recover
-    logger.info("Checking for interrupted executions...")
+    logger.info("Checking for interrupted executions...", extra={"event": "recovery_check"})
     await _recover_interrupted_executions()
 
     # Initialize DLQ scheduler
     try:
         init_dlq_scheduler(_pipeline_runner_factory)
-        logger.info("DLQ Scheduler initialized")
+        logger.info("DLQ Scheduler initialized", extra={"event": "scheduler_ready"})
     except Exception:
-        logger.exception("Failed to initialize DLQ scheduler")
+        logger.exception(
+            "Failed to initialize DLQ scheduler", extra={"event": "scheduler_init_failed"}
+        )
 
     # Initialize Pipeline Scheduler (cron-based)
     try:
@@ -686,18 +689,25 @@ async def _startup() -> None:
         try:
             scheduler.sync_schedules_from_registry(sync_db)
             sync_db.commit()
-            logger.info("Pipeline Scheduler initialized and schedules synced")
+            logger.info(
+                "Pipeline Scheduler initialized and schedules synced",
+                extra={"event": "scheduler_ready"},
+            )
         finally:
             sync_db.close()
     except Exception:
-        logger.exception("Failed to initialize Pipeline Scheduler")
+        logger.exception(
+            "Failed to initialize Pipeline Scheduler", extra={"event": "scheduler_init_failed"}
+        )
 
     # Initialize Content Dedup Sweeper
     try:
         init_content_dedup_scheduler()
-        logger.info("Content Dedup Sweeper initialized")
+        logger.info("Content Dedup Sweeper initialized", extra={"event": "scheduler_ready"})
     except Exception:
-        logger.exception("Failed to initialize Content Dedup Sweeper")
+        logger.exception(
+            "Failed to initialize Content Dedup Sweeper", extra={"event": "scheduler_init_failed"}
+        )
 
 
 async def _recover_interrupted_executions() -> None:
@@ -723,7 +733,7 @@ async def _recover_interrupted_executions() -> None:
         interrupted = manager.execution_manager.get_interrupted_executions()
 
         if not interrupted:
-            logger.info("No interrupted executions found")
+            logger.info("No interrupted executions found", extra={"event": "recovery_none"})
             return
 
         logger.info(
@@ -750,7 +760,11 @@ async def _recover_interrupted_executions() -> None:
                 execution.execution_id,
             )
 
-        logger.info("Scheduled %d execution(s) for recovery", len(interrupted))
+        logger.info(
+            "Scheduled %d execution(s) for recovery",
+            len(interrupted),
+            extra={"event": "recovery_scheduled"},
+        )
 
     finally:
         db.close()
@@ -775,7 +789,7 @@ async def _shutdown() -> None:
     stop_pipeline_scheduler()
     stop_dlq_scheduler()
     stop_content_dedup_scheduler()
-    logger.info("Shutdown complete")
+    logger.info("Shutdown complete", extra={"event": "service_stopped"})
 
 
 # Main entry point
@@ -786,7 +800,12 @@ def main() -> None:
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "8001"))
 
-    logger.info("ReflowManager service starting on http://%s:%d", host, port)
+    logger.info(
+        "ReflowManager service starting on http://%s:%d",
+        host,
+        port,
+        extra={"event": "service_listen"},
+    )
     uvicorn.run(app, host=host, port=port)
 
 

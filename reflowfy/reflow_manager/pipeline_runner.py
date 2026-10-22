@@ -1029,9 +1029,9 @@ class PipelineRunner:
                 return False
             if not announced:
                 logger.info(
-                    "Execution %s is still being planned (or was just created); "
+                    "Execution is still being planned (or was just created); "
                     "waiting to see whether its planner is alive",
-                    execution_id,
+                    extra={"event": "plan_waiting"},
                 )
                 announced = True
             time.sleep(DRIVER_RETRY_SECONDS)

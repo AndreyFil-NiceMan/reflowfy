@@ -63,10 +63,18 @@ def _scan_directory(module_name: str, label: str) -> int:
                 display = rel_dir / filename
                 try:
                     importlib.import_module(full_module)
-                    logger.debug("Loaded %s: %s", label, display)
+                    logger.debug(
+                        "Loaded %s: %s", label, display, extra={"event": "component_loaded"}
+                    )
                     loaded_count += 1
                 except Exception:
-                    logger.warning("Failed to load %s %s", label, display, exc_info=True)
+                    logger.warning(
+                        "Failed to load %s %s",
+                        label,
+                        display,
+                        exc_info=True,
+                        extra={"event": "component_load_failed"},
+                    )
 
     return loaded_count
 
@@ -109,7 +117,7 @@ def discover_and_load_pipelines(module_name: Optional[str] = None) -> int:
 
     total_loaded = 0
 
-    logger.info("Discovering components...")
+    logger.info("Discovering components...", extra={"event": "discovery_start"})
 
     # Scan reusable components first (so pipelines can reference them)
     total_loaded += _scan_directory("sources", "source")

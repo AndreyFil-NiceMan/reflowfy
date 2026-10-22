@@ -45,7 +45,9 @@ class PipelineScheduler:
     def start(self) -> None:
         """Start the background polling thread."""
         if self._running:
-            logger.warning("Pipeline Scheduler already running")
+            logger.warning(
+                "Pipeline Scheduler already running", extra={"event": "scheduler_already_running"}
+            )
             return
 
         self._running = True
@@ -63,7 +65,7 @@ class PipelineScheduler:
         if not self._running:
             return
 
-        logger.info("Stopping Pipeline Scheduler")
+        logger.info("Stopping Pipeline Scheduler", extra={"event": "scheduler_stopping"})
         self._running = False
         self._stop_event.set()
 
@@ -71,7 +73,7 @@ class PipelineScheduler:
             self._thread.join(timeout=10)
             self._thread = None
 
-        logger.info("Pipeline Scheduler stopped")
+        logger.info("Pipeline Scheduler stopped", extra={"event": "scheduler_stopped"})
 
     def _run_loop(self) -> None:
         """Main polling loop."""

@@ -36,7 +36,9 @@ def create_app() -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         """Initialize pipelines on startup."""
         setup_logging(service_name="api")
-        logger.info("Starting Reflowfy API (version %s)", __version__)
+        logger.info(
+            "Starting Reflowfy API (version %s)", __version__, extra={"event": "service_start"}
+        )
 
         # Load pipelines using global discovery (module from PIPELINE_MODULE env)
         discover_and_load_pipelines()
@@ -154,7 +156,7 @@ def setup_pipeline_routes(app: FastAPI) -> None:
             distributed_executor=distributed_executor,
         )
 
-    logger.info("Routes configured")
+    logger.info("Routes configured", extra={"event": "routes_ready"})
 
 
 def main():
@@ -168,7 +170,7 @@ def main():
 
     # Note: User must import their pipeline definitions before starting the server
     # This triggers registration via metaclass
-    logger.info("Starting Reflowfy API (version %s)", __version__)
+    logger.info("Starting Reflowfy API (version %s)", __version__, extra={"event": "service_start"})
 
     # Auto-discover and load pipelines
     discover_and_load_pipelines()
@@ -180,7 +182,12 @@ def main():
     host = os.getenv("API_HOST", "0.0.0.0")
     port = int(os.getenv("API_PORT", "8000"))
 
-    logger.info("Server starting on http://%s:%d (docs at /docs)", host, port)
+    logger.info(
+        "Server starting on http://%s:%d (docs at /docs)",
+        host,
+        port,
+        extra={"event": "service_listen"},
+    )
 
     # Start server
     uvicorn.run(app, host=host, port=port)
