@@ -15,7 +15,8 @@ from reflowfy.worker.consumer import KafkaJobConsumer
 
 from prometheus_client import start_http_server
 
-logger = logging.getLogger(__name__)
+# Named explicitly so `python -m reflowfy.worker.main` logs through the "reflowfy" logger too.
+logger = logging.getLogger("reflowfy.worker.main")
 
 
 def main():

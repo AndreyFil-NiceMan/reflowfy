@@ -21,7 +21,9 @@ from reflowfy.api.routes import create_pipeline_routes
 from reflowfy.api.execution import execution_tracker
 from reflowfy.execution.distributed_executor import get_executor
 
-logger = logging.getLogger(__name__)
+# Named explicitly: the Dockerfiles start this with `python -m`, where __name__ is "__main__" and a
+# logger named after it sits outside the "reflowfy" logger the JSON/Elasticsearch handlers hang off.
+logger = logging.getLogger("reflowfy.api.app")
 
 
 def create_app() -> FastAPI:

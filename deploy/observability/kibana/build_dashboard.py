@@ -18,13 +18,14 @@ KQL = "language"
 
 def _col_count() -> Dict[str, Any]:
     return {
-        "label": "Count",
+        "label": "Events",
+        "customLabel": True,
         "dataType": "number",
         "operationType": "count",
         "isBucketed": False,
         "scale": "ratio",
         "sourceField": "___records___",
-        "params": {"emptyAsNull": True},
+        "params": {"emptyAsNull": False},
     }
 
 

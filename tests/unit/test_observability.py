@@ -355,3 +355,25 @@ def test_bind_log_context_sync_async_and_kwargs():
     assert sync("e1", pipeline_name="p") == {"execution_id": "e1", "pipeline_name": "p"}
     assert asyncio.run(asy(execution_id="e2")) == {"execution_id": "e2"}
     assert get_log_context() == {}
+
+
+def test_entry_point_modules_log_under_the_reflowfy_logger():
+    """`python -m reflowfy.x.app` makes __name__ "__main__"; a logger named after it
+    is outside the 'reflowfy' logger, so its lines never got the JSON formatter or
+    reached Elasticsearch."""
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).parents[2] / "reflowfy"
+    for rel in ("reflow_manager/app.py", "api/app.py", "worker/main.py"):
+        for node in ast.parse((root / rel).read_text()).body:
+            if (
+                isinstance(node, ast.Assign)
+                and getattr(node.targets[0], "id", None) == "logger"
+                and isinstance(node.value, ast.Call)
+            ):
+                arg = node.value.args[0]
+                assert isinstance(arg, ast.Constant) and arg.value.startswith("reflowfy."), rel
+                break
+        else:
+            raise AssertionError(f"no module-level logger in {rel}")

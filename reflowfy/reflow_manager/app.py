@@ -45,7 +45,9 @@ from reflowfy.reflow_manager.content_dedup_scheduler import (  # noqa: E402
     stop_content_dedup_scheduler,
 )
 
-logger = logging.getLogger(__name__)
+# Named explicitly: the Dockerfiles start this with `python -m`, where __name__ is "__main__" and a
+# logger named after it sits outside the "reflowfy" logger the JSON/Elasticsearch handlers hang off.
+logger = logging.getLogger("reflowfy.reflow_manager.app")
 
 
 @asynccontextmanager
