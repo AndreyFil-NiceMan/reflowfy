@@ -34,7 +34,7 @@ class SourceRegistry:
     def register(cls, name: str, factory: Callable[..., Any]) -> None:
         """Register a source factory function."""
         cls._sources[name] = factory
-        logger.debug("Registered reusable source: %s", name)
+        logger.debug("Registered reusable source: %s", name, extra={"event": "source_registered"})
 
     @classmethod
     def get(cls, name: str) -> Optional[Callable[..., Any]]:
@@ -70,7 +70,9 @@ def source(name: str) -> Callable[[F], F]:
         def production_elastic(**overrides):
             return elastic_source(url="http://prod:9200", **overrides)
     """
+
     def decorator(func: F) -> F:
         source_registry.register(name, func)
         return func
+
     return decorator

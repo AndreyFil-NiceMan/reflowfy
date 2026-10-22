@@ -6,9 +6,13 @@ propagation.
 """
 
 import contextvars
+import functools
+import inspect
 import logging
 from contextlib import contextmanager
-from typing import Any, Dict, Generator
+from typing import Any, Callable, Dict, Generator, TypeVar
+
+F = TypeVar("F", bound=Callable[..., Any])
 
 _ctx: contextvars.ContextVar[Dict[str, Any]] = contextvars.ContextVar(
     "reflowfy_log_ctx", default={}
@@ -43,3 +47,43 @@ def log_context(**fields: Any) -> Generator[None, None, None]:
         yield
     finally:
         _ctx.reset(token)
+
+
+def get_log_context() -> Dict[str, Any]:
+    """The fields currently bound by log_context() (a copy)."""
+    return dict(_ctx.get())
+
+
+def bind_log_context(*names: str) -> Callable[[F], F]:
+    """Decorator: bind the named arguments of the wrapped function as log context.
+
+    ``@bind_log_context("execution_id", "pipeline_name")`` puts those two on every
+    record logged inside the call (and what it awaits), so the message needn't repeat
+    them and Elasticsearch can filter on them. Arguments the function doesn't take, or
+    that are None, are skipped. Works on sync and async functions.
+    """
+
+    def decorate(fn: F) -> F:
+        sig = inspect.signature(fn)
+
+        def fields(args: Any, kwargs: Any) -> Dict[str, Any]:
+            bound = sig.bind_partial(*args, **kwargs).arguments
+            return {n: bound[n] for n in names if n in bound}
+
+        if inspect.iscoroutinefunction(fn):
+
+            @functools.wraps(fn)
+            async def awrapper(*args: Any, **kwargs: Any) -> Any:
+                with log_context(**fields(args, kwargs)):
+                    return await fn(*args, **kwargs)
+
+            return awrapper  # type: ignore[return-value]
+
+        @functools.wraps(fn)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            with log_context(**fields(args, kwargs)):
+                return fn(*args, **kwargs)
+
+        return wrapper  # type: ignore[return-value]
+
+    return decorate

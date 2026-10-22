@@ -55,21 +55,27 @@ class DLQScheduler:
     def start(self):
         """Start the background polling thread."""
         if self._running:
-            logger.warning("DLQ Scheduler already running")
+            logger.warning(
+                "DLQ Scheduler already running", extra={"event": "scheduler_already_running"}
+            )
             return
 
         self._running = True
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
-        logger.info("DLQ Scheduler started (polling every %ss)", self.poll_interval)
+        logger.info(
+            "DLQ Scheduler started (polling every %ss)",
+            self.poll_interval,
+            extra={"event": "scheduler_start"},
+        )
 
     def stop(self):
         """Stop the scheduler gracefully."""
         if not self._running:
             return
 
-        logger.info("Stopping DLQ Scheduler")
+        logger.info("Stopping DLQ Scheduler", extra={"event": "scheduler_stopping"})
         self._running = False
         self._stop_event.set()
 
@@ -77,7 +83,7 @@ class DLQScheduler:
             self._thread.join(timeout=10)
             self._thread = None
 
-        logger.info("DLQ Scheduler stopped")
+        logger.info("DLQ Scheduler stopped", extra={"event": "scheduler_stopped"})
 
     def _run_loop(self):
         """Main polling loop."""
@@ -85,7 +91,9 @@ class DLQScheduler:
             try:
                 self._poll_and_process()
             except Exception:
-                logger.error("DLQ Scheduler error", exc_info=True)
+                logger.error(
+                    "DLQ Scheduler error", exc_info=True, extra={"event": "scheduler_error"}
+                )
 
             # Wait for poll interval or stop event
             self._stop_event.wait(timeout=self.poll_interval)
@@ -109,7 +117,11 @@ class DLQScheduler:
             if not due_jobs:
                 return
 
-            logger.info("DLQ Scheduler found %d due jobs", len(due_jobs))
+            logger.info(
+                "DLQ Scheduler found %d due jobs",
+                len(due_jobs),
+                extra={"event": "dlq_due", "jobs_due": len(due_jobs)},
+            )
             for j in due_jobs:
                 logger.debug(
                     "Job %s: pipeline=%s, scheduled_at=%s, retry=%s",
@@ -117,6 +129,11 @@ class DLQScheduler:
                     j.pipeline_name,
                     j.scheduled_at,
                     j.retry_count,
+                    extra={
+                        "event": "dlq_job_due",
+                        "dlq_job_id": j.id,
+                        "pipeline_name": j.pipeline_name,
+                    },
                 )
 
             # Group jobs by pipeline
@@ -132,7 +149,7 @@ class DLQScheduler:
 
         except Exception:
             db.rollback()
-            logger.error("DLQ poll error", exc_info=True)
+            logger.error("DLQ poll error", exc_info=True, extra={"event": "dlq_poll_error"})
             raise
         finally:
             db.close()
@@ -149,7 +166,11 @@ class DLQScheduler:
             "Processing %d DLQ jobs for pipeline: %s",
             len(jobs),
             pipeline_name,
-            extra={"pipeline_name": pipeline_name},
+            extra={
+                "event": "dlq_process",
+                "pipeline_name": pipeline_name,
+                "jobs_due": len(jobs),
+            },
         )
 
         # Mark jobs as processing
@@ -167,7 +188,12 @@ class DLQScheduler:
                     pipeline_name,
                     error_msg,
                     exc_info=True,
-                    extra={"pipeline_name": pipeline_name},
+                    extra={
+                        "event": "dlq_dispatch_error",
+                        "pipeline_name": pipeline_name,
+                        "jobs_due": len(group),
+                        "trigger": "scheduler",
+                    },
                 )
                 for job in group:
                     self._handle_job_failure(db, job, error_msg)
@@ -177,7 +203,13 @@ class DLQScheduler:
             logger.info(
                 "DLQ jobs dispatched to execution: %s",
                 execution_id,
-                extra={"execution_id": execution_id, "pipeline_name": pipeline_name},
+                extra={
+                    "event": "dlq_dispatched",
+                    "execution_id": execution_id,
+                    "pipeline_name": pipeline_name,
+                    "jobs_due": len(group),
+                    "trigger": "scheduler",
+                },
             )
 
     def _dispatch_jobs(self, db: Session, pipeline_name: str, jobs: List[DLQJob]) -> str:
@@ -222,7 +254,17 @@ class DLQScheduler:
         if job.retry_count >= job.max_retries:
             # Move to archive
             self._archive_job(db, job)
-            logger.info("DLQ job %s archived after %d retries", job.id, job.retry_count)
+            logger.info(
+                "DLQ job %s archived after %d retries",
+                job.id,
+                job.retry_count,
+                extra={
+                    "event": "dlq_archived",
+                    "dlq_job_id": job.id,
+                    "pipeline_name": job.pipeline_name,
+                    "retry_count": job.retry_count,
+                },
+            )
         else:
             # Reschedule with exponential backoff
             backoff_minutes = self._calculate_backoff(job.retry_count)
@@ -235,6 +277,13 @@ class DLQScheduler:
                 job.id,
                 job.retry_count,
                 job.max_retries,
+                extra={
+                    "event": "dlq_rescheduled",
+                    "dlq_job_id": job.id,
+                    "pipeline_name": job.pipeline_name,
+                    "retry_count": job.retry_count,
+                    "backoff_minutes": backoff_minutes,
+                },
             )
 
     def _calculate_backoff(self, retry_count: int) -> int:
@@ -289,9 +338,32 @@ class DLQScheduler:
             job.processed_at = datetime.now(timezone.utc).replace(tzinfo=None)
             job.execution_id = execution_id
             db.commit()
+            logger.info(
+                "DLQ job dispatched to execution: %s",
+                execution_id,
+                extra={
+                    "event": "dlq_dispatched",
+                    "execution_id": execution_id,
+                    "pipeline_name": job.pipeline_name,
+                    "dlq_job_id": job_id,
+                    "jobs_due": 1,
+                    "trigger": "manual",
+                },
+            )
             return execution_id
         except Exception as e:
             db.rollback()
+            logger.error(
+                "Failed to dispatch DLQ job: %s",
+                e,
+                exc_info=True,
+                extra={
+                    "event": "dlq_dispatch_error",
+                    "pipeline_name": job.pipeline_name,
+                    "dlq_job_id": job_id,
+                    "trigger": "manual",
+                },
+            )
             self._handle_job_failure(db, job, str(e))
             db.commit()
             raise
@@ -335,11 +407,34 @@ class DLQScheduler:
                 # Only this group's jobs go to the retry path; the others still run,
                 # as in _process_pipeline_jobs.
                 last_error = e
+                logger.error(
+                    "Failed to dispatch DLQ jobs for %s: %s",
+                    pipeline_name,
+                    e,
+                    exc_info=True,
+                    extra={
+                        "event": "dlq_dispatch_error",
+                        "pipeline_name": pipeline_name,
+                        "jobs_due": len(group),
+                        "trigger": "manual",
+                    },
+                )
                 for job in group:
                     self._handle_job_failure(db, job, str(e))
                 continue
             _mark_completed(group, execution_id)
             execution_ids.append(execution_id)
+            logger.info(
+                "DLQ jobs dispatched to execution: %s",
+                execution_id,
+                extra={
+                    "event": "dlq_dispatched",
+                    "execution_id": execution_id,
+                    "pipeline_name": pipeline_name,
+                    "jobs_due": len(group),
+                    "trigger": "manual",
+                },
+            )
         db.commit()
         if last_error is not None and not execution_ids:
             raise last_error
