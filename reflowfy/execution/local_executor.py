@@ -19,7 +19,15 @@ def _log_record_skips(applied: Any) -> None:
     for step in applied:
         if step.records_skipped:
             logger.info(
-                "%s skipped %d records: %s", step.name, step.records_skipped, step.skip_reasons
+                "%s skipped %d records: %s",
+                step.name,
+                step.records_skipped,
+                step.skip_reasons,
+                extra={
+                    "event": "records_skipped",
+                    "transformation": step.name,
+                    "records_skipped": step.records_skipped,
+                },
             )
 
 

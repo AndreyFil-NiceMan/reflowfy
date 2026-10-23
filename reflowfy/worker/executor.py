@@ -315,18 +315,31 @@ class WorkerExecutor:
                     step.duration,
                     step.records_in,
                     step.records_out,
-                    extra={"event": "transform_applied"},
+                    extra={
+                        "event": "transform_applied",
+                        "transformation": step.name,
+                        "mode": step.mode,
+                        "concurrency": step.concurrency,
+                        "records_in": step.records_in,
+                        "records_out": step.records_out,
+                    },
                 )
                 if step.records_skipped:
                     stats.records_skipped += step.records_skipped
                     for reason, times in (step.skip_reasons or {}).items():
                         count_skip_reason(stats.record_skip_reasons, reason, times)
+                    # Reasons stay in the message: as a field their keys would be
+                    # unbounded mapping names in the log index.
                     logger.info(
-                        "Job %s: %s skipped %d records (%s)",
-                        job_id,
+                        "%s skipped %d records (%s)",
                         step.name,
                         step.records_skipped,
                         _top_reasons(step.skip_reasons or {}),
+                        extra={
+                            "event": "records_skipped",
+                            "transformation": step.name,
+                            "records_skipped": step.records_skipped,
+                        },
                     )
                     metrics.records_skipped_total.labels(
                         pipeline=_pipeline_name, transformation=step.name

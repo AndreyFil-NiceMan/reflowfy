@@ -208,8 +208,9 @@ per-record timeout. Don't keep async clients at module level: `reflowfy test` an
 a new loop per job. Sources stay sync (an async `fetch` is a possible follow-up).
 
 Observability: `AppliedStep.mode` / `.concurrency` (worker debug log, `reflowfy test -v`);
-per-step durations stay in `JobStats.transformation_times`. No new metric or job state: an async
-step's outcomes are the existing ones. Tests: `tests/unit/test_async_transformations.py`,
+per-step durations stay in `JobStats.transformation_times`. Running a step async adds no job
+state or metric: its outcomes are the existing ones (the one new counter is for `SkipRecord`, see
+"Dropping a record"). Tests: `tests/unit/test_async_transformations.py`,
 `tests/e2e/test_async_transform.py` (the mock API counts lookups in flight),
 `tests/e2e_distributed/test_async_pipelines.py` (`dist_async`, per-job peak from the sink).
 

@@ -591,7 +591,7 @@ class _Dest:
     async def health_check(self) -> bool:
         return True
 
-    async def send_with_retry(self, records: List[Any], params: Dict[str, Any]) -> None:
+    async def send_with_retry(self, records: List[Any], params: Any = None, **_: Any) -> None:
         self.sent.extend(records)
 
     async def close(self) -> None:
@@ -653,7 +653,9 @@ async def test_a_failing_record_fails_the_worker_job_naming_it(monkeypatch: pyte
     assert "record 1: RuntimeError: users API answered 500" in stats.error
 
 
-async def test_the_worker_stores_and_counts_skipped_records(monkeypatch: pytest.MonkeyPatch):
+async def test_the_worker_stores_and_counts_skipped_records(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
     from reflowfy.core.registry import pipeline_registry
     from reflowfy.observability import metrics
 
@@ -673,13 +675,22 @@ async def test_the_worker_stores_and_counts_skipped_records(monkeypatch: pytest.
     )
     before = counter._value.get()
 
-    assert await ex.execute_job(_payload([{"id": i} for i in range(5)])) is True
+    with caplog.at_level("DEBUG"):
+        assert await ex.execute_job(_payload([{"id": i} for i in range(5)])) is True
 
     assert [r["id"] for r in dest.sent] == [0, 2]
     stats = saved[-1]
     assert stats.records_skipped == 3
     assert stats.to_dict()["record_skip_reasons"] == {"odd id": 2, "four": 1}
     assert counter._value.get() == before + 3
+    (skipped,) = [r for r in caplog.records if getattr(r, "event", None) == "records_skipped"]
+    assert (getattr(skipped, "transformation"), getattr(skipped, "records_skipped")) == (
+        "ut_rec_skip_record",
+        3,
+    )
+    assert "'odd id' x2" in skipped.getMessage()
+    (applied,) = [r for r in caplog.records if getattr(r, "event", None) == "transform_applied"]
+    assert (getattr(applied, "mode"), getattr(applied, "concurrency")) == ("per_record", 4)
 
 
 def test_local_mode_logs_why_records_were_skipped(caplog: pytest.LogCaptureFixture):
@@ -691,3 +702,5 @@ def test_local_mode_logs_why_records_were_skipped(caplog: pytest.LogCaptureFixtu
     with caplog.at_level("INFO"):
         LocalExecutor().execute(pipeline=pipeline, runtime_params={})
     assert "ut_rec_skip_record skipped 2 records: {'odd id': 2}" in caplog.text
+    (record,) = [r for r in caplog.records if getattr(r, "event", None) == "records_skipped"]
+    assert getattr(record, "records_skipped") == 2

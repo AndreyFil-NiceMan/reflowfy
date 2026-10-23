@@ -197,6 +197,12 @@ async def apply_transformations_iteratively_async(
                     transformation.name,
                     records_in,
                     concurrency,
+                    extra={
+                        "event": "transform_per_record_start",
+                        "transformation": transformation.name,
+                        "records_in": records_in,
+                        "concurrency": concurrency,
+                    },
                 )
             elif isinstance(transformation, AsyncTransformation):
                 mode = "async"
