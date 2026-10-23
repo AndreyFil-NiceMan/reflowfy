@@ -31,6 +31,7 @@ import logging
 import re
 import typing
 import warnings
+import types
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass, field
 from typing import (
@@ -354,6 +355,8 @@ class PipelineParameter:
 # Required[...]/NotRequired[...] say nothing __required_keys__ doesn't already
 # say, so they are stripped and ignored. Both spellings, since a TypedDict may
 # use either module's and typing's only exist on 3.11+.
+# `X | Y` has origin types.UnionType before 3.14; Union[X, Y] has typing.Union.
+_UNION_ORIGINS = (Union, types.UnionType)
 _REQUIREDNESS_MARKERS = frozenset(
     marker
     for marker in (
@@ -421,7 +424,7 @@ def params_from_typeddict(params_type: type) -> List[PipelineParameter]:
             continue
 
         # Optional[X] / X | None means "not required", and the parameter is an X.
-        if get_origin(hint) is Union:
+        if get_origin(hint) in _UNION_ORIGINS:
             non_none = [a for a in get_args(hint) if a is not type(None)]
             if len(non_none) == 1:
                 hint = non_none[0]
@@ -435,6 +438,10 @@ def params_from_typeddict(params_type: type) -> List[PipelineParameter]:
             # isinstance() and the `param_type in (list, dict)` body/query split
             # both need a bare runtime type, so list[int] must collapse to list.
             param_type = get_origin(hint) or hint
+            # A real union has no single runtime type. On 3.14 `Union` is itself a class, so
+            # the isinstance(type) check below would let it through as the "type".
+            if param_type in _UNION_ORIGINS:
+                param_type = str
 
         params.append(
             PipelineParameter(
