@@ -76,11 +76,17 @@ class BatchReport:
     def ok(self) -> bool:
         return self.error is None
 
+    @property
+    def skipped(self) -> int:
+        """Records the batch's per-record steps dropped with ``SkipRecord``."""
+        return sum(s.records_skipped for s in self.applied)
+
     def to_dict(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {
             "label": self.label,
             "records_fetched": self.fetched,
             "records_out": len(self.transformed),
+            "records_skipped": self.skipped,
             "sent": self.sent,
             "sent_count": self.sent_count,
             "steps": [
@@ -89,6 +95,8 @@ class BatchReport:
                     "records_in": s.records_in,
                     "records_out": s.records_out,
                     "duration_ms": round(s.duration * 1000, 3),
+                    "records_skipped": s.records_skipped,
+                    "skip_reasons": dict(s.skip_reasons or {}),
                 }
                 for s in self.applied
             ],
@@ -672,6 +680,7 @@ def register(app: typer.Typer):
 
         failed = [r for r in reports if not r.ok]
         total_records = sum(len(r.transformed) for r in reports)
+        total_skipped = sum(r.skipped for r in reports)
         # A single-batch run has nothing to be partial about, so any failure
         # fails the run. Per-batch ID failures are tolerated unless asked not.
         strict = opts.fail_fast or not runs_id_batches(resolved)
@@ -685,6 +694,7 @@ def register(app: typer.Typer):
                 "dry_run": opts.dry_run,
                 "batches": [r.to_dict() for r in reports],
                 "records_out": total_records,
+                "records_skipped": total_skipped,
                 "ok": not failed,
             }
             typer.echo(json.dumps(payload, default=str, indent=2))
@@ -695,6 +705,8 @@ def register(app: typer.Typer):
 
         sent = any(r.sent for r in reports)
         outcome = "records sent successfully" if sent else "records processed"
+        if total_skipped:
+            outcome += f", {total_skipped} skipped by SkipRecord"
 
         if failed:
             console.print(
