@@ -468,3 +468,12 @@ def test_queries_dir_falls_back_to_cwd_when_the_module_has_no_file(
     monkeypatch.chdir(tmp_path)
 
     assert pipeline._resolve_queries_dir() == Path.cwd() / "queries"
+
+
+def test_a_pipe_union_derives_the_same_as_typing_union() -> None:
+    class _PipeParams(RuntimeParams, total=False):
+        either: int | str
+        maybe: int | None
+
+    either, maybe = params_from_typeddict(_PipeParams)
+    assert (either.param_type, maybe.param_type) == (str, int)
