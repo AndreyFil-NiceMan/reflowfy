@@ -103,6 +103,9 @@ def _apply_column_migrations() -> None:
         "autovacuum_analyze_scale_factor = 0.02)",
         "ALTER TABLE executions SET (autovacuum_vacuum_scale_factor = 0.02, "
         "autovacuum_analyze_scale_factor = 0.02)",
+        # One row per deduplicated record, swept after the retention window
+        "ALTER TABLE processed_records SET (autovacuum_vacuum_scale_factor = 0.02, "
+        "autovacuum_analyze_scale_factor = 0.02)",
     ]
 
     inspector = inspect(engine)

@@ -57,5 +57,5 @@ Every log line is one ECS-shaped JSON object (`LOG_JSON=false` gives text with t
 - `sources/elastic.py`: `pit_close_error`, `source_aggs_ignored`, `source_option_ignored`, `source_page`, `source_planned`
 - `transformations/registry.py`: `transformation_registered`
 - `worker/consumer.py`: `commit_failed_rebalance`, `consumer_connected`, `consumer_start_failed`, `consumer_start_retry`, `job_failed_recorded`, `job_received`, `message_bad_schema`, `message_empty`, `message_error`, `message_invalid`
-- `worker/executor.py`: `db_update_error`, `destination_close_error`, `destination_send`, `destination_unhealthy`, `heartbeat_error`, `job_cancelled`, `job_claim_error`, `job_completed`, `job_deduplicated`, `job_dropped`, `job_empty`, `job_failed`, `job_processing`, `job_redelivered`, `job_row_missing`, `job_status_saved`, `transform_applied`
+- `worker/executor.py`: `db_update_error`, `destination_close_error`, `destination_send`, `destination_unhealthy`, `heartbeat_error`, `job_cancelled`, `job_claim_error`, `job_completed`, `job_deduplicated`, `job_dropped`, `job_empty`, `job_failed`, `job_processing`, `job_redelivered`, `job_row_missing`, `job_status_saved`, `records_deduplicated`, `transform_applied`
 - `worker/main.py`: `service_config`, `service_start`, `service_stop`, `shutdown_drain`, `shutdown_forced`, `worker_crashed`, `worker_ready`

@@ -52,7 +52,14 @@ def test_hash_is_unchanged_when_there_are_no_per_job_params():
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from reflowfy.reflow_manager.models import Base
-from reflowfy.execution.content_dedup import claim_content_hash, release_content_hash
+from reflowfy.execution.content_dedup import (
+    claim_record_hashes,
+    compute_record_hash,
+    held_by_other_job,
+    record_identity,
+    release_record_hashes,
+)
+from reflowfy.reflow_manager.models import ProcessedContent, ProcessedRecord
 
 
 @pytest.fixture
@@ -62,25 +69,6 @@ async def session_factory():
         await conn.run_sync(Base.metadata.create_all)
     yield async_sessionmaker(engine, expire_on_commit=False)
     await engine.dispose()
-
-
-async def test_first_claim_wins_second_loses(session_factory):
-    won1 = await claim_content_hash(session_factory, "h1", "pipe", "job1", "ex1")
-    won2 = await claim_content_hash(session_factory, "h1", "pipe", "job2", "ex2")
-    assert won1 is True
-    assert won2 is False
-
-
-async def test_release_allows_reclaim(session_factory):
-    assert await claim_content_hash(session_factory, "h2", "pipe", "jobA", "exA") is True
-    await release_content_hash(session_factory, "h2", "jobA")
-    assert await claim_content_hash(session_factory, "h2", "pipe", "jobB", "exB") is True
-
-
-async def test_release_only_removes_own_claim(session_factory):
-    assert await claim_content_hash(session_factory, "h3", "pipe", "owner", "exO") is True
-    await release_content_hash(session_factory, "h3", "not-owner")  # no-op
-    assert await claim_content_hash(session_factory, "h3", "pipe", "x", "exX") is False
 
 
 def test_destination_changes_hash():
@@ -110,52 +98,6 @@ def test_destination_identity_ignores_credentials():
     ident = destination_identity(a)
     assert "auth_token" not in ident["config"]
     assert ident["config"]["headers"] == {"X-Tenant": "t1"}
-
-
-async def test_same_job_reclaims_its_own_hash(session_factory):
-    """A job re-run after its worker died must not be a duplicate of itself."""
-    assert await claim_content_hash(session_factory, "h4", "pipe", "job1", "ex1") is True
-    # claim never released (SIGKILL) — the lease re-dispatch runs job1 again
-    assert await claim_content_hash(session_factory, "h4", "pipe", "job1", "ex1") is True
-    assert await claim_content_hash(session_factory, "h4", "pipe", "job2", "ex1") is False
-
-
-async def test_legacy_claim_blocks_other_jobs_during_transition(session_factory, monkeypatch):
-    """A claim recorded before destinations joined the hash still counts, so an
-    upgrade does not rewrite everything the previous version already wrote."""
-    legacy = "legacy-h"
-    assert await claim_content_hash(session_factory, legacy, "pipe", "old-job", "ex0") is True
-
-    # same content, new-style hash (destination included): blocked by the legacy claim
-    assert (
-        await claim_content_hash(
-            session_factory, "new-h", "pipe", "job1", "ex1", legacy_hash=legacy
-        )
-        is False
-    )
-    # nothing was claimed under the new hash
-    assert await claim_content_hash(session_factory, "new-h", "pipe", "job2", "ex1") is True
-
-
-async def test_legacy_claim_by_same_job_does_not_block(session_factory):
-    legacy = "legacy-h2"
-    assert await claim_content_hash(session_factory, legacy, "pipe", "job1", "ex") is True
-    assert (
-        await claim_content_hash(session_factory, "new-h2", "pipe", "job1", "ex", legacy_hash=legacy)
-        is True
-    )
-
-
-async def test_legacy_claims_can_be_switched_off(session_factory, monkeypatch):
-    monkeypatch.setenv("DEDUP_HONOR_LEGACY_HASH", "false")
-    legacy = "legacy-h3"
-    assert await claim_content_hash(session_factory, legacy, "pipe", "old-job", "ex0") is True
-    assert (
-        await claim_content_hash(
-            session_factory, "new-h3", "pipe", "job1", "ex1", legacy_hash=legacy
-        )
-        is True
-    )
 
 
 def _api(body, identity=None, url="http://s/in", params=None):
@@ -193,15 +135,120 @@ def test_a_declared_identity_is_still_scrubbed_of_credentials():
     assert one == two
 
 
-async def test_previous_release_claim_blocks_other_jobs(session_factory):
-    """A claim under the previous release's destination identity (an X-API-Key header
-    still in it) counts like the legacy hash, so upgrading does not rewrite content."""
-    previous = "previous-h"
-    assert await claim_content_hash(session_factory, previous, "pipe", "old-job", "ex0") is True
-    assert (
-        await claim_content_hash(
-            session_factory, "new-h5", "pipe", "job1", "ex1", previous_hashes=(previous,)
-        )
-        is False
+# --- per-record dedup -------------------------------------------------------
+
+
+def test_processed_records_table_shape():
+    cols = {c.name for c in ProcessedRecord.__table__.columns}
+    assert cols == {"record_hash", "job_id", "created_at"}
+    assert ProcessedRecord.__table__.primary_key.columns.keys() == ["record_hash"]
+
+
+def _h(record, key=None, params=None, destination=None, job_params=None, pipeline="p"):
+    return compute_record_hash(
+        pipeline, record_identity(record, key, params or {}), destination, job_params
     )
-    assert await claim_content_hash(session_factory, "new-h5", "pipe", "job2", "ex1") is True
+
+
+def test_record_hash_is_a_stable_raw_digest():
+    assert _h({"id": 1, "v": "x"}) == _h({"v": "x", "id": 1})
+    assert len(_h({"id": 1})) == 32  # bytea, not hex
+    assert _h({"id": 1, "v": "x"}) != _h({"id": 1, "v": "y"})
+    assert _h({"id": 1}, pipeline="a") != _h({"id": 1}, pipeline="b")
+
+
+def test_record_hash_changes_with_destination_not_credentials():
+    from reflowfy.destinations.api import api_destination
+    from reflowfy.execution.content_dedup import destination_identity
+
+    a = destination_identity(api_destination(url="http://x/a", auth_type="bearer", auth_token="1"))
+    rotated = destination_identity(
+        api_destination(url="http://x/a", auth_type="bearer", auth_token="2")
+    )
+    other = destination_identity(api_destination(url="http://x/b"))
+    assert _h({"id": 1}, destination=a) == _h({"id": 1}, destination=rotated)
+    assert _h({"id": 1}, destination=a) != _h({"id": 1}, destination=other)
+
+
+def test_a_field_key_ignores_the_other_fields():
+    a = _h({"order_id": 7, "processed_at": "10:00"}, key="order_id")
+    b = _h({"order_id": 7, "processed_at": "10:05"}, key="order_id")
+    assert a == b
+    assert a != _h({"order_id": 8, "processed_at": "10:00"}, key="order_id")
+
+
+def test_a_missing_key_field_raises():
+    with pytest.raises(KeyError):
+        record_identity({"id": 1}, "order_id", {})
+
+
+def test_a_key_function_gets_the_record_and_runtime_params():
+    def key(record, params):
+        return (params.get("tenant"), record["order_id"])
+
+    a = _h({"order_id": 7, "x": 1}, key=key, params={"tenant": "a"})
+    b = _h({"order_id": 7, "x": 2}, key=key, params={"tenant": "a"})
+    other_tenant = _h({"order_id": 7, "x": 1}, key=key, params={"tenant": "b"})
+    assert a == b
+    assert a != other_tenant
+
+
+def test_job_params_count_but_slice_params_do_not():
+    """The same rows for another tenant (reflowfy.job(rows, tenant=...)) are new work,
+    but overlapping slices — the same record under different current_ids — dedup."""
+    assert _h({"id": 1}, job_params={"tenant": "a"}) != _h({"id": 1}, job_params={"tenant": "b"})
+    assert _h({"id": 1}, job_params={"current_ids": [1, 2], "current_id": 1}) == _h({"id": 1})
+    assert _h({"id": 1}, job_params={}) == _h({"id": 1})
+
+
+async def test_a_second_job_wins_only_the_new_records(session_factory):
+    first = [_h({"id": i}) for i in range(1, 101)]
+    second = [_h({"id": i}) for i in range(50, 151)]
+    assert await claim_record_hashes(session_factory, first, "job-a") == set(first)
+    won = await claim_record_hashes(session_factory, second, "job-b")
+    assert won == {_h({"id": i}) for i in range(101, 151)}
+
+
+async def test_a_job_rewins_its_own_claims(session_factory):
+    """A job re-run after its worker died must not be a duplicate of itself."""
+    hashes = [_h({"id": 1}), _h({"id": 2})]
+    assert await claim_record_hashes(session_factory, hashes, "job1") == set(hashes)
+    assert await claim_record_hashes(session_factory, hashes, "job1") == set(hashes)
+    assert await claim_record_hashes(session_factory, hashes, "job2") == set()
+
+
+async def test_release_frees_only_own_claims(session_factory):
+    mine, theirs = _h({"id": 1}), _h({"id": 2})
+    await claim_record_hashes(session_factory, [mine], "job1")
+    await claim_record_hashes(session_factory, [theirs], "job2")
+    await release_record_hashes(session_factory, [mine, theirs], "job1")
+    assert await claim_record_hashes(session_factory, [mine, theirs], "job3") == {mine}
+
+
+async def test_claims_are_chunked(session_factory, monkeypatch):
+    from reflowfy.execution import content_dedup
+
+    monkeypatch.setattr(content_dedup, "CLAIM_CHUNK_SIZE", 7)
+    hashes = [_h({"id": i}) for i in range(30)]
+    assert await claim_record_hashes(session_factory, hashes + hashes[:3], "j") == set(hashes)
+    assert await claim_record_hashes(session_factory, hashes, "other") == set()
+    await release_record_hashes(session_factory, hashes, "j")
+    assert await claim_record_hashes(session_factory, hashes, "other") == set(hashes)
+    assert await claim_record_hashes(session_factory, [], "j") == set()
+
+
+async def _old_claim(session_factory, content_hash, job_id):
+    async with session_factory() as db:
+        db.add(ProcessedContent(
+            content_hash=content_hash, pipeline_name="p", job_id=job_id, execution_id="e0"
+        ))
+        await db.commit()
+
+
+async def test_a_job_hash_from_the_previous_release_blocks_other_jobs(session_factory):
+    await _old_claim(session_factory, "old-h", "old-job")
+    assert await held_by_other_job(session_factory, ["x", "old-h"], "job1") is True
+    assert await held_by_other_job(session_factory, ["old-h"], "old-job") is False
+    assert await held_by_other_job(session_factory, ["x"], "job1") is False
+    assert await held_by_other_job(session_factory, [], "job1") is False
+

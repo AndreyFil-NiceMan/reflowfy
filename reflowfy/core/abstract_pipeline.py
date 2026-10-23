@@ -37,6 +37,7 @@ from typing import (
     TYPE_CHECKING,
     Annotated,
     Any,
+    Callable,
     Dict,
     Generic,
     Iterable,
@@ -491,10 +492,22 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
     # Additional configuration
     config: Dict[str, Any] = {}
 
-    # Duplicate job control:
-    #   True  = jobs may run multiple times (default, current behavior)
-    #   False = each unique job (by content hash) runs at most once
+    # Duplicate control:
+    #   True  = jobs may run multiple times and resend what they sent (default)
+    #   False = each record is sent at most once per destination: the worker
+    #           claims a hash of every record it is about to send and drops the
+    #           ones another job already sent (within CONTENT_DEDUP_RETENTION_HOURS)
     enable_duplicate_jobs: bool = True
+
+    # What identifies one record for enable_duplicate_jobs=False, read from the
+    # record as sent (after transformations):
+    #   None     = the whole record (default)
+    #   "field"  = that field of the record, e.g. dedup_key = "order_id"
+    #   callable = fn(record, runtime_params) -> anything JSON-serializable, e.g.
+    #              dedup_key = staticmethod(lambda r, p: (p.get("tenant"), r["id"]))
+    # Wrap a function set in the class body in staticmethod, or it binds as a method.
+    # A key that ignores a field means a change to that field is not resent.
+    dedup_key: Optional[Union[str, Callable[[Any, Any], Any]]] = None
 
     # The params TypedDict, set by PipelineMeta from AbstractPipeline[MyParams].
     # None means the pipeline didn't declare one.
@@ -513,6 +526,7 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
         rate_limit: Optional[float] = None,
         config: Optional[Dict[str, Any]] = None,
         enable_duplicate_jobs: Optional[bool] = None,
+        dedup_key: Optional[Union[str, Callable[[Any, Any], Any]]] = None,
     ):
         """
         Initialize the abstract pipeline.
@@ -521,7 +535,9 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
             rate_limit: Rate limit in jobs per minute
             config: Additional configuration options
             enable_duplicate_jobs: True = jobs may run multiple times (default);
-                False = each unique job (by content hash) runs at most once
+                False = each record is sent at most once per destination
+            dedup_key: What identifies a record for dedup — a field name or
+                ``fn(record, runtime_params)``; None hashes the whole record
         """
         if rate_limit is not None:
             self.rate_limit = rate_limit
@@ -529,6 +545,19 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
             self.config = config
         if enable_duplicate_jobs is not None:
             self.enable_duplicate_jobs = enable_duplicate_jobs
+        if dedup_key is not None:
+            self.dedup_key = dedup_key
+        if self.dedup_key is not None:
+            if not (isinstance(self.dedup_key, str) or callable(self.dedup_key)):
+                raise ValueError(
+                    f"{self.__class__.__name__}.dedup_key must be a field name or a "
+                    f"function of (record, runtime_params), got {self.dedup_key!r}"
+                )
+            if self.enable_duplicate_jobs:
+                raise ValueError(
+                    f"{self.__class__.__name__} sets dedup_key but enable_duplicate_jobs "
+                    "is True, so nothing is deduplicated: set enable_duplicate_jobs = False"
+                )
 
         # Validate pipeline name
         if not self.name:
@@ -916,6 +945,11 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
             "config": self.config,
             "transformations": self.get_transformation_names(),
             "enable_duplicate_jobs": self.enable_duplicate_jobs,
+            "dedup_key": (
+                self.dedup_key
+                if self.dedup_key is None or isinstance(self.dedup_key, str)
+                else "<callable>"
+            ),
             "schedules": [
                 {"name": r.name, "cron": r.cron, "params": r.params} for r in self.schedules
             ],
