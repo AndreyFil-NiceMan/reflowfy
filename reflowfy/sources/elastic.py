@@ -391,7 +391,11 @@ class ElasticSource(BaseSource):
         aggs = _sub_aggs(body)
         dropped = _prune_to_path(aggs, path)
         if dropped:
-            logger.info("elastic composite: ignoring non-composite aggregations %s", dropped)
+            logger.info(
+                "elastic composite: ignoring non-composite aggregations %s",
+                dropped,
+                extra={"event": "source_aggs_ignored"},
+            )
         node: Dict[str, Any] = aggs
         for name in path[:-1]:
             node = _sub_aggs(node[name])
@@ -458,7 +462,12 @@ class ElasticSource(BaseSource):
             buckets, after_key = self._composite_page(client, resolved, body, path)
             pages += 1
             records.extend(wrap_as_record(b) for b in buckets)
-            logger.debug("elastic composite page %d: %d buckets", pages, len(buckets))
+            logger.debug(
+                "elastic composite page %d: %d buckets",
+                pages,
+                len(buckets),
+                extra={"event": "source_page"},
+            )
             if limit and len(records) >= limit:
                 return records[:limit]
             if not buckets or not after_key:
@@ -467,6 +476,7 @@ class ElasticSource(BaseSource):
                     "/".join(path),
                     len(records),
                     pages,
+                    extra={"event": "source_planned", "source_type": "elastic", "pages": pages},
                 )
                 return records
             composite["after"] = after_key
@@ -500,7 +510,12 @@ class ElasticSource(BaseSource):
             if len(buckets) < page_size or not after_key:
                 break
             cursor = composite["after"] = after_key
-        logger.info("elastic composite '%s': planned %d jobs", "/".join(path), pages)
+        logger.info(
+            "elastic composite '%s': planned %d jobs",
+            "/".join(path),
+            pages,
+            extra={"event": "source_planned", "source_type": "elastic", "jobs_planned": pages},
+        )
 
     def _count_documents(self, client: Any, resolved: Dict[str, Any]) -> int:
         """Return how many documents the base query matches (metadata only)."""
@@ -563,7 +578,11 @@ class ElasticSource(BaseSource):
                 try:
                     client.close_point_in_time(id=pit_id)
                 except Exception:  # best effort: it expires on its own
-                    logger.debug("Could not close PIT for a range window", exc_info=True)
+                    logger.debug(
+                        "Could not close PIT for a range window",
+                        exc_info=True,
+                        extra={"event": "pit_close_error"},
+                    )
 
     def _split_range_windows(
         self, client: Elasticsearch, resolved: Dict[str, Any], count: int
@@ -593,7 +612,11 @@ class ElasticSource(BaseSource):
             try:
                 client.close_point_in_time(id=pit_id)
             except Exception:
-                logger.debug("Could not close the planning PIT", exc_info=True)
+                logger.debug(
+                    "Could not close the planning PIT",
+                    exc_info=True,
+                    extra={"event": "pit_close_error"},
+                )
         boundaries: List[Any] = []
         for cursor in cursors[1:]:  # cursors[0] is None: window 0 starts at the beginning
             value = cursor[0]
@@ -633,7 +656,10 @@ class ElasticSource(BaseSource):
         path = _composite_path(resolved["base_query"])
         if path:
             if int(resolved.get("num_slices") or 1) > 1:
-                logger.warning("elastic source: num_slices is ignored for composite aggregations")
+                logger.warning(
+                    "elastic source: num_slices is ignored for composite aggregations",
+                    extra={"event": "source_option_ignored"},
+                )
             docs_per_job = int(resolved.get("docs_per_job") or 0)
             if docs_per_job:
                 yield from self._split_composite(self._get_client(), resolved, path, docs_per_job)

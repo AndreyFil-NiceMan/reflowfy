@@ -89,6 +89,11 @@ class DistributedExecutor(BaseExecutor):
                 execution_id,
                 pipeline.name,
                 self.reflow_manager_url,
+                extra={
+                    "event": "execution_submit",
+                    "execution_id": execution_id,
+                    "pipeline_name": pipeline.name,
+                },
             )
 
             client = self._get_client()
@@ -114,6 +119,12 @@ class DistributedExecutor(BaseExecutor):
                     execution_id,
                     run_response.status_code,
                     run_response.text,
+                    extra={
+                        "event": "execution_submit_rejected",
+                        "execution_id": execution_id,
+                        "pipeline_name": pipeline.name,
+                        "http_status": run_response.status_code,
+                    },
                 )
                 run_response.raise_for_status()
 
@@ -122,7 +133,15 @@ class DistributedExecutor(BaseExecutor):
             total_jobs = result.get("jobs_dispatched", 0)
 
             logger.info(
-                "Dispatched %d jobs via ReflowManager (execution %s)", total_jobs, execution_id
+                "Dispatched %d jobs via ReflowManager (execution %s)",
+                total_jobs,
+                execution_id,
+                extra={
+                    "event": "execution_submitted",
+                    "execution_id": execution_id,
+                    "pipeline_name": pipeline.name,
+                    "jobs_total": total_jobs,
+                },
             )
 
             # Update status
@@ -134,7 +153,16 @@ class DistributedExecutor(BaseExecutor):
 
         except httpx.HTTPError as e:
             error_msg = f"ReflowManager HTTP error: {e}"
-            logger.error("Execution %s: %s", execution_id, error_msg)
+            logger.error(
+                "Execution %s: %s",
+                execution_id,
+                error_msg,
+                extra={
+                    "event": "execution_submit_error",
+                    "execution_id": execution_id,
+                    "pipeline_name": pipeline.name,
+                },
+            )
 
             status.state = ExecutionState.FAILED
             status.error_message = error_msg
@@ -149,7 +177,15 @@ class DistributedExecutor(BaseExecutor):
 
         except Exception as e:
             error_msg = f"Failed to run pipeline: {e}"
-            logger.exception("Execution %s: failed to run pipeline", execution_id)
+            logger.exception(
+                "Execution %s: failed to run pipeline",
+                execution_id,
+                extra={
+                    "event": "execution_submit_error",
+                    "execution_id": execution_id,
+                    "pipeline_name": pipeline.name,
+                },
+            )
 
             status.state = ExecutionState.FAILED
             status.error_message = error_msg

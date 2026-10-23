@@ -216,6 +216,20 @@ Emitted into every service so production ships to Elastic and is filterable by
 service.environment in Kibana. The ES password comes from a Secret, never inline.
 */}}
 {{- define "reflowfy.observability.env" -}}
+{{- /* Pod identity (downward API): every log line carries kubernetes.pod.name, so with
+       several replicas you can tell which pod wrote it. */ -}}
+- name: POD_NAME
+  valueFrom:
+    fieldRef:
+      fieldPath: metadata.name
+- name: POD_NAMESPACE
+  valueFrom:
+    fieldRef:
+      fieldPath: metadata.namespace
+- name: NODE_NAME
+  valueFrom:
+    fieldRef:
+      fieldPath: spec.nodeName
 - name: ENVIRONMENT
   value: {{ .Values.observability.environment | default "production" | quote }}
 - name: LOG_DESTINATION

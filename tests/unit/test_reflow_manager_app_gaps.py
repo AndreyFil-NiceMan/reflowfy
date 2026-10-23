@@ -81,6 +81,6 @@ def test_dispatch_failure_is_logged_even_when_the_execution_cannot_be_marked(
     finally:
         app_module.logger.removeHandler(handler)
 
-    assert "Background job dispatch failed for x" in messages
-    assert "Failed to mark execution x as failed" in messages
+    assert "Background job dispatch failed" in messages
+    assert "Failed to mark execution as failed" in messages
     assert closed == [True]  # the session is released either way

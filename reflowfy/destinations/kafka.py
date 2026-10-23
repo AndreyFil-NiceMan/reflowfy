@@ -178,6 +178,7 @@ class KafkaDestination(BaseDestination):
                         "Kafka destination: ignoring producer setting %r "
                         "(not an AIOKafkaProducer parameter, or one it sets itself)",
                         key,
+                        extra={"event": "producer_setting_ignored"},
                     )
 
             self._producer = AIOKafkaProducer(**producer_kwargs)
@@ -320,7 +321,11 @@ class KafkaDestination(BaseDestination):
             )
         except Exception as e:
             # Fail open — a broken lag check must not block the pipeline
-            logger.warning("Kafka lag check failed (fail open): %s", e)
+            logger.warning(
+                "Kafka lag check failed (fail open): %s",
+                e,
+                extra={"event": "kafka_lag_check_error", "error_type": type(e).__name__},
+            )
             return True
 
         if lag > threshold:
@@ -329,6 +334,7 @@ class KafkaDestination(BaseDestination):
                 lag,
                 threshold,
                 consumer_group_id,
+                extra={"event": "kafka_lag_high", "lag": lag, "lag_threshold": threshold},
             )
             return False
 

@@ -53,12 +53,18 @@ def _run_body(
     rate_limit_override = rate_limit
 
     logger.info(
-        "Running pipeline %s (mode=%s, rate_limit=%s, params=%s)",
+        "Running pipeline %s (mode=%s, rate_limit=%s, %d params)",
         pipeline_name,
         mode_label,
         rate_limit if rate_limit else "default",
-        runtime_params_dict,
-        extra={"pipeline_name": pipeline_name},
+        len(runtime_params_dict),
+        extra={
+            "event": "run_requested",
+            "pipeline_name": pipeline_name,
+            "mode": mode_label,
+            "rate_limit": rate_limit,
+            "param_count": len(runtime_params_dict),
+        },
     )
 
     try:
@@ -71,7 +77,7 @@ def _run_body(
         logger.exception(
             "Execution raised for pipeline %s",
             pipeline_name,
-            extra={"pipeline_name": pipeline_name},
+            extra={"event": "run_failed", "pipeline_name": pipeline_name},
         )
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -82,7 +88,12 @@ def _run_body(
         "Execution %s completed (state=%s)",
         status.execution_id,
         status.state,
-        extra={"execution_id": status.execution_id, "pipeline_name": pipeline_name},
+        extra={
+            "event": "run_finished",
+            "execution_id": status.execution_id,
+            "pipeline_name": pipeline_name,
+            "state": str(status.state),
+        },
     )
 
     return PipelineRunResponse(
@@ -230,7 +241,13 @@ def _create_run_route(
     body_str = ("body: " + ", ".join(p.name for p in body_params)) if body_params else "no body"
     query_str = "&".join(p.name + "=..." for p in query_params)
     full_query = "?mode=distributed&rate_limit=..." + (f"&{query_str}" if query_str else "")
-    logger.debug("Registered POST /pipelines/%s/run%s [%s]", pipeline_name, full_query, body_str)
+    logger.debug(
+        "Registered POST /pipelines/%s/run%s [%s]",
+        pipeline_name,
+        full_query,
+        body_str,
+        extra={"event": "route_registered"},
+    )
 
 
 def _rate_limit_description(pipeline: Any) -> str:
@@ -278,4 +295,6 @@ def create_pipeline_routes(
             "config": pipeline.config,
         }
 
-    logger.debug("Registered GET /pipelines/%s/status", pipeline_name)
+    logger.debug(
+        "Registered GET /pipelines/%s/status", pipeline_name, extra={"event": "route_registered"}
+    )

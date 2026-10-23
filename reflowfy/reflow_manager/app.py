@@ -18,6 +18,7 @@ load_dotenv()
 
 from reflowfy import __version__  # noqa: E402
 
+from reflowfy.observability.context import bind_log_context  # noqa: E402
 from reflowfy.observability.logging import setup_logging  # noqa: E402
 from reflowfy.reflow_manager.database import get_db, init_db, SessionLocal  # noqa: E402
 from reflowfy.reflow_manager.manager import ReflowManager  # noqa: E402
@@ -44,7 +45,9 @@ from reflowfy.reflow_manager.content_dedup_scheduler import (  # noqa: E402
     stop_content_dedup_scheduler,
 )
 
-logger = logging.getLogger(__name__)
+# Named explicitly: the Dockerfiles start this with `python -m`, where __name__ is "__main__" and a
+# logger named after it sits outside the "reflowfy" logger the JSON/Elasticsearch handlers hang off.
+logger = logging.getLogger("reflowfy.reflow_manager.app")
 
 
 @asynccontextmanager
@@ -461,13 +464,20 @@ async def run_pipeline(
         # (`totl=5`) run silently on defaults. Say so in the response. Only for pipelines
         # that declare parameters at all: an untyped legacy pipeline reads whatever it likes.
         declared = {p.name for p in pipeline.define_parameters()}
-        unknown = sorted(k for k in runtime_params if declared and k not in declared and not k.startswith("_"))
+        unknown = sorted(
+            k for k in runtime_params if declared and k not in declared and not k.startswith("_")
+        )
         if unknown:
             logger.warning(
                 "Run of %s passed undeclared parameter(s) %s; they are ignored by the pipeline's "
                 "own declaration",
                 request.pipeline_name,
                 unknown,
+                extra={
+                    "event": "run_undeclared_params",
+                    "execution_id": execution_id,
+                    "pipeline_name": request.pipeline_name,
+                },
             )
 
         # Create initial execution record (pending state)
@@ -482,6 +492,18 @@ async def run_pipeline(
         # so the next auto-run is one interval after this manual trigger.
         _reset_pipeline_schedule_if_needed(db, request.pipeline_name)
         db.commit()
+
+        logger.info(
+            "Run accepted",
+            extra={
+                "event": "run_accepted",
+                "execution_id": execution_id,
+                "pipeline_name": request.pipeline_name,
+                "mode": request.mode,
+                "rate_limit": request.rate_limit,
+                "param_count": len(runtime_params),
+            },
+        )
 
         # Schedule job dispatching in background
         background_tasks.add_task(
@@ -518,7 +540,11 @@ async def run_pipeline(
         )
 
     except Exception as e:
-        logger.exception("Failed to start pipeline %s", request.pipeline_name)
+        logger.exception(
+            "Failed to start pipeline %s",
+            request.pipeline_name,
+            extra={"event": "run_failed", "pipeline_name": request.pipeline_name},
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to start pipeline: {str(e)}",
@@ -540,6 +566,7 @@ def _reset_pipeline_schedule_if_needed(db: Session, pipeline_name: str) -> None:
     )
 
 
+@bind_log_context("execution_id", "pipeline_name")
 def _dispatch_pipeline_jobs(
     execution_id: str,
     pipeline_name: str,
@@ -565,7 +592,7 @@ def _dispatch_pipeline_jobs(
         )
 
     except Exception as e:
-        logger.exception("Background job dispatch failed for %s", execution_id)
+        logger.exception("Background job dispatch failed", extra={"event": "dispatch_failed"})
 
         # Update execution state to failed. Use a fresh ExecutionManager so this
         # works even when ReflowManager construction above failed (manager unbound).
@@ -574,7 +601,9 @@ def _dispatch_pipeline_jobs(
                 execution_id, "failed", error_message=str(e)
             )
         except Exception:
-            logger.exception("Failed to mark execution %s as failed", execution_id)
+            logger.exception(
+                "Failed to mark execution as failed", extra={"event": "execution_mark_failed_error"}
+            )
 
     finally:
         db.close()
@@ -602,7 +631,10 @@ async def get_execution_stats(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Error fetching execution stats for %s", execution_id)
+        logger.exception(
+            "Error fetching execution stats",
+            extra={"event": "stats_error", "execution_id": execution_id},
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error fetching execution stats: {str(e)}",
@@ -612,14 +644,18 @@ async def get_execution_stats(
 async def _startup() -> None:
     """Initialize database and load pipelines on startup."""
     setup_logging(service_name="reflow-manager")
-    logger.info("Starting ReflowManager service (version %s)", __version__)
+    logger.info(
+        "Starting ReflowManager service (version %s)",
+        __version__,
+        extra={"event": "service_start"},
+    )
 
     # Initialize database (retries internally until DB is ready)
     global _db_ready
-    logger.info("Initializing database...")
+    logger.info("Initializing database...", extra={"event": "db_init"})
     init_db()
     _db_ready = True
-    logger.info("Database initialized")
+    logger.info("Database initialized", extra={"event": "db_ready"})
 
     # Load pipelines using global discovery (module from PIPELINE_MODULE env)
     from reflowfy.core.pipeline_discovery import discover_and_load_pipelines
@@ -631,18 +667,21 @@ async def _startup() -> None:
         os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
         os.getenv("KAFKA_TOPIC", "reflow.jobs"),
         os.getenv("MAX_JOBS_PER_MINUTE", "6000"),
+        extra={"event": "service_config"},
     )
 
     # Check for interrupted executions and recover
-    logger.info("Checking for interrupted executions...")
+    logger.info("Checking for interrupted executions...", extra={"event": "recovery_check"})
     await _recover_interrupted_executions()
 
     # Initialize DLQ scheduler
     try:
         init_dlq_scheduler(_pipeline_runner_factory)
-        logger.info("DLQ Scheduler initialized")
+        logger.info("DLQ Scheduler initialized", extra={"event": "scheduler_ready"})
     except Exception:
-        logger.exception("Failed to initialize DLQ scheduler")
+        logger.exception(
+            "Failed to initialize DLQ scheduler", extra={"event": "scheduler_init_failed"}
+        )
 
     # Initialize Pipeline Scheduler (cron-based)
     try:
@@ -652,18 +691,25 @@ async def _startup() -> None:
         try:
             scheduler.sync_schedules_from_registry(sync_db)
             sync_db.commit()
-            logger.info("Pipeline Scheduler initialized and schedules synced")
+            logger.info(
+                "Pipeline Scheduler initialized and schedules synced",
+                extra={"event": "scheduler_ready"},
+            )
         finally:
             sync_db.close()
     except Exception:
-        logger.exception("Failed to initialize Pipeline Scheduler")
+        logger.exception(
+            "Failed to initialize Pipeline Scheduler", extra={"event": "scheduler_init_failed"}
+        )
 
     # Initialize Content Dedup Sweeper
     try:
         init_content_dedup_scheduler()
-        logger.info("Content Dedup Sweeper initialized")
+        logger.info("Content Dedup Sweeper initialized", extra={"event": "scheduler_ready"})
     except Exception:
-        logger.exception("Failed to initialize Content Dedup Sweeper")
+        logger.exception(
+            "Failed to initialize Content Dedup Sweeper", extra={"event": "scheduler_init_failed"}
+        )
 
 
 async def _recover_interrupted_executions() -> None:
@@ -679,20 +725,36 @@ async def _recover_interrupted_executions() -> None:
         # instead of standing by until the dead loop's heartbeat goes stale.
         released = manager.execution_manager.release_drivers_on_host(socket.gethostname())
         if released:
-            logger.info("Released %d dispatch lease(s) left by a previous process", released)
+            logger.info(
+                "Released %d dispatch lease(s) left by a previous process",
+                released,
+                extra={"event": "driver_leases_released", "leases_released": released},
+            )
 
         # Find interrupted executions
         interrupted = manager.execution_manager.get_interrupted_executions()
 
         if not interrupted:
-            logger.info("No interrupted executions found")
+            logger.info("No interrupted executions found", extra={"event": "recovery_none"})
             return
 
-        logger.info("Found %d interrupted execution(s)", len(interrupted))
+        logger.info(
+            "Found %d interrupted execution(s)",
+            len(interrupted),
+            extra={"event": "recovery_found", "executions_interrupted": len(interrupted)},
+        )
 
         # Resume each in a background thread (don't block startup)
         for execution in interrupted:
-            logger.info("Scheduling resume for: %s", execution.execution_id)
+            logger.info(
+                "Scheduling resume",
+                extra={
+                    "event": "recovery_resume_scheduled",
+                    "execution_id": execution.execution_id,
+                    "pipeline_name": execution.pipeline_name,
+                    "state": execution.state,
+                },
+            )
             # Use run_in_executor to avoid blocking the event loop
             asyncio.get_event_loop().run_in_executor(
                 None,  # Default executor
@@ -700,12 +762,17 @@ async def _recover_interrupted_executions() -> None:
                 execution.execution_id,
             )
 
-        logger.info("Scheduled %d execution(s) for recovery", len(interrupted))
+        logger.info(
+            "Scheduled %d execution(s) for recovery",
+            len(interrupted),
+            extra={"event": "recovery_scheduled"},
+        )
 
     finally:
         db.close()
 
 
+@bind_log_context("execution_id")
 def _resume_execution_sync(execution_id: str) -> None:
     """Synchronously resume an execution (runs in thread pool)."""
     db = SessionLocal()
@@ -713,18 +780,18 @@ def _resume_execution_sync(execution_id: str) -> None:
         manager = _make_manager(db)
         manager.pipeline_runner.resume_execution(execution_id)
     except Exception:
-        logger.exception("Failed to resume execution %s", execution_id)
+        logger.exception("Failed to resume execution", extra={"event": "resume_failed"})
     finally:
         db.close()
 
 
 async def _shutdown() -> None:
     """Gracefully stop background schedulers on service shutdown."""
-    logger.info("Shutting down ReflowManager service...")
+    logger.info("Shutting down ReflowManager service", extra={"event": "service_stop"})
     stop_pipeline_scheduler()
     stop_dlq_scheduler()
     stop_content_dedup_scheduler()
-    logger.info("Shutdown complete")
+    logger.info("Shutdown complete", extra={"event": "service_stopped"})
 
 
 # Main entry point
@@ -735,7 +802,12 @@ def main() -> None:
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "8001"))
 
-    logger.info("ReflowManager service starting on http://%s:%d", host, port)
+    logger.info(
+        "ReflowManager service starting on http://%s:%d",
+        host,
+        port,
+        extra={"event": "service_listen"},
+    )
     uvicorn.run(app, host=host, port=port)
 
 

@@ -114,7 +114,10 @@ class KafkaDispatcher(BaseDispatcher):
             or self._producer_loop != loop
             or self._producer_loop.is_closed()
         ):
-            logger.info("Detected event loop change, resetting Kafka producer")
+            logger.info(
+                "Detected event loop change, resetting Kafka producer",
+                extra={"event": "producer_reset"},
+            )
             # We cannot strictly close() the old producer if its loop is closed, just discard it
             self._producer = None
             self._producer_loop = None
@@ -168,7 +171,15 @@ class KafkaDispatcher(BaseDispatcher):
             return True
 
         except KafkaError as e:
-            logger.error("Kafka error: %s", e)
+            logger.error(
+                "Kafka error: %s",
+                e,
+                extra={
+                    "event": "kafka_send_error",
+                    "job_id": job_payload.get("job_id"),
+                    "error_type": type(e).__name__,
+                },
+            )
             return False
 
     async def dispatch_jobs_batch(
@@ -192,7 +203,11 @@ class KafkaDispatcher(BaseDispatcher):
                 pipeline_name, rate_limit, max_wait=TOKEN_WAIT_SECONDS
             ):
                 # Normal below ~2 jobs/min: the drive loop calls again.
-                logger.debug("No rate-limit token yet after %d jobs; returning", dispatched)
+                logger.debug(
+                    "No rate-limit token yet after %d jobs; returning",
+                    dispatched,
+                    extra={"event": "rate_limit_wait", "jobs_dispatched": dispatched},
+                )
                 break
             # Re-check: a pause may have landed during a long token wait. The chunk
             # limit is ignored here: at rates below ~2 jobs/min the token only arrives
@@ -218,13 +233,25 @@ class KafkaDispatcher(BaseDispatcher):
                     f"The job message is too large for Kafka ({e}). Records travel inside the "
                     "message: use fewer records per job, or a source that re-fetches on the worker."
                 )
-                logger.error("Job %s cannot be sent: %s", job.get("job_id"), reason)
+                logger.error(
+                    "Job cannot be sent: %s",
+                    reason,
+                    extra={"event": "job_unsendable", "job_id": job.get("job_id")},
+                )
                 if on_unsendable:
                     on_unsendable(job, reason)
                     continue
                 break
             except KafkaError as e:
-                logger.error("Kafka error: %s", e)
+                logger.error(
+                    "Kafka error: %s",
+                    e,
+                    extra={
+                        "event": "kafka_send_error",
+                        "job_id": job.get("job_id"),
+                        "error_type": type(e).__name__,
+                    },
+                )
                 break
 
         return dispatched

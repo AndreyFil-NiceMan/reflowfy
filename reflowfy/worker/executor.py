@@ -236,11 +236,15 @@ class WorkerExecutor:
             blocking_state = await self._claim_job(job_id)
             if blocking_state is not None:
                 if blocking_state == "cancelled":
-                    logger.info("Job %s: execution was cancelled — skipping", job_id)
+                    logger.info(
+                        "Execution was cancelled — skipping job", extra={"event": "job_cancelled"}
+                    )
                     stats.cancelled = True
                 else:
                     logger.info(
-                        "Job %s: already %s — skipping redelivered message", job_id, blocking_state
+                        "Job already %s — skipping redelivered message",
+                        blocking_state,
+                        extra={"event": "job_redelivered", "state": blocking_state},
                     )
                     stats.redelivered = True
                 stats.success = True
@@ -284,16 +288,24 @@ class WorkerExecutor:
                 # just an empty slice.
                 stats.skip_reason = runtime_params.get("skip_reason")
                 if stats.skip_reason:
-                    logger.info("Job %s: dropped by pipeline (%s)", job_id, stats.skip_reason)
+                    logger.info(
+                        "Job dropped by pipeline (%s)",
+                        stats.skip_reason,
+                        extra={"event": "job_dropped", "skip_reason": stats.skip_reason},
+                    )
                 else:
-                    logger.info("Job %s: no records to process", job_id)
+                    logger.info("No records to process", extra={"event": "job_empty"})
                 stats.success = True
                 stats.records_output = 0
                 stats.end_time = time.time()
                 await self._update_job_in_db(execution_id, job_id, stats)
                 return True
 
-            logger.info("Processing job %s: %d records", job_id, len(records))
+            logger.info(
+                "Processing %d records",
+                len(records),
+                extra={"event": "job_processing", "records_in": len(records)},
+            )
             for step in applied:
                 stats.transformation_times[step.name] = round(step.duration, 3)
                 logger.debug(
@@ -303,6 +315,7 @@ class WorkerExecutor:
                     step.duration,
                     step.records_in,
                     step.records_out,
+                    extra={"event": "transform_applied"},
                 )
                 if step.records_skipped:
                     stats.records_skipped += step.records_skipped
@@ -360,7 +373,10 @@ class WorkerExecutor:
                     previous_hashes=previous_hashes,
                 )
                 if not won:
-                    logger.info("Job %s: content already processed — deduplicated", job_id)
+                    logger.info(
+                        "Content already processed — deduplicated",
+                        extra={"event": "job_deduplicated"},
+                    )
                     stats.deduplicated = True
                     stats.success = True
                     stats.records_output = 0
@@ -371,7 +387,9 @@ class WorkerExecutor:
 
             # Health check (async)
             if not await destination.health_check():
-                logger.error("Job %s: destination health check failed", job_id)
+                logger.error(
+                    "Destination health check failed", extra={"event": "destination_unhealthy"}
+                )
                 stats.success = False
                 stats.error = "Destination health check failed"
                 stats.end_time = time.time()
@@ -382,7 +400,9 @@ class WorkerExecutor:
 
             # Send to destination and track time (async)
             logger.debug(
-                "Job %s: sending %d records to destination", job_id, len(transformed_records)
+                "Sending %d records to destination",
+                len(transformed_records),
+                extra={"event": "destination_send"},
             )
             dest_start = time.time()
             await destination.send_with_retry(transformed_records, runtime_params)
@@ -393,10 +413,16 @@ class WorkerExecutor:
             stats.end_time = time.time()
 
             logger.info(
-                "Job %s completed (%.2fs, %d records)",
-                job_id,
+                "Job completed (%.2fs, %d records)",
                 stats.end_time - stats.start_time,
                 stats.records_output,
+                extra={
+                    "event": "job_completed",
+                    "duration_ms": round((stats.end_time - stats.start_time) * 1000),
+                    "records_in": stats.records_input,
+                    "records_out": stats.records_output,
+                    "destination_write_ms": round(stats.destination_write_time * 1000),
+                },
             )
 
             # Update job status in PostgreSQL (async)
@@ -406,7 +432,12 @@ class WorkerExecutor:
 
         except Exception as e:
             tb_str = traceback.format_exc()
-            logger.error("Job %s failed: %s", job_id, e, exc_info=True)
+            logger.error(
+                "Job failed: %s",
+                e,
+                exc_info=True,
+                extra={"event": "job_failed", "error_type": type(e).__name__},
+            )
 
             # Mark as failed — capture both summary and full traceback
             stats.success = False
@@ -452,7 +483,11 @@ class WorkerExecutor:
                 try:
                     await destination.close()
                 except Exception as close_err:
-                    logger.warning("Job %s: failed to close destination: %s", job_id, close_err)
+                    logger.warning(
+                        "Failed to close destination: %s",
+                        close_err,
+                        extra={"event": "destination_close_error"},
+                    )
 
     async def _heartbeat_job(self, job_id: str) -> None:
         """Refresh the running job's ``updated_at`` every JOB_HEARTBEAT_SECONDS.
@@ -475,7 +510,11 @@ class WorkerExecutor:
                     )
                     await db.commit()
             except Exception:
-                logger.warning("Job %s: heartbeat failed; will retry", job_id, exc_info=True)
+                logger.warning(
+                    "Heartbeat failed; will retry",
+                    exc_info=True,
+                    extra={"event": "heartbeat_error"},
+                )
 
     async def _claim_job(self, job_id: str) -> Optional[str]:
         """Claim a job for this delivery: pending/dispatched -> running, attempts + 1.
@@ -507,9 +546,9 @@ class WorkerExecutor:
                 return state
         except Exception:
             logger.warning(
-                "Job %s: could not claim (database error); running it anyway",
-                job_id,
+                "Could not claim job (database error); running it anyway",
                 exc_info=True,
+                extra={"event": "job_claim_error"},
             )
             return None
 
@@ -557,15 +596,20 @@ class WorkerExecutor:
 
                 rowcount = getattr(result, "rowcount", None)
                 if rowcount == 0:
-                    logger.warning("Job %s not found in database", job_id)
+                    logger.warning("Job not found in database", extra={"event": "job_row_missing"})
                     await db.rollback()
                     return
 
                 await db.commit()
-                logger.debug("Job %s: status updated in database", job_id)
+                logger.debug("Status updated in database", extra={"event": "job_status_saved"})
 
             except Exception as e:
-                logger.error("Job %s: failed to update database: %s", job_id, e, exc_info=True)
+                logger.error(
+                    "Failed to update database: %s",
+                    e,
+                    exc_info=True,
+                    extra={"event": "db_update_error"},
+                )
                 await db.rollback()
 
     async def close(self):

@@ -110,7 +110,7 @@ class KafkaJobConsumer:
         for attempt in range(max_retries):
             try:
                 await self.consumer.start()
-                logger.info("Kafka consumer connected")
+                logger.info("Kafka consumer connected", extra={"event": "consumer_connected"})
                 break
             except KafkaError as e:
                 if attempt < max_retries - 1:
@@ -121,10 +121,19 @@ class KafkaJobConsumer:
                         max_retries,
                         e,
                         wait_time,
+                        extra={
+                            "event": "consumer_start_retry",
+                            "attempt": attempt + 1,
+                            "retry_in_s": wait_time,
+                        },
                     )
                     await asyncio.sleep(wait_time)
                 else:
-                    logger.error("Failed to start consumer after %d attempts", max_retries)
+                    logger.error(
+                        "Failed to start consumer after %d attempts",
+                        max_retries,
+                        extra={"event": "consumer_start_failed"},
+                    )
                     raise
 
         self._running = True
@@ -156,7 +165,14 @@ class KafkaJobConsumer:
         try:
             if msg.value is None:
                 # Null-value record (e.g. tombstone) carries no job; skip it.
-                logger.warning("Received message with empty value, skipping")
+                logger.warning(
+                    "Received message with empty value, skipping",
+                    extra={
+                        "event": "message_empty",
+                        "kafka_partition": getattr(msg, "partition", None),
+                        "kafka_offset": getattr(msg, "offset", None),
+                    },
+                )
                 await self.consumer.commit()
                 return
 
@@ -178,11 +194,27 @@ class KafkaJobConsumer:
 
             version = job_payload.get("schema_version")
             if version != 2:
-                logger.error("Unsupported job schema_version=%r; skipping", version, extra=log_ctx)
+                logger.error(
+                    "Unsupported job schema_version=%r; skipping",
+                    version,
+                    extra={
+                        **log_ctx,
+                        "event": "message_bad_schema",
+                        "schema_version": str(version),
+                    },
+                )
                 await self.consumer.commit()
                 return
 
-            logger.info("Received job %s", job_id, extra=log_ctx)
+            logger.info(
+                "Received job",
+                extra={
+                    **log_ctx,
+                    "event": "job_received",
+                    "kafka_partition": getattr(msg, "partition", None),
+                    "kafka_offset": getattr(msg, "offset", None),
+                },
+            )
 
             # Execute job asynchronously. execute_job durably records the outcome
             # (completed/failed/deduplicated) in Postgres before returning.
@@ -197,13 +229,23 @@ class KafkaJobConsumer:
             # restart. A crash *before* this line leaves the offset uncommitted,
             # preserving at-least-once reprocessing.
             if not success:
-                logger.warning("Job %s failed; recorded to DB", job_id, extra=log_ctx)
+                logger.warning(
+                    "Job failed; recorded to DB", extra={**log_ctx, "event": "job_failed_recorded"}
+                )
             await self.consumer.commit()
 
         except _InvalidPayload as e:
             # Malformed for good: redelivery cannot fix it, so commit past it — and
             # count it, so dropped messages show on the dashboards, not just in logs.
-            logger.error("Invalid job payload: %s", e)
+            logger.error(
+                "Invalid job payload: %s",
+                e,
+                extra={
+                    "event": "message_invalid",
+                    "kafka_partition": getattr(msg, "partition", None),
+                    "kafka_offset": getattr(msg, "offset", None),
+                },
+            )
             metrics.jobs_processed_total.labels(pipeline="unknown", status="invalid").inc()
             # Commit anyway to skip bad message
             await self.consumer.commit()
@@ -212,10 +254,13 @@ class KafkaJobConsumer:
             # Group rebalanced mid-job. The outcome is already in Postgres; the message
             # will be redelivered, so a duplicate run is possible (enable_duplicate_jobs=False
             # dedups by content).
-            logger.warning("Offset commit failed: group rebalanced; message will be redelivered")
+            logger.warning(
+                "Offset commit failed: group rebalanced; message will be redelivered",
+                extra={"event": "commit_failed_rebalance"},
+            )
 
         except Exception:
-            logger.exception("Job processing error")
+            logger.exception("Job processing error", extra={"event": "message_error"})
             # Don't commit - will retry
 
     def request_stop(self) -> None:
