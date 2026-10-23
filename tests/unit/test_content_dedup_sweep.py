@@ -49,3 +49,23 @@ def test_purge_executions_removes_old_finished_with_jobs(session):
 
     assert {e.execution_id for e in session.query(Execution)} == {"new", "running"}
     assert {j.job_id for j in session.query(Job)} == {"j-new", "j-running"}
+
+
+def test_purge_deletes_expired_record_claims_in_chunks(session):
+    """4M-record runs leave 4M rows: the purge commits every chunk instead of
+    deleting them in one transaction, and keeps going until none are left."""
+    from reflowfy.reflow_manager.models import ProcessedRecord
+
+    now = datetime(2026, 6, 30, 12, 0, 0)
+    for i in range(23):
+        session.add(ProcessedRecord(record_hash=bytes([i]) * 32, job_id="j",
+                                    created_at=now - timedelta(hours=30)))
+    session.add(ProcessedRecord(record_hash=b"\xff" * 32, job_id="j",
+                                created_at=now - timedelta(hours=1)))
+    session.add(ProcessedContent(content_hash="old", pipeline_name="p", job_id="j",
+                                 execution_id="e", created_at=now - timedelta(hours=30)))
+    session.commit()
+
+    assert purge_expired_content(session, retention_hours=24, now=now, chunk_size=5) == 24
+    assert [r.record_hash for r in session.query(ProcessedRecord)] == [b"\xff" * 32]
+    assert session.query(ProcessedContent).count() == 0

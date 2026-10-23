@@ -1,19 +1,27 @@
-"""Worker-side content deduplication primitive.
+"""Worker-side content deduplication primitives.
 
-`compute_content_hash` is a deterministic hash of a job's work: pipeline name +
-transformation names + record content + where it is written (the destination). The async claim/release helpers run
-against PostgreSQL using whatever AsyncSession factory the worker provides.
+Dedup is per record: `compute_record_hash` identifies one record's write (pipeline +
+the record or its `dedup_key` + destination + the job's own params), and the worker
+claims those hashes in `processed_records` before sending, dropping the records
+another job already claimed. The async claim/release helpers run against
+PostgreSQL using whatever AsyncSession factory the worker provides.
+
+`compute_content_hash` is the previous, job-level hash. It is kept only for the
+upgrade guard (`held_by_other_job`): claims the previous release made in
+`processed_content` still mark a job as already written.
 """
 
 import hashlib
 import json
 import os
-from typing import Any, Callable, Dict, List, Optional, Sequence, cast
+from datetime import datetime, timezone
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Union, cast
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy import delete, select
 
-from reflowfy.reflow_manager.models import ProcessedContent
+from reflowfy.core.serialization import to_json_safe
+from reflowfy.reflow_manager.models import ProcessedContent, ProcessedRecord
 
 # Config keys left out of a destination's identity: rotating a credential must not
 # make already-written content look new. Matched as substrings of the key lowercased
@@ -61,7 +69,7 @@ def previous_destination_identity(destination: Any) -> Dict[str, Any]:
 def destination_identity(destination: Any) -> Dict[str, Any]:
     """Where a job writes: the destination's class plus its config, minus credentials.
 
-    Part of the content hash so the same records sent somewhere else (another
+    Part of every record's hash so the same records sent somewhere else (another
     topic, another URL) are new work, not a duplicate of the first write.
 
     The whole config counts, including an ``api_destination``'s request body. That errs
@@ -94,7 +102,9 @@ def compute_content_hash(
     job_params: Optional[Dict[str, Any]] = None,
     destination: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Deterministic SHA256 over stable job content (v1 semantics).
+    """Deterministic SHA256 over a whole job's content — the previous, job-level hash.
+
+    Only the upgrade guard uses it now (see :func:`held_by_other_job`).
 
     ``job_params`` is what the plan attached to this one job (see
     :func:`reflowfy.job`). Two jobs can hold identical records and still be
@@ -123,76 +133,131 @@ def compute_content_hash(
 
 
 def honor_legacy_hash() -> bool:
-    """Whether claims recorded before destinations joined the hash still block.
+    """Whether job-level claims made by earlier releases still block.
 
-    Those claims carry no destination, so honoring them can wrongly block the same
-    records going somewhere new — but only until the sweeper's retention (24h)
-    has expired them, and the alternative is writing everything a second time at
-    upgrade. Set DEDUP_HONOR_LEGACY_HASH=false once that window has passed.
+    Dedup used to claim one hash per job (and before that, one without the
+    destination). Honoring those claims can wrongly block content going somewhere
+    new — but only until the sweeper's retention (24h) has expired them, and the
+    alternative is writing everything a second time at upgrade. Set
+    DEDUP_HONOR_LEGACY_HASH=false once that window has passed.
     """
     return os.getenv("DEDUP_HONOR_LEGACY_HASH", "true").strip().lower() not in ("0", "false", "no")
 
 
-async def claim_content_hash(
-    session_factory: Any,
-    content_hash: str,
-    pipeline_name: str,
-    job_id: str,
-    execution_id: str,
-    legacy_hash: Optional[str] = None,
-    previous_hashes: Sequence[str] = (),
-) -> bool:
-    """Atomically claim a content hash. True if this job holds it.
+async def held_by_other_job(session_factory: Any, job_hashes: Sequence[str], job_id: str) -> bool:
+    """Whether another job holds one of these job-level hashes in processed_content.
 
-    ``legacy_hash`` is the same content hashed the way it was before destinations
-    were included, and ``previous_hashes`` the way earlier releases hashed it with
-    a destination. If another job already holds any of them (claimed before the
-    upgrade), this is a duplicate and nothing is claimed.
-
-    True when this call inserted the claim, or when the claim already belongs to
-    this same job_id: a job re-run after its worker died (lease re-dispatch, or a
-    SIGKILL that skipped the release) must not be marked a duplicate of itself —
-    that dropped the unwritten rest of the job.
+    Transition guard: dedup used to claim one hash per job. A job whose old hash
+    another job already holds was written by the previous release, so it is a
+    duplicate even though none of its record hashes are claimed yet. Only checked
+    while :func:`honor_legacy_hash` is on.
     """
+    hashes = list(dict.fromkeys(h for h in job_hashes if h))
+    if not hashes:
+        return False
     async with session_factory() as db:
-        older = [h for h in (legacy_hash, *previous_hashes) if h and h != content_hash]
-        if older and honor_legacy_hash():
-            for older_hash in dict.fromkeys(older):
-                legacy_owner = (
-                    await db.execute(
-                        select(ProcessedContent.job_id).where(
-                            ProcessedContent.content_hash == older_hash
-                        )
-                    )
-                ).scalar_one_or_none()
-                if legacy_owner is not None and legacy_owner != job_id:
-                    return False
-        stmt = (
-            pg_insert(ProcessedContent)
-            .values(
-                content_hash=content_hash,
-                pipeline_name=pipeline_name,
-                job_id=job_id,
-                execution_id=execution_id,
+        owners = (
+            await db.execute(
+                select(ProcessedContent.job_id).where(ProcessedContent.content_hash.in_(hashes))
             )
-            .on_conflict_do_nothing(index_elements=["content_hash"])
-        )
-        result = await db.execute(stmt)
-        await db.commit()
-        if (result.rowcount or 0) == 1:
-            return True
-        owner = await db.execute(
-            select(ProcessedContent.job_id).where(ProcessedContent.content_hash == content_hash)
-        )
-        return bool(owner.scalar_one_or_none() == job_id)
+        ).scalars()
+        return any(owner != job_id for owner in owners)
 
 
-async def release_content_hash(session_factory: Any, content_hash: str, job_id: str) -> None:
-    """Release this caller's own claim so a retry can reprocess."""
+# Plan keys that only say which slice a job is. Two jobs can carry the same record
+# under different current_ids (overlapping slices), and that must still dedup.
+_SLICE_PARAMS = ("current_id", "current_ids", "input_ids")
+
+# Rows per INSERT/DELETE statement when claiming or releasing record hashes.
+CLAIM_CHUNK_SIZE = 1000
+
+DedupKey = Union[str, Callable[[Any, Any], Any]]
+
+
+def record_identity(record: Any, dedup_key: Optional[DedupKey], runtime_params: Any) -> Any:
+    """What identifies one record for dedup: the whole record, one field, or a key function.
+
+    A ``str`` key is looked up in the record (``KeyError`` if missing — the job fails
+    rather than sending unchecked); a callable gets ``(record, runtime_params)``.
+    """
+    if dedup_key is None:
+        return to_json_safe(record)
+    if isinstance(dedup_key, str):
+        return to_json_safe(record[dedup_key])
+    return to_json_safe(dedup_key(record, runtime_params))
+
+
+def compute_record_hash(
+    pipeline_name: str,
+    identity: Any,
+    destination: Optional[Dict[str, Any]] = None,
+    job_params: Optional[Dict[str, Any]] = None,
+) -> bytes:
+    """SHA256 digest identifying one record's write.
+
+    Covers the pipeline, the record's identity (see :func:`record_identity`), the
+    destination (:func:`destination_identity`) and the params the plan attached to
+    the job with :func:`reflowfy.job` — the same rows for another tenant are new
+    work. Slice keys (``current_ids`` et al.) are left out so overlapping slices
+    still match. Transformation names are left out: the hash is over what is sent.
+    """
+    stable: Dict[str, Any] = {"pipeline_name": pipeline_name, "record": identity}
+    if destination:
+        stable["destination"] = destination
+    own = {k: v for k, v in (job_params or {}).items() if k not in _SLICE_PARAMS}
+    if own:
+        stable["job_params"] = own
+    content = json.dumps(stable, sort_keys=True, default=str)
+    return hashlib.sha256(content.encode()).digest()
+
+
+def _chunks(items: List[bytes], size: int = CLAIM_CHUNK_SIZE) -> List[List[bytes]]:
+    return [items[i : i + size] for i in range(0, len(items), size)]
+
+
+async def claim_record_hashes(
+    session_factory: Any, hashes: Sequence[bytes], job_id: str
+) -> Set[bytes]:
+    """Atomically claim record hashes. Returns the ones this job holds.
+
+    A hash counts as held when this call inserted it or when this same job_id
+    already holds it: a job re-run after its worker died (lease re-dispatch, or a
+    SIGKILL that skipped the release) must not be a duplicate of itself.
+    """
+    unique = list(dict.fromkeys(hashes))
+    won: Set[bytes] = set()
+    if not unique:
+        return won
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     async with session_factory() as db:
-        stmt = delete(ProcessedContent).where(
-            ProcessedContent.content_hash == content_hash,
-            ProcessedContent.job_id == job_id,
-        )
-        await db.execute(stmt)
+        for part in _chunks(unique):
+            stmt = (
+                pg_insert(ProcessedRecord)
+                .values([{"record_hash": h, "job_id": job_id, "created_at": now} for h in part])
+                .on_conflict_do_nothing(index_elements=["record_hash"])
+                .returning(ProcessedRecord.record_hash)
+            )
+            inserted = set((await db.execute(stmt)).scalars())
+            won |= inserted
+            taken = [h for h in part if h not in inserted]
+            if taken:
+                own = await db.execute(
+                    select(ProcessedRecord.record_hash).where(
+                        ProcessedRecord.record_hash.in_(taken), ProcessedRecord.job_id == job_id
+                    )
+                )
+                won |= set(own.scalars())
+        await db.commit()
+    return won
+
+
+async def release_record_hashes(session_factory: Any, hashes: Sequence[bytes], job_id: str) -> None:
+    """Release this job's own record claims so a retry can send them."""
+    async with session_factory() as db:
+        for part in _chunks(list(dict.fromkeys(hashes))):
+            await db.execute(
+                delete(ProcessedRecord).where(
+                    ProcessedRecord.record_hash.in_(part), ProcessedRecord.job_id == job_id
+                )
+            )
         await db.commit()

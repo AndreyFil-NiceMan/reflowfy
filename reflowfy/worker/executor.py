@@ -5,19 +5,24 @@ import os
 import time
 import traceback
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 
+from reflowfy.core.exceptions import pipeline_step
 from reflowfy.core.execution_context import build_flat_runtime_params_from_metadata
 from reflowfy.core.registry import pipeline_registry
 from reflowfy.execution.content_dedup import (
-    claim_content_hash,
+    claim_record_hashes,
     compute_content_hash,
+    compute_record_hash,
     destination_identity,
+    held_by_other_job,
+    honor_legacy_hash,
     previous_destination_identity,
-    release_content_hash,
+    record_identity,
+    release_record_hashes,
 )
 from reflowfy.execution.job_runner import run_job_records_async
 from reflowfy.factories.source_factory import SourceFactory
@@ -56,6 +61,8 @@ class JobStats:
         self.error_traceback: Optional[str] = None
         self.success = False
         self.deduplicated = False
+        # Records dropped before the send because another job already sent them.
+        self.records_deduplicated = 0
         self.skip_reason: Optional[str] = None
         # Records dropped with SkipRecord, and why (reason -> count, bounded).
         self.records_skipped = 0
@@ -75,6 +82,7 @@ class JobStats:
             "duration_seconds": round(duration, 3),
             "records_input": self.records_input,
             "records_output": self.records_output,
+            "records_deduplicated": self.records_deduplicated,
             "throughput_records_per_second": (
                 round(self.records_output / duration, 2) if duration > 0 else 0
             ),
@@ -145,6 +153,7 @@ class WorkerExecutor:
         skipped: bool = False,
         redelivered: bool = False,
         cancelled: bool = False,
+        records_deduplicated: int = 0,
     ) -> None:
         """Emit Prometheus metrics for one finished job.
 
@@ -166,6 +175,8 @@ class WorkerExecutor:
         # failed at the destination has records_output set but nothing delivered.
         if success and records:
             metrics.records_processed_total.labels(pipeline=pipeline).inc(records)
+        if success and records_deduplicated:
+            metrics.records_deduplicated_total.labels(pipeline=pipeline).inc(records_deduplicated)
         if not success and error_type:
             metrics.jobs_failed_total.labels(pipeline=pipeline, error_type=error_type).inc()
 
@@ -212,6 +223,7 @@ class WorkerExecutor:
                 error_type=stats.error_type,
                 duration=duration,
                 records=stats.records_output,
+                records_deduplicated=stats.records_deduplicated,
             )
 
     async def _execute_job_inner(
@@ -225,7 +237,7 @@ class WorkerExecutor:
         """Fetch the slice, transform, write to destination, report to Postgres."""
         # job_id/execution_id/pipeline_name are bound onto every record here by the
         # log_context() the caller entered — no need to pass them per call.
-        claimed_content_hash = None
+        claimed_record_hashes: List[bytes] = []
         destination = None
         heartbeat: Optional["asyncio.Task[None]"] = None
 
@@ -347,45 +359,23 @@ class WorkerExecutor:
 
             stats.records_output = len(transformed_records)
 
-            # Worker-side content deduplication (enable_duplicate_jobs=False).
-            dedup_check = bool(job_payload.get("dedup_check", False))
-            if dedup_check:
-                transformation_names = [step.name for step in applied]
-                job_params = job_payload.get("job_params") or None
-                identity = destination_identity(destination)
-                content_hash = compute_content_hash(
-                    _pipeline_name, transformation_names, records, job_params, identity
-                )
-                # Claims made before destinations joined the hash are keyed without one.
-                legacy_hash = compute_content_hash(
-                    _pipeline_name, transformation_names, records, job_params
-                )
-                # ...and before an X-API-Key header counted as a credential, with it
-                # (hashed only when that changes the identity: hashing is per record).
-                previous_identity = previous_destination_identity(destination)
-                previous_hashes = (
-                    (
-                        compute_content_hash(
-                            _pipeline_name,
-                            transformation_names,
-                            records,
-                            job_params,
-                            previous_identity,
-                        ),
-                    )
-                    if previous_identity != identity
-                    else ()
-                )
-                won = await claim_content_hash(
-                    self._async_session,
-                    content_hash,
+            # Worker-side per-record deduplication (enable_duplicate_jobs=False).
+            # Nothing to send (transformations filtered everything) is not a duplicate.
+            if job_payload.get("dedup_check", False) and transformed_records:
+                job_params: Optional[Dict[str, Any]] = job_payload.get("job_params") or None
+                kept, claimed_record_hashes = await self._claim_records(
+                    pipeline,
                     _pipeline_name,
                     job_id,
-                    execution_id,
-                    legacy_hash=legacy_hash,
-                    previous_hashes=previous_hashes,
+                    records,
+                    transformed_records,
+                    [step.name for step in applied],
+                    job_params,
+                    destination,
+                    runtime_params,
                 )
-                if not won:
+                stats.records_deduplicated = len(transformed_records) - len(kept)
+                if not kept:
                     logger.info(
                         "Content already processed — deduplicated",
                         extra={"event": "job_deduplicated"},
@@ -396,7 +386,24 @@ class WorkerExecutor:
                     stats.end_time = time.time()
                     await self._update_job_in_db(execution_id, job_id, stats)
                     return True
-                claimed_content_hash = content_hash
+                if stats.records_deduplicated:
+                    logger.info(
+                        "%d of %d records already processed — dropped",
+                        stats.records_deduplicated,
+                        len(transformed_records),
+                        extra={
+                            "event": "records_deduplicated",
+                            "records_deduplicated": stats.records_deduplicated,
+                        },
+                    )
+                    # define_destination saw every record, and a destination may have
+                    # baked them in (an api_destination body is sent verbatim). Resolve
+                    # it again against what is actually being sent.
+                    await destination.close()
+                    with pipeline_step("define_destination", _pipeline_name):
+                        destination = pipeline.define_destination(kept, runtime_params)
+                transformed_records = kept
+                stats.records_output = len(kept)
 
             # Health check (async)
             if not await destination.health_check():
@@ -406,8 +413,8 @@ class WorkerExecutor:
                 stats.success = False
                 stats.error = "Destination health check failed"
                 stats.end_time = time.time()
-                if claimed_content_hash:
-                    await release_content_hash(self._async_session, claimed_content_hash, job_id)
+                if claimed_record_hashes:
+                    await release_record_hashes(self._async_session, claimed_record_hashes, job_id)
                 await self._update_job_in_db(execution_id, job_id, stats)
                 return False
 
@@ -459,9 +466,9 @@ class WorkerExecutor:
             stats.error_traceback = tb_str
             stats.end_time = time.time()
 
-            if claimed_content_hash:
+            if claimed_record_hashes:
                 try:
-                    await release_content_hash(self._async_session, claimed_content_hash, job_id)
+                    await release_record_hashes(self._async_session, claimed_record_hashes, job_id)
                 except Exception:
                     pass
 
@@ -475,9 +482,9 @@ class WorkerExecutor:
             # scale-down/rollout) bypasses `except Exception`. Release the claim so the
             # redelivered message runs again; left held, the redelivery was marked
             # deduplicated and the unwritten rest of the job was silently lost.
-            if claimed_content_hash:
+            if claimed_record_hashes:
                 try:
-                    await release_content_hash(self._async_session, claimed_content_hash, job_id)
+                    await release_record_hashes(self._async_session, claimed_record_hashes, job_id)
                 except BaseException:
                     pass
             raise
@@ -501,6 +508,67 @@ class WorkerExecutor:
                         close_err,
                         extra={"event": "destination_close_error"},
                     )
+
+    async def _claim_records(
+        self,
+        pipeline: Any,
+        pipeline_name: str,
+        job_id: str,
+        records: List[Any],
+        transformed_records: List[Any],
+        transformation_names: List[str],
+        job_params: Optional[Dict[str, Any]],
+        destination: Any,
+        runtime_params: Any,
+    ) -> Tuple[List[Any], List[bytes]]:
+        """Claim a hash per record about to be sent. Returns (records to send, claimed).
+
+        A record whose hash another job holds was already sent there and is dropped,
+        as is a second record with the same identity within this job.
+        """
+        identity = destination_identity(destination)
+        if honor_legacy_hash():
+            # Upgrade guard: the previous release claimed one hash per job in
+            # processed_content. A job it already wrote is a duplicate as a whole.
+            # (Hashing is per record, so the previous identity only when it differs.)
+            previous_identity = previous_destination_identity(destination)
+            job_hashes = [
+                compute_content_hash(
+                    pipeline_name, transformation_names, records, job_params, identity
+                ),
+                compute_content_hash(pipeline_name, transformation_names, records, job_params),
+            ]
+            if previous_identity != identity:
+                job_hashes.append(
+                    compute_content_hash(
+                        pipeline_name,
+                        transformation_names,
+                        records,
+                        job_params,
+                        previous_identity,
+                    )
+                )
+            if await held_by_other_job(self._async_session, job_hashes, job_id):
+                return [], []
+
+        dedup_key = getattr(pipeline, "dedup_key", None)
+        hashes = [
+            compute_record_hash(
+                pipeline_name,
+                record_identity(record, dedup_key, runtime_params),
+                identity,
+                job_params,
+            )
+            for record in transformed_records
+        ]
+        won = await claim_record_hashes(self._async_session, hashes, job_id)
+        kept: List[Any] = []
+        seen: Set[bytes] = set()
+        for record, record_hash in zip(transformed_records, hashes):
+            if record_hash in won and record_hash not in seen:
+                seen.add(record_hash)
+                kept.append(record)
+        return kept, list(won)
 
     async def _heartbeat_job(self, job_id: str) -> None:
         """Refresh the running job's ``updated_at`` every JOB_HEARTBEAT_SECONDS.

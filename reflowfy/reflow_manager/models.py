@@ -2,7 +2,17 @@
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-from sqlalchemy import Boolean, String, Integer, Float, Text, DateTime, ForeignKey, JSON
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+)
 from sqlalchemy.orm import declarative_base, Mapped, mapped_column, relationship
 
 Base = declarative_base()
@@ -260,13 +270,35 @@ class DLQJobArchive(Base):
         }
 
 
-class ProcessedContent(Base):
-    """Content-hash ledger for worker-side deduplication.
+class ProcessedRecord(Base):  # type: ignore[valid-type,misc]  # untyped Base
+    """Per-record ledger for worker-side deduplication.
 
-    One row per processed record-content hash. The worker claims a hash
-    atomically (INSERT ... ON CONFLICT DO NOTHING) before sending to the
-    destination; a duplicate claim means the content was already processed.
-    Rows are purged after a retention window by the content dedup sweeper.
+    One row per record sent with enable_duplicate_jobs=False, keyed by the raw
+    SHA256 of ``compute_record_hash``. The worker claims a job's hashes in bulk
+    (INSERT ... ON CONFLICT DO NOTHING) before sending and drops the records
+    another job already holds. Kept lean on purpose — a 4M-record run is 4M rows
+    for the retention window; the content dedup sweeper purges them in chunks.
+    """
+
+    __tablename__ = "processed_records"
+
+    record_hash: Mapped[bytes] = mapped_column(LargeBinary(32), primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        nullable=False,
+        index=True,
+    )
+
+
+class ProcessedContent(Base):
+    """Legacy job-level content-hash ledger.
+
+    Dedup used to claim one hash per job here. Nothing writes it any more: the
+    worker only reads it as an upgrade guard (``held_by_other_job``) so a job the
+    previous release already wrote is not written again. The sweeper empties it
+    after the retention window.
     """
 
     __tablename__ = "processed_content"

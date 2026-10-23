@@ -292,7 +292,29 @@ The `/run` `rate_limit` override is persisted on the execution (`executions.rate
 
 ### Content deduplication & DLQ
 
-Job IDs are plain `uuid4`. Idempotency is enforced **worker-side, by content**: when `enable_duplicate_jobs=False` the manager sets `dedup_check` on the payload, and the worker hashes the job's content (`execution/content_dedup.py`: pipeline name + transformation names + fetched records + the job's own `job_params` + `destination_identity()` — the destination's class and config, **minus credentials**, so the same records sent to another topic/URL are new work but a rotated password is not) and claims that hash in the `processed_content` table. First claimant runs; a later job with the same hash is marked `deduplicated` and never written. A claim already held by the *same* `job_id` counts as won (a job re-run after its worker died is not a duplicate of itself), and the worker releases its claim on any exit including shutdown. Note the hash covers records, not the source descriptor, so it is computed after fetching. Changing what the hash covers changes every hash, so the worker also computes the previous (destination-less) hash and treats a claim another job holds under it as a duplicate (`DEDUP_HONOR_LEGACY_HASH`, default true) — that keeps an upgrade from rewriting what the old version already wrote, at the price of blocking the same records going to a *new* destination until the 24h retention sweeper expires the old claims. Set it to `false` after that window.
+Job IDs are plain `uuid4`. Idempotency is enforced **worker-side, per record**: when `enable_duplicate_jobs=False` the manager sets `dedup_check` on the payload, and right before the send the worker hashes every record it is about to write (`execution/content_dedup.py` `compute_record_hash`: pipeline name + the record's identity + `destination_identity()` — the destination's class and config, **minus credentials** — + the params the plan attached with `job(...)`, minus the slice keys `current_id`/`current_ids`/`input_ids`). It claims those hashes in bulk in `processed_records` (raw 32-byte digest PK, `INSERT … ON CONFLICT DO NOTHING RETURNING`, 1000 per statement) and drops the records another job already holds. Overlapping slices, reordered records and a job with one changed record are all handled; a job with nothing new ends `deduplicated`, a partly new one `completed` with `records_deduplicated` in its stats. A claim already held by the *same* `job_id` counts as won (a job re-run after its worker died is not a duplicate of itself), the worker releases its claims on any exit including shutdown, and a job whose transformations dropped every record is not a duplicate. When records were dropped, `define_destination` is called again with the records kept: it saw them all, and an `api_destination` body is sent verbatim.
+
+What is hashed is the record **as sent** (after transformations), so a transformation that stamps `processed_at` makes every record new work. `dedup_key` names what identifies a record instead:
+
+```python
+class OrdersById(AbstractPipeline[RuntimeParams]):
+    name = "orders_by_id"
+    enable_duplicate_jobs = False
+    dedup_key = "order_id"                     # a field of the record
+
+class OrdersPerTenant(AbstractPipeline[TenantParams]):
+    name = "orders_per_tenant"
+    enable_duplicate_jobs = False
+    dedup_key = staticmethod(lambda record, params: (params.get("tenant"), record["order_id"]))
+```
+
+A callable gets `(record, runtime_params)` — use the params when part of the identity lives only there — and must be wrapped in `staticmethod` in a class body. A missing field fails the job (`KeyError`) instead of sending unchecked. A key that leaves a field out means a change to that field is **not** resent until the claim expires. `dedup_key` with `enable_duplicate_jobs = True` raises in `__init__`. Two traps: per-job params count, so jobs tagged differently (`job(rows, slice="a")`) never dedup against each other; and an `api_destination` whose body carries the records makes the body part of every hash, so it needs `dedup_identity=` (see `tests/e2e/test_pipelines/record_dedup_pipeline.py`, `tests/unit/test_record_dedup_worker.py`).
+
+Observability: `Job <id>: N of M records already processed — dropped`, `records_deduplicated` on the job's stats, and `reflowfy_records_deduplicated_total{pipeline}` (a fully deduplicated job is still `jobs_processed_total{status="deduplicated"}`).
+
+Size: one row per record sent, about 0.6–0.7 GB per 4M records (estimate), purged after `CONTENT_DEDUP_RETENTION_HOURS` (24) in chunks of `CONTENT_DEDUP_PURGE_CHUNK_SIZE` (10 000) per transaction.
+
+**Upgrade from job-level dedup.** Dedup used to claim one hash per job in `processed_content`, and record hashes never match those. So the worker still computes the old job hashes (`compute_content_hash`, with and without the destination) and treats a job whose old hash another job holds as already written (`held_by_other_job`, `DEDUP_HONOR_LEGACY_HASH`, default true). Nothing writes `processed_content` any more; set the flag to `false` once the 24h retention has emptied it, and the guard, the table and `compute_content_hash` can then be removed.
 
 This is content idempotency across executions. Within one execution, the job-level claim above already stops a redelivered message from running a job twice.
 
