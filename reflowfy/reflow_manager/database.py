@@ -55,6 +55,7 @@ def init_db(max_retries: int = 10, retry_delay: float = 2.0) -> None:
                     max_retries,
                     exc,
                     retry_delay,
+                    extra={"event": "db_connect_retry"},
                 )
                 time.sleep(retry_delay)
     raise RuntimeError(
@@ -124,7 +125,12 @@ def _apply_column_migrations() -> None:
             if add_column:
                 raise  # a column the code needs is missing: init_db retries, then fails loudly
             # index / vacuum settings only tune performance; they run on a later restart
-            logger.warning("Skipping optional migration (table locked): %s", stmt, exc_info=True)
+            logger.warning(
+                "Skipping optional migration (table locked): %s",
+                stmt,
+                exc_info=True,
+                extra={"event": "migration_skipped"},
+            )
 
 
 def get_db() -> Generator[Session, None, None]:

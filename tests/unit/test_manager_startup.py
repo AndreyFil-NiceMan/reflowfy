@@ -332,7 +332,7 @@ def test_resume_swallows_and_logs_errors(factory, monkeypatch, caplog):
 
     monkeypatch.setattr(app_module, "_make_manager", broken)
     app_module._resume_execution_sync("e")  # a recovery thread must not crash
-    assert "Failed to resume execution e" in caplog.text
+    assert "Failed to resume execution" in caplog.text
 
 
 # ----- _shutdown --------------------------------------------------------------------

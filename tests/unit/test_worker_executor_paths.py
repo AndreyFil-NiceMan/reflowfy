@@ -243,7 +243,7 @@ class TestOutcomes:
         assert stats.error_type == "DestinationError"
         assert "DestinationError" in stats.error_traceback
         assert stats.to_dict()["error"] == stats.error
-        assert "Job j failed: Destination 'kafka' error: broker gone" in logs
+        assert "Job failed: Destination 'kafka' error: broker gone" in logs
         assert processed("p2-destfail", "failed") == before + 1
         assert failed_by_type("p2-destfail", "DestinationError") == before_typed + 1
         assert dest.closed  # producer released even on failure
@@ -263,7 +263,7 @@ class TestOutcomes:
         assert stats.error_type == "TransformationError"
         assert "phase2_explode" in stats.error
         assert "bad record shape" in stats.error
-        assert any(m.startswith("Job j failed:") for m in logs)
+        assert any(m.startswith("Job failed:") for m in logs)
         assert processed("p2-tfail", "failed") == before + 1
         assert not pipe.destination_resolved
         assert dest.sent == []
@@ -280,7 +280,7 @@ class TestOutcomes:
         (stats,) = stub_worker.updates
         assert stats.error == "Destination health check failed"
         assert stats.error_type is None
-        assert "Job j: destination health check failed" in logs
+        assert "Destination health check failed" in logs
         assert processed("p2-unhealthy", "failed") == before + 1
         assert dest.sent == [] and dest.closed
 
@@ -300,7 +300,7 @@ class TestOutcomes:
         (stats,) = stub_worker.updates
         assert (stats.success, stats.records_input, stats.records_output) == (True, 2, 2)
         assert stats.end_time is not None and stats.destination_write_time >= 0
-        assert any(m.startswith("Job j completed") and "2 records" in m for m in logs)
+        assert any(m.startswith("Job completed") and "2 records" in m for m in logs)
         assert processed("p2-ok", "completed") == before + 1
         assert (
             REGISTRY.get_sample_value("reflowfy_records_processed_total", {"pipeline": "p2-ok"})
@@ -322,7 +322,7 @@ class TestOutcomes:
 
         assert ok is True  # commit: the job row belongs to the delivery that ran it
         assert stub_worker.updates == []  # the row keeps that delivery's result
-        assert "Job j: already completed — skipping redelivered message" in logs
+        assert "Job already completed — skipping redelivered message" in logs
         assert processed("p2-redeliver", "redelivered") == before + 1
         assert processed("p2-redeliver", "completed") == before_completed
         assert not pipe.destination_resolved
@@ -337,7 +337,7 @@ class TestOutcomes:
 
         assert ok is True
         assert stub_worker.updates == []
-        assert "Job j: execution was cancelled — skipping" in logs
+        assert "Execution was cancelled — skipping job" in logs
         assert processed("p2-cancel", "cancelled") == before + 1
 
     async def test_empty_slice_completes_with_no_records(self, register, stub_worker):
@@ -350,7 +350,7 @@ class TestOutcomes:
         assert ok is True
         (stats,) = stub_worker.updates
         assert stats.skip_reason is None and stats.records_output == 0
-        assert "Job j: no records to process" in logs
+        assert "No records to process" in logs
         assert processed("p2-empty", "completed") == before + 1
         assert not pipe.destination_resolved
 
@@ -361,7 +361,7 @@ class TestOutcomes:
             ok = await stub_worker.execute_job(_payload("p2-closefail"))
 
         assert ok is True
-        assert "Job j: failed to close destination: socket" in logs
+        assert "Failed to close destination: socket" in logs
 
 
 # ---------------------------------------------------------------- content dedup
@@ -395,7 +395,7 @@ class TestContentDedup:
         (stats,) = stub_worker.updates
         assert stats.deduplicated is True and stats.records_output == 0
         assert stats.records_deduplicated == 2
-        assert "Job j: content already processed — deduplicated" in logs
+        assert "Content already processed — deduplicated" in logs
         assert processed("p2-dedup", "deduplicated") == before + 1
         assert dest.sent == []
         # one hash per record, claimed under this job
@@ -539,7 +539,7 @@ class TestClaimJob:
                 assert await worker._claim_job("j") is None
         finally:
             await worker.close()
-        assert "Job j: could not claim (database error); running it anyway" in logs
+        assert "Could not claim job (database error); running it anyway" in logs
 
 
 @pytest.mark.real_claim
@@ -604,7 +604,7 @@ class TestUpdateJobInDb:
                 await worker._update_job_in_db("e", "ghost", JobStats())
         finally:
             await worker.close()
-        assert "Job ghost not found in database" in logs
+        assert "Job not found in database" in logs
         assert await _rows(url) == {}
 
     async def test_database_error_is_logged_not_raised(self, tmp_path):
@@ -614,7 +614,7 @@ class TestUpdateJobInDb:
                 await worker._update_job_in_db("e", "j", JobStats())
         finally:
             await worker.close()
-        assert any(m.startswith("Job j: failed to update database:") for m in logs)
+        assert any(m.startswith("Failed to update database:") for m in logs)
 
 
 @pytest.mark.real_claim
@@ -637,7 +637,7 @@ class TestEndToEndOnSqlite:
         assert row.state == "completed" and row.attempts == 1
         assert row.stats["skip_reason"] == "upstream not ready"
         assert row.processed_records == 0
-        assert "Job j: dropped by pipeline (upstream not ready)" in logs
+        assert "Job dropped by pipeline (upstream not ready)" in logs
         assert processed("p2-skip", "skipped") == before + 1
         assert dest.sent == []
 
@@ -707,5 +707,5 @@ class TestEndToEndOnSqlite:
                 await beat
         await worker.close()
 
-        failures = [m for m in logs if m == "Job j: heartbeat failed; will retry"]
+        failures = [m for m in logs if m == "Heartbeat failed; will retry"]
         assert len(failures) >= 2  # kept beating after the first failure

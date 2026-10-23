@@ -104,6 +104,7 @@ class ContentDedupScheduler:
             "Content Dedup Sweeper started (every %ss, retain %sh)",
             self.sweep_interval,
             self.retention_hours,
+            extra={"event": "sweeper_start", "sweep_interval_s": self.sweep_interval},
         )
 
     def stop(self) -> None:
@@ -123,16 +124,23 @@ class ContentDedupScheduler:
                 executions = purge_expired_executions(db, self.execution_retention_hours)
                 db.commit()
                 if deleted:
-                    logger.info("Content Dedup Sweeper purged %d expired hash(es)", deleted)
+                    logger.info(
+                        "Content Dedup Sweeper purged %d expired hash(es)",
+                        deleted,
+                        extra={"event": "dedup_hashes_purged", "hashes_purged": deleted},
+                    )
                 if executions:
                     logger.info(
                         "Retention sweeper purged %d execution(s) older than %dh with their jobs",
                         executions,
                         self.execution_retention_hours,
+                        extra={"event": "executions_purged", "executions_purged": executions},
                     )
             except Exception:  # pragma: no cover
                 db.rollback()
-                logger.error("Content Dedup Sweeper error", exc_info=True)
+                logger.error(
+                    "Content Dedup Sweeper error", exc_info=True, extra={"event": "sweeper_error"}
+                )
             finally:
                 db.close()
             self._stop_event.wait(timeout=self.sweep_interval)

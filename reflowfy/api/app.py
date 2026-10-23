@@ -21,7 +21,9 @@ from reflowfy.api.routes import create_pipeline_routes
 from reflowfy.api.execution import execution_tracker
 from reflowfy.execution.distributed_executor import get_executor
 
-logger = logging.getLogger(__name__)
+# Named explicitly: the Dockerfiles start this with `python -m`, where __name__ is "__main__" and a
+# logger named after it sits outside the "reflowfy" logger the JSON/Elasticsearch handlers hang off.
+logger = logging.getLogger("reflowfy.api.app")
 
 
 def create_app() -> FastAPI:
@@ -36,7 +38,9 @@ def create_app() -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         """Initialize pipelines on startup."""
         setup_logging(service_name="api")
-        logger.info("Starting Reflowfy API (version %s)", __version__)
+        logger.info(
+            "Starting Reflowfy API (version %s)", __version__, extra={"event": "service_start"}
+        )
 
         # Load pipelines using global discovery (module from PIPELINE_MODULE env)
         discover_and_load_pipelines()
@@ -119,10 +123,14 @@ def setup_pipeline_routes(app: FastAPI) -> None:
     pipelines = pipeline_registry.list_all()
 
     if not pipelines:
-        logger.warning("No pipelines registered")
+        logger.warning("No pipelines registered", extra={"event": "no_pipelines"})
         return
 
-    logger.info("Setting up routes for %d pipeline(s)", len(pipelines))
+    logger.info(
+        "Setting up routes for %d pipeline(s)",
+        len(pipelines),
+        extra={"event": "routes_setup", "pipelines_registered": len(pipelines)},
+    )
 
     # Get ReflowManager URL from environment
     reflow_manager_url = os.getenv("REFLOW_MANAGER_URL", "http://localhost:8001")
@@ -150,7 +158,7 @@ def setup_pipeline_routes(app: FastAPI) -> None:
             distributed_executor=distributed_executor,
         )
 
-    logger.info("Routes configured")
+    logger.info("Routes configured", extra={"event": "routes_ready"})
 
 
 def main():
@@ -164,7 +172,7 @@ def main():
 
     # Note: User must import their pipeline definitions before starting the server
     # This triggers registration via metaclass
-    logger.info("Starting Reflowfy API (version %s)", __version__)
+    logger.info("Starting Reflowfy API (version %s)", __version__, extra={"event": "service_start"})
 
     # Auto-discover and load pipelines
     discover_and_load_pipelines()
@@ -176,7 +184,12 @@ def main():
     host = os.getenv("API_HOST", "0.0.0.0")
     port = int(os.getenv("API_PORT", "8000"))
 
-    logger.info("Server starting on http://%s:%d (docs at /docs)", host, port)
+    logger.info(
+        "Server starting on http://%s:%d (docs at /docs)",
+        host,
+        port,
+        extra={"event": "service_listen"},
+    )
 
     # Start server
     uvicorn.run(app, host=host, port=port)

@@ -102,7 +102,7 @@ async def test_overlapping_jobs_send_each_record_once(register, worker):  # noqa
     assert (second.records_output, second.records_deduplicated) == (50, 51)
     assert second.success and not second.deduplicated  # partly new: a completed job
     assert second.to_dict()["records_deduplicated"] == 51
-    assert "Job b: 51 of 101 records already processed — dropped" in logs
+    assert "51 of 101 records already processed — dropped" in logs
     assert deduplicated_records("rd-overlap") == before + 51
 
 

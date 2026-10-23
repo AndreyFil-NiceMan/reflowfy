@@ -181,6 +181,7 @@ class PipelineMeta(ABCMeta):
                         pipeline_name,
                         exc,
                         exc_info=True,
+                        extra={"event": "pipeline_register_failed", "pipeline_name": pipeline_name},
                     )
                     pipeline_registry.record_failure(pipeline_name, exc)
 

@@ -240,7 +240,7 @@ class TestConsumeLoop:
             consumer = await _run(worker, [_msg(_job("bad"))])
 
         assert consumer.events.count("commit") == 1
-        assert "Job bad failed; recorded to DB" in logs
+        assert "Job failed; recorded to DB" in logs
 
     @pytest.mark.parametrize("version", [None, 1, 3, "2"])
     async def test_wrong_schema_version_is_rejected_and_committed(self, fake_kafka, version):

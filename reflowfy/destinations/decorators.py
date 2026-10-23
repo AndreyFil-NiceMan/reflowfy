@@ -33,7 +33,9 @@ class DestinationRegistry:
     def register(cls, name: str, factory: Callable[..., Any]) -> None:
         """Register a destination factory function."""
         cls._destinations[name] = factory
-        logger.debug("Registered reusable destination: %s", name)
+        logger.debug(
+            "Registered reusable destination: %s", name, extra={"event": "destination_registered"}
+        )
 
     @classmethod
     def get(cls, name: str) -> Optional[Callable[..., Any]]:
@@ -69,7 +71,9 @@ def destination(name: str) -> Callable[[F], F]:
         def production_kafka(**overrides):
             return kafka_destination(bootstrap_servers="kafka:9092", **overrides)
     """
+
     def decorator(func: F) -> F:
         destination_registry.register(name, func)
         return func
+
     return decorator

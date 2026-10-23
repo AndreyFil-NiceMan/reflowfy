@@ -58,7 +58,9 @@ class TransformationRegistry:
                 )
 
             self._transformations[name] = transformation_class
-            logger.debug("Registered transformation: %s", name)
+            logger.debug(
+                "Registered transformation: %s", name, extra={"event": "transformation_registered"}
+            )
 
     def get(self, name: str) -> Optional[Type[Any]]:
         """
