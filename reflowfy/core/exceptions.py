@@ -62,3 +62,25 @@ class SkipJob(PipelineError):
             if not [r for r in records if r["status"] == "ready"]:
                 raise SkipJob("nothing ready yet")
     """
+
+
+class SkipRecord(PipelineError):
+    """Raise from a per-record transformation to drop that one record.
+
+    The rest of the job carries on. Unlike returning ``None`` (a silent drop, like
+    a filter), the reason is kept: logged, stored on the job's ``stats``
+    (``records_skipped`` / ``record_skip_reasons``) and counted as
+    ``reflowfy_records_skipped_total``::
+
+        @record_transformation("enrich_user")
+        async def enrich_user(record, runtime_params):
+            user = await fetch_user(record["user_id"])
+            if not user["active"]:
+                raise SkipRecord("user inactive")
+            return {**record, "user": user}
+
+    Keep the reason a short, fixed phrase rather than one built from the record:
+    reasons are counted, so ``"user inactive"`` groups and ``f"user {id} inactive"``
+    does not. Only a per-record transformation can skip a record; anywhere else
+    there is no single record to drop, and it fails the job saying so.
+    """

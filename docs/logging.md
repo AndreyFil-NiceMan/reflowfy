@@ -19,6 +19,8 @@ Every log line is one ECS-shaped JSON object (`LOG_JSON=false` gives text with t
 | `state` | Execution/job state at that moment |
 | `jobs_total/_completed/_failed/_dispatched/_pending/_in_flight/_cancelled/_due` | Job counts |
 | `records_in`, `records_out` | Record counts |
+| `records_skipped` | Records a per-record transformation dropped with `SkipRecord` (the reasons are in the message, not a field) |
+| `transformation`, `mode`, `concurrency` | A transformation step: its name, how it ran (`sync` / `async` / `per_record`), records in flight at once (per_record only) |
 | `duration_ms`, `destination_write_ms` | Timings |
 | `skip_reason`, `reason` | Why a job was dropped / skipped |
 | `error_type` | Exception class name |
@@ -42,7 +44,8 @@ Every log line is one ECS-shaped JSON object (`LOG_JSON=false` gives text with t
 - `destinations/kafka.py`: `kafka_lag_check_error`, `kafka_lag_high`, `producer_setting_ignored`
 - `execution/distributed_executor.py`: `execution_submit`, `execution_submit_error`, `execution_submit_rejected`, `execution_submitted`
 - `execution/job_runner.py`: `skipjob_raised`
-- `execution/local_executor.py`: `destination_send`, `execution_empty`, `execution_finished`, `execution_start`, `id_done`, `id_empty`, `id_processing`, `id_transform_done`, `job_dropped`, `source_fetch`, `source_fetched`, `transform_done`
+- `execution/local_executor.py`: `destination_send`, `execution_empty`, `execution_finished`, `execution_start`, `id_done`, `id_empty`, `id_processing`, `id_transform_done`, `job_dropped`, `records_skipped`, `source_fetch`, `source_fetched`, `transform_done`
+- `execution/transformation_runner.py`: `transform_per_record_start`
 - `reflow_manager/app.py`: `db_init`, `db_ready`, `dispatch_failed`, `driver_leases_released`, `execution_mark_failed_error`, `recovery_check`, `recovery_found`, `recovery_none`, `recovery_resume_scheduled`, `recovery_scheduled`, `resume_failed`, `run_accepted`, `run_failed`, `run_undeclared_params`, `scheduler_init_failed`, `scheduler_ready`, `service_config`, `service_listen`, `service_start`, `service_stop`, `service_stopped`, `stats_error`
 - `reflow_manager/content_dedup_scheduler.py`: `dedup_hashes_purged`, `executions_purged`, `sweeper_error`, `sweeper_start`
 - `reflow_manager/database.py`: `db_connect_retry`, `migration_skipped`
@@ -57,5 +60,5 @@ Every log line is one ECS-shaped JSON object (`LOG_JSON=false` gives text with t
 - `sources/elastic.py`: `pit_close_error`, `source_aggs_ignored`, `source_option_ignored`, `source_page`, `source_planned`
 - `transformations/registry.py`: `transformation_registered`
 - `worker/consumer.py`: `commit_failed_rebalance`, `consumer_connected`, `consumer_start_failed`, `consumer_start_retry`, `job_failed_recorded`, `job_received`, `message_bad_schema`, `message_empty`, `message_error`, `message_invalid`
-- `worker/executor.py`: `db_update_error`, `destination_close_error`, `destination_send`, `destination_unhealthy`, `heartbeat_error`, `job_cancelled`, `job_claim_error`, `job_completed`, `job_deduplicated`, `job_dropped`, `job_empty`, `job_failed`, `job_processing`, `job_redelivered`, `job_row_missing`, `job_status_saved`, `records_deduplicated`, `transform_applied`
+- `worker/executor.py`: `db_update_error`, `destination_close_error`, `destination_send`, `destination_unhealthy`, `heartbeat_error`, `job_cancelled`, `job_claim_error`, `job_completed`, `job_deduplicated`, `job_dropped`, `job_empty`, `job_failed`, `job_processing`, `job_redelivered`, `job_row_missing`, `job_status_saved`, `records_deduplicated`, `records_skipped`, `transform_applied`
 - `worker/main.py`: `service_config`, `service_start`, `service_stop`, `shutdown_drain`, `shutdown_forced`, `worker_crashed`, `worker_ready`

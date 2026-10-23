@@ -1,8 +1,11 @@
 """Base transformation class with automatic registration."""
 
+import asyncio
+import os
 from abc import ABCMeta, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
+from reflowfy.core.exceptions import SkipJob, SkipRecord
 from reflowfy.core.query_loader import QueryLoaderMixin
 
 
@@ -101,6 +104,215 @@ class BaseTransformation(QueryLoaderMixin, metaclass=TransformationMeta):
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(name='{self.name}')"
+
+
+class AsyncTransformation(BaseTransformation):
+    """A transformation whose work is a coroutine: implement :meth:`apply_async`.
+
+    The worker awaits it on its own event loop, so it can call HTTP APIs or
+    databases without blocking (``@transformation`` on an ``async def`` builds one
+    of these). Steps still run one after another; for many awaits per job, one
+    per record, use :class:`RecordTransformation` / ``@record_transformation``.
+
+    Example:
+        >>> class Geocode(AsyncTransformation):
+        ...     name = "geocode"
+        ...
+        ...     def __init__(self, provider: str):
+        ...         self.provider = provider
+        ...
+        ...     async def apply_async(self, records, runtime_params):
+        ...         async with httpx.AsyncClient() as client:
+        ...             ...
+
+    Open clients inside ``apply_async`` rather than at module level: ``reflowfy
+    test`` and local mode run each job on a new event loop.
+    """
+
+    @abstractmethod
+    async def apply_async(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
+        """Transform a batch of records; same contract as :meth:`BaseTransformation.apply`."""
+
+    def apply(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
+        """Synchronous entry point for callers that are not async; runs ``apply_async``."""
+        from reflowfy.core.async_utils import run_coroutine_sync
+
+        return run_coroutine_sync(self.apply_async(records, runtime_params))
+
+
+DEFAULT_RECORD_CONCURRENCY = 16
+
+
+def default_record_concurrency() -> int:
+    """``TRANSFORM_CONCURRENCY`` (records in flight per per-record step), default 16."""
+    raw = os.getenv("TRANSFORM_CONCURRENCY", "")
+    try:
+        value = int(raw) if raw.strip() else DEFAULT_RECORD_CONCURRENCY
+    except ValueError:
+        raise ValueError(f"TRANSFORM_CONCURRENCY must be an integer, got {raw!r}") from None
+    if value < 1:
+        raise ValueError(f"TRANSFORM_CONCURRENCY must be >= 1, got {value}")
+    return value
+
+
+class RecordFailure(Exception):
+    """One record of a :class:`RecordTransformation` failed.
+
+    Carries the record's position so the runner can report exactly which record
+    broke the step, instead of guessing from the exception.
+    """
+
+    def __init__(self, index: int, record: Any, error: Exception):
+        self.index = index
+        self.record = record
+        self.error = error
+        super().__init__(f"record {index}: {type(error).__name__}: {error}")
+
+
+MAX_SKIP_REASONS = 20
+"""Distinct ``SkipRecord`` reasons kept per step; the rest are counted as ``OTHER_SKIP_REASON``."""
+MAX_SKIP_REASON_LENGTH = 200
+OTHER_SKIP_REASON = "(other reasons)"
+
+
+def count_skip_reason(reasons: Dict[str, int], reason: str, times: int = 1) -> None:
+    """Add ``times`` skips for ``reason`` to ``reasons``, keeping the dict bounded."""
+    reason = reason[:MAX_SKIP_REASON_LENGTH] or "(no reason)"
+    if reason not in reasons and len(reasons) >= MAX_SKIP_REASONS:
+        reason = OTHER_SKIP_REASON
+    reasons[reason] = reasons.get(reason, 0) + times
+
+
+class _Skipped:
+    """Marks a record its transformation dropped with ``SkipRecord``."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+
+
+class RecordResults(NamedTuple):
+    """What a per-record step produced: the kept records, and why the others went."""
+
+    records: List[Any]
+    skip_reasons: Dict[str, int]
+    """``SkipRecord`` reason -> records skipped for it (bounded, see ``MAX_SKIP_REASONS``)."""
+
+
+class RecordTransformation(AsyncTransformation):
+    """Awaits :meth:`apply_record` once per record, ``concurrency`` records at a time.
+
+    Output keeps input order; a record for which ``apply_record`` returns ``None``
+    is dropped. The first record that raises stops the step: the records still in
+    flight are cancelled and the job fails naming that record's index.
+    ``SkipRecord`` drops that record and records why; ``SkipJob`` from any record
+    drops the whole job. ``timeout`` (seconds) bounds
+    each record's call.
+
+    The concurrent calls share one ``runtime_params``: read it, don't write it.
+    Usually built with ``@record_transformation``; subclass it to share one client
+    across the records of a step, opened in :meth:`setup` and closed in
+    :meth:`teardown` (creating an ``httpx.AsyncClient`` costs tens of milliseconds,
+    so one per record is slow)::
+
+        class EnrichUser(RecordTransformation):
+            name = "enrich_user"
+            concurrency = 32
+
+            async def setup(self, runtime_params):
+                self.client = httpx.AsyncClient(base_url="http://users")
+
+            async def teardown(self):
+                await self.client.aclose()
+
+            async def apply_record(self, record, runtime_params):
+                resp = await self.client.get(f"/users/{record['user_id']}")
+                return {**record, "user": resp.json()}
+    """
+
+    concurrency: Optional[int] = None
+    """Records in flight at once; ``None`` means ``TRANSFORM_CONCURRENCY`` (16)."""
+    timeout: Optional[float] = None
+    """Seconds allowed per record; ``None`` means no limit."""
+
+    @abstractmethod
+    async def apply_record(self, record: Any, runtime_params: Dict[str, Any]) -> Any:
+        """Transform one record; return the new record, or ``None`` to drop it."""
+
+    async def setup(self, runtime_params: Dict[str, Any]) -> None:
+        """Called once before the step's records run: open shared clients here."""
+
+    async def teardown(self) -> None:
+        """Called once after the step's records, whether they succeeded or not."""
+
+    def effective_concurrency(self) -> int:
+        """The cap this step runs with."""
+        return self.concurrency if self.concurrency is not None else default_record_concurrency()
+
+    async def _apply_one(self, index: int, record: Any, runtime_params: Dict[str, Any]) -> Any:
+        try:
+            if self.timeout is None:
+                return await self.apply_record(record, runtime_params)
+            try:
+                return await asyncio.wait_for(
+                    self.apply_record(record, runtime_params), self.timeout
+                )
+            except asyncio.TimeoutError as exc:
+                # The bare asyncio.TimeoutError says nothing on its own.
+                timed_out = TimeoutError(f"timed out after {self.timeout}s")
+                raise RecordFailure(index, record, timed_out) from exc
+        except (SkipJob, RecordFailure):
+            raise
+        except SkipRecord as exc:
+            return _Skipped(str(exc))
+        except Exception as exc:
+            raise RecordFailure(index, record, exc) from exc
+
+    async def apply_async(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
+        return (await self.apply_records(records, runtime_params)).records
+
+    async def apply_records(
+        self, records: List[Any], runtime_params: Dict[str, Any]
+    ) -> RecordResults:
+        """Run the step and also report the records it skipped (the runner uses this)."""
+        if not records:
+            return RecordResults([], {})
+        await self.setup(runtime_params)
+        try:
+            results = await self._apply_all(records, runtime_params)
+        finally:
+            await self.teardown()
+        kept: List[Any] = []
+        skip_reasons: Dict[str, int] = {}
+        for result in results:
+            if isinstance(result, _Skipped):
+                count_skip_reason(skip_reasons, result.reason)
+            elif result is not None:
+                kept.append(result)
+        return RecordResults(kept, skip_reasons)
+
+    async def _apply_all(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
+        results: List[Any] = [None] * len(records)
+        # A fixed pool of workers pulling from one iterator, rather than a task per
+        # record, keeps memory flat for a job of any size. next() never awaits, so
+        # the workers cannot take the same record.
+        pending = iter(enumerate(records))
+
+        async def worker() -> None:
+            for index, record in pending:
+                results[index] = await self._apply_one(index, record, runtime_params)
+
+        workers = [
+            asyncio.ensure_future(worker())
+            for _ in range(min(self.effective_concurrency(), len(records)))
+        ]
+        try:
+            await asyncio.gather(*workers)
+        except BaseException:
+            for task in workers:
+                task.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
+            raise
+        return results
 
 
 class TransformationError(Exception):

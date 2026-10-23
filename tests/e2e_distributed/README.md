@@ -20,8 +20,9 @@ proof that the data arrived.
 | `conftest.py`, `helpers.py` | Fixtures and clients; the environment variables are documented in `conftest.py` |
 | `test_abstract_pipelines.py` | Delivery, job outcomes, retry-failed, dedup, rate limit, pause/resume, concurrency, API behaviour, Elasticsearch, chaos |
 | `test_id_based_pipelines.py` | One job per ID, `ids_batch_size`, fan-out via `define_jobs`, odd IDs, the API source with injected failures, chaos |
+| `test_async_pipelines.py` | Async per-record transformations: delivery, the concurrency cap per job (counted by the sink), 404/5xx per record, retry-failed, a long async step that must not get the worker evicted, chaos |
 
-Pipelines: `dist_abstract`, `dist_abstract_es`, `dist_ids_b1`, `dist_ids_b7`, `dist_ids_b100`,
+Pipelines: `dist_abstract`, `dist_abstract_es`, `dist_async`, `dist_ids_b1`, `dist_ids_b7`, `dist_ids_b100`,
 `dist_ids_fanout`, `dist_ids_api`, `dist_ids_api_batch`.
 
 ## Running it

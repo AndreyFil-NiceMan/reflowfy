@@ -17,6 +17,8 @@ Endpoints
     GET  /flag/{channel}
     POST /reset/{channel}         forget a channel (ledger, rules, flag)
     GET  /users/... via /api/{run}/users/{id} and POST /api/{run}/users/batch
+    GET  /api/{run}/stats         mock API calls and the most in flight at once, for the
+                                  whole run and per ``?job=`` tag the caller sent
     GET  /health, GET /channels, HEAD/OPTIONS on any path (destination health checks)
 """
 
@@ -27,7 +29,7 @@ import time
 from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 LOCK = threading.Lock()
 
@@ -41,6 +43,8 @@ class Channel:
         self.rules: Dict[str, Any] = {}
         self.flag: str = ""
         self.api_calls: Counter = Counter()  # mock API: id -> times requested
+        self.in_flight: Counter = Counter()  # mock API: "*" / job tag -> requests open now
+        self.peak: Counter = Counter()  # mock API: "*" / job tag -> most open at once
 
 
 CHANNELS: Dict[str, Channel] = {}
@@ -115,6 +119,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ids": list(ch.ids), "batches": list(ch.batches)})
         if len(parts) == 2 and parts[0] == "flag":
             return self._send(200, {"value": channel(parts[1]).flag})
+        if len(parts) == 3 and parts[0] == "api" and parts[2] == "stats":
+            return self._api_stats(parts[1])
         if len(parts) == 4 and parts[0] == "api" and parts[2] == "users":
             return self._user(parts[1], parts[3])
         self._send(404, {"error": f"no route {self.path}"})
@@ -228,10 +234,33 @@ class Handler(BaseHTTPRequestHandler):
 
     def _user(self, run: str, uid: str) -> None:
         ch = self._api_rules(run)
-        user = self._user_response(ch, run, uid)
+        job = parse_qs(urlparse(self.path).query).get("job", [None])[0]
+        keys = ["*"] + ([f"job:{job}"] if job is not None else [])
+        with LOCK:
+            for key in keys:
+                ch.in_flight[key] += 1
+                ch.peak[key] = max(ch.peak[key], ch.in_flight[key])
+        try:
+            user = self._user_response(ch, run, uid)
+        finally:
+            with LOCK:
+                for key in keys:
+                    ch.in_flight[key] -= 1
         if user is None:
             return self._send(self._pending_status, {"error": "injected"})
         self._send(200, user)
+
+    def _api_stats(self, run: str) -> None:
+        ch = self._api_rules(run)
+        with LOCK:
+            self._send(
+                200,
+                {
+                    "calls": sum(ch.api_calls.values()),
+                    "peak_concurrency": ch.peak["*"],
+                    "peak_by_job": {k[4:]: v for k, v in ch.peak.items() if k.startswith("job:")},
+                },
+            )
 
     def _users_batch(self, run: str, body: Any) -> None:
         ch = self._api_rules(run)

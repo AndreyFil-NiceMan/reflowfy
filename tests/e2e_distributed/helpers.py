@@ -114,6 +114,14 @@ class Sink:
     def reset(self, channel: str) -> None:
         self.http.delete(f"/reset/{channel}")
 
+    def api_rules(self, channel: str, **rules: Any) -> None:
+        """Injection rules for the mock users API of a run (``slow_ms``, ``status_by_id``…)."""
+        self.rules(f"api:{channel}", **rules)
+
+    def api_stats(self, channel: str) -> Dict[str, Any]:
+        """Mock users API calls and peak concurrency: whole run and ``peak_by_job``."""
+        return dict(_get(self.http, f"/api/{channel}/stats").json())
+
 
 def assert_exactly_once(sink: Sink, channel: str, expected: Iterable[Any]) -> None:
     """Every expected id arrived, once, and nothing else arrived."""

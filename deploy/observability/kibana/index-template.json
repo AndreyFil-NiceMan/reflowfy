@@ -21,7 +21,9 @@
         "retry_in_s": { "type": "float" },
         "duration_ms": { "type": "long" },
         "records_in": { "type": "long" },
-        "records_out": { "type": "long" }
+        "records_out": { "type": "long" },
+        "records_skipped": { "type": "long" },
+        "concurrency": { "type": "long" }
       }
     }
   }

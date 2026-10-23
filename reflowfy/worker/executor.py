@@ -24,7 +24,7 @@ from reflowfy.execution.content_dedup import (
     record_identity,
     release_record_hashes,
 )
-from reflowfy.execution.job_runner import run_job_records
+from reflowfy.execution.job_runner import run_job_records_async
 from reflowfy.factories.source_factory import SourceFactory
 from reflowfy.observability import metrics
 from reflowfy.observability.context import log_context
@@ -32,8 +32,17 @@ from reflowfy.observability.logging import get_logger
 from reflowfy.observability.tracing import extract_and_attach
 from reflowfy.reflow_manager.db_settings import async_connect_args
 from reflowfy.reflow_manager.models import Job
+from reflowfy.transformations.base import count_skip_reason
 
 logger = get_logger("worker.executor")
+
+
+def _top_reasons(reasons: Dict[str, int], limit: int = 3) -> str:
+    """``"user inactive" x3, "no email" x1`` — the most frequent reasons, for one log line."""
+    top = sorted(reasons.items(), key=lambda item: -item[1])[:limit]
+    more = len(reasons) - len(top)
+    text = ", ".join(f"{reason!r} x{times}" for reason, times in top)
+    return f"{text}, +{more} more" if more > 0 else text
 
 
 class JobStats:
@@ -55,6 +64,9 @@ class JobStats:
         # Records dropped before the send because another job already sent them.
         self.records_deduplicated = 0
         self.skip_reason: Optional[str] = None
+        # Records dropped with SkipRecord, and why (reason -> count, bounded).
+        self.records_skipped = 0
+        self.record_skip_reasons: Dict[str, int] = {}
         # Another delivery of this job already claimed it; this message was skipped.
         self.redelivered = False
         # The execution was cancelled before this job started; the message was skipped.
@@ -78,6 +90,8 @@ class JobStats:
             "destination_write_time": round(self.destination_write_time, 3),
             "error": self.error,
             "skip_reason": self.skip_reason,
+            "records_skipped": self.records_skipped,
+            "record_skip_reasons": self.record_skip_reasons,
             "success": self.success,
         }
 
@@ -272,11 +286,12 @@ class WorkerExecutor:
                 )
 
             # Shared v2 core: fetch this slice, normalize, transform, resolve destination.
-            # In a thread: fetch/transform are blocking (sync Elasticsearch client). Run
+            # Async transformations are awaited on this loop; the blocking parts (sync
+            # Elasticsearch client, sync transformations) run in threads inside it. Run
             # inline they stall the event loop, starving the Kafka heartbeat so the broker
             # evicts the worker and the later commit fails with CommitFailedError.
-            records, transformed_records, applied, destination = await asyncio.to_thread(
-                run_job_records, source, pipeline, runtime_params
+            records, transformed_records, applied, destination = await run_job_records_async(
+                source, pipeline, runtime_params
             )
             stats.records_input = len(records)
 
@@ -306,13 +321,41 @@ class WorkerExecutor:
             for step in applied:
                 stats.transformation_times[step.name] = round(step.duration, 3)
                 logger.debug(
-                    "Applied transformation %s (%.3fs, %d -> %d records)",
+                    "Applied transformation %s (%s, %.3fs, %d -> %d records)",
                     step.name,
+                    step.mode if step.concurrency is None else f"{step.mode} x{step.concurrency}",
                     step.duration,
                     step.records_in,
                     step.records_out,
-                    extra={"event": "transform_applied"},
+                    extra={
+                        "event": "transform_applied",
+                        "transformation": step.name,
+                        "mode": step.mode,
+                        "concurrency": step.concurrency,
+                        "records_in": step.records_in,
+                        "records_out": step.records_out,
+                    },
                 )
+                if step.records_skipped:
+                    stats.records_skipped += step.records_skipped
+                    for reason, times in (step.skip_reasons or {}).items():
+                        count_skip_reason(stats.record_skip_reasons, reason, times)
+                    # Reasons stay in the message: as a field their keys would be
+                    # unbounded mapping names in the log index.
+                    logger.info(
+                        "%s skipped %d records (%s)",
+                        step.name,
+                        step.records_skipped,
+                        _top_reasons(step.skip_reasons or {}),
+                        extra={
+                            "event": "records_skipped",
+                            "transformation": step.name,
+                            "records_skipped": step.records_skipped,
+                        },
+                    )
+                    metrics.records_skipped_total.labels(
+                        pipeline=_pipeline_name, transformation=step.name
+                    ).inc(step.records_skipped)
 
             stats.records_output = len(transformed_records)
 
