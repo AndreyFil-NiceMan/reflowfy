@@ -123,6 +123,68 @@ def test_close_is_registered_to_run_at_exit(monkeypatch):
         h.close()
 
 
+_SHIP_AND_EXIT = """
+import os
+from reflowfy.observability.logging import get_logger, setup_logging
+setup_logging("cli")
+for i in range(int(os.environ["N_LINES"])):
+    get_logger("pipelines.p").info("line %d", i, extra={"event": "probe"})
+"""
+
+
+def test_a_process_that_exits_at_once_ships_every_line(tmp_path):
+    """The real exit path, in a real process: urllib3's exit hooks must not get to
+    the client's pool before the handler ships its tail (`reflowfy test` sent
+    Elasticsearch only what had been flushed before its last second)."""
+    import os
+    import subprocess
+    import sys
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    received = []
+
+    class FakeElastic(BaseHTTPRequestHandler):
+        def _reply(self, body):
+            data = json.dumps(body).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("X-Elastic-Product", "Elasticsearch")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_PUT(self):  # the client sends _bulk as PUT
+            lines = self.rfile.read(int(self.headers["Content-Length"])).splitlines()
+            docs = [json.loads(line) for line in lines[1::2]]
+            received.extend(docs)
+            self._reply({"errors": False, "items": [{"index": {"status": 201}} for _ in docs]})
+
+        do_POST = do_PUT
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), FakeElastic)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    env = {
+        **os.environ,
+        "LOG_DESTINATION": "elastic",
+        "ELASTIC_LOG_URL": f"http://127.0.0.1:{server.server_port}",
+        "N_LINES": "50",
+        "NO_PROXY": "127.0.0.1",
+    }
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", _SHIP_AND_EXIT], env=env, cwd=tmp_path,
+            capture_output=True, text=True, timeout=30,
+        )
+    finally:
+        server.shutdown()
+    assert proc.returncode == 0, proc.stderr
+    assert [d["message"] for d in received] == [f"line {i}" for i in range(50)]
+
+
 def test_doc_level_rejections_are_counted(monkeypatch):
     """ES accepting the request but rejecting docs must NOT be silently lost."""
     def fake_bulk(client, actions, **kw):
