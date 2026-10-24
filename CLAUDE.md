@@ -229,6 +229,20 @@ because a record outcome has no place on the per-job `jobs_processed_total` and 
 short fixed phrases: at most 20 distinct per step (the rest go to "(other reasons)"), 200
 characters each. `LocalExecutor` and `reflowfy test` show them too (`--json`: `records_skipped` and `skip_reasons` per step).
 
+### API destination: per job or per record
+
+`define_destination(records, params)` runs once per job and returns one destination; the
+worker calls `send(records)` once. `kafka_destination` already writes one message per
+record. `api_destination` by default sends **one request per job** with `body=` verbatim
+(build it from `records`). `api_destination(url=".../users/{user_id}", per_record=True)`
+works like Kafka instead: one request per record, the record as the body (`key_field="x"`
+sends only `record["x"]`, same rule as Kafka), and `{field}` placeholders in the URL filled
+from each record, URL-encoded (a missing field fails the job, not retried). Requests are
+sequential; a retry re-sends the whole job, so the endpoint should be idempotent. Errors
+name the record's position (`record 2 of 3: HTTP 404 …`), never its contents. No
+`dedup_identity` needed: the records are not in the config. Tests:
+`tests/unit/test_api_destination.py::TestPerRecord`.
+
 ### Execution modes
 
 `EXECUTION_MODE` env var selects `local` (in-process via `LocalDispatcher`, used by the default docker-compose) or `distributed` (Kafka via `KafkaDispatcher`). Same pipeline code runs in both.

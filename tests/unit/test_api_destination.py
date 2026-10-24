@@ -207,3 +207,143 @@ class TestHealthCheck:
         await dest.close()
         mock_client.aclose.assert_awaited_once()
         assert dest._client is None
+
+
+class TestPerRecord:
+    """per_record=True: one request per record, like kafka_destination."""
+
+    @pytest.fixture
+    def mock_response(self):
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        return resp
+
+    async def _capture(self, dest, mock_response):
+        calls = []
+
+        async def fake_request(method, url, *, json=None, content=None, params=None):
+            calls.append(
+                {"method": method, "url": url, "json": json, "content": content, "params": params}
+            )
+            return mock_response
+
+        dest._client = MagicMock()
+        dest._client.request = fake_request
+        return calls
+
+    async def test_one_request_per_record_with_record_as_body(self, mock_response):
+        dest = api_destination(
+            url="https://api.example.com/ingest", per_record=True, params={"t": "acme"}
+        )
+        calls = await self._capture(dest, mock_response)
+        await dest.send([{"id": 1}, {"id": 2}, {"id": 3}])
+        assert [c["json"] for c in calls] == [{"id": 1}, {"id": 2}, {"id": 3}]
+        assert all(c["url"] == "https://api.example.com/ingest" for c in calls)
+        assert all(c["params"] == {"t": "acme"} for c in calls)
+
+    async def test_url_placeholders_filled_from_each_record_and_encoded(self, mock_response):
+        dest = api_destination(
+            url="https://api.example.com/tenants/{tenant}/users/{user_id}",
+            method="PUT",
+            per_record=True,
+        )
+        calls = await self._capture(dest, mock_response)
+        await dest.send([{"tenant": "a", "user_id": 7}, {"tenant": "b c/d", "user_id": "x?y"}])
+        assert [c["url"] for c in calls] == [
+            "https://api.example.com/tenants/a/users/7",
+            "https://api.example.com/tenants/b%20c%2Fd/users/x%3Fy",
+        ]
+        assert all(c["method"] == "PUT" for c in calls)
+
+    async def test_key_field_sends_only_that_field(self, mock_response):
+        dest = api_destination(
+            url="https://api.example.com/users/{id}", per_record=True, key_field="payload"
+        )
+        calls = await self._capture(dest, mock_response)
+        await dest.send([{"id": 1, "payload": {"name": "a"}}, {"id": 2, "name": "b"}])
+        # Missing field → whole record, as kafka_destination does.
+        assert [c["json"] for c in calls] == [{"name": "a"}, {"id": 2, "name": "b"}]
+        assert [c["url"] for c in calls] == [
+            "https://api.example.com/users/1",
+            "https://api.example.com/users/2",
+        ]
+
+    async def test_str_payload_sent_raw(self, mock_response):
+        dest = api_destination(url="https://api.example.com", per_record=True, key_field="xml")
+        calls = await self._capture(dest, mock_response)
+        await dest.send([{"xml": "<a/>"}])
+        assert calls[0]["content"] == "<a/>"
+        assert calls[0]["json"] is None
+
+    async def test_empty_records_send_nothing(self, mock_response):
+        dest = api_destination(url="https://api.example.com", per_record=True)
+        calls = await self._capture(dest, mock_response)
+        await dest.send([])
+        assert calls == []
+
+    async def test_missing_placeholder_field_fails_without_request(self, mock_response):
+        dest = api_destination(url="https://api.example.com/users/{user_id}", per_record=True)
+        calls = await self._capture(dest, mock_response)
+        with pytest.raises(ValueError, match=r"\{user_id\}.*record 2"):
+            await dest.send([{"user_id": 1}, {"name": "no id"}])
+        assert len(calls) == 1
+
+    async def test_placeholder_on_non_dict_record_fails(self, mock_response):
+        dest = api_destination(url="https://api.example.com/{id}", per_record=True)
+        await self._capture(dest, mock_response)
+        with pytest.raises(ValueError):
+            await dest.send(["raw line"])
+
+    async def test_failure_names_the_record_and_stops(self):
+        ok = MagicMock()
+        ok.raise_for_status = MagicMock()
+        bad = MagicMock()
+        bad.status_code = 404
+        bad.text = "Not Found"
+        bad.raise_for_status = MagicMock(
+            side_effect=httpx.HTTPStatusError("404", request=MagicMock(), response=bad)
+        )
+        dest = api_destination(url="https://api.example.com/{id}", per_record=True)
+        dest._client = MagicMock()
+        dest._client.request = AsyncMock(side_effect=[ok, bad, ok])
+        with pytest.raises(DestinationError) as exc_info:
+            await dest.send([{"id": 1}, {"id": 2}, {"id": 3}])
+        assert str(exc_info.value) == "Destination 'api' error: record 2 of 3: HTTP 404: Not Found"
+        assert dest._client.request.await_count == 2
+
+    async def test_health_check_probes_url_before_first_placeholder(self):
+        dest = api_destination(url="https://api.example.com/users/{id}", per_record=True)
+        resp = MagicMock()
+        resp.status_code = 200
+        dest._client = MagicMock()
+        dest._client.head = AsyncMock(return_value=resp)
+        assert await dest.health_check() is True
+        assert dest._client.head.await_args.args[0] == "https://api.example.com/users/"
+
+    async def test_placeholders_untouched_without_per_record(self, mock_response):
+        dest = api_destination(url="https://api.example.com/{id}", body={"a": 1})
+        calls = await self._capture(dest, mock_response)
+        await dest.send([{"id": 1}, {"id": 2}])
+        assert len(calls) == 1
+        assert calls[0]["url"] == "https://api.example.com/{id}"
+        assert calls[0]["json"] == {"a": 1}
+
+    def test_body_with_per_record_rejected(self):
+        with pytest.raises(ValueError, match="per_record"):
+            api_destination(url="https://api.example.com", per_record=True, body={"a": 1})
+
+    def test_key_field_without_per_record_rejected(self):
+        with pytest.raises(ValueError, match="per_record"):
+            api_destination(url="https://api.example.com", key_field="payload")
+
+    def test_config_round_trips_through_factory(self):
+        from reflowfy.factories.destination_factory import DestinationFactory
+
+        dest = api_destination(url="https://api.example.com/{id}", per_record=True, key_field="p")
+        rebuilt = DestinationFactory.create("api", dest.config)
+        assert rebuilt.config == dest.config
+
+    def test_schema_accepts_per_record_fields(self):
+        cfg = ApiDestinationConfig(url="https://x.com/{id}", per_record=True, key_field="p")
+        assert cfg.per_record is True
+        assert cfg.key_field == "p"
