@@ -227,7 +227,7 @@ records ('reason' xN, …)`, stores `records_skipped` and `record_skip_reasons` 
 because a record outcome has no place on the per-job `jobs_processed_total` and adding a label to
 `records_processed_total` would break its existing series. Reasons are counted, so they must be
 short fixed phrases: at most 20 distinct per step (the rest go to "(other reasons)"), 200
-characters each. `LocalExecutor` and `reflowfy test -v` show them too.
+characters each. `LocalExecutor` and `reflowfy test` show them too (`--json`: `records_skipped` and `skip_reasons` per step).
 
 ### Execution modes
 

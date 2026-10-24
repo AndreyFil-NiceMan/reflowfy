@@ -17,7 +17,9 @@ from reflowfy import (
     Param,
     PipelineError,
     RuntimeParams,
+    SkipRecord,
     pipeline_registry,
+    record_transformation,
 )
 from reflowfy.cli.commands import test as test_cmd
 from reflowfy.cli.main import app
@@ -91,6 +93,13 @@ class Explode(BaseTransformation):
 
 # MockSource wraps each of these as {"data": <record>}.
 RECORDS = [{"id": 1, "name": "alice"}, {"id": 2, "name": "bob"}, {"id": 3, "name": "carol"}]
+
+
+@record_transformation("skip_odd")
+async def skip_odd(record: Any, runtime_params: Any) -> Any:
+    if record["data"]["id"] % 2:
+        raise SkipRecord("odd id")
+    return record
 
 
 class CliParams(RuntimeParams, total=False):
@@ -362,6 +371,7 @@ class TestRun:
             "dry_run",
             "batches",
             "records_out",
+            "records_skipped",
             "ok",
         }
         assert payload["pipeline"] == "cli_json"
@@ -375,6 +385,29 @@ class TestRun:
         assert [s["name"] for s in batch["steps"]] == ["upper_names"]
         assert batch["steps"][0]["records_in"] == 2
         assert "error" not in batch
+
+    def test_skip_record_reported(self):
+        dest = _destination()
+        _pipeline("cli_skip", transforms=[skip_odd()], destination=dest)
+        result = invoke("cli_skip", "--no-input")
+        assert result.exit_code == 0, result.output
+        assert "skipped 2: odd id" in result.output
+        assert "1 records sent successfully, 2 skipped by SkipRecord" in result.output
+        sent = dest.send_with_retry.call_args.args[0]
+        assert [r["data"]["id"] for r in sent] == [2]
+
+    def test_skip_record_in_json(self):
+        _pipeline("cli_skip_json", transforms=[skip_odd()])
+        result = invoke("cli_skip_json", "--no-input", "--dry-run", "--json")
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["records_out"] == 1
+        assert payload["records_skipped"] == 2
+        [batch] = payload["batches"]
+        assert batch["records_skipped"] == 2
+        [step] = batch["steps"]
+        assert step["records_skipped"] == 2
+        assert step["skip_reasons"] == {"odd id": 2}
 
     def test_dry_run_sends_nothing(self):
         dest = _destination()
