@@ -1,6 +1,7 @@
 """`reflowfy test`, driven through the real typer app with CliRunner."""
 
 import json
+import logging
 import sys
 import textwrap
 import types
@@ -17,6 +18,7 @@ from reflowfy import (
     Param,
     PipelineError,
     RuntimeParams,
+    SkipJob,
     SkipRecord,
     pipeline_registry,
     record_transformation,
@@ -65,6 +67,28 @@ def _destination() -> AsyncMock:
     destination = AsyncMock()
     destination.health_check.return_value = True
     return destination
+
+
+class DropJob(BaseTransformation):
+    name = "drop_job"
+
+    def apply(self, records: Any, runtime_params: Dict[str, Any]) -> Any:
+        raise SkipJob("not this one")
+
+
+@pytest.fixture
+def skip_logs() -> Iterator[List[logging.LogRecord]]:
+    """Records the test command logs (setup_logging is stubbed in this module)."""
+    seen: List[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = seen.append  # type: ignore[method-assign]
+    cli_logger = logging.getLogger("reflowfy.cli.test")
+    cli_logger.addHandler(handler)
+    cli_logger.setLevel(logging.INFO)
+    try:
+        yield seen
+    finally:
+        cli_logger.removeHandler(handler)
 
 
 class Upper(BaseTransformation):
@@ -408,6 +432,50 @@ class TestRun:
         [step] = batch["steps"]
         assert step["records_skipped"] == 2
         assert step["skip_reasons"] == {"odd id": 2}
+
+    def test_skips_are_logged_like_the_worker(self, skip_logs):
+        _pipeline("cli_skip_log", transforms=[skip_odd()])
+        result = invoke("cli_skip_log", "--no-input", "--dry-run")
+        assert result.exit_code == 0, result.output
+        [rec] = [r for r in skip_logs if getattr(r, "event", None) == "records_skipped"]
+        assert rec.getMessage() == "skip_odd skipped 2 records ('odd id' x2)"
+        assert rec.__dict__["transformation"] == "skip_odd"
+        assert rec.__dict__["records_skipped"] == 2
+        assert rec.__dict__["pipeline_name"] == "cli_skip_log"
+        assert rec.__dict__["execution_id"]
+
+    def test_skip_job_is_logged_and_reported(self, skip_logs):
+        dest = _destination()
+        _pipeline("cli_skip_job", transforms=[DropJob()], destination=dest)
+        result = invoke("cli_skip_job", "--no-input")
+        assert result.exit_code == 0, result.output
+        assert "Job dropped by pipeline (SkipJob): not this one" in result.output
+        assert "No records returned from source" not in result.output
+        dest.send_with_retry.assert_not_called()
+        [rec] = [r for r in skip_logs if getattr(r, "event", None) == "job_dropped"]
+        assert rec.__dict__["skip_reason"] == "not this one"
+        assert rec.__dict__["pipeline_name"] == "cli_skip_job"
+
+    def test_skip_job_in_json_and_logs_kept_off_stdout(self, monkeypatch):
+        root = logging.getLogger("reflowfy")
+        handlers: List[logging.Handler] = []
+
+        def setup(service_name: str = "cli") -> None:
+            # Built inside the run, as setup_logging does: sys.stdout is the runner's.
+            handlers.append(logging.StreamHandler(sys.stdout))
+            root.addHandler(handlers[0])
+
+        monkeypatch.setattr(test_cmd, "setup_logging", setup)
+        monkeypatch.setattr(root, "level", logging.INFO)
+        try:
+            _pipeline("cli_skip_job_json", transforms=[DropJob()])
+            result = invoke("cli_skip_job_json", "--no-input", "--dry-run", "--json")
+        finally:
+            root.removeHandler(handlers[0])
+        assert result.exit_code == 0, result.output
+        assert "Job dropped by pipeline" not in result.stdout
+        [batch] = json.loads(result.stdout)["batches"]
+        assert batch["jobs_dropped"] == ["not this one"]
 
     def test_dry_run_sends_nothing(self):
         dest = _destination()

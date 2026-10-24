@@ -86,6 +86,43 @@ def test_bulk_flush_ships_batched_docs(monkeypatch):
     assert len(shipped) == 3
 
 
+def test_close_ships_lines_still_queued(monkeypatch):
+    """A short-lived process (`reflowfy test`) closes the handler before the
+    shipper thread has picked its lines up; none may be lost."""
+    shipped = []
+
+    def fake_bulk(client, actions, **kw):
+        acts = list(actions)
+        shipped.append(len(acts))
+        return (len(acts), [])
+
+    monkeypatch.setattr(
+        "reflowfy.observability.elastic_handler.helpers.bulk", fake_bulk
+    )
+    h = ElasticLogHandler(
+        service_name="cli", client=object(),
+        flush_docs=2, flush_seconds=10, queue_max=100,
+    )
+    h.setFormatter(ECSJSONFormatter("cli"))
+    for i in range(5):
+        h.emit(_record(f"m{i}"))
+    h.close()
+    assert sum(shipped) == 5
+    assert max(shipped) <= 2  # still in flush_docs-sized bulks
+
+
+def test_close_is_registered_to_run_at_exit(monkeypatch):
+    registered = []
+    monkeypatch.setattr(
+        "reflowfy.observability.elastic_handler.atexit.register", registered.append
+    )
+    h = ElasticLogHandler(service_name="cli", client=object())
+    try:
+        assert registered == [h.close]
+    finally:
+        h.close()
+
+
 def test_doc_level_rejections_are_counted(monkeypatch):
     """ES accepting the request but rejecting docs must NOT be silently lost."""
     def fake_bulk(client, actions, **kw):

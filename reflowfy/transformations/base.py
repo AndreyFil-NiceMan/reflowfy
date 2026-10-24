@@ -183,6 +183,14 @@ def count_skip_reason(reasons: Dict[str, int], reason: str, times: int = 1) -> N
     reasons[reason] = reasons.get(reason, 0) + times
 
 
+def top_skip_reasons(reasons: Dict[str, int], limit: int = 3) -> str:
+    """``"user inactive" x3, "no email" x1`` — the most frequent reasons, for one log line."""
+    top = sorted(reasons.items(), key=lambda item: -item[1])[:limit]
+    more = len(reasons) - len(top)
+    text = ", ".join(f"{reason!r} x{times}" for reason, times in top)
+    return f"{text}, +{more} more" if more > 0 else text
+
+
 class _Skipped:
     """Marks a record its transformation dropped with ``SkipRecord``."""
 
