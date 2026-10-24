@@ -44,6 +44,9 @@ class ApiDestinationConfig(BaseModel):
         default=None,
         description="Per-record mode: send only this field's value when the record has it",
     )
+    concurrency: int = Field(
+        default=1, ge=1, description="Per-record mode: requests in flight at once per job"
+    )
 
     @field_validator("url")
     @classmethod

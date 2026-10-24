@@ -6,7 +6,13 @@ from urllib.parse import quote
 
 import httpx
 
-from reflowfy.destinations.base import BaseDestination, DestinationError, RetryConfig
+from reflowfy.core.async_utils import for_each_concurrently
+from reflowfy.destinations.base import (
+    BaseDestination,
+    DestinationError,
+    RetryConfig,
+    check_concurrency,
+)
 from reflowfy.http_auth import build_auth_headers
 from reflowfy.observability.logging import get_logger
 
@@ -32,6 +38,7 @@ class ApiDestination(BaseDestination):
     ``record[key_field]`` when ``key_field`` is set and present on the record),
     and ``{field}`` placeholders in ``url`` filled from each record
     (URL-encoded), e.g. ``url="https://api.example.com/users/{user_id}"``.
+    ``concurrency=N`` keeps up to N of those requests in flight at once.
 
     Supports:
     - Configurable authentication (Bearer, API key, Basic)
@@ -54,6 +61,7 @@ class ApiDestination(BaseDestination):
         health_check_enabled: bool = True,
         per_record: bool = False,
         key_field: Optional[str] = None,
+        concurrency: int = 1,
     ):
         """
         Initialize API destination.
@@ -79,7 +87,17 @@ class ApiDestination(BaseDestination):
                 of the whole record), as ``kafka_destination(key_field=...)``
                 does. Records missing the field, or non-dict records, are sent
                 unchanged.
+            concurrency: Per-record mode only. Requests in flight at once per job;
+                1 (default) sends them one after another, in order. Above 1 they
+                start in order but may finish out of order, and the first failure
+                cancels the requests still in flight.
         """
+        check_concurrency("api_destination", concurrency)
+        if concurrency > 1 and not per_record:
+            raise ValueError(
+                "api_destination: concurrency= requires per_record=True "
+                "(without it a job is a single request)"
+            )
         if per_record and body is not None:
             raise ValueError(
                 "api_destination: per_record=True sends each record as the body; "
@@ -99,6 +117,7 @@ class ApiDestination(BaseDestination):
             "health_check_enabled": health_check_enabled,
             "per_record": per_record,
             "key_field": key_field,
+            "concurrency": concurrency,
         }
         super().__init__(config, retry_config)
         self._client: Optional[httpx.AsyncClient] = None
@@ -136,10 +155,12 @@ class ApiDestination(BaseDestination):
         await self._request(self.config["url"], self.config.get("body"))
 
     async def _send_per_record(self, records: List[Any]) -> None:
-        """One request per record, in order; the first failure stops the rest."""
+        """One request per record, ``concurrency`` at a time; the first failure stops the rest."""
         key_field = self.config.get("key_field")
+        concurrency = self.config.get("concurrency", 1)
         total = len(records)
-        for index, record in enumerate(records):
+
+        async def send_one(index: int, record: Any) -> None:
             # Built outside _request so a bad template fails the job at once
             # instead of being retried as if the endpoint were down.
             url = self._record_url(record, index)
@@ -156,10 +177,17 @@ class ApiDestination(BaseDestination):
                 raise DestinationError(
                     "api", f"record {index + 1} of {total}: {reason}", e.original_error
                 ) from e
+
+        await for_each_concurrently(records, concurrency, send_one)
         logger.debug(
-            "Sent %d per-record requests",
+            "Sent %d per-record requests (concurrency %d)",
             total,
-            extra={"event": "api_per_record_sent", "requests": total},
+            concurrency,
+            extra={
+                "event": "api_per_record_sent",
+                "requests": total,
+                "concurrency": concurrency,
+            },
         )
 
     def _record_url(self, record: Any, index: int) -> str:
@@ -222,6 +250,19 @@ class ApiDestination(BaseDestination):
         except Exception:
             return False
 
+    def identity_config(self) -> Dict[str, Any]:
+        """``config`` minus how fast it sends, and minus per-record keys left unset.
+
+        Unset ``per_record``/``key_field`` are dropped so an api_destination that
+        does not use them hashes exactly as it did before they existed.
+        """
+        identity = {k: v for k, v in self.config.items() if k != "concurrency"}
+        if not identity.get("per_record"):
+            identity.pop("per_record", None)
+        if identity.get("key_field") is None:
+            identity.pop("key_field", None)
+        return identity
+
     async def close(self) -> None:
         """Close HTTP client."""
         if self._client:
@@ -243,6 +284,7 @@ def api_destination(
     dedup_identity: Optional[Any] = None,
     per_record: bool = False,
     key_field: Optional[str] = None,
+    concurrency: int = 1,
 ) -> ApiDestination:
     """
     Factory function for API destination.
@@ -268,12 +310,13 @@ def api_destination(
                 method="PUT",
                 per_record=True,
                 key_field="payload",  # optional: send only record["payload"]
+                concurrency=16,       # optional: requests in flight at once
             )
 
     Per-record mode needs no ``dedup_identity``: the records are not part of the
-    config. Requests go one at a time, and a retry (``retry_config``) re-sends the
-    whole job, records already accepted included — make the endpoint idempotent
-    (PUT/upsert) when that matters.
+    config. Requests go one at a time unless ``concurrency`` is raised, and a retry
+    (``retry_config``) re-sends the whole job, records already accepted included —
+    make the endpoint idempotent (PUT/upsert) when that matters.
     """
     destination = ApiDestination(
         url=url,
@@ -288,6 +331,7 @@ def api_destination(
         health_check_enabled=health_check_enabled,
         per_record=per_record,
         key_field=key_field,
+        concurrency=concurrency,
     )
     destination.dedup_identity = dedup_identity
     return destination

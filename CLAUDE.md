@@ -237,11 +237,21 @@ record. `api_destination` by default sends **one request per job** with `body=` 
 (build it from `records`). `api_destination(url=".../users/{user_id}", per_record=True)`
 works like Kafka instead: one request per record, the record as the body (`key_field="x"`
 sends only `record["x"]`, same rule as Kafka), and `{field}` placeholders in the URL filled
-from each record, URL-encoded (a missing field fails the job, not retried). Requests are
-sequential; a retry re-sends the whole job, so the endpoint should be idempotent. Errors
-name the record's position (`record 2 of 3: HTTP 404 …`), never its contents. No
-`dedup_identity` needed: the records are not in the config. Tests:
-`tests/unit/test_api_destination.py::TestPerRecord`.
+from each record, URL-encoded (a missing field fails the job, not retried). A retry
+re-sends the whole job, so the endpoint should be idempotent. Errors name the record's
+position (`record 2 of 3: HTTP 404 …`), never its contents. No `dedup_identity` needed:
+the records are not in the config. Tests: `tests/unit/test_api_destination.py::TestPerRecord`.
+
+**`concurrency=N`** (both `kafka_destination` and per-record `api_destination`, default 1)
+keeps N messages/requests in flight per job through `core/async_utils.for_each_concurrently`
+— the same fixed worker pool record transformations use, not a task per record. 1 is the old
+behaviour exactly (one at a time, in order); above 1 records start in order but may land
+out of order, and the first failure cancels the rest. It is not part of the dedup hash:
+`BaseDestination.identity_config()` is what `destination_identity` hashes, and destinations
+drop tuning knobs there. `ApiDestination` also drops `per_record`/`key_field` when unset,
+so adding those keys did not change every existing destination's hash (which would have
+re-sent the last 24 h of records once after upgrade). A new config key on a destination
+needs the same treatment. Tests: `tests/unit/test_destination_concurrency.py`.
 
 ### Execution modes
 

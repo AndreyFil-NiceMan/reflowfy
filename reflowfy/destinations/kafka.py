@@ -12,7 +12,13 @@ import ssl
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from aiokafka import AIOKafkaProducer
 from aiokafka.errors import KafkaError
-from reflowfy.destinations.base import BaseDestination, DestinationError, RetryConfig
+from reflowfy.core.async_utils import for_each_concurrently
+from reflowfy.destinations.base import (
+    BaseDestination,
+    DestinationError,
+    RetryConfig,
+    check_concurrency,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +76,7 @@ class KafkaDestination(BaseDestination):
         lag_check_timeout: float = 10.0,
         # Message key
         key_field: Optional[str] = None,
+        concurrency: int = 1,
         **producer_config: Any,
     ):
         """
@@ -92,8 +99,13 @@ class KafkaDestination(BaseDestination):
                 record, only that field's value is sent as the Kafka message
                 (instead of the whole record). Records missing the field, or
                 non-dict records, are sent unchanged.
+            concurrency: Messages in flight at once per job. 1 (default) sends them
+                one after another, in order, each waiting for the broker's ack.
+                Higher lets the producer batch them, much faster, but the order of
+                a job's records on the topic is no longer guaranteed.
             **producer_config: Additional producer configuration
         """
+        check_concurrency("kafka_destination", concurrency)
         config = {
             "bootstrap_servers": bootstrap_servers,
             "topic": topic,
@@ -107,6 +119,7 @@ class KafkaDestination(BaseDestination):
             "lag_threshold": lag_threshold,
             "lag_check_timeout": lag_check_timeout,
             "key_field": key_field,
+            "concurrency": concurrency,
             **producer_config,
         }
 
@@ -261,34 +274,37 @@ class KafkaDestination(BaseDestination):
         producer = await self._get_producer()
         topic = self.config["topic"]
         key_field = self.config.get("key_field")
+        concurrency = self.config.get("concurrency", 1)
+
+        headers: List[Tuple[str, bytes]] = []
+        if metadata:
+            for k, v in metadata.items():
+                if isinstance(v, str):
+                    headers.append((k, v.encode("utf-8")))
+
+        async def send_one(_index: int, record: Any) -> None:
+            # If key_field is set and present, send just that field's value
+            # instead of the whole record.
+            payload = record
+            if key_field and isinstance(record, dict) and key_field in record:
+                payload = record[key_field]
+            value = json.dumps(payload).encode("utf-8")
+            await producer.send_and_wait(
+                topic=topic,
+                value=value,
+                headers=headers if headers else None,
+            )
 
         try:
-            for record in records:
-                # If key_field is set and present, send just that field's value
-                # instead of the whole record.
-                payload = record
-                if key_field and isinstance(record, dict) and key_field in record:
-                    payload = record[key_field]
-                value = json.dumps(payload).encode("utf-8")
-
-                # Prepare headers
-                headers: List[Tuple[str, bytes]] = []
-                if metadata:
-                    for k, v in metadata.items():
-                        if isinstance(v, str):
-                            headers.append((k, v.encode("utf-8")))
-
-                # Send message
-                await producer.send_and_wait(
-                    topic=topic,
-                    value=value,
-                    headers=headers if headers else None,
-                )
-
+            await for_each_concurrently(records, concurrency, send_one)
         except KafkaError as e:
             raise DestinationError("kafka", f"Failed to send to topic '{topic}': {e}", e)
         except Exception as e:
             raise DestinationError("kafka", f"Unexpected error: {e}", e)
+
+    def identity_config(self) -> Dict[str, Any]:
+        """``config`` without ``concurrency``: how fast is not where."""
+        return {k: v for k, v in self.config.items() if k != "concurrency"}
 
     async def health_check(self) -> bool:
         """
@@ -362,6 +378,7 @@ def kafka_destination(
     lag_threshold: int = 10000,
     lag_check_timeout: float = 10.0,
     key_field: Optional[str] = None,
+    concurrency: int = 1,
     **producer_config: Any,
 ) -> KafkaDestination:
     """
@@ -375,6 +392,7 @@ def kafka_destination(
         ...     consumer_group_id="downstream-consumers",
         ...     lag_threshold=5000,
         ...     key_field="user_id",
+        ...     concurrency=64,  # messages in flight per job; order not kept above 1
         ... )
     """
     return KafkaDestination(
@@ -391,5 +409,6 @@ def kafka_destination(
         lag_threshold=lag_threshold,
         lag_check_timeout=lag_check_timeout,
         key_field=key_field,
+        concurrency=concurrency,
         **producer_config,
     )
