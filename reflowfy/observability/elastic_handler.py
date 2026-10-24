@@ -7,6 +7,7 @@ must never stall job processing.
 # ponytail: in-memory drop-oldest; upgrade path = local disk spool if drops hurt.
 """
 
+import atexit
 import json
 import logging
 import os
@@ -49,6 +50,11 @@ class ElasticLogHandler(logging.Handler):
         self._last_warn = float("-inf")
         self._thread = threading.Thread(target=self._run, name="es-log-shipper", daemon=True)
         self._thread.start()
+        # Ship the tail at exit ourselves. logging.shutdown is too late: urllib3's
+        # weakref.finalize hooks (registered when the client built its pool, i.e.
+        # after logging's) run first, empty the pool, and the last bulk then blocks
+        # until join() gives up — a short `reflowfy test` run shipped nothing.
+        atexit.register(self.close)
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
@@ -116,8 +122,15 @@ class ElasticLogHandler(logging.Handler):
                 self._flush(batch)
                 batch = []
                 last = time.monotonic()
-        if batch:
-            self._flush(batch)
+        # Ship what is still queued: a short-lived process (`reflowfy test`) closes
+        # the handler at exit with most of its lines not yet picked up.
+        while True:
+            try:
+                batch.append(self._q.get_nowait())
+            except queue.Empty:
+                break
+        for start in range(0, len(batch), self.flush_docs):
+            self._flush(batch[start : start + self.flush_docs])
 
     def _flush(self, lines: List[str]) -> None:
         if self._client is None:

@@ -13,13 +13,14 @@ does.
 import asyncio
 import importlib.util
 import json
+import logging
 import os
 import sys
 import traceback
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, TypeGuard
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, TypeGuard, cast
 
 import typer
 
@@ -33,8 +34,11 @@ from reflowfy.core.exceptions import PipelineError
 from reflowfy.core.execution_context import ExecutionContext
 from reflowfy.execution.job_runner import job_runtime_params, plan_slices, run_job_records
 from reflowfy.execution.transformation_runner import AppliedStep
-from reflowfy.observability.logging import setup_logging
-from reflowfy.transformations.base import TransformationError
+from reflowfy.observability.context import log_context
+from reflowfy.observability.logging import get_logger, setup_logging
+from reflowfy.transformations.base import TransformationError, top_skip_reasons
+
+logger = get_logger("cli.test")
 
 # Repr length beyond which a source/destination is truncated at verbosity 0.
 # A mock source's repr embeds every record it holds; dumping that before the
@@ -71,6 +75,8 @@ class BatchReport:
     error: Optional[BaseException] = None
     sent: bool = False
     sent_count: int = 0
+    jobs_dropped: List[str] = field(default_factory=lambda: [])
+    """``SkipJob`` reasons, one per job the pipeline dropped."""
 
     @property
     def ok(self) -> bool:
@@ -89,6 +95,7 @@ class BatchReport:
             "records_skipped": self.skipped,
             "sent": self.sent,
             "sent_count": self.sent_count,
+            "jobs_dropped": list(self.jobs_dropped),
             "steps": [
                 {
                     "name": s.name,
@@ -357,9 +364,14 @@ def run_batch(
             if remaining <= 0:
                 break
             job_params = job_runtime_params(sub, flat_params)
-            records, transformed, applied, destination = run_job_records(
-                sub, pipeline, job_params, limit=remaining
-            )
+            with log_context(
+                execution_id=job_params.get("execution_id"),
+                pipeline_name=job_params.get("pipeline_name"),
+            ):
+                records, transformed, applied, destination = run_job_records(
+                    sub, pipeline, job_params, limit=remaining
+                )
+                log_skips(job_params, applied, report)
             report.fetched += len(records)
             report.transformed.extend(transformed)
             report.applied.extend(applied)
@@ -383,14 +395,46 @@ def run_batch(
     return report
 
 
+def log_skips(job_params: Dict[str, Any], applied: List[AppliedStep], report: BatchReport) -> None:
+    """Log SkipJob / SkipRecord the way the worker does, so LOG_DESTINATION=elastic
+    gets the same ``job_dropped`` / ``records_skipped`` events from a CLI run."""
+    skip_reason = job_params.get("skip_reason")
+    if skip_reason:
+        report.jobs_dropped.append(str(skip_reason))
+        logger.info(
+            "Job dropped by pipeline (%s)",
+            skip_reason,
+            extra={"event": "job_dropped", "skip_reason": skip_reason},
+        )
+    for step in applied:
+        if step.records_skipped:
+            # Reasons stay in the message, as in the worker: as a field their keys
+            # would be unbounded mapping names in the log index.
+            logger.info(
+                "%s skipped %d records (%s)",
+                step.name,
+                step.records_skipped,
+                top_skip_reasons(step.skip_reasons or {}),
+                extra={
+                    "event": "records_skipped",
+                    "transformation": step.name,
+                    "records_skipped": step.records_skipped,
+                },
+            )
+
+
 def report_batch(report: BatchReport, opts: TestOptions, indent: str = "") -> None:
     """Render one batch's outcome."""
     if report.error is not None and report.fetched == 0 and not report.applied:
         render_failure(report.error, opts, indent)
         return
 
+    for reason in report.jobs_dropped:
+        console.print(f"{indent}[yellow]⏭️  Job dropped by pipeline (SkipJob): {reason}[/yellow]")
     console.print(f"{indent}[green]✓ Fetched {report.fetched} records[/green]")
     if report.fetched == 0:
+        if report.jobs_dropped:
+            return
         console.print(f"{indent}[yellow]⚠️  No records returned from source[/yellow]")
         return
 
@@ -661,9 +705,13 @@ def register(app: typer.Typer):
             os.environ["LOG_LEVEL"] = "DEBUG"
         setup_logging(service_name="cli")
 
-        # --json is a data channel; rich output would corrupt it.
+        # --json is a data channel; rich output would corrupt it, and so would log
+        # lines on stdout (skips are logged), so those move to stderr.
         if opts.as_json:
             console.quiet = True
+            for handler in logging.getLogger("reflowfy").handlers:
+                if getattr(handler, "stream", None) is sys.stdout:
+                    cast("logging.StreamHandler[Any]", handler).setStream(sys.stderr)
 
         cwd = os.getcwd()
         if cwd not in sys.path:
