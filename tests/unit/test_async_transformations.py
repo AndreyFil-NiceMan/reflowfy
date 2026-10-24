@@ -36,8 +36,9 @@ from reflowfy.transformations.base import (
     OTHER_SKIP_REASON,
     count_skip_reason,
     default_record_concurrency,
+    top_skip_reasons,
 )
-from reflowfy.worker.executor import JobStats, WorkerExecutor, _top_reasons
+from reflowfy.worker.executor import JobStats, WorkerExecutor
 
 
 class _Pipeline:
@@ -381,8 +382,8 @@ def test_skip_reasons_stay_bounded():
 
 
 def test_top_reasons_names_the_most_frequent():
-    assert _top_reasons({"a": 1, "b": 5}) == "'b' x5, 'a' x1"
-    assert _top_reasons({"a": 4, "b": 3, "c": 2, "d": 1}) == "'a' x4, 'b' x3, 'c' x2, +1 more"
+    assert top_skip_reasons({"a": 1, "b": 5}) == "'b' x5, 'a' x1"
+    assert top_skip_reasons({"a": 4, "b": 3, "c": 2, "d": 1}) == "'a' x4, 'b' x3, 'c' x2, +1 more"
 
 
 async def test_a_record_that_exceeds_its_timeout_fails_the_job():

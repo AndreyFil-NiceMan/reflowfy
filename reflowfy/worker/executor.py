@@ -32,17 +32,9 @@ from reflowfy.observability.logging import get_logger
 from reflowfy.observability.tracing import extract_and_attach
 from reflowfy.reflow_manager.db_settings import async_connect_args
 from reflowfy.reflow_manager.models import Job
-from reflowfy.transformations.base import count_skip_reason
+from reflowfy.transformations.base import count_skip_reason, top_skip_reasons
 
 logger = get_logger("worker.executor")
-
-
-def _top_reasons(reasons: Dict[str, int], limit: int = 3) -> str:
-    """``"user inactive" x3, "no email" x1`` — the most frequent reasons, for one log line."""
-    top = sorted(reasons.items(), key=lambda item: -item[1])[:limit]
-    more = len(reasons) - len(top)
-    text = ", ".join(f"{reason!r} x{times}" for reason, times in top)
-    return f"{text}, +{more} more" if more > 0 else text
 
 
 class JobStats:
@@ -346,7 +338,7 @@ class WorkerExecutor:
                         "%s skipped %d records (%s)",
                         step.name,
                         step.records_skipped,
-                        _top_reasons(step.skip_reasons or {}),
+                        top_skip_reasons(step.skip_reasons or {}),
                         extra={
                             "event": "records_skipped",
                             "transformation": step.name,

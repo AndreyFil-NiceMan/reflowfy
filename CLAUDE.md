@@ -227,7 +227,7 @@ records ('reason' xN, …)`, stores `records_skipped` and `record_skip_reasons` 
 because a record outcome has no place on the per-job `jobs_processed_total` and adding a label to
 `records_processed_total` would break its existing series. Reasons are counted, so they must be
 short fixed phrases: at most 20 distinct per step (the rest go to "(other reasons)"), 200
-characters each. `LocalExecutor` and `reflowfy test` show them too (`--json`: `records_skipped` and `skip_reasons` per step).
+characters each. `LocalExecutor` and `reflowfy test` show them too (`--json`: `records_skipped` and `skip_reasons` per step). `reflowfy test` also logs both skips with the worker's events (`records_skipped`, `job_dropped`, plus `jobs_dropped` in `--json`), so `LOG_DESTINATION=elastic` ships them from a CLI run as `service.name: cli`. That works because `ElasticLogHandler` registers `close()` with `atexit` itself and drains its queue there: left to `logging.shutdown`, urllib3's own exit hooks emptied the client's pool first and a short process shipped nothing.
 
 ### Execution modes
 
