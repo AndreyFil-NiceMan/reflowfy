@@ -88,7 +88,10 @@ def _identity(destination: Any, is_secret: Callable[[Any], bool]) -> Dict[str, A
             "type": type(destination).__name__,
             "identity": _strip_secrets(explicit, is_secret),
         }
-    config = getattr(destination, "config", None)
+    identity_config = getattr(destination, "identity_config", None)
+    config = (
+        identity_config() if callable(identity_config) else getattr(destination, "config", None)
+    )
     return {
         "type": type(destination).__name__,
         "config": _strip_secrets(config, is_secret) if isinstance(config, dict) else {},

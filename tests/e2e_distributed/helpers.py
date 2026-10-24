@@ -118,6 +118,10 @@ class Sink:
         """Injection rules for the mock users API of a run (``slow_ms``, ``status_by_id``…)."""
         self.rules(f"api:{channel}", **rules)
 
+    def record_stats(self, channel: str) -> Dict[str, Any]:
+        """Per-record deliveries (``PUT /record/...``): peak open at once, whole run and per job."""
+        return dict(_get(self.http, f"/record-stats/{channel}").json())
+
     def api_stats(self, channel: str) -> Dict[str, Any]:
         """Mock users API calls and peak concurrency: whole run and ``peak_by_job``."""
         return dict(_get(self.http, f"/api/{channel}/stats").json())

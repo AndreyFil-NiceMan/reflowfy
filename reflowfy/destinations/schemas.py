@@ -33,6 +33,20 @@ class ApiDestinationConfig(BaseModel):
     health_check_enabled: bool = Field(
         default=True, description="Enable/disable destination health check"
     )
+    per_record: bool = Field(
+        default=False,
+        description=(
+            "Send one request per record, the record as the body; {field} "
+            "placeholders in url are filled from each record"
+        ),
+    )
+    key_field: Optional[str] = Field(
+        default=None,
+        description="Per-record mode: send only this field's value when the record has it",
+    )
+    concurrency: int = Field(
+        default=1, ge=1, description="Per-record mode: requests in flight at once per job"
+    )
 
     @field_validator("url")
     @classmethod

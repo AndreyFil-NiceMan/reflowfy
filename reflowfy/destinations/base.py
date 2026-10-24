@@ -68,6 +68,15 @@ class BaseDestination(ABC):
         """
         pass
 
+    def identity_config(self) -> Dict[str, Any]:
+        """The part of ``config`` that says where records are written, for content dedup.
+
+        The whole config by default. A destination drops tuning knobs here (how
+        fast, not where): they would make every record look like new work after a
+        change, and adding one would change the hash of every existing destination.
+        """
+        return self.config
+
     async def close(self) -> None:
         """
         Release any resources held by the destination (connections, clients).
@@ -105,6 +114,17 @@ class BaseDestination(ABC):
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(config={self.config})"
+
+
+def check_concurrency(destination_type: str, concurrency: object) -> int:
+    """Validate a destination's ``concurrency`` (requests/messages in flight per job).
+
+    Takes ``object``: it is a runtime check for what a type checker never saw (a
+    value from config or an env var).
+    """
+    if isinstance(concurrency, bool) or not isinstance(concurrency, int) or concurrency < 1:
+        raise ValueError(f"{destination_type}: concurrency must be an integer >= 1")
+    return concurrency
 
 
 class DestinationError(Exception):
