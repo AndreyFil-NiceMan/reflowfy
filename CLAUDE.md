@@ -251,7 +251,11 @@ out of order, and the first failure cancels the rest. It is not part of the dedu
 drop tuning knobs there. `ApiDestination` also drops `per_record`/`key_field` when unset,
 so adding those keys did not change every existing destination's hash (which would have
 re-sent the last 24 h of records once after upgrade). A new config key on a destination
-needs the same treatment. Tests: `tests/unit/test_destination_concurrency.py`.
+needs the same treatment. Tests: `tests/unit/test_destination_concurrency.py`; E2E
+`tests/e2e/destinations/test_api_destination_per_record.py` (the mock webhook's
+`/items/<run>/<id>` counts requests open per job) and `test_kafka_destination_concurrency.py`
+(real broker, exactly-once and order at concurrency 1); distributed
+`tests/e2e_distributed/test_destination_concurrency.py` (`dist_per_record`, sink `PUT /record/…`).
 
 ### Execution modes
 

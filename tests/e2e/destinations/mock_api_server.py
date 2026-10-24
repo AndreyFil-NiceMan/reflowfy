@@ -11,6 +11,9 @@ Usage:
     uvicorn tests.e2e.destinations.mock_api_server:app --host 0.0.0.0 --port 8091
 """
 
+import asyncio
+import json
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -133,7 +136,72 @@ async def reset_data():
     global received_records, received_batches
     received_records = []
     received_batches = []
+    item_runs.clear()
     return {"status": "reset"}
+
+
+# ============================================================================
+# Per-record endpoint (api_destination(per_record=True))
+# ============================================================================
+
+
+class ItemRun:
+    """What one run (a test's own key) sent to /items: every request, and the
+    requests open at once per job — the cap a test checks ``concurrency`` against."""
+
+    def __init__(self) -> None:
+        self.received: List[Dict[str, Any]] = []
+        self.in_flight: Counter = Counter()
+        self.peak: Counter = Counter()
+
+
+item_runs: Dict[str, ItemRun] = {}
+
+
+@app.api_route("/items/{run}/{item_id}", methods=["PUT", "POST"])
+async def receive_item(
+    run: str,
+    item_id: str,
+    request: Request,
+    delay_ms: int = 0,
+    fail_id: str = "",
+    job: str = "",
+    authorization: Optional[str] = Header(None),
+):
+    """One record per request. ``delay_ms`` holds the request open so requests of the
+    same job overlap; ``fail_id`` answers 503 for that item."""
+    _check_auth(authorization)
+    state = item_runs.setdefault(run, ItemRun())
+    if item_id == fail_id:
+        raise HTTPException(status_code=503, detail=f"injected failure for {item_id}")
+    state.in_flight[job] += 1
+    state.peak[job] = max(state.peak[job], state.in_flight[job])
+    try:
+        if delay_ms:
+            await asyncio.sleep(delay_ms / 1000)
+    finally:
+        state.in_flight[job] -= 1
+    raw = await request.body()
+    try:
+        body: Any = json.loads(raw) if raw else None
+    except ValueError:
+        body = raw.decode("utf-8", "replace")
+    state.received.append(
+        {"item_id": item_id, "method": request.method, "job": job, "body": body}
+    )
+    return {"status": "received", "item_id": item_id}
+
+
+@app.get("/items/{run}")
+async def get_items(run: str):
+    state = item_runs.get(run, ItemRun())
+    return {"received": state.received, "peak_by_job": dict(state.peak)}
+
+
+@app.head("/items/{run}/")
+async def items_head(run: str):
+    """Health check probe: a per-record URL is probed up to its first placeholder."""
+    return None
 
 
 @app.head("/webhook")

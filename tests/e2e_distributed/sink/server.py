@@ -10,6 +10,12 @@ gives the tests two things a real destination/source cannot:
 
 Endpoints
     POST /ingest/{channel}        body {"records": [...], "job_index": n, ...}
+    PUT  /record/{channel}/{id}   one record per request (api_destination per_record=True);
+                                  ``?job=`` tags it, the ledger gets ``id``, and
+                                  ``GET /record-stats/{channel}`` reports the requests
+                                  open at once per job. Rules: ``record_slow_ms``,
+                                  ``record_fail_ids`` (answer 503 while the run's flag is
+                                  not "fixed")
     GET  /report/{channel}        counts, duplicates, batch timing
     GET  /ids/{channel}           every received id (repeats kept), in arrival order
     POST /config/{channel}        injection rules, see ``Rules``
@@ -119,6 +125,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ids": list(ch.ids), "batches": list(ch.batches)})
         if len(parts) == 2 and parts[0] == "flag":
             return self._send(200, {"value": channel(parts[1]).flag})
+        if len(parts) == 2 and parts[0] == "record-stats":
+            return self._record_stats(parts[1])
         if len(parts) == 3 and parts[0] == "api" and parts[2] == "stats":
             return self._api_stats(parts[1])
         if len(parts) == 4 and parts[0] == "api" and parts[2] == "users":
@@ -133,9 +141,18 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"reset": parts[1]})
         self._send(404, {"error": "no route"})
 
+    def do_PUT(self) -> None:
+        parts = self._parts()
+        body = self._body()
+        if len(parts) == 3 and parts[0] == "record":
+            return self._record(parts[1], parts[2], body)
+        self._send(404, {"error": f"no route {self.path}"})
+
     def do_POST(self) -> None:
         parts = self._parts()
         body = self._body()
+        if len(parts) == 3 and parts[0] == "record":
+            return self._record(parts[1], parts[2], body)
         if len(parts) == 2 and parts[0] == "ingest":
             return self._ingest(parts[1], body)
         if len(parts) == 2 and parts[0] == "config":
@@ -187,6 +204,47 @@ class Handler(BaseHTTPRequestHandler):
         if lost:  # stored, but the client is told it failed: the retry will duplicate
             return self._send(500, {"error": "injected lost acknowledgement"})
         self._send(200, {"accepted": len(records)})
+
+    # -- per-record delivery ----------------------------------------------------
+    def _record(self, name: str, rid: str, body: Any) -> None:
+        ch = channel(name)
+        rules = ch.rules
+        job = parse_qs(urlparse(self.path).query).get("job", [""])[0]
+        keys = ["rec:*", f"rec:job:{job}"]
+        with LOCK:
+            for key in keys:
+                ch.in_flight[key] += 1
+                ch.peak[key] = max(ch.peak[key], ch.in_flight[key])
+        try:
+            if rules.get("record_slow_ms"):
+                time.sleep(float(rules["record_slow_ms"]) / 1000)
+            failing = {str(i) for i in rules.get("record_fail_ids", [])}
+            if rid in failing and ch.flag != "fixed":
+                return self._send(503, {"error": f"injected failure for {rid}"})
+            with LOCK:
+                # The body is the record (or the part key_field selected): its id must
+                # be the one in the URL, or the placeholder was filled from another record.
+                body_id = key_of(body)
+                ch.ids.append(body_id if str(body_id) == rid else f"mismatch:{rid}:{body_id}")
+                ch.batches.append({"size": 1, "at": time.time(), "job_index": job, "meta": {}})
+        finally:
+            with LOCK:
+                for key in keys:
+                    ch.in_flight[key] -= 1
+        self._send(200, {"accepted": 1})
+
+    def _record_stats(self, name: str) -> None:
+        ch = channel(name)
+        with LOCK:
+            self._send(
+                200,
+                {
+                    "peak_concurrency": ch.peak["rec:*"],
+                    "peak_by_job": {
+                        k[8:]: v for k, v in ch.peak.items() if k.startswith("rec:job:")
+                    },
+                },
+            )
 
     def _report(self, name: str) -> None:
         ch = channel(name)

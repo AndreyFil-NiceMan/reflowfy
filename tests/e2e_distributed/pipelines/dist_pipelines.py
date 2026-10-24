@@ -9,6 +9,8 @@ AbstractPipeline
     dist_abstract         ``total`` records in jobs of ``per_job``; behaviour switches below
     dist_abstract_es      the same delivery from an Elasticsearch index (needs ES + a seeded index)
     dist_async            dist_abstract plus a per-record async lookup against the mock users API
+    dist_per_record       dist_abstract delivered one PUT per record (api_destination
+                          per_record=True), ``dest_concurrency`` requests in flight per job
 IdBasedPipeline
     dist_ids_b1 / _b7 / _b100   IDs are the records; ids_batch_size 1 / 7 / 100
     dist_ids_fanout             every input ID fans out into three jobs via define_jobs
@@ -46,6 +48,7 @@ from reflowfy import (
     transformation,
 )
 from reflowfy.destinations.api import api_destination
+from reflowfy.destinations.base import RetryConfig
 from reflowfy.sources.api import id_based_api_source
 from reflowfy.sources.elastic import elastic_source
 
@@ -250,6 +253,57 @@ class DistAsync(AbstractPipeline[DistAsyncParams]):
             "users": {str(r["id"]): r["user"] for r in records},
         }
         return api_destination(url=f"{sink}/ingest/{runtime_params['run']}", body=body)
+
+
+class DistPerRecordParams(DistParams, total=False):
+    dest_concurrency: Annotated[
+        NotRequired[int], Param("Destination requests in flight at once, per job", default=1)
+    ]
+    use_key_field: Annotated[
+        NotRequired[bool], Param("Send only record['payload'] (key_field)", default=False)
+    ]
+
+
+@transformation("dist_per_record_shape")
+def dist_per_record_shape(records: Records, runtime_params: DistPerRecordParams) -> Records:
+    """Ids only; with use_key_field nested under ``payload`` beside a field not to send."""
+    if runtime_params.get("use_key_field"):
+        return [{"id": r["id"], "payload": {"id": r["id"]}, "internal": "x"} for r in records]
+    return [{"id": r["id"]} for r in records]
+
+
+class DistPerRecord(AbstractPipeline[DistPerRecordParams]):
+    """Every record in its own ``PUT <sink>/record/<run>/<id>?job=<job_index>``.
+
+    The id in the URL comes from the record (the ``{id}`` placeholder); the sink checks it
+    matches the body, and counts the requests of one job open at once.
+    """
+
+    name = "dist_per_record"
+    description = "Distributed E2E: generated records -> one request per record -> sink"
+    rate_limit = 6000
+
+    def define_jobs(self, runtime_params: DistPerRecordParams):
+        return _generated_jobs(runtime_params)
+
+    def define_transformations(
+        self, records: Records, runtime_params: DistPerRecordParams
+    ) -> Transformations:
+        return [dist_behaviors(), dist_per_record_shape()]
+
+    def define_destination(
+        self, records: Records, runtime_params: DistPerRecordParams
+    ) -> BaseDestination:
+        sink = runtime_params.get("sink_url", SINK)
+        return api_destination(
+            url=f"{sink}/record/{runtime_params['run']}/{{id}}",
+            method="PUT",
+            per_record=True,
+            key_field="payload" if runtime_params.get("use_key_field") else None,
+            concurrency=runtime_params.get("dest_concurrency", 1),
+            params={"job": str(runtime_params.get("job_index"))},
+            retry_config=RetryConfig(max_attempts=1),  # a failure fails the job at once
+        )
 
 
 class DistAbstractEs(AbstractPipeline[EsParams]):
