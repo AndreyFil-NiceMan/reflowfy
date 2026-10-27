@@ -171,10 +171,29 @@ Reach for a `BaseTransformation` subclass only when the transformation needs
 its own constructor state (e.g. `FilterByStatus(allowed_status="active")`) —
 a plain function can't carry that.
 
+**`TypedRecord[T]`** (`core/types.py`) is the shaped record: a generic TypedDict `{"data": T}`. Describe what the source returns (`class Order(TypedDict)`), annotate with `List[TypedRecord[Order]]`, and subclass it for keys transformations add (`class TaxedOrder(TypedRecord[Order]): tax: NotRequired[float]`). It is a new name, not a change to `Record`: a TypedDict is closed, so `Record` must stay `Dict[str, Any]` or every transformation that adds a key breaks. `typing_extensions.TypedDict` because a generic TypedDict needs it on 3.10.
+
 The package ships `reflowfy/py.typed` (PEP 561), so installs are type-checked by consumers. It is registered in both `[tool.setuptools.package-data]` and `MANIFEST.in`.
 
 Where a third-party library genuinely has no types, the suppression is **file-scoped, never repo-wide**, with a header comment naming the library: `destinations/kafka.py`, `worker/consumer.py` and `reflow_manager/dispatcher.py` (aiokafka ships no stubs), and `sources/s3.py` (`reportTypedDictNotRequiredAccess`, because boto3-stubs marks `Key`/`Size`/`ETag` NotRequired). That rule stays live everywhere else on purpose — it is what catches `runtime_params["execution_id"]` subscripting on the all-optional `RuntimeParams`. `boto3.client("s3", ...)` passes every argument explicitly: boto3 is typed by overloads on the literal service name, and a `**kwargs` splat matches none of them, making the client and everything derived from it Unknown.
 
+### Validating records at runtime
+
+The same TypedDict is checked against the real records with pydantic (`core/record_validation.py`), opt in, on the pipeline class:
+
+```python
+class OrdersPipeline(AbstractPipeline[OrderParams]):
+    record_type = TypedRecord[Order]   # checked right after fetch()
+    on_invalid_record = "skip"         # "fail" (default) fails the job
+    validate_steps = True              # check each step's output against its return annotation
+```
+
+- **Validate only, strict.** Records are never replaced by pydantic's output: it would coerce (`"3.5"` → float) and silently drop undeclared keys. Strict means what passes is what the annotated code sees; an `int` still passes as `float`. Undeclared keys do not fail. One `TypeAdapter(List[T])` per type, cached; ~2.7 µs per record.
+- **After fetch** (`job_runner.check_record_type`): runs before `define_transformations`, which then sees only the kept records. `"fail"` raises `RecordValidationError` (a `PipelineError`): `record 3 of 50 does not match TypedRecord[Order]: data.amount: missing`. `"skip"` drops them the way `SkipRecord` does, reason `invalid data.amount: missing`. The check is reported as an `AppliedStep` named `record_type` with `mode="validate"`, so the worker, `LocalExecutor` and `reflowfy test` show its time and skips with no extra code; the worker leaves it out of the step names the legacy dedup hash uses.
+- **After each step** (`validate_steps`, `transformation_runner._check_step_output`): the promised type comes from `step_output_type` — an explicit `output_type` class attribute (a record type, not a list; how a `BaseTransformation` subclass declares one), else the `@transformation` function's `-> List[X]` (or `Tuple[X, ...]`) or the `@record_transformation` function's `-> X | None`. `-> Records`, `List[Any]`, a `dict` type, no annotation or an unresolvable forward reference: unchecked. A mismatch is a bug in that step, so it **always** fails the job with `StepOutputError` (a `TransformationError` naming the step and `culprit_index`), whatever `on_invalid_record` says.
+- Reasons and messages name a field path and pydantic's error type, never a value; list positions inside a record become `[]` (`data.items[].price: float_type`) so reasons group.
+
+Observability: a skip is the existing record-skip path — `records_skipped`/`record_skip_reasons` in the job's `stats`, the `… skipped N records` log line, `reflowfy_records_skipped_total{transformation="record_type"}`. A failure is an ordinary `failed` job whose `error_type` (stats and `reflowfy_jobs_failed_total`) is `RecordValidationError` (bad source data) or `StepOutputError` (a step broke its contract), so the two are told apart from each other and from other failures. Worked example: `pipelines/typed_records_pipeline.py` (`reflowfy test typed_records`); tests: `tests/unit/test_record_validation.py`.
 
 ### Async transformations
 

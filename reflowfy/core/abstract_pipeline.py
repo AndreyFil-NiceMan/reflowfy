@@ -516,6 +516,17 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
     # A key that ignores a field means a change to that field is not resent.
     dedup_key: Optional[Union[str, Callable[[Any, Any], Any]]] = None
 
+    # Runtime record checks (see core/record_validation.py):
+    #   record_type       = the TypedDict every fetched record must match, e.g.
+    #                       TypedRecord[Order]; checked right after source.fetch
+    #   on_invalid_record = "fail" (default) fails the job on a record that does
+    #                       not match; "skip" drops it, with the reason, as SkipRecord does
+    #   validate_steps    = check each transformation's output against its return
+    #                       annotation; a mismatch always fails the job (StepOutputError)
+    record_type: Any = None
+    on_invalid_record: Literal["fail", "skip"] = "fail"
+    validate_steps: bool = False
+
     # The params TypedDict, set by PipelineMeta from AbstractPipeline[MyParams].
     # None means the pipeline didn't declare one.
     _params_type: Optional[type] = None
@@ -565,6 +576,12 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
                     f"{self.__class__.__name__} sets dedup_key but enable_duplicate_jobs "
                     "is True, so nothing is deduplicated: set enable_duplicate_jobs = False"
                 )
+
+        if self.on_invalid_record not in ("fail", "skip"):
+            raise ValueError(
+                f'{self.__class__.__name__}.on_invalid_record must be "fail" or '
+                f'"skip", got {self.on_invalid_record!r}'
+            )
 
         # Validate pipeline name
         if not self.name:

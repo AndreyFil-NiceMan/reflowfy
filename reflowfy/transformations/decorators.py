@@ -157,6 +157,8 @@ def _make_class(
         {
             "name": name,
             **methods,
+            # Read by validate_steps for the record type the return annotation promises.
+            "_transform_fn": staticmethod(func),
             "__doc__": func.__doc__ or f"Transformation: {name}",
             "__module__": func.__module__,
         },

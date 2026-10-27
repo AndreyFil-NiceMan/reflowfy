@@ -10,7 +10,7 @@ Import from the package root::
 """
 
 from contextlib import contextmanager
-from typing import Generator, Optional
+from typing import Dict, Generator, Optional
 
 
 class PipelineError(Exception):
@@ -84,3 +84,23 @@ class SkipRecord(PipelineError):
     does not. Only a per-record transformation can skip a record; anywhere else
     there is no single record to drop, and it fails the job saying so.
     """
+
+
+class RecordValidationError(PipelineError):
+    """Fetched records do not match the pipeline's ``record_type``.
+
+    Raised right after ``source.fetch`` when ``on_invalid_record = "fail"`` (the
+    default), so bad source data fails the job before any transformation runs.
+    The message names positions and fields, never values::
+
+        record 3 of 50 does not match TypedRecord[Order]: data.amount: missing
+
+    Attributes:
+        invalid: 0-based record index -> what is wrong with it (``"data.amount: missing"``).
+        total: How many records were checked.
+    """
+
+    def __init__(self, message: str, invalid: Dict[int, str], total: int) -> None:
+        self.invalid = invalid
+        self.total = total
+        super().__init__(message)

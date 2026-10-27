@@ -18,12 +18,18 @@ from typing import Any, Dict, List, NamedTuple, Optional, Tuple, cast
 
 from reflowfy.core.async_utils import run_coroutine_sync
 from reflowfy.core.exceptions import SkipJob, SkipRecord
+from reflowfy.core.record_validation import (
+    describe_invalid,
+    find_invalid_records,
+    step_output_type,
+)
 from reflowfy.observability.logging import get_logger
 from reflowfy.transformations.base import (
     AsyncTransformation,
     RecordFailure,
     RecordResults,
     RecordTransformation,
+    StepOutputError,
     TransformationError,
 )
 
@@ -46,7 +52,10 @@ class AppliedStep(NamedTuple):
     records_in: int
     records_out: int
     mode: str = "sync"
-    """How the step ran: ``"sync"`` (in a thread), ``"async"`` or ``"per_record"``."""
+    """How the step ran: ``"sync"`` (in a thread), ``"async"`` or ``"per_record"``.
+
+    ``"validate"`` is not a transformation: it is the pipeline's ``record_type``
+    check on the fetched records (see ``job_runner.check_record_type``)."""
     concurrency: Optional[int] = None
     """Records in flight at once, for a ``"per_record"`` step."""
     skip_reasons: Optional[Dict[str, int]] = None
@@ -114,6 +123,27 @@ async def _run_async_step(
         result = RecordResults(await transformation.apply_async(records, runtime_params), {})
     transformation.validate_output(result.records)
     return result
+
+
+def _check_step_output(
+    transformation: Any, records: List[Any], step_index: int, applied: List[AppliedStep]
+) -> None:
+    """Fail the job if a step's records do not match the type it promises to return."""
+    output_type = step_output_type(transformation)
+    if output_type is None or not records:
+        return
+    invalid = find_invalid_records(output_type, records)
+    if not invalid:
+        return
+    culprit_index = min(invalid)
+    raise StepOutputError(
+        transformation_name=getattr(transformation, "name", "<unknown>"),
+        message=f"returned {describe_invalid(invalid, len(records), output_type)}",
+        step_index=step_index,
+        culprit_index=culprit_index,
+        culprit_record=records[culprit_index],
+        applied_steps=list(applied),
+    )
 
 
 def apply_transformations_iteratively(
@@ -214,6 +244,10 @@ async def apply_transformations_iteratively_async(
             else:
                 transformed = await asyncio.to_thread(
                     _run_sync_step, transformation, transformed, runtime_params
+                )
+            if getattr(pipeline, "validate_steps", False):
+                await asyncio.to_thread(
+                    _check_step_output, transformation, transformed, applied_count, applied
                 )
         except (TransformationError, SkipJob):
             raise

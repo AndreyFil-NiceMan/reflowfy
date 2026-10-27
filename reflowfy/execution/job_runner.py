@@ -14,10 +14,12 @@ test/preview paths cannot drift from what the worker actually runs.
 """
 
 import asyncio
+import time
 from typing import Any, Dict, Iterator, List, Optional, Tuple, cast
 
 from reflowfy.core.async_utils import run_coroutine_sync
-from reflowfy.core.exceptions import SkipJob, pipeline_step
+from reflowfy.core.exceptions import RecordValidationError, SkipJob, pipeline_step
+from reflowfy.core.record_validation import describe_invalid, find_invalid_records
 from reflowfy.core.serialization import to_json_safe
 from reflowfy.execution.transformation_runner import (
     AppliedStep,
@@ -26,6 +28,44 @@ from reflowfy.execution.transformation_runner import (
 from reflowfy.observability.logging import get_logger
 
 logger = get_logger("execution.job_runner")
+
+RECORD_TYPE_STEP = "record_type"
+"""Name of the :class:`AppliedStep` that reports the ``record_type`` check."""
+
+
+def check_record_type(pipeline: Any, records: List[Any]) -> Tuple[List[Any], AppliedStep]:
+    """Check fetched ``records`` against ``pipeline.record_type``.
+
+    Returns the records to transform and an :class:`AppliedStep` (mode
+    ``"validate"``) for the check, so its duration and any skipped records are
+    reported exactly like a transformation's. Invalid records fail the job
+    (:class:`RecordValidationError`) unless ``on_invalid_record = "skip"``, which
+    drops them with reasons such as ``invalid data.amount: missing``.
+    """
+    from reflowfy.transformations.base import count_skip_reason
+
+    record_type = pipeline.record_type
+    start = time.time()
+    invalid = find_invalid_records(record_type, records)
+    kept = records
+    skip_reasons: Optional[Dict[str, int]] = None
+    if invalid:
+        message = describe_invalid(invalid, len(records), record_type)
+        if getattr(pipeline, "on_invalid_record", "fail") != "skip":
+            raise RecordValidationError(message, invalid, len(records))
+        skip_reasons = {}
+        for reason in invalid.values():
+            count_skip_reason(skip_reasons, f"invalid {reason}")
+        kept = [record for i, record in enumerate(records) if i not in invalid]
+    step = AppliedStep(
+        name=RECORD_TYPE_STEP,
+        duration=time.time() - start,
+        records_in=len(records),
+        records_out=len(kept),
+        mode="validate",
+        skip_reasons=skip_reasons,
+    )
+    return kept, step
 
 
 def chunk(records: List[Any], size: int = 1) -> List[List[Any]]:
@@ -196,9 +236,15 @@ async def run_job_records_async(
             # slice can match zero docs). Nothing to transform; skip so transformations
             # aren't invoked on []. Every caller already treats empty records as a no-op.
             return records, [], [], None
+        checked = records
+        checks: List[AppliedStep] = []
+        if getattr(pipeline, "record_type", None) is not None:
+            checked, check = await asyncio.to_thread(check_record_type, pipeline, records)
+            checks.append(check)
         transformed_records, applied = await apply_transformations_iteratively_async(
-            pipeline, records, runtime_params
+            pipeline, checked, runtime_params
         )
+        applied = checks + applied
         with pipeline_step("define_destination", name):
             destination = await asyncio.to_thread(
                 pipeline.define_destination, transformed_records, runtime_params
