@@ -57,6 +57,11 @@ class BaseTransformation(QueryLoaderMixin, metaclass=TransformationMeta):
     # Concrete transformations MUST set this
     name: str = ""
 
+    # The record type apply() returns (a record, not a list: e.g. TaxedOrder), checked
+    # when the pipeline sets validate_steps. None = unchecked. A @transformation or
+    # @record_transformation reads it from the function's return annotation instead.
+    output_type: Any = None
+
     @abstractmethod
     def apply(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
         """
@@ -359,3 +364,12 @@ class TransformationError(Exception):
         self.culprit_record = culprit_record
         self.applied_steps: List[Any] = applied_steps or []
         super().__init__(f"Transformation '{transformation_name}' failed: {message}")
+
+
+class StepOutputError(TransformationError):
+    """A transformation returned records that do not match its own return type.
+
+    Raised after the step when the pipeline sets ``validate_steps = True``. It is a
+    bug in that step, not bad input, so it always fails the job — whatever
+    ``on_invalid_record`` says — and is counted under its own ``error_type``.
+    """

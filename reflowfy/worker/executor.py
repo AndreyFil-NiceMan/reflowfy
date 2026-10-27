@@ -361,7 +361,9 @@ class WorkerExecutor:
                     job_id,
                     records,
                     transformed_records,
-                    [step.name for step in applied],
+                    # Not the record_type check: it is no transformation, and
+                    # counting it would change the legacy job hash.
+                    [step.name for step in applied if step.mode != "validate"],
                     job_params,
                     destination,
                     runtime_params,

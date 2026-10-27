@@ -10,9 +10,9 @@ It is Kafka-based, Kubernetes-native, and order-independent for maximum parallel
 """
 
 from reflowfy.core.abstract_pipeline import AbstractPipeline, PipelineParameter, ScheduledRun
-from reflowfy.core.exceptions import PipelineError, SkipJob, SkipRecord
+from reflowfy.core.exceptions import PipelineError, RecordValidationError, SkipJob, SkipRecord
 from reflowfy.core.id_based_pipeline import IdBasedPipeline
-from reflowfy.core.types import Record, Records, Transformations
+from reflowfy.core.types import Record, Records, Transformations, TypedRecord
 from reflowfy.core.query_loader import load_query, load_query_text
 from reflowfy.core.registry import pipeline_registry
 from reflowfy.core.runtime_params import Param, RuntimeParams
@@ -22,6 +22,7 @@ from reflowfy.transformations.base import (
     AsyncTransformation,
     BaseTransformation,
     RecordTransformation,
+    StepOutputError,
     TransformationError,
 )
 from reflowfy.sources.base import BaseSource
@@ -57,6 +58,8 @@ __all__ = [
     "Record",
     "Records",
     "Transformations",
+    # A record with a known shape, {"data": T}; also what record_type checks.
+    "TypedRecord",
     "BaseSource",
     "BaseDestination",
     "Param",
@@ -75,9 +78,11 @@ __all__ = [
     "PipelineError",
     "SkipJob",
     "SkipRecord",
+    "RecordValidationError",
     "SourceError",
     "DestinationError",
     "TransformationError",
+    "StepOutputError",
     "elastic_source",
     "sql_source",
     "kafka_destination",
