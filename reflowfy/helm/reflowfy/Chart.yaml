@@ -2,8 +2,8 @@ apiVersion: v2
 name: reflowfy
 description: Reflowfy - Horizontally scalable data movement and transformation framework
 type: application
-version: "1.1.1"
-appVersion: "1.1.1"
+version: "1.1.2"
+appVersion: "1.1.2"
 
 dependencies:
   # PostgreSQL - Optional, only deployed if postgresql.enabled=true

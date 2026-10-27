@@ -40,7 +40,7 @@ from reflowfy.sources.decorators import source, source_registry
 from reflowfy.destinations.decorators import destination, destination_registry
 from reflowfy.transformations.decorators import record_transformation, transformation
 
-__version__ = "1.1.1"
+__version__ = "1.1.2"
 
 __all__ = [
     "load_query",
