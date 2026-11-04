@@ -130,9 +130,9 @@ def pipeline_route_base(pipeline: Any) -> str:
 
 
 def _pipeline_tags(pipeline: Any) -> List[str]:
-    """Swagger section: ``pipelines`` at the top level, ``pipelines/<folder>`` in a subfolder."""
+    """Swagger section: ``pipelines`` at the top level, the folder (``bob1_pipeline``) in one."""
     folder = pipeline_folder(pipeline)
-    return [f"pipelines/{folder}" if folder else "pipelines"]
+    return [folder or "pipelines"]
 
 
 def _register(
@@ -317,7 +317,7 @@ def create_pipeline_routes(
 
     ``folder`` is the pipeline file's directory relative to the pipeline module
     (``pipelines/bob1_pipeline/p1.py`` → ``bob1_pipeline``), and Swagger groups the
-    route under a ``pipelines/{folder}`` tag. Top-level pipelines are unchanged.
+    route under a ``{folder}`` tag (e.g. ``bob1_pipeline``). Top-level pipelines are unchanged.
     """
     # get_all_parameters() is the declared params plus any the pipeline injects
     # (IdBasedPipeline adds the built-in 'ids').

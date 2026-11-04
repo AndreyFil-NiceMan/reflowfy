@@ -381,7 +381,7 @@ class TestPipelineFolders:
         paths = _app(pipeline).openapi()["paths"]
 
         run = paths["/pipelines/bob1_pipeline/folders_route/run"]["post"]
-        assert run["tags"] == ["pipelines/bob1_pipeline"]
+        assert run["tags"] == ["bob1_pipeline"]
         # The flat alias still answers but is not shown twice in Swagger.
         assert "/pipelines/folders_route/run" not in paths
 
