@@ -313,48 +313,14 @@ def create_pipeline_routes(
     distributed_executor: Any,
 ) -> None:
     """
-    Create dynamic routes for a pipeline.
-
-    Creates:
-    - POST /pipelines[/{folder}]/{name}/run
-    - GET  /pipelines[/{folder}]/{name}/status
+    Create the dynamic POST /pipelines[/{folder}]/{name}/run route for a pipeline.
 
     ``folder`` is the pipeline file's directory relative to the pipeline module
     (``pipelines/bob1_pipeline/p1.py`` → ``bob1_pipeline``), and Swagger groups the
-    routes under a ``pipelines/{folder}`` tag. Top-level pipelines are unchanged.
+    route under a ``pipelines/{folder}`` tag. Top-level pipelines are unchanged.
     """
     # get_all_parameters() is the declared params plus any the pipeline injects
     # (IdBasedPipeline adds the built-in 'ids').
     _create_run_route(
         app, pipeline, local_executor, distributed_executor, pipeline.get_all_parameters()
-    )
-
-    pipeline_name = pipeline.name
-
-    async def get_pipeline_status():
-        """Get pipeline configuration and metadata."""
-        return {
-            "name": pipeline.name,
-            "folder": pipeline_folder(pipeline),
-            "description": pipeline.description,
-            "transformations": pipeline.get_transformation_names(),
-            "runtime_parameters": pipeline.get_runtime_parameters(),
-            "rate_limit": pipeline.rate_limit,
-            "config": pipeline.config,
-        }
-
-    _register(
-        app,
-        "get",
-        pipeline,
-        "status",
-        get_pipeline_status,
-        summary=f"Get {pipeline_name} info",
-        description=pipeline.description or None,
-    )
-
-    logger.debug(
-        "Registered GET %s/status",
-        pipeline_route_base(pipeline),
-        extra={"event": "route_registered"},
     )

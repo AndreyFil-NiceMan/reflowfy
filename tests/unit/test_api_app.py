@@ -93,7 +93,7 @@ class TestLifespan:
             assert discovered == [True]
             paths = app.openapi()["paths"]
             assert "/pipelines/app_discovered/run" in paths
-            assert "/pipelines/app_discovered/status" in paths
+            assert "/pipelines/app_discovered/status" not in paths
 
             listed = client.get("/pipelines").json()["pipelines"]
             assert listed == [

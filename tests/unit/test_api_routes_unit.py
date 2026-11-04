@@ -161,18 +161,11 @@ class TestRunRouteSchema:
         with pytest.raises(ValueError, match=f"'{reserved}'"):
             _create_run_route(FastAPI(), pipeline, None, None, params)
 
-    def test_status_route_describes_the_pipeline(self, make_pipeline):
-        pipeline = make_pipeline(
-            "routes_status", ScalarParams, description="Moves rows.", rate_limit=30
-        )
-        resp = TestClient(_app(pipeline)).get("/pipelines/routes_status/status")
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["name"] == "routes_status"
-        assert body["description"] == "Moves rows."
-        assert body["rate_limit"] == 30
-        assert body["transformations"] == []
-        assert body["runtime_parameters"] == ["env", "verbose"]
+    def test_no_per_pipeline_status_route(self, make_pipeline):
+        pipeline = make_pipeline("routes_status", ScalarParams)
+        app = _app(pipeline)
+        assert "/pipelines/routes_status/status" not in app.openapi()["paths"]
+        assert TestClient(app).get("/pipelines/routes_status/status").status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -388,19 +381,15 @@ class TestPipelineFolders:
         paths = _app(pipeline).openapi()["paths"]
 
         run = paths["/pipelines/bob1_pipeline/folders_route/run"]["post"]
-        status = paths["/pipelines/bob1_pipeline/folders_route/status"]["get"]
         assert run["tags"] == ["pipelines/bob1_pipeline"]
-        assert status["tags"] == ["pipelines/bob1_pipeline"]
         # The flat alias still answers but is not shown twice in Swagger.
         assert "/pipelines/folders_route/run" not in paths
-        assert "/pipelines/folders_route/status" not in paths
 
     def test_top_level_pipeline_is_unchanged(self, make_pipeline):
         pipeline = make_pipeline("folders_flat", RuntimeParams, __module__="pipelines.pipeline2")
         paths = _app(pipeline).openapi()["paths"]
 
         assert paths["/pipelines/folders_flat/run"]["post"]["tags"] == ["pipelines"]
-        assert paths["/pipelines/folders_flat/status"]["get"]["tags"] == ["pipelines"]
 
     def test_nested_pipeline_runs_on_both_paths(self, make_pipeline):
         pipeline = make_pipeline(
@@ -413,8 +402,4 @@ class TestPipelineFolders:
             response = client.post(f"{path}/run?mode=local")
             assert response.status_code == 200, response.text
             assert response.json()["pipeline_name"] == "folders_both"
-
-            status = client.get(f"{path}/status")
-            assert status.status_code == 200
-            assert status.json()["folder"] == "bob1_pipeline"
         assert executor.execute.call_count == 2

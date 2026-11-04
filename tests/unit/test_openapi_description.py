@@ -25,9 +25,6 @@ def test_description_in_swagger():
     paths = app.openapi()["paths"]
     run = paths["/pipelines/described_openapi/run"]["post"]
     assert run["description"].startswith("Moves widgets from A to B.")
-    assert paths["/pipelines/described_openapi/status"]["get"]["description"] == (
-        "Moves widgets from A to B."
-    )
 
 
 def test_no_description_is_fine():
