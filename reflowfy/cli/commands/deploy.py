@@ -161,6 +161,12 @@ def register(app: typer.Typer):
 
                 # If a custom repository is provided, clear the registry to prevent prepending specific defaults
                 cmd.extend(["--set", "postgresql.image.registry="])
+                # Air-gapped: the TLS copy-certs init container defaults to
+                # bitnami/os-shell on Docker Hub. It only needs sh/cp/chmod, which the
+                # postgres image has, so reuse that image instead of pulling another.
+                cmd.extend(["--set", f"postgresql.volumePermissions.image.repository={repo}"])
+                cmd.extend(["--set", f"postgresql.volumePermissions.image.tag={tag}"])
+                cmd.extend(["--set", "postgresql.volumePermissions.image.registry="])
                 # Enable insecure images to bypass Bitnami's check for unrecognized images
                 cmd.extend(["--set", "global.security.allowInsecureImages=true"])
 
@@ -185,6 +191,10 @@ def register(app: typer.Typer):
                     raise typer.Exit(code=1)
                 console.print("🐘 Exposing PostgreSQL via a passthrough Route", style="blue")
                 cmd.extend(["--set", "postgresql.route.enabled=true"])
+                # The passthrough Route needs a TLS-speaking server. TLS is off by
+                # default so the Postgres pod has no copy-certs init container; turn
+                # it on only here.
+                cmd.extend(["--set", "postgresql.tls.enabled=true"])
         else:
             db_url = os.getenv("DATABASE_URL")
             if not db_url:
