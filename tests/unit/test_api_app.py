@@ -99,6 +99,8 @@ class TestLifespan:
             assert listed == [
                 {
                     "name": "app_discovered",
+                    "folder": "",
+                    "run_path": "/pipelines/app_discovered/run",
                     "transformations": [],
                     "runtime_parameters": [],
                     "rate_limit": 50,
