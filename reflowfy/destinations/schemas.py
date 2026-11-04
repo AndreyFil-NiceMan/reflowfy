@@ -48,9 +48,6 @@ class ApiDestinationConfig(BaseModel):
         default=None,
         description="Per-record mode: send only this field's value when the record has it",
     )
-    key_field: Optional[str] = Field(
-        default=None, description="Deprecated: the old name of body_field"
-    )
     concurrency: int = Field(
         default=1, ge=1, description="Per-record mode: requests in flight at once per job"
     )

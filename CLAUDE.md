@@ -255,8 +255,7 @@ worker calls `send(records)` once. `kafka_destination` already writes one messag
 record. `api_destination` by default sends **one request per job** with `body=` verbatim
 (build it from `records`). `api_destination(url=".../users/{user_id}", per_record=True)`
 works like Kafka instead: one request per record, the record as the body (`body_field="x"`
-sends only `record["x"]`; `key_field=` is its deprecated old name, borrowed from Kafka, and
-warns), and `{field}` placeholders in the URL filled
+sends only `record["x"]`; it was `key_field=` until 1.1.2 and was renamed, no alias), and `{field}` placeholders in the URL filled
 from each record, URL-encoded (a missing field fails the job, not retried). A retry
 re-sends the whole job, so the endpoint should be idempotent. Errors name the record's
 position (`record 2 of 3: HTTP 404 …`), never its contents. Query params are per record

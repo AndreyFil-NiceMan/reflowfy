@@ -442,34 +442,6 @@ class TestPerRecord:
         assert dest.identity_config()["key_field"] == "k"
         assert "body_field" not in dest.identity_config()
 
-    def test_key_field_is_a_deprecated_alias_of_body_field(self):
-        with pytest.warns(DeprecationWarning, match="body_field"):
-            old = api_destination(url="https://x.com", per_record=True, key_field="p")
-        new = api_destination(url="https://x.com", per_record=True, body_field="p")
-        assert old.config == new.config
-        assert old.config["body_field"] == "p"
-        assert "key_field" not in old.config
-
-    async def test_deprecated_key_field_still_selects_the_body(self, mock_response):
-        with pytest.warns(DeprecationWarning):
-            dest = api_destination(url="https://x.com", per_record=True, key_field="payload")
-        calls = await self._capture(dest, mock_response)
-        await dest.send([{"payload": {"a": 1}, "other": 2}])
-        assert calls[0]["json"] == {"a": 1}
-
-    def test_key_field_and_body_field_together(self):
-        with pytest.warns(DeprecationWarning):
-            dest = api_destination(
-                url="https://x.com", per_record=True, key_field="p", body_field="p"
-            )
-        assert dest.config["body_field"] == "p"
-        with pytest.raises(ValueError, match="old name of body_field"):
-            api_destination(url="https://x.com", per_record=True, key_field="a", body_field="b")
-
-    def test_deprecated_key_field_without_per_record_rejected(self):
-        with pytest.warns(DeprecationWarning), pytest.raises(ValueError, match="per_record"):
-            api_destination(url="https://x.com", key_field="payload")
-
     def test_body_with_per_record_rejected(self):
         with pytest.raises(ValueError, match="per_record"):
             api_destination(url="https://api.example.com", per_record=True, body={"a": 1})

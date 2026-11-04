@@ -1,7 +1,6 @@
 """API destination for webhooks and REST endpoints."""
 
 import re
-import warnings
 from typing import Any, Dict, List, Optional, cast
 from urllib.parse import quote
 
@@ -64,7 +63,6 @@ class ApiDestination(BaseDestination):
         retry_config: Optional[RetryConfig] = None,
         health_check_enabled: bool = True,
         per_record: bool = False,
-        key_field: Optional[str] = None,
         concurrency: int = 1,
         params_field: Optional[str] = None,
         body_field: Optional[str] = None,
@@ -93,7 +91,6 @@ class ApiDestination(BaseDestination):
             per_record: Send one request per record, with the record as the
                 body and ``{field}`` placeholders in ``url`` filled from it.
                 Cannot be combined with ``body``.
-            key_field: Deprecated name for ``body_field``.
             concurrency: Per-record mode only. Requests in flight at once per job;
                 1 (default) sends them one after another, in order. Above 1 they
                 start in order but may finish out of order, and the first failure
@@ -109,7 +106,6 @@ class ApiDestination(BaseDestination):
                 of the whole record). Records missing the field, or non-dict
                 records, are sent unchanged (minus ``params_field``).
         """
-        body_field = _resolve_body_field(body_field, key_field)
         check_concurrency("api_destination", concurrency)
         if concurrency > 1 and not per_record:
             raise ValueError(
@@ -352,22 +348,6 @@ class ApiDestination(BaseDestination):
             self._client = None
 
 
-def _resolve_body_field(body_field: Optional[str], key_field: Optional[str]) -> Optional[str]:
-    """``body_field``, or the deprecated ``key_field`` it replaced."""
-    if key_field is None:
-        return body_field
-    if body_field is not None and body_field != key_field:
-        raise ValueError(
-            "api_destination: key_field= is the old name of body_field=; pass only body_field="
-        )
-    warnings.warn(
-        "api_destination(key_field=...) is deprecated; use body_field=... instead",
-        DeprecationWarning,
-        stacklevel=4,
-    )
-    return key_field
-
-
 def api_destination(
     url: str,
     method: str = "POST",
@@ -381,7 +361,6 @@ def api_destination(
     health_check_enabled: bool = True,
     dedup_identity: Optional[Any] = None,
     per_record: bool = False,
-    key_field: Optional[str] = None,
     concurrency: int = 1,
     params_field: Optional[str] = None,
     body_field: Optional[str] = None,
@@ -440,7 +419,6 @@ def api_destination(
         retry_config=retry_config,
         health_check_enabled=health_check_enabled,
         per_record=per_record,
-        key_field=key_field,
         concurrency=concurrency,
         params_field=params_field,
         body_field=body_field,
