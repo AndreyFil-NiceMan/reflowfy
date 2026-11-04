@@ -66,9 +66,19 @@ my_project/
 │   ├── destinations/   # Reusable @destination configs
 │   ├── transformations/ # Reusable @transformation logic
 │   └── queries/        # Query templates
+├── pyproject.toml      # Project dependencies (uv)
+├── uv.lock             # Locked versions — commit it
+├── Dockerfile.api / Dockerfile.reflow-manager / Dockerfile.worker
+├── .dockerignore
 ├── .env
 └── docker-compose.yml
 ```
+
+Dependencies are managed with [uv](https://docs.astral.sh/uv/): `uv add <package>` updates
+`pyproject.toml` and `uv.lock`. The images install exactly what `uv.lock` pins
+(`uv sync --locked`, so a stale lock fails the build), on top of the reflowfy base
+image, and run as the non-root user `10001`. `reflowfy init` runs `uv lock` for you
+when uv is installed. Building needs BuildKit (the default in Docker 23+ / compose v2).
 
 ### 3. Generate Components
 

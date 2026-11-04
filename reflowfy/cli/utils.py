@@ -1,6 +1,8 @@
 """Shared utilities for CLI commands."""
 
 from pathlib import Path
+
+import typer
 from rich.console import Console
 
 console = Console()
@@ -42,3 +44,19 @@ def get_dockerfiles_path() -> Path:
 
     # Priority 2: Templates bundled in package (Production/Init mode)
     return get_package_path() / "templates"
+
+
+def check_uv_project(project_dir: Path = Path(".")) -> None:
+    """Exit with a clear message unless the project has pyproject.toml and uv.lock.
+
+    The service images run `uv sync --locked`; without this check a missing lock
+    surfaces as a COPY error deep in the docker build output.
+    """
+    missing = [f for f in ("pyproject.toml", "uv.lock") if not (project_dir / f).exists()]
+    if missing:
+        console.print(
+            f"❌ Missing {' and '.join(missing)}. The images install dependencies from uv.lock: "
+            "run `reflowfy init` for a pyproject.toml, then `uv lock`.",
+            style="red",
+        )
+        raise typer.Exit(code=1)

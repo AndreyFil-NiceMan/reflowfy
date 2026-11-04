@@ -126,6 +126,7 @@ def test_init_still_scaffolds_a_project_when_the_package_files_are_unreadable(
         "example_query.sql",
         "example_query.json",
         "Dockerfiles",
+        "pyproject.toml",
         ".env",
     ):
         assert (
