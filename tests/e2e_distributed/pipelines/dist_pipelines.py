@@ -259,15 +259,15 @@ class DistPerRecordParams(DistParams, total=False):
     dest_concurrency: Annotated[
         NotRequired[int], Param("Destination requests in flight at once, per job", default=1)
     ]
-    use_key_field: Annotated[
-        NotRequired[bool], Param("Send only record['payload'] (key_field)", default=False)
+    use_body_field: Annotated[
+        NotRequired[bool], Param("Send only record['payload'] (body_field)", default=False)
     ]
 
 
 @transformation("dist_per_record_shape")
 def dist_per_record_shape(records: Records, runtime_params: DistPerRecordParams) -> Records:
-    """Ids only; with use_key_field nested under ``payload`` beside a field not to send."""
-    if runtime_params.get("use_key_field"):
+    """Ids only; with use_body_field nested under ``payload`` beside a field not to send."""
+    if runtime_params.get("use_body_field"):
         return [{"id": r["id"], "payload": {"id": r["id"]}, "internal": "x"} for r in records]
     return [{"id": r["id"]} for r in records]
 
@@ -299,7 +299,7 @@ class DistPerRecord(AbstractPipeline[DistPerRecordParams]):
             url=f"{sink}/record/{runtime_params['run']}/{{id}}",
             method="PUT",
             per_record=True,
-            key_field="payload" if runtime_params.get("use_key_field") else None,
+            body_field="payload" if runtime_params.get("use_body_field") else None,
             concurrency=runtime_params.get("dest_concurrency", 1),
             params={"job": str(runtime_params.get("job_index"))},
             retry_config=RetryConfig(max_attempts=1),  # a failure fails the job at once

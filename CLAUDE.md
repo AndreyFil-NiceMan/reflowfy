@@ -254,11 +254,18 @@ characters each. `LocalExecutor` and `reflowfy test` show them too (`--json`: `r
 worker calls `send(records)` once. `kafka_destination` already writes one message per
 record. `api_destination` by default sends **one request per job** with `body=` verbatim
 (build it from `records`). `api_destination(url=".../users/{user_id}", per_record=True)`
-works like Kafka instead: one request per record, the record as the body (`key_field="x"`
-sends only `record["x"]`, same rule as Kafka), and `{field}` placeholders in the URL filled
+works like Kafka instead: one request per record, the record as the body (`body_field="x"`
+sends only `record["x"]`; it was `key_field=` until 1.1.2 and was renamed, no alias), and `{field}` placeholders in the URL filled
 from each record, URL-encoded (a missing field fails the job, not retried). A retry
 re-sends the whole job, so the endpoint should be idempotent. Errors name the record's
-position (`record 2 of 3: HTTP 404 …`), never its contents. No `dedup_identity` needed:
+position (`record 2 of 3: HTTP 404 …`), never its contents. Query params are per record
+too: `{field}` placeholders in `params=` values are filled from each record (`"{field}"`
+alone keeps the value's type, so a list repeats the param; httpx does the encoding), and
+`params_field="query"` merges the dict in `record["query"]` over `params` (`None` value
+removes a key) and leaves that field out of the body. Same failure rule as the URL: a
+missing placeholder field or a non-dict `params_field` fails the job before its request.
+Unset `params_field` is dropped from `identity_config()`, and `body_field` is hashed under
+its old key `key_field` so the rename kept every hash. No `dedup_identity` needed:
 the records are not in the config. Tests: `tests/unit/test_api_destination.py::TestPerRecord`.
 
 **`concurrency=N`** (both `kafka_destination` and per-record `api_destination`, default 1)
@@ -267,7 +274,7 @@ keeps N messages/requests in flight per job through `core/async_utils.for_each_c
 behaviour exactly (one at a time, in order); above 1 records start in order but may land
 out of order, and the first failure cancels the rest. It is not part of the dedup hash:
 `BaseDestination.identity_config()` is what `destination_identity` hashes, and destinations
-drop tuning knobs there. `ApiDestination` also drops `per_record`/`key_field` when unset,
+drop tuning knobs there. `ApiDestination` also drops `per_record`/`body_field` when unset,
 so adding those keys did not change every existing destination's hash (which would have
 re-sent the last 24 h of records once after upgrade). A new config key on a destination
 needs the same treatment. Tests: `tests/unit/test_destination_concurrency.py`; E2E
