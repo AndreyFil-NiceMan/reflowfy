@@ -191,6 +191,10 @@ def register(app: typer.Typer):
                     raise typer.Exit(code=1)
                 console.print("🐘 Exposing PostgreSQL via a passthrough Route", style="blue")
                 cmd.extend(["--set", "postgresql.route.enabled=true"])
+                # The passthrough Route needs a TLS-speaking server. TLS is off by
+                # default so the Postgres pod has no copy-certs init container; turn
+                # it on only here.
+                cmd.extend(["--set", "postgresql.tls.enabled=true"])
         else:
             db_url = os.getenv("DATABASE_URL")
             if not db_url:
