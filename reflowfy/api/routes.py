@@ -1,7 +1,8 @@
 """Dynamic route generation for pipelines."""
 
 import logging
-from typing import Any, Dict, Literal, Optional
+import os
+from typing import Any, Dict, List, Literal, Optional
 from inspect import Parameter, Signature
 
 import pydantic
@@ -103,6 +104,51 @@ def _run_body(
         rate_limit=rate_limit,
         status=status.to_dict(),
     )
+
+
+def pipeline_folder(pipeline: Any, module_name: Optional[str] = None) -> str:
+    """Folder of the pipeline's file relative to the pipeline module, '' at the top level.
+
+    ``pipelines/bob1_pipeline/pipeline1.py`` (module ``pipelines.bob1_pipeline.pipeline1``)
+    gives ``"bob1_pipeline"``; ``pipelines/a/b/x.py`` gives ``"a/b"``. A pipeline defined
+    outside the pipeline module (a test, an installed package) counts as top level.
+    """
+    if module_name is None:
+        module_name = os.getenv("PIPELINE_MODULE", "pipelines")
+    defined_in = type(pipeline).__module__
+    prefix = module_name + "."
+    if not defined_in.startswith(prefix):
+        return ""
+    parts = defined_in[len(prefix) :].split(".")
+    return "/".join(parts[:-1])  # drop the file name itself
+
+
+def pipeline_route_base(pipeline: Any) -> str:
+    """URL prefix of a pipeline's routes: ``/pipelines[/<folder>]/<name>``."""
+    folder = pipeline_folder(pipeline)
+    return f"/pipelines/{folder}/{pipeline.name}" if folder else f"/pipelines/{pipeline.name}"
+
+
+def _pipeline_tags(pipeline: Any) -> List[str]:
+    """Swagger section: ``pipelines`` at the top level, the folder (``bob1_pipeline``) in one."""
+    folder = pipeline_folder(pipeline)
+    return [folder or "pipelines"]
+
+
+def _register(
+    app: FastAPI, method: str, pipeline: Any, suffix: str, endpoint: Any, **kwargs: Any
+) -> None:
+    """Register ``endpoint`` under the pipeline's folder-aware path.
+
+    A pipeline in a subfolder keeps answering on the flat ``/pipelines/<name>/<suffix>``
+    too (hidden from Swagger), so clients written before folders appeared still work.
+    """
+    route = getattr(app, method)
+    base = pipeline_route_base(pipeline)
+    route(f"{base}/{suffix}", tags=_pipeline_tags(pipeline), **kwargs)(endpoint)
+    flat = f"/pipelines/{pipeline.name}"
+    if base != flat:
+        route(f"{flat}/{suffix}", include_in_schema=False, **kwargs)(endpoint)
 
 
 def _param_annotation(p: Any):
@@ -227,23 +273,26 @@ def _create_run_route(
 
     setattr(run_pipeline, "__signature__", Signature(parameters=sig_params))
 
-    app.post(
-        f"/pipelines/{pipeline_name}/run",
+    _register(
+        app,
+        "post",
+        pipeline,
+        "run",
+        run_pipeline,
         response_model=PipelineRunResponse,
-        tags=["pipelines"],
         summary=f"Run {pipeline_name}",
         description=(
             (f"{pipeline.description}\n\n" if pipeline.description else "")
             + f"Execute {pipeline_name}. Use mode='local' for testing, 'distributed' for production."
         ),
-    )(run_pipeline)
+    )
 
     body_str = ("body: " + ", ".join(p.name for p in body_params)) if body_params else "no body"
     query_str = "&".join(p.name + "=..." for p in query_params)
     full_query = "?mode=distributed&rate_limit=..." + (f"&{query_str}" if query_str else "")
     logger.debug(
-        "Registered POST /pipelines/%s/run%s [%s]",
-        pipeline_name,
+        "Registered POST %s/run%s [%s]",
+        pipeline_route_base(pipeline),
         full_query,
         body_str,
         extra={"event": "route_registered"},
@@ -264,37 +313,14 @@ def create_pipeline_routes(
     distributed_executor: Any,
 ) -> None:
     """
-    Create dynamic routes for a pipeline.
+    Create the dynamic POST /pipelines[/{folder}]/{name}/run route for a pipeline.
 
-    Creates:
-    - POST /pipelines/{name}/run
-    - GET  /pipelines/{name}/status
+    ``folder`` is the pipeline file's directory relative to the pipeline module
+    (``pipelines/bob1_pipeline/p1.py`` → ``bob1_pipeline``), and Swagger groups the
+    route under a ``{folder}`` tag (e.g. ``bob1_pipeline``). Top-level pipelines are unchanged.
     """
     # get_all_parameters() is the declared params plus any the pipeline injects
     # (IdBasedPipeline adds the built-in 'ids').
     _create_run_route(
         app, pipeline, local_executor, distributed_executor, pipeline.get_all_parameters()
-    )
-
-    pipeline_name = pipeline.name
-
-    @app.get(
-        f"/pipelines/{pipeline_name}/status",
-        tags=["pipelines"],
-        summary=f"Get {pipeline_name} info",
-        description=pipeline.description or None,
-    )
-    async def get_pipeline_status():
-        """Get pipeline configuration and metadata."""
-        return {
-            "name": pipeline.name,
-            "description": pipeline.description,
-            "transformations": pipeline.get_transformation_names(),
-            "runtime_parameters": pipeline.get_runtime_parameters(),
-            "rate_limit": pipeline.rate_limit,
-            "config": pipeline.config,
-        }
-
-    logger.debug(
-        "Registered GET /pipelines/%s/status", pipeline_name, extra={"event": "route_registered"}
     )

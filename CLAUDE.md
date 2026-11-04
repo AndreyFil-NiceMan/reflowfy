@@ -123,6 +123,8 @@ Pipelines register themselves with **no explicit registry calls**. `AbstractPipe
 
 `core/pipeline_discovery.py` (`discover_and_load_pipelines`) imports every module under the `PIPELINE_MODULE` directory (default `pipelines`) plus sibling `sources/`, `destinations/`, `transformations/` dirs, which triggers the metaclass and decorator registration. All three services call this on startup. In E2E, `PIPELINE_MODULE` is overridden to `tests.e2e.test_pipelines`.
 
+**Subfolders show in Swagger.** A pipeline in `pipelines/bob1_pipeline/pipeline1.py` gets its run route at `/pipelines/bob1_pipeline/<name>/run`, grouped under a `bob1_pipeline` Swagger tag (the folder alone, no `pipelines/` prefix) (`api/routes.py` `pipeline_folder`, from the class's `__module__` relative to `PIPELINE_MODULE`). It also still answers on the flat `/pipelines/<name>/run`, hidden from the schema, so existing clients keep working. Pipeline names stay globally unique; the folder is only for display and URLs. `GET /pipelines` reports `folder` and `run_path`. There is no per-pipeline `GET …/status` route (removed); use `GET /pipelines` or `/executions/{id}/status`.
+
 ### Typed runtime_params
 
 `runtime_params` is one flat dict merging the user's parameters with the framework's reserved execution-context keys (built by `build_flat_runtime_params` in `core/execution_context.py`). `core/runtime_params.py` names that shape: `RuntimeParams` (a `total=False` TypedDict of the reserved keys), the `P` TypeVar bound to it, and the `Param` marker for defaults.

@@ -182,11 +182,9 @@ class TestNoParmsPipeline:
         assert "execution_id" in body
         assert body["status"]["state"] == "completed"
 
-    def test_status_endpoint(self, no_params_client):
+    def test_status_endpoint_is_gone(self, no_params_client):
         client, _, _ = no_params_client
-        r = client.get("/pipelines/_test_no_params/status")
-        assert r.status_code == 200
-        assert r.json()["name"] == "_test_no_params"
+        assert client.get("/pipelines/_test_no_params/status").status_code == 404
 
     def test_distributed_mode_uses_dist_executor(self, no_params_client):
         client, local_ex, dist_ex = no_params_client

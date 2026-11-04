@@ -17,7 +17,7 @@ from reflowfy.observability import (  # noqa: F401  (register families)
 )
 from reflowfy.observability.logging import setup_logging
 from reflowfy.observability.tracing import init_tracing, instrument_fastapi
-from reflowfy.api.routes import create_pipeline_routes
+from reflowfy.api.routes import create_pipeline_routes, pipeline_folder, pipeline_route_base
 from reflowfy.api.execution import execution_tracker
 from reflowfy.execution.distributed_executor import get_executor
 
@@ -87,6 +87,8 @@ def create_app() -> FastAPI:
             "pipelines": [
                 {
                     "name": p.name,
+                    "folder": pipeline_folder(p),
+                    "run_path": f"{pipeline_route_base(p)}/run",
                     "transformations": p.get_transformation_names(),
                     "runtime_parameters": p.get_runtime_parameters(),
                     "rate_limit": p.rate_limit,
@@ -149,8 +151,9 @@ def setup_pipeline_routes(app: FastAPI) -> None:
         execution_mode="distributed",
     )
 
-    # Create routes for each pipeline
-    for pipeline in pipelines:
+    # Create routes for each pipeline. Sorted by folder so Swagger lists the
+    # top-level "pipelines" section first, then each subfolder's section.
+    for pipeline in sorted(pipelines, key=lambda p: (pipeline_folder(p), p.name)):
         create_pipeline_routes(
             app=app,
             pipeline=pipeline,

@@ -13,7 +13,7 @@ from typing_extensions import Annotated, NotRequired, Required
 
 from reflowfy import AbstractPipeline, Param, RuntimeParams, pipeline_registry
 from reflowfy.api.execution import execution_tracker
-from reflowfy.api.routes import _create_run_route, create_pipeline_routes
+from reflowfy.api.routes import _create_run_route, create_pipeline_routes, pipeline_folder
 from reflowfy.core.abstract_pipeline import PipelineParameter
 from reflowfy.execution.base import ExecutionState, ExecutionStatus
 from reflowfy.execution.distributed_executor import DistributedExecutor
@@ -161,18 +161,11 @@ class TestRunRouteSchema:
         with pytest.raises(ValueError, match=f"'{reserved}'"):
             _create_run_route(FastAPI(), pipeline, None, None, params)
 
-    def test_status_route_describes_the_pipeline(self, make_pipeline):
-        pipeline = make_pipeline(
-            "routes_status", ScalarParams, description="Moves rows.", rate_limit=30
-        )
-        resp = TestClient(_app(pipeline)).get("/pipelines/routes_status/status")
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["name"] == "routes_status"
-        assert body["description"] == "Moves rows."
-        assert body["rate_limit"] == 30
-        assert body["transformations"] == []
-        assert body["runtime_parameters"] == ["env", "verbose"]
+    def test_no_per_pipeline_status_route(self, make_pipeline):
+        pipeline = make_pipeline("routes_status", ScalarParams)
+        app = _app(pipeline)
+        assert "/pipelines/routes_status/status" not in app.openapi()["paths"]
+        assert TestClient(app).get("/pipelines/routes_status/status").status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -353,3 +346,60 @@ class TestForwardingToManager:
             "/pipelines/routes_manager_down_5xx/run"
         )
         assert resp.status_code in (502, 503)
+
+
+# ---------------------------------------------------------------------------
+# Subfolders of the pipeline module: relative paths and Swagger sections
+# ---------------------------------------------------------------------------
+
+
+class TestPipelineFolders:
+    """``pipelines/bob1_pipeline/pipeline1.py`` shows up as its own Swagger section."""
+
+    @pytest.fixture(autouse=True)
+    def _pipeline_module(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PIPELINE_MODULE", "pipelines")
+
+    def test_folder_is_relative_to_the_pipeline_module(self, make_pipeline):
+        nested = make_pipeline(
+            "folders_nested", RuntimeParams, __module__="pipelines.bob1_pipeline.pipeline1"
+        )
+        deep = make_pipeline("folders_deep", RuntimeParams, __module__="pipelines.a.b.deep")
+        top = make_pipeline("folders_top", RuntimeParams, __module__="pipelines.pipeline2")
+        outside = make_pipeline("folders_outside", RuntimeParams, __module__="tests.unit.x")
+
+        assert pipeline_folder(nested) == "bob1_pipeline"
+        assert pipeline_folder(deep) == "a/b"
+        assert pipeline_folder(top) == ""
+        assert pipeline_folder(outside) == ""
+        assert pipeline_folder(nested, module_name="other") == ""
+
+    def test_nested_pipeline_routes_use_the_relative_path_and_tag(self, make_pipeline):
+        pipeline = make_pipeline(
+            "folders_route", RuntimeParams, __module__="pipelines.bob1_pipeline.pipeline1"
+        )
+        paths = _app(pipeline).openapi()["paths"]
+
+        run = paths["/pipelines/bob1_pipeline/folders_route/run"]["post"]
+        assert run["tags"] == ["bob1_pipeline"]
+        # The flat alias still answers but is not shown twice in Swagger.
+        assert "/pipelines/folders_route/run" not in paths
+
+    def test_top_level_pipeline_is_unchanged(self, make_pipeline):
+        pipeline = make_pipeline("folders_flat", RuntimeParams, __module__="pipelines.pipeline2")
+        paths = _app(pipeline).openapi()["paths"]
+
+        assert paths["/pipelines/folders_flat/run"]["post"]["tags"] == ["pipelines"]
+
+    def test_nested_pipeline_runs_on_both_paths(self, make_pipeline):
+        pipeline = make_pipeline(
+            "folders_both", RuntimeParams, __module__="pipelines.bob1_pipeline.pipeline1"
+        )
+        executor = _executor()
+        client = TestClient(_app(pipeline, local=executor, distributed=executor))
+
+        for path in ("/pipelines/bob1_pipeline/folders_both", "/pipelines/folders_both"):
+            response = client.post(f"{path}/run?mode=local")
+            assert response.status_code == 200, response.text
+            assert response.json()["pipeline_name"] == "folders_both"
+        assert executor.execute.call_count == 2
