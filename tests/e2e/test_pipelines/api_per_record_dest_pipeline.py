@@ -3,7 +3,7 @@ API destination in per-record mode.
 
 Every record goes in its own ``PUT /items/<run>/<id>`` to the mock webhook server:
 the record's ``id`` fills the URL placeholder, and the record (or only its ``payload``
-with ``use_key_field``) is the body. ``concurrency`` requests are in flight per job;
+with ``use_body_field``) is the body. ``concurrency`` requests are in flight per job;
 the mock holds each one for ``delay_ms`` and counts how many of a job's requests were
 open at once (the job is tagged by its first record id), so a test can check the cap.
 """
@@ -38,17 +38,17 @@ class ApiPerRecordParams(RuntimeParams, total=False):
     concurrency: Annotated[NotRequired[int], Param("Requests in flight per job", default=1)]
     delay_ms: Annotated[NotRequired[int], Param("Mock holds each request this long", default=0)]
     fail_id: Annotated[NotRequired[str], Param("Mock answers 503 for this id", default="")]
-    use_key_field: Annotated[
-        NotRequired[bool], Param("Send only record['payload'] (key_field)", default=False)
+    use_body_field: Annotated[
+        NotRequired[bool], Param("Send only record['payload'] (body_field)", default=False)
     ]
 
 
 @transformation("per_record_shape")
 def per_record_shape(records: Records, runtime_params: ApiPerRecordParams) -> Records:
-    """Unwrap the mock source's ``{"data": item}`` to id/name; with use_key_field nest
+    """Unwrap the mock source's ``{"data": item}`` to id/name; with use_body_field nest
     them under ``payload`` beside a field that must NOT be sent."""
     flat = [{"id": r["data"]["id"], "name": r["data"]["first_name"]} for r in records]
-    if runtime_params.get("use_key_field"):
+    if runtime_params.get("use_body_field"):
         return [{"id": r["id"], "payload": r, "internal": "x"} for r in flat]
     return flat
 
@@ -79,7 +79,7 @@ class E2EApiPerRecordPipeline(AbstractPipeline[ApiPerRecordParams]):
             auth_type="bearer",
             auth_token="test-webhook-token",
             per_record=True,
-            key_field="payload" if runtime_params.get("use_key_field") else None,
+            body_field="payload" if runtime_params.get("use_body_field") else None,
             concurrency=runtime_params.get("concurrency", 1),
             params={
                 "delay_ms": str(runtime_params.get("delay_ms", 0)),

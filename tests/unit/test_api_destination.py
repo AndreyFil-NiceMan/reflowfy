@@ -255,9 +255,9 @@ class TestPerRecord:
         ]
         assert all(c["method"] == "PUT" for c in calls)
 
-    async def test_key_field_sends_only_that_field(self, mock_response):
+    async def test_body_field_sends_only_that_field(self, mock_response):
         dest = api_destination(
-            url="https://api.example.com/users/{id}", per_record=True, key_field="payload"
+            url="https://api.example.com/users/{id}", per_record=True, body_field="payload"
         )
         calls = await self._capture(dest, mock_response)
         await dest.send([{"id": 1, "payload": {"name": "a"}}, {"id": 2, "name": "b"}])
@@ -269,7 +269,7 @@ class TestPerRecord:
         ]
 
     async def test_str_payload_sent_raw(self, mock_response):
-        dest = api_destination(url="https://api.example.com", per_record=True, key_field="xml")
+        dest = api_destination(url="https://api.example.com", per_record=True, body_field="xml")
         calls = await self._capture(dest, mock_response)
         await dest.send([{"xml": "<a/>"}])
         assert calls[0]["content"] == "<a/>"
@@ -403,11 +403,11 @@ class TestPerRecord:
         assert [c["params"] for c in calls] == [{"a": 1}, None, None]
         assert calls[2]["content"] == "raw line"
 
-    async def test_params_field_with_key_field(self, mock_response):
+    async def test_params_field_with_body_field(self, mock_response):
         dest = api_destination(
             url="https://api.example.com",
             per_record=True,
-            key_field="payload",
+            body_field="payload",
             params_field="query",
         )
         calls = await self._capture(dest, mock_response)
@@ -426,10 +426,10 @@ class TestPerRecord:
         with pytest.raises(ValueError, match="per_record"):
             api_destination(url="https://api.example.com", params_field="q")
 
-    def test_params_field_same_as_key_field_rejected(self):
+    def test_params_field_same_as_body_field_rejected(self):
         with pytest.raises(ValueError, match="must differ"):
             api_destination(
-                url="https://api.example.com", per_record=True, key_field="p", params_field="p"
+                url="https://api.example.com", per_record=True, body_field="p", params_field="p"
             )
 
     def test_unset_params_field_not_in_identity(self):
@@ -437,16 +437,46 @@ class TestPerRecord:
         assert "params_field" not in dest.identity_config()
         dest = api_destination(url="https://api.example.com", per_record=True, params_field="q")
         assert dest.identity_config()["params_field"] == "q"
-        dest = api_destination(url="https://api.example.com", per_record=True, key_field="k")
+        dest = api_destination(url="https://api.example.com", per_record=True, body_field="k")
+        # Hashed under its old name, so the rename kept every dedup hash.
         assert dest.identity_config()["key_field"] == "k"
+        assert "body_field" not in dest.identity_config()
+
+    def test_key_field_is_a_deprecated_alias_of_body_field(self):
+        with pytest.warns(DeprecationWarning, match="body_field"):
+            old = api_destination(url="https://x.com", per_record=True, key_field="p")
+        new = api_destination(url="https://x.com", per_record=True, body_field="p")
+        assert old.config == new.config
+        assert old.config["body_field"] == "p"
+        assert "key_field" not in old.config
+
+    async def test_deprecated_key_field_still_selects_the_body(self, mock_response):
+        with pytest.warns(DeprecationWarning):
+            dest = api_destination(url="https://x.com", per_record=True, key_field="payload")
+        calls = await self._capture(dest, mock_response)
+        await dest.send([{"payload": {"a": 1}, "other": 2}])
+        assert calls[0]["json"] == {"a": 1}
+
+    def test_key_field_and_body_field_together(self):
+        with pytest.warns(DeprecationWarning):
+            dest = api_destination(
+                url="https://x.com", per_record=True, key_field="p", body_field="p"
+            )
+        assert dest.config["body_field"] == "p"
+        with pytest.raises(ValueError, match="old name of body_field"):
+            api_destination(url="https://x.com", per_record=True, key_field="a", body_field="b")
+
+    def test_deprecated_key_field_without_per_record_rejected(self):
+        with pytest.warns(DeprecationWarning), pytest.raises(ValueError, match="per_record"):
+            api_destination(url="https://x.com", key_field="payload")
 
     def test_body_with_per_record_rejected(self):
         with pytest.raises(ValueError, match="per_record"):
             api_destination(url="https://api.example.com", per_record=True, body={"a": 1})
 
-    def test_key_field_without_per_record_rejected(self):
+    def test_body_field_without_per_record_rejected(self):
         with pytest.raises(ValueError, match="per_record"):
-            api_destination(url="https://api.example.com", key_field="payload")
+            api_destination(url="https://api.example.com", body_field="payload")
 
     def test_config_round_trips_through_factory(self):
         from reflowfy.factories.destination_factory import DestinationFactory
@@ -454,7 +484,7 @@ class TestPerRecord:
         dest = api_destination(
             url="https://api.example.com/{id}",
             per_record=True,
-            key_field="p",
+            body_field="p",
             params={"v": "{v}"},
             params_field="q",
         )
@@ -465,10 +495,10 @@ class TestPerRecord:
         cfg = ApiDestinationConfig(
             url="https://x.com/{id}",
             per_record=True,
-            key_field="p",
+            body_field="p",
             params={"v": "{v}", "n": 1},
             params_field="q",
         )
         assert cfg.per_record is True
-        assert cfg.key_field == "p"
+        assert cfg.body_field == "p"
         assert cfg.params_field == "q"

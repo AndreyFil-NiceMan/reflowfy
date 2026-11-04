@@ -1,6 +1,7 @@
 """API destination for webhooks and REST endpoints."""
 
 import re
+import warnings
 from typing import Any, Dict, List, Optional, cast
 from urllib.parse import quote
 
@@ -35,7 +36,7 @@ class ApiDestination(BaseDestination):
 
     With ``per_record=True`` it works like the Kafka destination instead: one
     request per record, the record itself as the body (or only
-    ``record[key_field]`` when ``key_field`` is set and present on the record),
+    ``record[body_field]`` when ``body_field`` is set and present on the record),
     and ``{field}`` placeholders in ``url`` filled from each record
     (URL-encoded), e.g. ``url="https://api.example.com/users/{user_id}"``.
     Query parameters are per record too: ``{field}`` placeholders in ``params``
@@ -66,6 +67,7 @@ class ApiDestination(BaseDestination):
         key_field: Optional[str] = None,
         concurrency: int = 1,
         params_field: Optional[str] = None,
+        body_field: Optional[str] = None,
     ):
         """
         Initialize API destination.
@@ -91,11 +93,7 @@ class ApiDestination(BaseDestination):
             per_record: Send one request per record, with the record as the
                 body and ``{field}`` placeholders in ``url`` filled from it.
                 Cannot be combined with ``body``.
-            key_field: Per-record mode only. When set and present on a dict
-                record, only that field's value is sent as the body (instead
-                of the whole record), as ``kafka_destination(key_field=...)``
-                does. Records missing the field, or non-dict records, are sent
-                unchanged.
+            key_field: Deprecated name for ``body_field``.
             concurrency: Per-record mode only. Requests in flight at once per job;
                 1 (default) sends them one after another, in order. Above 1 they
                 start in order but may finish out of order, and the first failure
@@ -106,7 +104,12 @@ class ApiDestination(BaseDestination):
                 removes the parameter). The field is not sent in the body. A
                 record without the field uses ``params`` alone; a field that is
                 not a dict fails the job.
+            body_field: Per-record mode only. When set and present on a dict
+                record, only that field's value is sent as the body (instead
+                of the whole record). Records missing the field, or non-dict
+                records, are sent unchanged (minus ``params_field``).
         """
+        body_field = _resolve_body_field(body_field, key_field)
         check_concurrency("api_destination", concurrency)
         if concurrency > 1 and not per_record:
             raise ValueError(
@@ -118,12 +121,12 @@ class ApiDestination(BaseDestination):
                 "api_destination: per_record=True sends each record as the body; "
                 "do not pass body= as well"
             )
-        if key_field is not None and not per_record:
-            raise ValueError("api_destination: key_field= requires per_record=True")
+        if body_field is not None and not per_record:
+            raise ValueError("api_destination: body_field= requires per_record=True")
         if params_field is not None and not per_record:
             raise ValueError("api_destination: params_field= requires per_record=True")
-        if params_field is not None and params_field == key_field:
-            raise ValueError("api_destination: params_field= and key_field= must differ")
+        if params_field is not None and params_field == body_field:
+            raise ValueError("api_destination: params_field= and body_field= must differ")
         config = {
             "url": url,
             "method": method.upper(),
@@ -135,7 +138,7 @@ class ApiDestination(BaseDestination):
             "body": body,
             "health_check_enabled": health_check_enabled,
             "per_record": per_record,
-            "key_field": key_field,
+            "body_field": body_field,
             "concurrency": concurrency,
             "params_field": params_field,
         }
@@ -176,7 +179,7 @@ class ApiDestination(BaseDestination):
 
     async def _send_per_record(self, records: List[Any]) -> None:
         """One request per record, ``concurrency`` at a time; the first failure stops the rest."""
-        key_field = self.config.get("key_field")
+        body_field = self.config.get("body_field")
         params_field = self.config.get("params_field")
         concurrency = self.config.get("concurrency", 1)
         total = len(records)
@@ -189,8 +192,8 @@ class ApiDestination(BaseDestination):
             payload: Any = record
             if isinstance(record, dict):
                 fields = cast(Dict[str, Any], record)
-                if key_field and key_field in fields:
-                    payload = fields[key_field]
+                if body_field and body_field in fields:
+                    payload = fields[body_field]
                 elif params_field and params_field in fields:
                     # The field is request metadata, not part of the record sent.
                     payload = {k: v for k, v in fields.items() if k != params_field}
@@ -327,14 +330,17 @@ class ApiDestination(BaseDestination):
     def identity_config(self) -> Dict[str, Any]:
         """``config`` minus how fast it sends, and minus per-record keys left unset.
 
-        Unset ``per_record``/``key_field``/``params_field`` are dropped so an api_destination that
-        does not use them hashes exactly as it did before they existed.
+        Unset ``per_record``/``body_field``/``params_field`` are dropped so an
+        api_destination that does not use them hashes exactly as it did before
+        they existed. ``body_field`` is hashed under its old name ``key_field``,
+        so renaming it did not change any destination's hash.
         """
         identity = {k: v for k, v in self.config.items() if k != "concurrency"}
         if not identity.get("per_record"):
             identity.pop("per_record", None)
-        if identity.get("key_field") is None:
-            identity.pop("key_field", None)
+        body_field = identity.pop("body_field", None)
+        if body_field is not None:
+            identity["key_field"] = body_field
         if identity.get("params_field") is None:
             identity.pop("params_field", None)
         return identity
@@ -344,6 +350,22 @@ class ApiDestination(BaseDestination):
         if self._client:
             await self._client.aclose()
             self._client = None
+
+
+def _resolve_body_field(body_field: Optional[str], key_field: Optional[str]) -> Optional[str]:
+    """``body_field``, or the deprecated ``key_field`` it replaced."""
+    if key_field is None:
+        return body_field
+    if body_field is not None and body_field != key_field:
+        raise ValueError(
+            "api_destination: key_field= is the old name of body_field=; pass only body_field="
+        )
+    warnings.warn(
+        "api_destination(key_field=...) is deprecated; use body_field=... instead",
+        DeprecationWarning,
+        stacklevel=4,
+    )
+    return key_field
 
 
 def api_destination(
@@ -362,6 +384,7 @@ def api_destination(
     key_field: Optional[str] = None,
     concurrency: int = 1,
     params_field: Optional[str] = None,
+    body_field: Optional[str] = None,
 ) -> ApiDestination:
     """
     Factory function for API destination.
@@ -386,8 +409,8 @@ def api_destination(
                 url="https://api.example.com/users/{user_id}",  # filled per record
                 method="PUT",
                 per_record=True,
-                key_field="payload",  # optional: send only record["payload"]
-                concurrency=16,       # optional: requests in flight at once
+                body_field="payload",  # optional: send only record["payload"]
+                concurrency=16,        # optional: requests in flight at once
             )
 
     Query parameters per record, two ways (they combine)::
@@ -420,6 +443,7 @@ def api_destination(
         key_field=key_field,
         concurrency=concurrency,
         params_field=params_field,
+        body_field=body_field,
     )
     destination.dedup_identity = dedup_identity
     return destination

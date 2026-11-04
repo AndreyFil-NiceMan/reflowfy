@@ -33,11 +33,11 @@ class TestPerRecordDelivery:
         # One request per record: as many deliveries as records, each of size 1.
         assert {b["size"] for b in sink.batches(channel)} == {1}
 
-    def test_key_field_sends_only_the_payload(
+    def test_body_field_sends_only_the_payload(
         self, manager: Manager, sink: Sink, channel: str, params: Params
     ):
         execution = manager.run(
-            PIPELINE, params(total=40, per_job=20, use_key_field=True, dest_concurrency=4)
+            PIPELINE, params(total=40, per_job=20, use_body_field=True, dest_concurrency=4)
         )
 
         assert manager.wait(execution)["state"] == "completed"

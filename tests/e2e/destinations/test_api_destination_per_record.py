@@ -102,9 +102,9 @@ class TestPerRecordDelivery:
             ids = [int(r["item_id"]) for r in items["received"] if r["job"] == job]
             assert ids == sorted(ids) and len(ids) == 10
 
-    def test_key_field_sends_only_the_payload(self, manager, run_key):
+    def test_body_field_sends_only_the_payload(self, manager, run_key):
         stats = _run_and_wait(
-            manager, {"run": run_key, "count": 10, "batch_size": 10, "use_key_field": True}
+            manager, {"run": run_key, "count": 10, "batch_size": 10, "use_body_field": True}
         )
 
         assert stats["state"] == "completed", stats

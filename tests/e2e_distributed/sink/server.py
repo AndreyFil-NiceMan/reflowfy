@@ -222,7 +222,7 @@ class Handler(BaseHTTPRequestHandler):
             if rid in failing and ch.flag != "fixed":
                 return self._send(503, {"error": f"injected failure for {rid}"})
             with LOCK:
-                # The body is the record (or the part key_field selected): its id must
+                # The body is the record (or the part body_field selected): its id must
                 # be the one in the URL, or the placeholder was filled from another record.
                 body_id = key_of(body)
                 ch.ids.append(body_id if str(body_id) == rid else f"mismatch:{rid}:{body_id}")
