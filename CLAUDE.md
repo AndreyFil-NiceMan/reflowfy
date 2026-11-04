@@ -283,6 +283,19 @@ needs the same treatment. Tests: `tests/unit/test_destination_concurrency.py`; E
 (real broker, exactly-once and order at concurrency 1); distributed
 `tests/e2e_distributed/test_destination_concurrency.py` (`dist_per_record`, sink `PUT /record/…`).
 
+**Kafka headers.** `kafka_destination(headers=...)` sets message headers: a `{name: str}`
+mapping, `{field}` placeholders filled from each record (`{"tenant": "{tenant_id}"}`), or a
+function `record -> {name: str | bytes | None} | None` for anything computed. Headers for every
+record are built before the first send, so a missing field or a function that raises fails the
+job (`ValueError`, not retried) with nothing written, naming the record's position, never its
+contents. They replace a metadata header of the same name (`LocalExecutor` passes slice params
+as `metadata`). A static mapping is `config["headers"]` only when set; a function is kept off
+`config` (its repr is an address, like `ssl_context`). Neither is in `identity_config()`:
+headers describe the message, not where it goes, so adding them does not change the dedup hash.
+Tests: `tests/unit/test_kafka_destination_send.py::TestHeaders`; E2E
+`tests/e2e/destinations/test_kafka_destination_headers.py` (real broker: static, function and
+missing-field modes of `e2e_kafka_headers_test`, topic `e2e-kafka-headers`).
+
 ### Execution modes
 
 `EXECUTION_MODE` env var selects `local` (in-process via `LocalDispatcher`, used by the default docker-compose) or `distributed` (Kafka via `KafkaDispatcher`). Same pipeline code runs in both.

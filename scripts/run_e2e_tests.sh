@@ -462,6 +462,11 @@ if [ "$SKIP_DOCKER" = false ]; then
         --bootstrap-server localhost:29092 \
         --replication-factor 1 --partitions 1 \
         --if-not-exists 2>/dev/null || log_warning "Topic e2e-kafka-concurrency might already exist"
+    docker exec reflofy-e2e-kafka kafka-topics --create \
+        --topic e2e-kafka-headers \
+        --bootstrap-server localhost:29092 \
+        --replication-factor 1 --partitions 1 \
+        --if-not-exists 2>/dev/null || log_warning "Topic e2e-kafka-headers might already exist"
     log_success "Kafka topics created"
 
     # Start main services (they join the existing network)
