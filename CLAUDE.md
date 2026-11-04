@@ -258,7 +258,13 @@ works like Kafka instead: one request per record, the record as the body (`key_f
 sends only `record["x"]`, same rule as Kafka), and `{field}` placeholders in the URL filled
 from each record, URL-encoded (a missing field fails the job, not retried). A retry
 re-sends the whole job, so the endpoint should be idempotent. Errors name the record's
-position (`record 2 of 3: HTTP 404 …`), never its contents. No `dedup_identity` needed:
+position (`record 2 of 3: HTTP 404 …`), never its contents. Query params are per record
+too: `{field}` placeholders in `params=` values are filled from each record (`"{field}"`
+alone keeps the value's type, so a list repeats the param; httpx does the encoding), and
+`params_field="query"` merges the dict in `record["query"]` over `params` (`None` value
+removes a key) and leaves that field out of the body. Same failure rule as the URL: a
+missing placeholder field or a non-dict `params_field` fails the job before its request.
+Unset `params_field` is dropped from `identity_config()`. No `dedup_identity` needed:
 the records are not in the config. Tests: `tests/unit/test_api_destination.py::TestPerRecord`.
 
 **`concurrency=N`** (both `kafka_destination` and per-record `api_destination`, default 1)

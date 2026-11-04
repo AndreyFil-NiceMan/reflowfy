@@ -20,8 +20,12 @@ class ApiDestinationConfig(BaseModel):
     )
     auth_token: Optional[str] = Field(default=None, description="Auth token/credentials")
     timeout: float = Field(default=30.0, ge=1.0, le=300.0, description="Request timeout")
-    params: Optional[Dict[str, str]] = Field(
-        default=None, description="URL query parameters appended to every request"
+    params: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "URL query parameters appended to every request; in per-record mode "
+            "{field} placeholders in values are filled from each record"
+        ),
     )
     body: Optional[Any] = Field(
         default=None,
@@ -46,6 +50,13 @@ class ApiDestinationConfig(BaseModel):
     )
     concurrency: int = Field(
         default=1, ge=1, description="Per-record mode: requests in flight at once per job"
+    )
+    params_field: Optional[str] = Field(
+        default=None,
+        description=(
+            "Per-record mode: record field holding a dict of query parameters, "
+            "merged over params and left out of the body"
+        ),
     )
 
     @field_validator("url")

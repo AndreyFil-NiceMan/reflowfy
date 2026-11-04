@@ -328,6 +328,118 @@ class TestPerRecord:
         assert calls[0]["url"] == "https://api.example.com/{id}"
         assert calls[0]["json"] == {"a": 1}
 
+    async def test_param_placeholders_filled_from_each_record(self, mock_response):
+        dest = api_destination(
+            url="https://api.example.com/users/{id}",
+            per_record=True,
+            params={"tenant": "acme", "v": "{version}", "q": "id:{id}", "tags": "{tags}"},
+        )
+        calls = await self._capture(dest, mock_response)
+        await dest.send([{"id": 1, "version": 3, "tags": ["a", "b"]}])
+        # "{field}" alone keeps the value's type; mixed text is formatted.
+        assert calls[0]["params"] == {"tenant": "acme", "v": 3, "q": "id:1", "tags": ["a", "b"]}
+        # The record is still the body, unchanged.
+        assert calls[0]["json"] == {"id": 1, "version": 3, "tags": ["a", "b"]}
+
+    async def test_param_placeholders_reach_the_wire_encoded(self):
+        seen = []
+        transport = httpx.MockTransport(lambda req: (seen.append(req.url), httpx.Response(200))[1])
+        dest = api_destination(
+            url="https://api.example.com/x", per_record=True, params={"q": "{q}", "t": "{t}"}
+        )
+        dest._client = httpx.AsyncClient(transport=transport)
+        await dest.send([{"q": "a b&c", "t": ["1", "2"]}])
+        await dest.close()
+        assert str(seen[0]) == "https://api.example.com/x?q=a+b%26c&t=1&t=2"
+
+    async def test_missing_param_placeholder_field_fails_without_request(self, mock_response):
+        dest = api_destination(
+            url="https://api.example.com", per_record=True, params={"v": "{version}"}
+        )
+        calls = await self._capture(dest, mock_response)
+        with pytest.raises(ValueError, match=r"params\['v'\].*\{version\}.*record 2"):
+            await dest.send([{"version": 1}, {"id": 2}])
+        assert len(calls) == 1
+
+    async def test_param_placeholders_untouched_without_per_record(self, mock_response):
+        dest = api_destination(url="https://api.example.com", params={"v": "{version}"})
+        calls = await self._capture(dest, mock_response)
+        await dest.send([{"version": 1}])
+        assert calls[0]["params"] == {"v": "{version}"}
+
+    async def test_params_field_merged_over_params_and_left_out_of_body(self, mock_response):
+        dest = api_destination(
+            url="https://api.example.com/users/{id}",
+            per_record=True,
+            params={"tenant": "acme", "mode": "full"},
+            params_field="query",
+        )
+        calls = await self._capture(dest, mock_response)
+        await dest.send(
+            [
+                {"id": 1, "name": "a", "query": {"mode": "patch", "dry_run": "true"}},
+                {"id": 2, "name": "b"},
+                {"id": 3, "query": {"tenant": None}},
+                {"id": 4, "query": None},
+            ]
+        )
+        assert [c["params"] for c in calls] == [
+            {"tenant": "acme", "mode": "patch", "dry_run": "true"},
+            {"tenant": "acme", "mode": "full"},
+            {"mode": "full"},
+            {"tenant": "acme", "mode": "full"},
+        ]
+        assert [c["json"] for c in calls] == [
+            {"id": 1, "name": "a"},
+            {"id": 2, "name": "b"},
+            {"id": 3},
+            {"id": 4},
+        ]
+
+    async def test_params_field_without_static_params(self, mock_response):
+        dest = api_destination(url="https://api.example.com", per_record=True, params_field="q")
+        calls = await self._capture(dest, mock_response)
+        await dest.send([{"id": 1, "q": {"a": 1}}, {"id": 2}, "raw line"])
+        assert [c["params"] for c in calls] == [{"a": 1}, None, None]
+        assert calls[2]["content"] == "raw line"
+
+    async def test_params_field_with_key_field(self, mock_response):
+        dest = api_destination(
+            url="https://api.example.com",
+            per_record=True,
+            key_field="payload",
+            params_field="query",
+        )
+        calls = await self._capture(dest, mock_response)
+        await dest.send([{"payload": {"x": 1}, "query": {"a": "1"}}])
+        assert calls[0]["json"] == {"x": 1}
+        assert calls[0]["params"] == {"a": "1"}
+
+    async def test_params_field_not_a_dict_fails_without_request(self, mock_response):
+        dest = api_destination(url="https://api.example.com", per_record=True, params_field="q")
+        calls = await self._capture(dest, mock_response)
+        with pytest.raises(ValueError, match=r"'q' on record 1 must be a dict.*str"):
+            await dest.send([{"q": "a=1"}])
+        assert calls == []
+
+    def test_params_field_without_per_record_rejected(self):
+        with pytest.raises(ValueError, match="per_record"):
+            api_destination(url="https://api.example.com", params_field="q")
+
+    def test_params_field_same_as_key_field_rejected(self):
+        with pytest.raises(ValueError, match="must differ"):
+            api_destination(
+                url="https://api.example.com", per_record=True, key_field="p", params_field="p"
+            )
+
+    def test_unset_params_field_not_in_identity(self):
+        dest = api_destination(url="https://api.example.com", per_record=True)
+        assert "params_field" not in dest.identity_config()
+        dest = api_destination(url="https://api.example.com", per_record=True, params_field="q")
+        assert dest.identity_config()["params_field"] == "q"
+        dest = api_destination(url="https://api.example.com", per_record=True, key_field="k")
+        assert dest.identity_config()["key_field"] == "k"
+
     def test_body_with_per_record_rejected(self):
         with pytest.raises(ValueError, match="per_record"):
             api_destination(url="https://api.example.com", per_record=True, body={"a": 1})
@@ -339,11 +451,24 @@ class TestPerRecord:
     def test_config_round_trips_through_factory(self):
         from reflowfy.factories.destination_factory import DestinationFactory
 
-        dest = api_destination(url="https://api.example.com/{id}", per_record=True, key_field="p")
+        dest = api_destination(
+            url="https://api.example.com/{id}",
+            per_record=True,
+            key_field="p",
+            params={"v": "{v}"},
+            params_field="q",
+        )
         rebuilt = DestinationFactory.create("api", dest.config)
         assert rebuilt.config == dest.config
 
     def test_schema_accepts_per_record_fields(self):
-        cfg = ApiDestinationConfig(url="https://x.com/{id}", per_record=True, key_field="p")
+        cfg = ApiDestinationConfig(
+            url="https://x.com/{id}",
+            per_record=True,
+            key_field="p",
+            params={"v": "{v}", "n": 1},
+            params_field="q",
+        )
         assert cfg.per_record is True
         assert cfg.key_field == "p"
+        assert cfg.params_field == "q"
