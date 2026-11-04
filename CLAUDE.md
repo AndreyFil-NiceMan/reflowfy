@@ -285,7 +285,9 @@ contents. They replace a metadata header of the same name (`LocalExecutor` passe
 as `metadata`). A static mapping is `config["headers"]` only when set; a function is kept off
 `config` (its repr is an address, like `ssl_context`). Neither is in `identity_config()`:
 headers describe the message, not where it goes, so adding them does not change the dedup hash.
-Tests: `tests/unit/test_kafka_destination_send.py::TestHeaders`.
+Tests: `tests/unit/test_kafka_destination_send.py::TestHeaders`; E2E
+`tests/e2e/destinations/test_kafka_destination_headers.py` (real broker: static, function and
+missing-field modes of `e2e_kafka_headers_test`, topic `e2e-kafka-headers`).
 
 ### Execution modes
 
