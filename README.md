@@ -181,6 +181,11 @@ def prod_kafka(**overrides):
     )
 ```
 
+Kafka message headers: `headers={"source": "reflowfy", "tenant": "{tenant_id}"}` sets them on
+every message, with `{field}` placeholders filled from each record; for anything computed, pass a
+function of the record instead — `headers=lambda r: {"type": r["type"], "raw": b"\x01"}` (values
+str, bytes or `None`).
+
 ### 2. Create Reusable Transformations
 
 Transformations process batches of records. Use the `@transformation` decorator in your `transformations/` directory:

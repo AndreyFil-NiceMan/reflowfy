@@ -8,8 +8,9 @@ import functools
 import inspect
 import json
 import logging
+import re
 import ssl
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Tuple, Union, cast
 from aiokafka import AIOKafkaProducer
 from aiokafka.errors import KafkaError
 from reflowfy.core.async_utils import for_each_concurrently
@@ -21,6 +22,19 @@ from reflowfy.destinations.base import (
 )
 
 logger = logging.getLogger(__name__)
+
+HeaderValue = Union[str, bytes, None]
+"""A Kafka header value: str (sent UTF-8 encoded), raw bytes, or None (a null value)."""
+
+HeadersFn = Callable[[Any], Optional[Mapping[str, HeaderValue]]]
+"""Per-record headers: called with each record, returns that message's headers."""
+
+KafkaHeaders = Union[Mapping[str, str], HeadersFn]
+"""What ``kafka_destination(headers=...)`` takes: a static mapping or a function."""
+
+_HEADER_PLACEHOLDER = re.compile(r"\{(\w+)\}")
+
+_Headers = List[Tuple[str, Optional[bytes]]]
 
 
 @functools.lru_cache(maxsize=1)
@@ -77,6 +91,8 @@ class KafkaDestination(BaseDestination):
         # Message key
         key_field: Optional[str] = None,
         concurrency: int = 1,
+        # Message headers
+        headers: Optional[KafkaHeaders] = None,
         **producer_config: Any,
     ):
         """
@@ -103,9 +119,18 @@ class KafkaDestination(BaseDestination):
                 one after another, in order, each waiting for the broker's ack.
                 Higher lets the producer batch them, much faster, but the order of
                 a job's records on the topic is no longer guaranteed.
+            headers: Kafka headers to set on every message. Either a mapping of
+                header name to string value, where ``{field}`` placeholders are
+                filled from each record (``{"tenant": "{tenant_id}"}``), or a
+                function called with each record that returns that message's
+                headers as a mapping of name to str / bytes / None (or None for
+                no headers). Headers with the same name as a metadata header
+                replace it. A record missing a placeholder field, or a function
+                that raises, fails the job before anything is sent.
             **producer_config: Additional producer configuration
         """
         check_concurrency("kafka_destination", concurrency)
+        headers_fn, static_headers = _check_headers(headers)
         config = {
             "bootstrap_servers": bootstrap_servers,
             "topic": topic,
@@ -122,6 +147,11 @@ class KafkaDestination(BaseDestination):
             "concurrency": concurrency,
             **producer_config,
         }
+        # Only when set, so a destination without headers keeps its config (and
+        # repr) exactly as before. A function is not config: like ssl_context,
+        # its repr is an address.
+        if static_headers is not None:
+            config["headers"] = static_headers
 
         # Parse bootstrap_servers if it's a comma-separated string
         if isinstance(bootstrap_servers, str) and "," in bootstrap_servers:
@@ -134,6 +164,7 @@ class KafkaDestination(BaseDestination):
         self._ssl_context = config.pop("ssl_context", None)
 
         super().__init__(config, retry_config)
+        self._headers_fn = headers_fn
         self._producer: Optional[AIOKafkaProducer] = None
         self._started = False
 
@@ -276,19 +307,24 @@ class KafkaDestination(BaseDestination):
         key_field = self.config.get("key_field")
         concurrency = self.config.get("concurrency", 1)
 
-        headers: List[Tuple[str, bytes]] = []
+        base_headers: _Headers = []
         if metadata:
             for k, v in metadata.items():
                 if isinstance(v, str):
-                    headers.append((k, v.encode("utf-8")))
+                    base_headers.append((k, v.encode("utf-8")))
 
-        async def send_one(_index: int, record: Any) -> None:
+        # Built for every record before the first send: a record that cannot get
+        # its headers fails the job (a ValueError, not retried) with nothing written.
+        per_record = self._build_headers(records, base_headers)
+
+        async def send_one(index: int, record: Any) -> None:
             # If key_field is set and present, send just that field's value
             # instead of the whole record.
             payload = record
             if key_field and isinstance(record, dict) and key_field in record:
                 payload = record[key_field]
             value = json.dumps(payload).encode("utf-8")
+            headers = per_record[index] if per_record is not None else base_headers
             await producer.send_and_wait(
                 topic=topic,
                 value=value,
@@ -302,9 +338,40 @@ class KafkaDestination(BaseDestination):
         except Exception as e:
             raise DestinationError("kafka", f"Unexpected error: {e}", e)
 
+    def _build_headers(self, records: List[Any], base: _Headers) -> Optional[List[_Headers]]:
+        """Each record's headers, or None when every message gets ``base`` unchanged."""
+        static: Optional[Dict[str, str]] = self.config.get("headers")
+        if self._headers_fn is None and not static:
+            return None
+        total = len(records)
+        result: List[_Headers] = []
+        for index, record in enumerate(records):
+            if self._headers_fn is not None:
+                try:
+                    produced = self._headers_fn(record)
+                except Exception as e:
+                    raise ValueError(
+                        f"kafka_destination: headers function failed on record "
+                        f"{index + 1} of {total}: {type(e).__name__}"
+                    ) from e
+                own = _encode_headers(produced, index, total)
+            else:
+                assert static is not None
+                own = [
+                    (name, _fill_header(name, template, record, index, total).encode("utf-8"))
+                    for name, template in static.items()
+                ]
+            names = {name for name, _ in own}
+            result.append([h for h in base if h[0] not in names] + own)
+        return result
+
     def identity_config(self) -> Dict[str, Any]:
-        """``config`` without ``concurrency``: how fast is not where."""
-        return {k: v for k, v in self.config.items() if k != "concurrency"}
+        """``config`` without ``concurrency`` or ``headers``: neither is where.
+
+        Headers describe a message, not the topic it lands on, so adding or changing
+        them does not turn records already written into new work.
+        """
+        return {k: v for k, v in self.config.items() if k not in ("concurrency", "headers")}
 
     async def health_check(self) -> bool:
         """
@@ -364,6 +431,78 @@ class KafkaDestination(BaseDestination):
             self._started = False
 
 
+def _check_headers(headers: object) -> Tuple[Optional[HeadersFn], Optional[Dict[str, str]]]:
+    """Split ``headers=`` into (function, static mapping), rejecting bad shapes early.
+
+    Takes ``object``: the annotation on ``kafka_destination`` is not enforced for
+    untyped callers, and a wrong shape should fail here, not on the first send.
+    """
+    if headers is None:
+        return None, None
+    if callable(headers):
+        return cast(HeadersFn, headers), None
+    if not isinstance(headers, Mapping):
+        raise TypeError(
+            "kafka_destination: headers must be a mapping of name to string value, "
+            f"or a function of the record; got {type(headers).__name__}"
+        )
+    static: Dict[str, str] = {}
+    for name, value in cast(Mapping[Any, Any], headers).items():
+        if not isinstance(name, str) or not isinstance(value, str):
+            raise TypeError(
+                "kafka_destination: static headers must map str to str; use a "
+                "function of the record for bytes or null values"
+            )
+        static[name] = value
+    return None, static
+
+
+def _fill_header(name: str, template: str, record: Any, index: int, total: int) -> str:
+    """``template`` with each ``{field}`` replaced by the record's value."""
+    if "{" not in template:
+        return template
+
+    def substitute(match: "re.Match[str]") -> str:
+        field = match.group(1)
+        fields = cast(Dict[str, Any], record) if isinstance(record, dict) else {}
+        if field not in fields:
+            raise ValueError(
+                f"kafka_destination: header {name!r} placeholder {{{field}}} has no "
+                f"matching field on record {index + 1} of {total}"
+            )
+        return str(fields[field])
+
+    return _HEADER_PLACEHOLDER.sub(substitute, template)
+
+
+def _encode_headers(produced: Any, index: int, total: int) -> _Headers:
+    """A headers function's result as aiokafka's list of (name, bytes | None)."""
+    if produced is None:
+        return []
+    if not isinstance(produced, Mapping):
+        raise ValueError(
+            f"kafka_destination: headers function returned {type(produced).__name__} "
+            f"for record {index + 1} of {total}; expected a mapping or None"
+        )
+    encoded: _Headers = []
+    for name, value in cast(Mapping[Any, Any], produced).items():
+        if not isinstance(name, str):
+            raise ValueError(
+                f"kafka_destination: header name {type(name).__name__} on record "
+                f"{index + 1} of {total}; header names must be str"
+            )
+        if isinstance(value, str):
+            encoded.append((name, value.encode("utf-8")))
+        elif value is None or isinstance(value, bytes):
+            encoded.append((name, value))
+        else:
+            raise ValueError(
+                f"kafka_destination: header {name!r} on record {index + 1} of {total} "
+                f"is {type(value).__name__}; header values must be str, bytes or None"
+            )
+    return encoded
+
+
 def kafka_destination(
     bootstrap_servers: Union[str, List[str]],
     topic: str,
@@ -379,6 +518,7 @@ def kafka_destination(
     lag_check_timeout: float = 10.0,
     key_field: Optional[str] = None,
     concurrency: int = 1,
+    headers: Optional[KafkaHeaders] = None,
     **producer_config: Any,
 ) -> KafkaDestination:
     """
@@ -393,6 +533,14 @@ def kafka_destination(
         ...     lag_threshold=5000,
         ...     key_field="user_id",
         ...     concurrency=64,  # messages in flight per job; order not kept above 1
+        ...     headers={"source": "reflowfy", "tenant": "{tenant_id}"},  # per record
+        ... )
+
+        Headers computed in code (bytes, null values, anything beyond a field):
+        >>> destination = kafka_destination(
+        ...     bootstrap_servers="kafka:9092",
+        ...     topic="events",
+        ...     headers=lambda record: {"type": record["type"], "trace": None},
         ... )
     """
     return KafkaDestination(
@@ -410,5 +558,6 @@ def kafka_destination(
         lag_check_timeout=lag_check_timeout,
         key_field=key_field,
         concurrency=concurrency,
+        headers=headers,
         **producer_config,
     )

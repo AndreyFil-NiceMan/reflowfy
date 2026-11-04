@@ -489,3 +489,119 @@ class TestHealthCheck:
 
         monkeypatch.setattr(dest, "_get_consumer_lag", hang)
         assert await dest.health_check() is True
+
+
+# ---------------------------------------------------------------- headers
+
+
+class TestHeaders:
+    async def test_static_headers_on_every_message(self, fake_producer):
+        await _dest(headers={"source": "reflowfy", "v": "2"}).send([{"a": 1}, {"a": 2}])
+        sent = fake_producer.instances[0].sent
+        assert [m["headers"] for m in sent] == [[("source", b"reflowfy"), ("v", b"2")]] * 2
+
+    async def test_placeholders_are_filled_from_each_record(self, fake_producer):
+        dest = _dest(headers={"tenant": "{tenant}", "route": "t-{tenant}/{id}"})
+        await dest.send([{"tenant": "acme", "id": 1}, {"tenant": "zeta", "id": 22}])
+        sent = fake_producer.instances[0].sent
+        assert sent[0]["headers"] == [("tenant", b"acme"), ("route", b"t-acme/1")]
+        assert sent[1]["headers"] == [("tenant", b"zeta"), ("route", b"t-zeta/22")]
+
+    async def test_non_placeholder_braces_are_kept(self, fake_producer):
+        await _dest(headers={"j": '{"a": 1}'}).send([{"a": 1}])
+        assert fake_producer.instances[0].sent[0]["headers"] == [("j", b'{"a": 1}')]
+
+    async def test_missing_placeholder_field_fails_before_any_send_and_is_not_retried(
+        self, fake_producer
+    ):
+        dest = _dest(
+            headers={"tenant": "{tenant}"},
+            retry_config=RetryConfig(max_attempts=3, min_wait_seconds=0, max_wait_seconds=0),
+        )
+        with pytest.raises(ValueError) as excinfo:
+            await dest.send_with_retry([{"tenant": "a"}, {"other": "secret-value"}])
+        msg = str(excinfo.value)
+        assert "header 'tenant'" in msg and "{tenant}" in msg and "record 2 of 2" in msg
+        assert "secret-value" not in msg
+        assert fake_producer.instances[0].sent == []
+
+    async def test_placeholder_on_non_dict_record_fails(self, fake_producer):
+        with pytest.raises(ValueError, match="record 1 of 1"):
+            await _dest(headers={"x": "{x}"}).send(["raw"])
+
+    async def test_function_headers_per_record(self, fake_producer):
+        def headers(record: Any) -> Dict[str, Any]:
+            return {"type": record["type"], "raw": b"\x00\x01", "trace": None}
+
+        await _dest(headers=headers).send([{"type": "a"}, {"type": "b"}])
+        sent = fake_producer.instances[0].sent
+        assert sent[0]["headers"] == [("type", b"a"), ("raw", b"\x00\x01"), ("trace", None)]
+        assert sent[1]["headers"][0] == ("type", b"b")
+
+    async def test_function_returning_none_or_empty_sends_no_headers(self, fake_producer):
+        await _dest(headers=lambda r: None if r["i"] else {}).send([{"i": 0}, {"i": 1}])
+        assert [m["headers"] for m in fake_producer.instances[0].sent] == [None, None]
+
+    async def test_function_that_raises_fails_naming_the_record(self, fake_producer):
+        with pytest.raises(ValueError) as excinfo:
+            await _dest(headers=lambda r: {"k": r["missing"]}).send([{"a": 1}, {"b": 2}])
+        assert "headers function failed on record 1 of 2: KeyError" in str(excinfo.value)
+        assert isinstance(excinfo.value.__cause__, KeyError)
+        assert fake_producer.instances[0].sent == []
+
+    @pytest.mark.parametrize(
+        "produced, match",
+        [
+            (["k", "v"], "returned list for record 1 of 1"),
+            ({1: "v"}, "header names must be str"),
+            ({"n": 5}, "header 'n' on record 1 of 1 is int"),
+        ],
+    )
+    async def test_function_bad_result_fails(self, fake_producer, produced, match):
+        with pytest.raises(ValueError, match=match):
+            await _dest(headers=lambda r: produced).send([{"a": 1}])
+
+    async def test_user_headers_replace_metadata_headers_of_the_same_name(self, fake_producer):
+        await _dest(headers={"job_id": "mine", "x": "1"}).send(
+            [{"a": 1}], metadata={"execution_id": "e1", "job_id": "j"}
+        )
+        assert fake_producer.instances[0].sent[0]["headers"] == [
+            ("execution_id", b"e1"),
+            ("job_id", b"mine"),
+            ("x", b"1"),
+        ]
+
+    async def test_headers_with_concurrency(self, fake_producer):
+        records = [{"i": i} for i in range(20)]
+        await _dest(headers={"i": "{i}"}, concurrency=5).send(records)
+        got = {m["value"]: m["headers"] for m in fake_producer.instances[0].sent}
+        assert got == {f'{{"i": {i}}}'.encode(): [("i", str(i).encode())] for i in range(20)}
+
+    def test_static_headers_are_config_but_not_identity(self):
+        dest = _dest(headers={"a": "b"})
+        assert dest.config["headers"] == {"a": "b"}
+        assert "headers" not in dest.identity_config()
+        assert dest.identity_config() == _dest().identity_config()
+
+    def test_no_headers_leaves_config_unchanged(self):
+        assert "headers" not in _dest().config
+
+    def test_function_is_kept_out_of_config(self):
+        dest = _dest(headers=lambda r: {})
+        assert "headers" not in dest.config
+
+    async def test_headers_are_not_forwarded_to_the_producer(self, fake_producer):
+        await _dest(headers={"a": "b"}).send([{"a": 1}])
+        assert "headers" not in fake_producer.instances[0].kwargs
+
+    @pytest.mark.parametrize(
+        "headers, match",
+        [
+            ([("a", "b")], "got list"),
+            ({"a": b"bytes"}, "static headers must map str to str"),
+            ({1: "x"}, "static headers must map str to str"),
+        ],
+    )
+    def test_bad_headers_rejected_at_construction(self, headers, match):
+        with pytest.raises(TypeError, match=match):
+            _dest(headers=headers)
