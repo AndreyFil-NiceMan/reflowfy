@@ -1,12 +1,73 @@
 """Initialize a new Reflowfy project."""
 
+import re
 import secrets
 import shutil
+import subprocess
 from pathlib import Path
+from typing import Optional
 
 import typer
 
 from reflowfy.cli.utils import console, get_dockerfiles_path, get_package_path
+
+
+def _find_uv() -> Optional[str]:
+    """Path to the uv executable, or None. A function so tests can stub it."""
+    return shutil.which("uv")
+
+
+def _project_name(target_dir: Path) -> str:
+    """A valid PEP 508 project name derived from the directory name."""
+    name = re.sub(r"[^A-Za-z0-9._-]+", "-", target_dir.absolute().name).strip("-._").lower()
+    return name or "reflowfy-project"
+
+
+def _write_uv_project(target_dir: Path) -> None:
+    """Scaffold pyproject.toml and .dockerignore; existing files are left alone."""
+    import reflowfy
+
+    templates = get_package_path() / "templates"
+    pyproject = target_dir / "pyproject.toml"
+    pyproject_template = templates / "pyproject.toml.template"
+    if not pyproject.exists() and pyproject_template.exists():
+        pyproject.write_text(
+            pyproject_template.read_text()
+            .replace("{project_name}", _project_name(target_dir))
+            .replace("{reflowfy_version}", reflowfy.__version__)
+        )
+        console.print("  ✅ Created pyproject.toml", style="green")
+
+    dockerignore = target_dir / ".dockerignore"
+    dockerignore_template = templates / "dockerignore.template"
+    if not dockerignore.exists() and dockerignore_template.exists():
+        dockerignore.write_text(dockerignore_template.read_text())
+        console.print("  ✅ Created .dockerignore", style="green")
+
+
+def _lock(target_dir: Path) -> None:
+    """Run `uv lock` so the project builds straight away; warn instead of failing."""
+    if not (target_dir / "pyproject.toml").exists() or (target_dir / "uv.lock").exists():
+        return
+    uv = _find_uv()
+    if uv is None:
+        console.print(
+            "  ⚠️ uv not found — install it and run `uv lock` here; the images need uv.lock",
+            style="yellow",
+        )
+        return
+    result = subprocess.run(
+        [uv, "lock"], cwd=target_dir, capture_output=True, text=True, check=False
+    )
+    if result.returncode == 0:
+        console.print("  ✅ Created uv.lock", style="green")
+    else:
+        detail = (result.stderr or result.stdout).strip().splitlines()
+        console.print(
+            f"  ⚠️ `uv lock` failed ({detail[-1] if detail else 'no output'}) — "
+            "fix it and run `uv lock` here; the images need uv.lock",
+            style="yellow",
+        )
 
 
 def register(app: typer.Typer):
@@ -16,6 +77,9 @@ def register(app: typer.Typer):
     def init(
         path: str = typer.Argument(".", help="Directory to initialize (defaults to current)"),
         name: str = typer.Option("my_pipeline", help="Name of your first pipeline"),
+        lock: bool = typer.Option(
+            True, "--lock/--no-lock", help="Run `uv lock` to create uv.lock (needs uv)"
+        ),
     ):
         """
         Initialize a new Reflowfy project with sources, destinations,
@@ -133,7 +197,6 @@ class {class_name}(AbstractPipeline):
                 "Dockerfile.reflow-manager",
                 "Dockerfile.worker",
                 "docker-compose.yml",
-                "requirements.txt",
             ]:
                 src_file = src_path / dockerfile
                 dest_file = target_dir / dockerfile
@@ -142,6 +205,14 @@ class {class_name}(AbstractPipeline):
                     console.print(f"  ✅ Copied {dockerfile}", style="green")
         except Exception as e:
             console.print(f"  ⚠️ Could not copy Dockerfiles: {e}", style="yellow")
+
+        # uv project: the images install exactly what uv.lock pins.
+        try:
+            _write_uv_project(target_dir)
+        except Exception as e:
+            console.print(f"  ⚠️ Could not create pyproject.toml: {e}", style="yellow")
+        if lock:
+            _lock(target_dir)
 
         # Generate .env file from template
         try:
@@ -182,9 +253,10 @@ Next steps:
   2. Edit .env to configure Kafka, Registry, and Database
   3. Edit src/pipelines/{name}.py to customize your pipeline
   4. reflowfy new pipeline|source|destination|transformation <name>
-  5. reflowfy test {name} --dry-run   (no Docker, fastest loop)
-  6. reflowfy run --build    (run the full stack locally)
-  7. reflowfy deploy        (deploy to OpenShift - reads from .env)
+  5. uv add <package>       (project dependencies; commit pyproject.toml + uv.lock)
+  6. reflowfy test {name} --dry-run   (no Docker, fastest loop)
+  7. reflowfy run --build    (run the full stack locally)
+  8. reflowfy deploy        (deploy to OpenShift - reads from .env)
 """,
                 style="bold green",
             )

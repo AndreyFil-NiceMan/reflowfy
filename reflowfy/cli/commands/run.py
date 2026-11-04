@@ -3,7 +3,7 @@
 import subprocess
 import typer
 
-from reflowfy.cli.utils import console
+from reflowfy.cli.utils import check_uv_project, console
 
 
 def register(app: typer.Typer):
@@ -22,6 +22,7 @@ def register(app: typer.Typer):
         console.print(Panel("🚀 Starting Local Development Stack"))
 
         if build:
+            check_uv_project()
             console.print("🔨 Building images with --no-cache...", style="yellow")
             try:
                 subprocess.run(["docker", "compose", "build", "--no-cache"], check=True)

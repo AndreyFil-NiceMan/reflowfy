@@ -314,7 +314,8 @@ cd "$WORKSPACE"
 
 # Run reflowfy init
 log_info "Running reflowfy init..."
-uv run python -m reflowfy.cli.main init . --name e2e_pipeline || {
+# --no-lock: the lock is made below, once the reflowfy pin is relaxed.
+uv run python -m reflowfy.cli.main init . --name e2e_pipeline --no-lock || {
     log_error "reflowfy init failed"
     exit 1
 }
@@ -328,7 +329,7 @@ for dir in "${REQUIRED_DIRS[@]}"; do
     fi
 done
 
-REQUIRED_FILES=("src/pipelines/e2e_pipeline.py" ".env" "Dockerfile.api" "Dockerfile.reflow-manager" "Dockerfile.worker" "docker-compose.yml" "requirements.txt")
+REQUIRED_FILES=("src/pipelines/e2e_pipeline.py" ".env" "Dockerfile.api" "Dockerfile.reflow-manager" "Dockerfile.worker" "docker-compose.yml" "pyproject.toml" ".dockerignore")
 for file in "${REQUIRED_FILES[@]}"; do
     if [ ! -f "$file" ]; then
         log_error "Missing expected file after init: $file"
@@ -352,8 +353,23 @@ export REFLOWFY_BASE_IMAGE=reflowfy-base:local
 log_info "Preparing local reflowfy base image (Dockerfile.base + local wheel)..."
 cp "$PROJECT_ROOT/Dockerfile.base" .
 # Swap the PyPI install for the local wheel (matches the templated RUN line).
-sed -i "s|RUN pip install --no-cache-dir \"reflowfy.*|COPY $WHEEL_FILENAME /tmp/$WHEEL_FILENAME\nRUN pip install --no-cache-dir /tmp/$WHEEL_FILENAME|" Dockerfile.base
+sed -i "s|^RUN \(.*\)uv pip install \"reflowfy.*|COPY $WHEEL_FILENAME /tmp/$WHEEL_FILENAME\nRUN \1uv pip install /tmp/$WHEEL_FILENAME|" Dockerfile.base
+grep -q "uv pip install /tmp/$WHEEL_FILENAME" Dockerfile.base || {
+    log_error "Could not point Dockerfile.base at the local wheel (install line changed?)"
+    exit 1
+}
 log_success "  Dockerfile.base prepared for local wheel"
+
+# The service images `uv sync --locked` the project's uv.lock. The scaffold pins
+# reflowfy>=<version under test>, which may not be on PyPI yet; relax it before
+# locking. reflowfy itself comes from the base image (the local wheel), not the lock.
+sed -i 's|"reflowfy>=[^"]*"|"reflowfy"|' pyproject.toml
+log_info "Locking the workspace project (uv lock)..."
+uv lock --directory "$WORKSPACE" || {
+    log_error "uv lock failed in the E2E workspace"
+    exit 1
+}
+log_success "  uv.lock created"
 
 # Modify docker-compose.yml for E2E testing (different ports, container names, env vars)
 log_info "Modifying docker-compose.yml for E2E..."

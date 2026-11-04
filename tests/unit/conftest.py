@@ -21,3 +21,12 @@ def _no_worker_claim_db(request, monkeypatch):
     from reflowfy.worker.executor import WorkerExecutor
 
     monkeypatch.setattr(WorkerExecutor, "_claim_job", AsyncMock(return_value=None))
+
+
+@pytest.fixture(autouse=True)
+def _no_uv_lock(monkeypatch):
+    """`reflowfy init` runs `uv lock`, which resolves against PyPI. Unit tests
+    must not touch the network: report uv as missing unless a test stubs it."""
+    from reflowfy.cli.commands import init_cmd
+
+    monkeypatch.setattr(init_cmd, "_find_uv", lambda: None)

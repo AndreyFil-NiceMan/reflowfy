@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 from python_on_whales import DockerClient
 
-from reflowfy.cli.utils import console, get_dockerfiles_path
+from reflowfy.cli.utils import check_uv_project, console, get_dockerfiles_path
 
 docker = DockerClient()
 
@@ -33,6 +33,7 @@ def _build_images(
     }
 
     build_context = Path(".")
+    check_uv_project(build_context)
 
     if not (build_context / "src" / "pipelines").exists():
         console.print("⚠️  No 'src/pipelines/' folder found in current directory.", style="yellow")

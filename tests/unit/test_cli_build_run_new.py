@@ -31,6 +31,9 @@ runner = CliRunner()
 @pytest.fixture(autouse=True)
 def _cwd(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
+    # build / run --build require a locked uv project (see TestUvProjectCheck).
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'p'\n")
+    (tmp_path / "uv.lock").write_text("version = 1\n")
     monkeypatch.setattr(console, "_width", 300)
     for name in ("REGISTRY", "PROJECT", "REFLOWFY_BASE_IMAGE"):
         monkeypatch.delenv(name, raising=False)
