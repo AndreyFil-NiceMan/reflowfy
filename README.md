@@ -196,6 +196,50 @@ every message, with `{field}` placeholders filled from each record; for anything
 function of the record instead — `headers=lambda r: {"type": r["type"], "raw": b"\x01"}` (values
 str, bytes or `None`).
 
+#### A destination per record: `@record_destination`
+
+When the records of one job go to different places — another topic, another cluster, other
+credentials — choose the destination per record. The function is called once for every record
+with `(record, runtime_params)` and returns that record's destination, built exactly as you
+build one today:
+
+```python
+# destinations/stt_engines.py
+from reflowfy import kafka_destination, record_destination
+
+@record_destination("stt_engines", on_error="skip")
+def stt_engines(record, runtime_params):
+    topic = Settings.KAFKA.topics[record["engine"]][runtime_params["env"]]
+    return kafka_destination(
+        bootstrap_servers=Settings.KAFKA.clusters[topic.cluster].hosts,
+        topic=topic.name,
+        sasl_username=topic.username,
+        sasl_password=topic.password,
+    )
+
+# in the pipeline
+def define_destination(self, records, runtime_params):
+    return stt_engines()
+```
+
+- Records whose destinations have the same class and config share one, so 200 records over
+  3 topics open 3 producers, not 200. Building a destination is cheap: none connects before
+  its first send.
+- Every record is routed before anything is sent. A failing record fails the job with nothing
+  written (`record_destination 'stt_engines' failed on record 37 of 200: KeyError`) — unless
+  `on_error="skip"`, which skips it with the exception's type as the reason.
+  `raise SkipRecord("unknown engine")` skips a record either way; `SkipJob` drops the job.
+- Skips are reported like a per-record transformation's: the job's `records_skipped` /
+  `record_skip_reasons`, `reflowfy_records_skipped_total{transformation="stt_engines"}`, and a
+  log line. The job's `stats` also show how many `destinations` it wrote to.
+- Each destination is sent to with its own retries, so a failing one does not re-send those
+  already written. Order is kept within a destination, not across them.
+- It may be `async def` (e.g. to look the topic up in a service): `concurrency` records are
+  routed at once (default `TRANSFORM_CONCURRENCY`, 16). Keyword arguments given in
+  `define_destination` — `stt_engines(region="eu")` — are passed on to every call.
+- Filter records in a transformation, not here: returning anything but a destination fails
+  the job.
+
 ### 2. Create Reusable Transformations
 
 Transformations process batches of records. Use the `@transformation` decorator in your `transformations/` directory:
