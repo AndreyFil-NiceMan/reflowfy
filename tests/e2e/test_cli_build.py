@@ -31,6 +31,7 @@ def temp_workspace():
     shutil.rmtree(temp_dir)
 
 
+@pytest.mark.usefixtures("uv_project")
 class TestBuildCommand:
     """Tests for the 'reflowfy build' command."""
 
