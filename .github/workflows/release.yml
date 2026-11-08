@@ -3,7 +3,9 @@ name: Release
 # Publishes a release when a GitHub Release is published:
 #   1. builds the wheel + sdist and uploads them to PyPI (Trusted Publishing)
 #   2. builds the reflowfy base image (reflowfy + all deps) from the just-published
-#      package, saves it to a gzipped tar, and attaches it to the Release.
+#      package, pushes it to Docker Hub (:<version> and :latest, when the
+#      DOCKERHUB_USERNAME / DOCKERHUB_TOKEN secrets are set), saves it to a
+#      gzipped tar, and attaches it to the Release.
 #
 # The release tag must match reflowfy.__version__ (e.g. tag v1.0.12 -> 1.0.12).
 
@@ -92,6 +94,32 @@ jobs:
           docker save "reflowfy-base:${VERSION}" "reflowfy-base:latest" \
             | gzip > "reflowfy-base-${VERSION}.tar.gz"
           ls -lh "reflowfy-base-${VERSION}.tar.gz"
+
+      - name: Push base image to Docker Hub
+        # Needs repo secrets DOCKERHUB_USERNAME + DOCKERHUB_TOKEN (a Docker Hub
+        # access token with Read & Write scope). The target repository defaults
+        # to <DOCKERHUB_USERNAME>/reflowfy-base; set the repo variable
+        # DOCKERHUB_IMAGE (e.g. myorg/reflowfy-base) to push somewhere else.
+        # Without the secrets the step is skipped with a warning, so a release
+        # never fails just because Docker Hub is not configured.
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_IMAGE: ${{ vars.DOCKERHUB_IMAGE }}
+        run: |
+          if [ -z "$DOCKERHUB_USERNAME" ] || [ -z "$DOCKERHUB_TOKEN" ]; then
+            echo "::warning::DOCKERHUB_USERNAME / DOCKERHUB_TOKEN secrets not set — skipping Docker Hub push"
+            exit 0
+          fi
+          IMAGE="${DOCKERHUB_IMAGE:-${DOCKERHUB_USERNAME}/reflowfy-base}"
+          IMAGE="${IMAGE%%:*}"
+          echo "$DOCKERHUB_TOKEN" | docker login docker.io -u "$DOCKERHUB_USERNAME" --password-stdin
+          for tag in "${VERSION}" latest; do
+            docker tag "reflowfy-base:${tag}" "docker.io/${IMAGE}:${tag}"
+            docker push "docker.io/${IMAGE}:${tag}"
+          done
+          docker logout docker.io
+          echo "Pushed docker.io/${IMAGE}:${VERSION} and :latest" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Create the GitHub Release (manual dispatch)
         if: github.event_name == 'workflow_dispatch'
