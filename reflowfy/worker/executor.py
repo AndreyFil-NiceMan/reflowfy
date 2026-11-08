@@ -24,7 +24,8 @@ from reflowfy.execution.content_dedup import (
     record_identity,
     release_record_hashes,
 )
-from reflowfy.execution.job_runner import run_job_records_async
+from reflowfy.destinations.record import RecordDestination
+from reflowfy.execution.job_runner import ROUTE_MODE, run_job_records_async
 from reflowfy.factories.source_factory import SourceFactory
 from reflowfy.observability import metrics
 from reflowfy.observability.context import log_context
@@ -63,6 +64,8 @@ class JobStats:
         self.redelivered = False
         # The execution was cancelled before this job started; the message was skipped.
         self.cancelled = False
+        # Distinct destinations a @record_destination sent this job's records to.
+        self.destinations: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -85,6 +88,8 @@ class JobStats:
             "records_skipped": self.records_skipped,
             "record_skip_reasons": self.record_skip_reasons,
             "success": self.success,
+            # Only for a @record_destination, so other jobs' stats keep their shape.
+            **({"destinations": self.destinations} if self.destinations is not None else {}),
         }
 
 
@@ -361,9 +366,10 @@ class WorkerExecutor:
                     job_id,
                     records,
                     transformed_records,
-                    # Not the record_type check: it is no transformation, and
-                    # counting it would change the legacy job hash.
-                    [step.name for step in applied if step.mode != "validate"],
+                    # Not the record_type check or a record destination's routing:
+                    # neither is a transformation, and counting them would change
+                    # the legacy job hash.
+                    [step.name for step in applied if step.mode not in ("validate", ROUTE_MODE)],
                     job_params,
                     destination,
                     runtime_params,
@@ -392,12 +398,18 @@ class WorkerExecutor:
                     )
                     # define_destination saw every record, and a destination may have
                     # baked them in (an api_destination body is sent verbatim). Resolve
-                    # it again against what is actually being sent.
-                    await destination.close()
-                    with pipeline_step("define_destination", _pipeline_name):
-                        destination = pipeline.define_destination(kept, runtime_params)
+                    # it again against what is actually being sent. Not a record
+                    # destination: each record's destination was built from that record
+                    # alone, and routing again would report its skips twice.
+                    if not isinstance(destination, RecordDestination):
+                        await destination.close()
+                        with pipeline_step("define_destination", _pipeline_name):
+                            destination = pipeline.define_destination(kept, runtime_params)
                 transformed_records = kept
                 stats.records_output = len(kept)
+
+            if isinstance(destination, RecordDestination):
+                stats.destinations = len(destination.destinations)
 
             # Health check (async)
             if not await destination.health_check():
@@ -546,11 +558,23 @@ class WorkerExecutor:
                 return [], []
 
         dedup_key = getattr(pipeline, "dedup_key", None)
+        identities: Dict[int, Dict[str, Any]] = {}
+
+        def identity_of(record: Any) -> Dict[str, Any]:
+            # A record destination writes each record somewhere of its own: hash
+            # that place, so the same record sent to two topics is two writes.
+            if not isinstance(destination, RecordDestination):
+                return identity
+            routed = destination.destination_for(record)
+            if id(routed) not in identities:
+                identities[id(routed)] = destination_identity(routed)
+            return identities[id(routed)]
+
         hashes = [
             compute_record_hash(
                 pipeline_name,
                 record_identity(record, dedup_key, runtime_params),
-                identity,
+                identity_of(record),
                 job_params,
             )
             for record in transformed_records
