@@ -232,10 +232,14 @@ def define_destination(self, records, runtime_params):
 - Skips are reported like a per-record transformation's: the job's `records_skipped` /
   `record_skip_reasons`, `reflowfy_records_skipped_total{transformation="stt_engines"}`, and a
   log line. The job's `stats` also show how many `destinations` it wrote to.
-- Each destination is sent to with its own retries, so a failing one does not re-send those
-  already written. Order is kept within a destination, not across them.
-- It may be `async def` (e.g. to look the topic up in a service): `concurrency` records are
-  routed at once (default `TRANSFORM_CONCURRENCY`, 16). Keyword arguments given in
+- The destinations are sent to concurrently, each with its own retries, so a failing one does
+  not re-send those already written (and cancels the sends still in flight). Order is kept
+  within a destination, not across them.
+- Same knobs as `@record_transformation`: `concurrency` caps the destinations sent to at once
+  and, for an `async def` function (e.g. one that looks the topic up in a service), the records
+  routed at once — default `TRANSFORM_CONCURRENCY` (16); `concurrency=1` sends one destination
+  after another, in first-seen order. `timeout=` bounds each record of an `async def` function;
+  a timeout follows `on_error` like any other error. Keyword arguments given in
   `define_destination` — `stt_engines(region="eu")` — are passed on to every call.
 - Filter records in a transformation, not here: returning anything but a destination fails
   the job.

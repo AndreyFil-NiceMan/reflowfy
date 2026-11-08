@@ -16,6 +16,7 @@ Example:
         return production_kafka(topic="my-output")
 """
 
+import inspect
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, TypeVar
 
@@ -86,6 +87,7 @@ def record_destination(
     name: str,
     on_error: "OnError" = "fail",
     concurrency: Optional[int] = None,
+    timeout: Optional[float] = None,
 ) -> Callable[["RecordDestinationFn"], "type[RecordDestination]"]:
     """
     Decorator for a destination chosen per record.
@@ -93,8 +95,10 @@ def record_destination(
     The function is called once per record with ``(record, runtime_params)`` and
     returns the destination that record goes to — a ``kafka_destination(...)`` with
     its own cluster, topic and credentials, an ``api_destination(...)``, any
-    destination. Records whose destinations have the same class and config share one.
-    It may be ``async def``; ``concurrency`` records are then routed at once.
+    destination. Records whose destinations have the same class and config share one,
+    and those destinations are sent to concurrently. It may be ``async def`` (a lookup
+    in a service, say), and then ``concurrency`` records are routed at once — the same
+    knobs as ``@record_transformation``.
 
     The decorated name becomes a destination class: return an instance of it from
     ``define_destination``. Keyword arguments given there are passed on to every call.
@@ -105,8 +109,10 @@ def record_destination(
             record, naming the record's position; ``"skip"`` skips that record with
             the exception's type name as the reason. ``raise SkipRecord("why")``
             skips a record either way.
-        concurrency: Records routed at once by an ``async def`` function. Defaults to
-            the ``TRANSFORM_CONCURRENCY`` env var (16).
+        concurrency: Destinations sent to at once, and records routed at once by an
+            ``async def`` function. Defaults to the ``TRANSFORM_CONCURRENCY`` env var (16).
+        timeout: Seconds allowed per record for an ``async def`` function; ``None``
+            means no limit. A timeout counts as the function raising (``on_error``).
 
     Example:
         @record_destination("stt_engines", on_error="skip")
@@ -124,9 +130,17 @@ def record_destination(
         raise ValueError(f"record_destination {name!r}: on_error must be 'fail' or 'skip'")
     if concurrency is not None:
         check_concurrency(f"record_destination {name!r}", concurrency)
+    if timeout is not None and timeout <= 0:
+        raise ValueError(f"record_destination {name!r}: timeout must be > 0")
 
     def decorator(func: "RecordDestinationFn") -> "type[RecordDestination]":
-        cls = make_record_destination(func, name, on_error, concurrency)
+        if timeout is not None and not inspect.iscoroutinefunction(func):
+            # A thread running sync code cannot be stopped, so the limit would be a lie.
+            raise TypeError(
+                f"record_destination {name!r}: timeout needs an `async def` function; "
+                "a running sync function cannot be interrupted"
+            )
+        cls = make_record_destination(func, name, on_error, concurrency, timeout)
         destination_registry.register(name, cls)
         return cls
 

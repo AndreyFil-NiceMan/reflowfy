@@ -301,7 +301,7 @@ missing-field modes of `e2e_kafka_headers_test`, topic `e2e-kafka-headers`).
 ### A destination per record: `@record_destination`
 
 `define_destination` runs once per job; `@record_destination("name", on_error="fail"|"skip",
-concurrency=None)` turns a function `(record, runtime_params, **options) -> BaseDestination`
+concurrency=None, timeout=None)` turns a function `(record, runtime_params, **options) -> BaseDestination`
 (sync or `async def`) into a `RecordDestination` subclass (`destinations/record.py`) that
 `define_destination` returns (`return stt_engines()`; kwargs become `options`). It is for
 records of one job going to different topics/clusters/credentials.
@@ -325,9 +325,19 @@ records of one job going to different topics/clusters/credentials.
   (`destination_identity(destination.destination_for(record))`), so one record to two topics is
   two writes; after dedup the destination is **not** re-resolved for a `RecordDestination`
   (each was built from its own record, and re-routing would count skips twice).
-  `send_with_retry` sends group by group with each group's own retries, so a failing group
-  does not re-send the ones already written. `health_check` needs every group healthy;
-  `close` closes all and raises the first error after trying all.
+  `send_with_retry` sends the groups through `for_each_concurrently` (the record
+  transformations' worker pool), each with its own retries, so a failing group does not
+  re-send the ones already written; the first failure cancels the sends in flight.
+  `health_check` (every group healthy) and `close` (all closed, first error raised after) run
+  through the same pool.
+- **Concurrency/timeout, as `@record_transformation`:** `effective_concurrency()` (the
+  decorator's `concurrency`, else `TRANSFORM_CONCURRENCY`, 16) caps groups in flight and, for
+  an `async def` function, records routed at once (`AppliedStep.concurrency` reports the
+  latter; `None` for a sync function, which routes sequentially in one thread). `concurrency=1`
+  sends groups one at a time in first-seen order. `timeout` (async only — a sync function in a
+  thread cannot be interrupted, so it raises `TypeError` at decoration) wraps each call in
+  `asyncio.wait_for` and turns a timeout into `TimeoutError("timed out after Ns")`, which then
+  follows `on_error` (reason/type `TimeoutError`).
 - Observability: the existing skip path (`records_skipped`/`record_skip_reasons`,
   `reflowfy_records_skipped_total{transformation=<name>}`, the `… skipped N records` line);
   `records_routed` info log `<name> routed N records to K destinations`; a warning when every

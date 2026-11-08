@@ -21,8 +21,10 @@ right after ``define_destination``):
    (one producer per cluster/topic/credentials, not one per record). Anything kept
    out of ``config`` — a Kafka ``headers`` function, an ``ssl_context`` — is taken
    from the first record's destination of the group.
-3. ``send_with_retry`` sends each group with that group's own retries, so a failed
-   group does not re-send the groups already written.
+3. ``send_with_retry`` sends the groups concurrently, ``concurrency`` at a time (default
+   ``TRANSFORM_CONCURRENCY``, 16, as for ``@record_transformation``), each with its own
+   retries, so a failed group does not re-send the groups already written. Order is kept
+   within a group, not across groups. The first group that fails cancels the rest.
 
 ``raise SkipRecord("why")`` drops one record with a reason; ``on_error="skip"`` does the
 same for any exception, with its type name as the reason. ``SkipJob`` drops the job.
@@ -34,6 +36,7 @@ import inspect
 import json
 from typing import Any, Callable, ClassVar, Dict, List, Literal, NamedTuple, Optional, Tuple, Union
 
+from reflowfy.core.async_utils import for_each_concurrently
 from reflowfy.core.exceptions import PipelineError, SkipJob, SkipRecord
 from reflowfy.destinations.base import BaseDestination
 from reflowfy.observability.logging import get_logger
@@ -83,9 +86,14 @@ class RecordDestination(BaseDestination):
     name: ClassVar[str] = "record_destination"
     on_error: ClassVar[OnError] = "fail"
     concurrency: ClassVar[Optional[int]] = None
-    """Records routed at once when the function is ``async def`` (default
-    ``TRANSFORM_CONCURRENCY``, 16). A sync function routes the records one after
+    """Destinations sent to (and health-checked, closed) at once, and records routed at
+    once when the function is ``async def``. Default ``TRANSFORM_CONCURRENCY`` (16), as
+    for ``@record_transformation``. A sync function routes its records one after
     another, in a thread."""
+    timeout: ClassVar[Optional[float]] = None
+    """Seconds allowed per record for an ``async def`` function; ``None`` means no
+    limit. A timeout is an error like any other: it fails the job, or with
+    ``on_error="skip"`` skips the record with the reason ``TimeoutError``."""
 
     def __init__(self, **options: Any):
         # The routed destinations are what records are written to; this one's config
@@ -101,6 +109,12 @@ class RecordDestination(BaseDestination):
     def destination_for_record(self, record: Any, runtime_params: Any) -> Any:
         """The destination ``record`` goes to. May be ``async def`` in a subclass."""
         raise NotImplementedError(f"{type(self).__name__} must implement destination_for_record")
+
+    def effective_concurrency(self) -> int:
+        """The cap this destination runs with."""
+        from reflowfy.transformations.base import default_record_concurrency
+
+        return self.concurrency if self.concurrency is not None else default_record_concurrency()
 
     # ------------------------------------------------------------------ routing
 
@@ -122,7 +136,7 @@ class RecordDestination(BaseDestination):
         Every record is routed before the caller sends any, so a record that fails
         the job (``on_error="fail"``) fails it with nothing written.
         """
-        from reflowfy.transformations.base import count_skip_reason, default_record_concurrency
+        from reflowfy.transformations.base import count_skip_reason
 
         total = len(records)
         results: List[Union[BaseDestination, _Skipped, None]] = [None] * total
@@ -131,16 +145,13 @@ class RecordDestination(BaseDestination):
 
             async def route_one(index: int, record: Any) -> None:
                 try:
-                    produced = await self.destination_for_record(record, runtime_params)
+                    produced = await self._call_async(record, runtime_params)
                 except Exception as exc:
                     results[index] = self._on_failure(exc, index, total)
                 else:
                     results[index] = self._checked(produced, index, total)
 
-            from reflowfy.core.async_utils import for_each_concurrently
-
-            concurrency = self.concurrency or default_record_concurrency()
-            await for_each_concurrently(records, concurrency, route_one)
+            await for_each_concurrently(records, self.effective_concurrency(), route_one)
         else:
 
             def route_all() -> None:
@@ -189,6 +200,17 @@ class RecordDestination(BaseDestination):
                 extra={"event": "records_all_skipped", "record_destination": self.name},
             )
         return RouteResult(kept, skip_reasons)
+
+    async def _call_async(self, record: Any, runtime_params: Any) -> Any:
+        if self.timeout is None:
+            return await self.destination_for_record(record, runtime_params)
+        try:
+            return await asyncio.wait_for(
+                self.destination_for_record(record, runtime_params), self.timeout
+            )
+        except asyncio.TimeoutError as exc:
+            # The bare asyncio.TimeoutError says nothing on its own.
+            raise TimeoutError(f"timed out after {self.timeout}s") from exc
 
     def _on_failure(self, exc: Exception, index: int, total: int) -> _Skipped:
         if isinstance(exc, SkipJob):
@@ -253,38 +275,53 @@ class RecordDestination(BaseDestination):
     # ------------------------------------------------------------------ destination API
 
     async def send(self, records: List[Any], metadata: Optional[Dict[str, Any]] = None) -> None:
-        """Send each record to its destination, one destination after another."""
+        """Send each record to its destination, ``concurrency`` destinations at a time."""
         records = await self._ensure_routed(records, metadata)
-        for destination, batch in self._buckets(records):
+
+        async def send_one(_: int, bucket: Tuple[BaseDestination, List[Any]]) -> None:
+            destination, batch = bucket
             await destination.send(batch, metadata)
+
+        await for_each_concurrently(self._buckets(records), self.effective_concurrency(), send_one)
 
     async def send_with_retry(
         self, records: List[Any], metadata: Optional[Dict[str, Any]] = None
     ) -> None:
         """Like :meth:`send`, each destination with its own retries.
 
-        A destination that fails after its retries fails the job; destinations
-        already written are not written again by this call.
+        A destination that fails after its retries fails the job and cancels the sends
+        still in flight; destinations already written are not written again by this call.
         """
         records = await self._ensure_routed(records, metadata)
-        for destination, batch in self._buckets(records):
+
+        async def send_one(_: int, bucket: Tuple[BaseDestination, List[Any]]) -> None:
+            destination, batch = bucket
             await destination.send_with_retry(batch, metadata)
 
+        await for_each_concurrently(self._buckets(records), self.effective_concurrency(), send_one)
+
     async def health_check(self) -> bool:
-        """Every routed destination is healthy (none routed: healthy)."""
-        for destination in self._groups:
-            if not await destination.health_check():
-                return False
-        return True
+        """Every routed destination is healthy (none routed: healthy). Checked concurrently."""
+        healthy: List[bool] = [True] * len(self._groups)
+
+        async def check(index: int, destination: BaseDestination) -> None:
+            healthy[index] = await destination.health_check()
+
+        await for_each_concurrently(self._groups, self.effective_concurrency(), check)
+        return all(healthy)
 
     async def close(self) -> None:
         """Close every routed destination; the first error is raised after all were tried."""
-        first_error: Optional[BaseException] = None
-        for destination in self._groups:
+        errors: List[Optional[BaseException]] = [None] * len(self._groups)
+
+        async def close_one(index: int, destination: BaseDestination) -> None:
             try:
                 await destination.close()
             except Exception as exc:
-                first_error = first_error or exc
+                errors[index] = exc
+
+        await for_each_concurrently(self._groups, self.effective_concurrency(), close_one)
+        first_error = next((e for e in errors if e is not None), None)
         if first_error is not None:
             raise first_error
 
@@ -315,6 +352,7 @@ def make_record_destination(
     name: str,
     on_error: OnError,
     concurrency: Optional[int],
+    timeout: Optional[float] = None,
 ) -> "type[RecordDestination]":
     """The :class:`RecordDestination` subclass ``@record_destination`` builds for ``func``.
 
@@ -345,6 +383,7 @@ def make_record_destination(
             "name": name,
             "on_error": on_error,
             "concurrency": concurrency,
+            "timeout": timeout,
             "destination_for_record": method,
             "_destination_fn": staticmethod(func),
             "__doc__": func.__doc__ or f"Record destination: {name}",
