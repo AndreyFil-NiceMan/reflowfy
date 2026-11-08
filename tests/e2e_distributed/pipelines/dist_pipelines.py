@@ -10,7 +10,8 @@ AbstractPipeline
     dist_abstract_es      the same delivery from an Elasticsearch index (needs ES + a seeded index)
     dist_async            dist_abstract plus a per-record async lookup against the mock users API
     dist_per_record       dist_abstract delivered one PUT per record (api_destination
-                          per_record=True), ``dest_concurrency`` requests in flight per job
+                          per_record=True): 16 requests in flight per job, or
+                          ``dest_concurrency`` through a @record_destination
 IdBasedPipeline
     dist_ids_b1 / _b7 / _b100   IDs are the records; ids_batch_size 1 / 7 / 100
     dist_ids_fanout             every input ID fans out into three jobs via define_jobs
@@ -38,6 +39,7 @@ from reflowfy import (
     Param,
     Record,
     Records,
+    RecordDestination,
     RecordTransformation,
     RuntimeParams,
     SkipJob,
@@ -45,6 +47,7 @@ from reflowfy import (
     Transformations,
     chunk,
     job,
+    record_destination,
     transformation,
 )
 from reflowfy.destinations.api import api_destination
@@ -257,11 +260,36 @@ class DistAsync(AbstractPipeline[DistAsyncParams]):
 
 class DistPerRecordParams(DistParams, total=False):
     dest_concurrency: Annotated[
-        NotRequired[int], Param("Destination requests in flight at once, per job", default=1)
+        NotRequired[int],
+        Param("Requests in flight per job via @record_destination (0: the default, 16)", default=0),
     ]
     use_body_field: Annotated[
         NotRequired[bool], Param("Send only record['payload'] (body_field)", default=False)
     ]
+
+
+def _per_record_sink(runtime_params: DistPerRecordParams) -> BaseDestination:
+    sink = runtime_params.get("sink_url", SINK)
+    return api_destination(
+        url=f"{sink}/record/{runtime_params['run']}/{{id}}",
+        method="PUT",
+        per_record=True,
+        body_field="payload" if runtime_params.get("use_body_field") else None,
+        params={"job": str(runtime_params.get("job_index"))},
+        retry_config=RetryConfig(max_attempts=1),  # a failure fails the job at once
+    )
+
+
+def _per_record_route(record: Record, runtime_params: DistPerRecordParams) -> BaseDestination:
+    # The same destination for every record: one group, so the limit is the job's.
+    return _per_record_sink(runtime_params)
+
+
+# A @record_destination's limit is fixed where it is declared: one per value tested.
+PER_RECORD_LIMITED: Dict[int, "type[RecordDestination]"] = {
+    n: record_destination(f"dist_per_record_c{n}", concurrency=n)(_per_record_route)
+    for n in (1, 4, 5, 8)
+}
 
 
 @transformation("dist_per_record_shape")
@@ -294,16 +322,11 @@ class DistPerRecord(AbstractPipeline[DistPerRecordParams]):
     def define_destination(
         self, records: Records, runtime_params: DistPerRecordParams
     ) -> BaseDestination:
-        sink = runtime_params.get("sink_url", SINK)
-        return api_destination(
-            url=f"{sink}/record/{runtime_params['run']}/{{id}}",
-            method="PUT",
-            per_record=True,
-            body_field="payload" if runtime_params.get("use_body_field") else None,
-            concurrency=runtime_params.get("dest_concurrency", 1),
-            params={"job": str(runtime_params.get("job_index"))},
-            retry_config=RetryConfig(max_attempts=1),  # a failure fails the job at once
-        )
+        limit = runtime_params.get("dest_concurrency", 0)
+        if not limit:
+            return _per_record_sink(runtime_params)
+        limited: Any = PER_RECORD_LIMITED[limit]()
+        return limited
 
 
 class DistAbstractEs(AbstractPipeline[EsParams]):

@@ -1,17 +1,18 @@
-"""concurrency= on kafka_destination and api_destination, and the pool behind it."""
+"""Requests in flight per job: the pool behind them, the API destination's default of 16,
+and that removing concurrency= from the destinations (1.1.4) changed no dedup hash."""
 
 import asyncio
 from typing import Any, List
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
-from aiokafka.errors import KafkaError
 
 from reflowfy.core.async_utils import for_each_concurrently
 from reflowfy.destinations.api import api_destination
 from reflowfy.destinations.base import DestinationError
 from reflowfy.destinations.kafka import kafka_destination
+from reflowfy.destinations.base import ConnectionPool
 from reflowfy.destinations.schemas import ApiDestinationConfig
 from reflowfy.execution.content_dedup import destination_identity
 from reflowfy.factories.destination_factory import DestinationFactory
@@ -87,112 +88,35 @@ class TestForEachConcurrently:
         assert sorted(got) == [(0, "a"), (1, "b"), (2, "c")]
 
 
-# ---------------------------------------------------------------- validation
+# ---------------------------------------------------------------- removed knobs
 
 
-@pytest.mark.parametrize("bad", [0, -1, 1.5, True, "4"])
-def test_invalid_concurrency_rejected(bad):
-    with pytest.raises(ValueError, match="concurrency"):
-        kafka_destination(bootstrap_servers="k:9092", topic="t", concurrency=bad)
-    with pytest.raises(ValueError, match="concurrency"):
-        api_destination(url="https://x.com", per_record=True, concurrency=bad)
+def test_kafka_concurrency_was_removed():
+    with pytest.raises(TypeError, match="concurrency= was removed"):
+        kafka_destination(bootstrap_servers="k:9092", topic="t", concurrency=4)
 
 
-def test_api_concurrency_requires_per_record():
-    with pytest.raises(ValueError, match="per_record"):
-        api_destination(url="https://x.com", concurrency=4)
+def test_api_concurrency_was_removed():
+    with pytest.raises(TypeError, match="concurrency"):
+        api_destination(url="https://x.com", per_record=True, concurrency=4)  # type: ignore[call-arg]
 
 
-def test_api_schema_accepts_concurrency():
-    assert (
-        ApiDestinationConfig(url="https://x.com", per_record=True, concurrency=8).concurrency == 8
-    )
-    with pytest.raises(Exception):
-        ApiDestinationConfig(url="https://x.com", concurrency=0)
-
-
-def test_defaults_are_one():
-    assert kafka_destination(bootstrap_servers="k:9092", topic="t").config["concurrency"] == 1
-    assert api_destination(url="https://x.com").config["concurrency"] == 1
+def test_api_schema_has_no_concurrency():
+    assert "concurrency" not in ApiDestinationConfig.model_fields
 
 
 def test_config_round_trips_through_factory():
-    kafka = kafka_destination(bootstrap_servers="k:9092", topic="t", concurrency=32)
-    api = api_destination(url="https://x.com/{id}", per_record=True, concurrency=8)
+    kafka = kafka_destination(bootstrap_servers="k:9092", topic="t", value_field="d", key="{k}")
+    api = api_destination(url="https://x.com/{id}", per_record=True, headers={"X": "{x}"})
     assert DestinationFactory.create("kafka", kafka.config).config == kafka.config
     assert DestinationFactory.create("api", api.config).config == api.config
 
 
-def test_kafka_concurrency_is_not_passed_to_the_producer():
-    dest = kafka_destination(bootstrap_servers="k:9092", topic="t", concurrency=8)
-    assert "concurrency" not in dest._build_connection_kwargs()
+# ---------------------------------------------------------------- api per-record
 
 
-# ---------------------------------------------------------------- kafka send
-
-
-class FakeProducer:
-    def __init__(self, fail_value: Any = None) -> None:
-        self.seen = InFlight()
-        self.sent: List[bytes] = []
-        self.fail_value = fail_value
-
-    async def send_and_wait(self, topic: str, value: bytes, headers: Any = None) -> None:
-        await self.seen.run(value)
-        if value == self.fail_value:
-            raise KafkaError("broker gone")
-        self.sent.append(value)
-
-
-def _kafka(producer: FakeProducer, **kwargs: Any):
-    dest = kafka_destination(bootstrap_servers="k:9092", topic="t", **kwargs)
-
-    async def get_producer() -> FakeProducer:
-        return producer
-
-    dest._get_producer = get_producer  # type: ignore[method-assign]
-    return dest
-
-
-class TestKafkaConcurrency:
-    async def test_default_sends_one_at_a_time_in_order(self):
-        producer = FakeProducer()
-        await _kafka(producer).send([{"i": i} for i in range(5)])
-        assert producer.seen.peak == 1
-        assert producer.sent == [f'{{"i": {i}}}'.encode() for i in range(5)]
-
-    async def test_concurrency_keeps_n_messages_in_flight(self):
-        producer = FakeProducer()
-        await _kafka(producer, concurrency=10).send([{"i": i} for i in range(40)])
-        assert producer.seen.peak == 10
-        assert sorted(producer.sent) == sorted(f'{{"i": {i}}}'.encode() for i in range(40))
-
-    async def test_key_field_and_headers_still_apply(self):
-        producer = FakeProducer()
-        headers: List[Any] = []
-
-        async def send_and_wait(topic: str, value: bytes, headers_: Any = None, **kw: Any):
-            headers.append(kw.get("headers", headers_))
-            producer.sent.append(value)
-
-        producer.send_and_wait = send_and_wait  # type: ignore[method-assign]
-        dest = _kafka(producer, key_field="p", concurrency=4)
-        await dest.send([{"p": 1}, {"p": 2}], {"execution_id": "e1", "n": 3})
-        assert sorted(producer.sent) == [b"1", b"2"]
-        assert headers == [[("execution_id", b"e1")]] * 2
-
-    async def test_a_failed_message_raises_destination_error(self):
-        producer = FakeProducer(fail_value=b'{"i": 3}')
-        with pytest.raises(DestinationError, match="Failed to send to topic 't'"):
-            await _kafka(producer, concurrency=4).send([{"i": i} for i in range(20)])
-        assert len(producer.sent) < 20
-
-
-# ---------------------------------------------------------------- api send
-
-
-def _api(seen: InFlight, fail_url: Any = None, **kwargs: Any):
-    dest = api_destination(url="https://api.example.com/users/{id}", per_record=True, **kwargs)
+def _api(seen: InFlight, fail_url: Any = None, url: str = "https://api.example.com/users/{id}"):
+    dest = api_destination(url=url, per_record=True)
     urls: List[str] = []
 
     async def request(method: str, url: str, **_: Any) -> Any:
@@ -206,29 +130,55 @@ def _api(seen: InFlight, fail_url: Any = None, **kwargs: Any):
             )
         return resp
 
-    dest._client = MagicMock()
-    dest._client.request = request
+    client = MagicMock()
+    client.request = request
+    dest._client = client
+    dest._get_client = AsyncMock(return_value=client)  # pooled or not: this fake
     return dest, urls
 
 
-class TestApiConcurrency:
-    async def test_default_one_request_at_a_time_in_order(self):
+class TestApiRequestsInFlight:
+    async def test_default_is_16(self, monkeypatch):
+        monkeypatch.delenv("TRANSFORM_CONCURRENCY", raising=False)
         seen = InFlight()
         dest, urls = _api(seen)
-        await dest.send([{"id": i} for i in range(4)])
-        assert seen.peak == 1
-        assert urls == [f"https://api.example.com/users/{i}" for i in range(4)]
-
-    async def test_concurrency_keeps_n_requests_in_flight(self):
-        seen = InFlight()
-        dest, urls = _api(seen, concurrency=16)
         await dest.send([{"id": i} for i in range(100)])
         assert seen.peak == 16
         assert sorted(urls) == sorted(f"https://api.example.com/users/{i}" for i in range(100))
 
-    async def test_failure_names_the_record_and_cancels_the_rest(self):
+    async def test_env_sets_the_default(self, monkeypatch):
+        monkeypatch.setenv("TRANSFORM_CONCURRENCY", "1")
         seen = InFlight()
-        dest, urls = _api(seen, fail_url="https://api.example.com/users/5", concurrency=4)
+        dest, urls = _api(seen)
+        await dest.send([{"id": i} for i in range(4)])
+        assert seen.peak == 1
+        assert urls == [f"https://api.example.com/users/{i}" for i in range(4)]  # in order
+
+    async def test_a_record_destination_sets_it(self):
+        seen = InFlight()
+        dest, _ = _api(seen)
+        dest.send_concurrency = 3
+        await dest.send([{"id": i} for i in range(20)])
+        assert seen.peak == 3
+
+    async def test_a_pool_budget_caps_several_destinations_together(self):
+        """Two destinations of one record destination share one limit, not one each."""
+        seen = InFlight()
+        pool = ConnectionPool(request_limit=4)
+        dests = []
+        for host in ("a", "b"):
+            dest, _ = _api(seen, url=f"https://{host}.example.com/{{id}}")
+            dest.connection_pool = pool
+            dest.send_concurrency = 4
+            dests.append(dest)
+        records = [{"id": i} for i in range(20)]
+        await asyncio.gather(*(d.send(records) for d in dests))
+        assert seen.peak == 4  # not 8
+
+    async def test_failure_names_the_record_and_cancels_the_rest(self, monkeypatch):
+        monkeypatch.setenv("TRANSFORM_CONCURRENCY", "4")
+        seen = InFlight()
+        dest, urls = _api(seen, fail_url="https://api.example.com/users/5")
         with pytest.raises(DestinationError) as exc_info:
             await dest.send([{"id": i} for i in range(100)])
         assert str(exc_info.value) == (
@@ -236,26 +186,27 @@ class TestApiConcurrency:
         )
         assert len(urls) < 100
 
-    async def test_missing_placeholder_fails_the_job(self):
-        dest, _ = _api(InFlight(), concurrency=4)
-        with pytest.raises(ValueError, match=r"\{id\}"):
+    async def test_missing_placeholder_fails_the_job_before_any_request(self):
+        dest, urls = _api(InFlight())
+        with pytest.raises(ValueError, match=r"\{id\}.*record 2 of 3"):
             await dest.send([{"id": 1}, {"name": "x"}, {"id": 3}])
+        assert urls == []
 
 
 # ---------------------------------------------------------------- dedup identity
 
 
 class TestDedupIdentity:
-    def test_concurrency_does_not_change_kafka_identity(self):
-        one = kafka_destination(bootstrap_servers="k:9092", topic="t")
-        many = kafka_destination(bootstrap_servers="k:9092", topic="t", concurrency=64)
-        assert destination_identity(one) == destination_identity(many)
-        assert "concurrency" not in destination_identity(one)["config"]
+    def test_kafka_identity_has_the_shape_it_had_before_1_1_4(self):
+        """concurrency was never hashed, and value_field is hashed as key_field."""
+        dest = kafka_destination(bootstrap_servers="k:9092", topic="t", value_field="data")
+        config = destination_identity(dest)["config"]
+        assert "concurrency" not in config and "value_field" not in config
+        assert config["key_field"] == "data"
 
-    def test_concurrency_does_not_change_api_identity(self):
-        one = api_destination(url="https://x.com/{id}", per_record=True)
-        many = api_destination(url="https://x.com/{id}", per_record=True, concurrency=16)
-        assert destination_identity(one) == destination_identity(many)
+    def test_api_identity_has_no_concurrency(self):
+        dest = api_destination(url="https://x.com/{id}", per_record=True)
+        assert "concurrency" not in destination_identity(dest)["config"]
 
     def test_per_record_still_changes_api_identity(self):
         batched = api_destination(url="https://x.com")
