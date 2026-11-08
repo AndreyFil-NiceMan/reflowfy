@@ -1,5 +1,6 @@
 """
-E2E tests for ``api_destination(per_record=True, concurrency=...)``.
+E2E tests for ``api_destination(per_record=True)``: 16 requests in flight per job by
+default, or a ``@record_destination``'s ``concurrency``.
 
 Runs ``e2e_api_per_record_test`` and checks, on the mock webhook server, what each
 record's request looked like: one ``PUT /items/<run>/<id>`` per record, the record's id
@@ -89,9 +90,22 @@ class TestPerRecordDelivery:
             assert request["body"]["id"] == int(request["item_id"])
             assert set(request["body"]) == {"id", "name"}
 
-    def test_default_concurrency_sends_one_at_a_time_in_order(self, manager, run_key):
+    def test_by_default_requests_overlap(self, manager, run_key):
         stats = _run_and_wait(
-            manager, {"run": run_key, "count": 20, "batch_size": 10, "delay_ms": 30}
+            manager, {"run": run_key, "count": 20, "batch_size": 10, "delay_ms": 100}
+        )
+
+        assert stats["state"] == "completed", stats
+        items = _items(run_key)
+        assert sorted(_ids(items["received"])) == list(range(1, 21))
+        # Up to 16 at once by default: a job of 10 has several open together.
+        assert set(items["peak_by_job"]) == {"1", "11"}, items["peak_by_job"]
+        assert all(2 <= peak <= 10 for peak in items["peak_by_job"].values()), items
+
+    def test_concurrency_one_sends_one_at_a_time_in_order(self, manager, run_key):
+        stats = _run_and_wait(
+            manager,
+            {"run": run_key, "count": 20, "batch_size": 10, "delay_ms": 30, "concurrency": 1},
         )
 
         assert stats["state"] == "completed", stats
@@ -141,7 +155,9 @@ class TestPerRecordConcurrency:
         params = {"count": 40, "batch_size": 40, "delay_ms": 100}
 
         started = time.time()
-        sequential = _run_and_wait(manager, {**params, "run": f"{run_key}-seq"})
+        sequential = _run_and_wait(
+            manager, {**params, "run": f"{run_key}-seq", "concurrency": 1}
+        )
         sequential_s = time.time() - started
 
         started = time.time()

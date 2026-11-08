@@ -11,6 +11,7 @@ does.
 """
 
 import asyncio
+import inspect
 import importlib.util
 import json
 import logging
@@ -327,9 +328,19 @@ def _send_job(
         )
 
         async def _send() -> None:
-            if not await destination.health_check():
-                raise PipelineError("destination health check failed")
-            await destination.send_with_retry(records, job_params)
+            # Closed in the same loop that sent: a Kafka producer belongs to its loop,
+            # and an unclosed one leaks a connection per job.
+            try:
+                if not await destination.health_check():
+                    raise PipelineError("destination health check failed")
+                await destination.send_with_retry(records, job_params)
+            finally:
+                # A duck-typed destination may have no close().
+                close = getattr(destination, "close", None)
+                if close is not None:
+                    closed = close()
+                    if inspect.isawaitable(closed):
+                        await closed
 
         asyncio.run(_send())
         report.sent = True

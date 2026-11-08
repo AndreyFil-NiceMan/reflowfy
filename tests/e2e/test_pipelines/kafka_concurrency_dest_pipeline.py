@@ -1,9 +1,10 @@
 """
-Kafka destination with ``concurrency``.
+Kafka destination: one batch per job.
 
-Generated records, each stamped with the test's ``run`` key, go to one topic with
-``concurrency`` messages in flight per job. The test consumes the topic and checks that
-every record of its run arrived exactly once (and, at concurrency 1, in order).
+Generated records, each stamped with the test's ``run`` key, go to one topic. Each
+job's messages are handed to the producer together and their acks awaited together
+(``concurrency=`` was removed in 1.1.4). The test consumes the topic and checks that
+every record of its run arrived exactly once, and each job's in the order it sent them.
 """
 
 import os
@@ -35,7 +36,6 @@ class KafkaConcurrencyParams(RuntimeParams, total=False):
     run: Annotated[Required[str], Param("Stamped on every record, so a test finds its own")]
     count: Annotated[NotRequired[int], Param("Records to generate", default=200)]
     batch_size: Annotated[NotRequired[int], Param("Records per job", default=50)]
-    concurrency: Annotated[NotRequired[int], Param("Messages in flight per job", default=1)]
 
 
 @transformation("stamp_run")
@@ -45,7 +45,7 @@ def stamp_run(records: Records, runtime_params: KafkaConcurrencyParams) -> Recor
 
 
 class E2EKafkaConcurrencyPipeline(AbstractPipeline[KafkaConcurrencyParams]):
-    """E2E pipeline for ``kafka_destination(concurrency=...)``."""
+    """E2E pipeline for ``kafka_destination``'s batched send."""
 
     name = "e2e_kafka_concurrency_test"
     rate_limit = 6000  # jobs per minute
@@ -67,5 +67,4 @@ class E2EKafkaConcurrencyPipeline(AbstractPipeline[KafkaConcurrencyParams]):
         return kafka_destination(
             bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
             topic=CONCURRENCY_TOPIC,
-            concurrency=runtime_params.get("concurrency", 1),
         )

@@ -17,14 +17,19 @@ right after ``define_destination``):
 
 1. The function is called for every record before anything is sent. Building a
    destination is cheap: none connects before its first send.
-2. Records whose destinations have the same class and config share one destination
-   (one producer per cluster/topic/credentials, not one per record). Anything kept
-   out of ``config`` — a Kafka ``headers`` function, an ``ssl_context`` — is taken
-   from the first record's destination of the group.
-3. ``send_with_retry`` sends the groups concurrently, ``concurrency`` at a time (default
-   ``TRANSFORM_CONCURRENCY``, 16, as for ``@record_transformation``), each with its own
-   retries, so a failed group does not re-send the groups already written. Order is kept
-   within a group, not across groups. The first group that fails cancels the rest.
+2. Records whose destinations have the same class and config share one destination.
+   Anything kept out of ``config`` — a Kafka ``headers`` function, an ``ssl_context`` —
+   is taken from the first record's destination of the group.
+3. Connections are shared wider than groups, through one :class:`ConnectionPool` per
+   job: one Kafka producer per cluster and credentials (a producer writes to any
+   topic), one HTTP client per host. Health checks run once per cluster or host.
+4. ``send_with_retry`` sends the groups concurrently, each with its own retries, so a
+   failed group does not re-send the groups already written. Order is kept within a
+   group, not across groups. The first group that fails cancels the rest.
+   ``concurrency`` (default ``TRANSFORM_CONCURRENCY``, 16, as for
+   ``@record_transformation``) is the job's one limit: groups sent at once, and
+   per-record requests in flight across *all* groups together. A Kafka group is one
+   batch, which needs no limit.
 
 ``raise SkipRecord("why")`` drops one record with a reason; ``on_error="skip"`` does the
 same for any exception, with its type name as the reason. ``SkipJob`` drops the job.
@@ -34,14 +39,32 @@ Skips are reported like a per-record transformation's, under the destination's n
 import asyncio
 import inspect
 import json
-from typing import Any, Callable, ClassVar, Dict, List, Literal, NamedTuple, Optional, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    ClassVar,
+    Dict,
+    List,
+    Literal,
+    NamedTuple,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 from reflowfy.core.async_utils import for_each_concurrently
 from reflowfy.core.exceptions import PipelineError, SkipJob, SkipRecord
-from reflowfy.destinations.base import BaseDestination
+from reflowfy.destinations.base import BaseDestination, ConnectionPool
 from reflowfy.observability.logging import get_logger
 
 logger = get_logger("destinations.record")
+
+ADVICE_MIN_RECORDS = 10
+"""A job routing at least this many records, each to its own destination, gets advice."""
+
+# Record destinations already advised: once per process, not once per job.
+_advised: Set[str] = set()
 
 OnError = Literal["fail", "skip"]
 """What a record whose function raises does: fail the job, or skip the record."""
@@ -86,10 +109,12 @@ class RecordDestination(BaseDestination):
     name: ClassVar[str] = "record_destination"
     on_error: ClassVar[OnError] = "fail"
     concurrency: ClassVar[Optional[int]] = None
-    """Destinations sent to (and health-checked, closed) at once, and records routed at
-    once when the function is ``async def``. Default ``TRANSFORM_CONCURRENCY`` (16), as
-    for ``@record_transformation``. A sync function routes its records one after
-    another, in a thread."""
+    """The job's one limit: requests in flight across all destinations together (a
+    per-record ``api_destination``; a Kafka group is one batch), destinations sent to,
+    health-checked and closed at once, and records routed at once when the function is
+    ``async def``. Default ``TRANSFORM_CONCURRENCY`` (16), as for
+    ``@record_transformation``. A sync function routes its records one after another,
+    in a thread."""
     timeout: ClassVar[Optional[float]] = None
     """Seconds allowed per record for an ``async def`` function; ``None`` means no
     limit. A timeout is an error like any other: it fails the job, or with
@@ -97,7 +122,7 @@ class RecordDestination(BaseDestination):
 
     def __init__(self, **options: Any):
         # The routed destinations are what records are written to; this one's config
-        # only names it (repr, and the legacy job-level dedup hash).
+        # only names it.
         super().__init__({"record_destination": self.name})
         self.options = options
         self._groups: List[BaseDestination] = []
@@ -105,6 +130,8 @@ class RecordDestination(BaseDestination):
         self._group_of_record: Dict[int, int] = {}
         # Keeps routed records alive, so their id() is not reused within the job.
         self._routed: List[Any] = []
+        # Connections shared by every routed destination, and the job's request budget.
+        self._pool = ConnectionPool(request_limit=self.effective_concurrency())
 
     def destination_for_record(self, record: Any, runtime_params: Any) -> Any:
         """The destination ``record`` goes to. May be ``async def`` in a subclass."""
@@ -178,6 +205,7 @@ class RecordDestination(BaseDestination):
             kept.append(record)
 
         if kept:
+            self._advise(len(kept))
             logger.info(
                 "%s routed %d records to %d destinations",
                 self.name,
@@ -212,6 +240,29 @@ class RecordDestination(BaseDestination):
             # The bare asyncio.TimeoutError says nothing on its own.
             raise TimeoutError(f"timed out after {self.timeout}s") from exc
 
+    def _advise(self, routed: int) -> None:
+        """Say once when every record got a destination of its own.
+
+        Shared connections keep that fast, but it usually means a per-record value
+        (an id in an f-string URL, a body) went into the destination's config, where
+        it is not URL-encoded and makes every record a destination of its own.
+        """
+        if routed < ADVICE_MIN_RECORDS or len(self._groups) < routed:
+            return
+        if self.name in _advised:
+            return
+        _advised.add(self.name)
+        logger.warning(
+            "%s built a destination per record (%d/%d): put per-record values in "
+            "templates — api_destination(url='.../{id}', per_record=True), "
+            "headers={'X': '{field}'}, kafka_destination(key='{field}') — so records "
+            "share a destination and values are encoded",
+            self.name,
+            len(self._groups),
+            routed,
+            extra={"event": "destination_per_record", "record_destination": self.name},
+        )
+
     def _on_failure(self, exc: Exception, index: int, total: int) -> _Skipped:
         if isinstance(exc, SkipJob):
             raise exc
@@ -243,6 +294,8 @@ class RecordDestination(BaseDestination):
         index = self._group_by_key.get(key)
         if index is None:
             index = len(self._groups)
+            destination.connection_pool = self._pool
+            destination.send_concurrency = self.effective_concurrency()
             self._groups.append(destination)
             self._group_by_key[key] = index
         return index
@@ -301,13 +354,22 @@ class RecordDestination(BaseDestination):
         await for_each_concurrently(self._buckets(records), self.effective_concurrency(), send_one)
 
     async def health_check(self) -> bool:
-        """Every routed destination is healthy (none routed: healthy). Checked concurrently."""
-        healthy: List[bool] = [True] * len(self._groups)
+        """Every routed destination is healthy (none routed: healthy).
+
+        One check per :meth:`BaseDestination.health_key` — per cluster or host, not
+        per routed destination — run concurrently.
+        """
+        checks: Dict[str, BaseDestination] = {}
+        for index, destination in enumerate(self._groups):
+            key = destination.health_key()
+            checks.setdefault(key if key is not None else f"#{index}", destination)
+        targets = list(checks.values())
+        healthy: List[bool] = [True] * len(targets)
 
         async def check(index: int, destination: BaseDestination) -> None:
             healthy[index] = await destination.health_check()
 
-        await for_each_concurrently(self._groups, self.effective_concurrency(), check)
+        await for_each_concurrently(targets, self.effective_concurrency(), check)
         return all(healthy)
 
     async def close(self) -> None:
@@ -321,6 +383,10 @@ class RecordDestination(BaseDestination):
                 errors[index] = exc
 
         await for_each_concurrently(self._groups, self.effective_concurrency(), close_one)
+        try:
+            await self._pool.close()  # the shared producers and clients
+        except Exception as exc:
+            errors.append(exc)
         first_error = next((e for e in errors if e is not None), None)
         if first_error is not None:
             raise first_error

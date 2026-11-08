@@ -564,14 +564,6 @@ def test_errors_of_a_clean_or_unknown_execution(client, db):
     assert client.get("/executions/nope/errors").status_code == 404
 
 
-def test_checkpoints_is_deprecated_but_answers(client, with_jobs):
-    response = client.get("/executions/e/checkpoints", params={"state": "pending"})
-    assert response.status_code == 200
-    assert response.headers["Deprecation"] == "true"
-    assert "/executions/e/jobs" in response.headers["Link"]
-    assert [j["job_id"] for j in response.json()] == ["j3"]
-
-
 def test_execution_stats_route(client, with_jobs):
     body = client.get("/executions/e/stats").json()
     assert body["execution_id"] == "e" and body["state"] == "running"

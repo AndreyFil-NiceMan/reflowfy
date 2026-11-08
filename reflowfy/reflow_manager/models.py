@@ -56,8 +56,8 @@ class Execution(Base):
     driver_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     driver_heartbeat_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     # False while the manager is still planning (saving) the execution's jobs, True once
-    # every job is saved. NULL: created before this column existed — treated as planned.
-    plan_complete: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    # every job is saved.
+    plan_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     # Relationship to jobs
     jobs: Mapped[List["Job"]] = relationship(
@@ -284,29 +284,6 @@ class ProcessedRecord(Base):  # type: ignore[valid-type,misc]  # untyped Base
 
     record_hash: Mapped[bytes] = mapped_column(LargeBinary(32), primary_key=True)
     job_id: Mapped[str] = mapped_column(String(36), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
-        nullable=False,
-        index=True,
-    )
-
-
-class ProcessedContent(Base):
-    """Legacy job-level content-hash ledger.
-
-    Dedup used to claim one hash per job here. Nothing writes it any more: the
-    worker only reads it as an upgrade guard (``held_by_other_job``) so a job the
-    previous release already wrote is not written again. The sweeper empties it
-    after the retention window.
-    """
-
-    __tablename__ = "processed_content"
-
-    content_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
-    pipeline_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    job_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    execution_id: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),

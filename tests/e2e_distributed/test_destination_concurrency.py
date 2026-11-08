@@ -1,4 +1,5 @@
-"""Per-record ``api_destination`` with ``concurrency``, over Kafka and a real worker pool.
+"""Per-record ``api_destination`` (16 in flight by default, or a ``@record_destination``'s
+``concurrency``), over Kafka and a real worker pool.
 
 ``dist_per_record`` is ``dist_abstract`` delivered one ``PUT <sink>/record/<run>/<id>`` per
 record. The id in the URL is filled from the record; the sink checks it matches the body
@@ -60,11 +61,22 @@ class TestPerRecordConcurrency:
         assert all(2 <= peak <= 5 for peak in per_job.values()), per_job
         assert_exactly_once(sink, channel, ids(120))
 
-    def test_default_concurrency_sends_one_at_a_time(
+    def test_by_default_up_to_16_at_once(
+        self, manager: Manager, sink: Sink, channel: str, params: Params
+    ):
+        sink.rules(channel, record_slow_ms=100)
+        execution = manager.run(PIPELINE, params(total=30, per_job=30))
+
+        assert manager.wait(execution)["state"] == "completed"
+        peak = sink.record_stats(channel)["peak_by_job"]["0"]
+        assert 2 <= peak <= 16, peak
+        assert_exactly_once(sink, channel, ids(30))
+
+    def test_concurrency_one_sends_one_at_a_time(
         self, manager: Manager, sink: Sink, channel: str, params: Params
     ):
         sink.rules(channel, record_slow_ms=20)
-        execution = manager.run(PIPELINE, params(total=30, per_job=30))
+        execution = manager.run(PIPELINE, params(total=30, per_job=30, dest_concurrency=1))
 
         assert manager.wait(execution)["state"] == "completed"
         assert sink.record_stats(channel)["peak_by_job"] == {"0": 1}

@@ -30,7 +30,6 @@ import copy
 import logging
 import re
 import typing
-import warnings
 import types
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass, field
@@ -153,22 +152,6 @@ class PipelineMeta(ABCMeta):
                 from reflowfy.core.registry import pipeline_registry
 
                 pipeline_name = namespace["name"]
-
-                # getattr, not namespace: a subclass of a typed pipeline inherits
-                # its parent's params type and is not deprecated.
-                if getattr(cls, "_params_type", None) is None:
-                    warnings.warn(
-                        f"Pipeline '{pipeline_name}' does not declare a params type. "
-                        f"Untyped runtime_params is deprecated; pass a RuntimeParams "
-                        f"subclass so the hooks are typed and define_parameters() is "
-                        f"derived:\n"
-                        f"    class {name}(AbstractPipeline[MyParams]):\n"
-                        f"Use AbstractPipeline[RuntimeParams] if the pipeline takes no "
-                        f"parameters of its own.",
-                        DeprecationWarning,
-                        # 2 = the `class ...` statement in the user's module.
-                        stacklevel=2,
-                    )
 
                 try:
                     instance = cls()

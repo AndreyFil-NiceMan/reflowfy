@@ -93,8 +93,9 @@ def _apply_column_migrations() -> None:
         # Dispatch-loop ownership lease (one loop per execution, takeover when stale)
         "ALTER TABLE executions ADD COLUMN IF NOT EXISTS driver_id VARCHAR(255)",
         "ALTER TABLE executions ADD COLUMN IF NOT EXISTS driver_heartbeat_at TIMESTAMP",
-        # Planning finished (NULL = an execution from before this column: treat as planned)
-        "ALTER TABLE executions ADD COLUMN IF NOT EXISTS plan_complete BOOLEAN",
+        # Planning finished: False while the manager saves the jobs, True once all are saved
+        "ALTER TABLE executions ADD COLUMN IF NOT EXISTS plan_complete BOOLEAN NOT NULL "
+        "DEFAULT FALSE",
         # Retention sweeper filters on completed_at; partial index skips unfinished rows
         "CREATE INDEX IF NOT EXISTS idx_executions_completed_at "
         "ON executions(completed_at) WHERE completed_at IS NOT NULL",

@@ -132,9 +132,10 @@ class TestDerivedDefineParameters:
 
         assert OverridePipeline().define_parameters() == hand_written
 
-    def test_undeclared_pipeline_warns_but_still_works(self):
-        """Untyped runtime_params is deprecated — a warning, never a failure."""
-        with pytest.warns(DeprecationWarning, match="does not declare a params type"):
+    def test_undeclared_pipeline_registers_without_a_warning(self):
+        """Untyped runtime_params is a supported style: no warning, no failure."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
 
             class WarnsPipeline(AbstractPipeline):
                 name = "unit_typed_params_warns"

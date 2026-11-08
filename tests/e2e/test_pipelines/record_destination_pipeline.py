@@ -3,7 +3,7 @@ Kafka destination chosen per record, with ``@record_destination``.
 
 Generated records, each stamped with the test's ``run`` key and an ``engine``
 (``whisper`` / ``google`` / ``azure`` by id), go to one topic per engine: one job
-writes to three topics. ``mode`` picks the destination function:
+writes to three topics. ``scenario`` picks the destination function:
 
 - ``route``: every record has a known engine;
 - ``skip``: every 5th record's engine is unknown, and ``on_error="skip"`` drops it
@@ -45,7 +45,7 @@ class RecordDestinationParams(RuntimeParams, total=False):
     """Parameters for :class:`E2ERecordDestinationPipeline`."""
 
     run: Annotated[Required[str], Param("Stamped on every record, so a test finds its own")]
-    mode: Annotated[
+    scenario: Annotated[
         NotRequired[Literal["route", "skip", "fail"]],
         Param("Which destination function routes the records", default="route"),
     ]
@@ -55,7 +55,7 @@ class RecordDestinationParams(RuntimeParams, total=False):
 
 @transformation("stamp_engine")
 def stamp_engine(records: Records, runtime_params: RecordDestinationParams) -> Records:
-    unknown = runtime_params.get("mode", "route") != "route"
+    unknown = runtime_params.get("scenario", "route") != "route"
     stamped: Records = []
     for r in records:
         record_id: int = r["data"]["id"]
@@ -103,6 +103,6 @@ class E2ERecordDestinationPipeline(AbstractPipeline[RecordDestinationParams]):
     def define_destination(
         self, records: Records, runtime_params: RecordDestinationParams
     ) -> BaseDestination:
-        if runtime_params.get("mode", "route") == "skip":
+        if runtime_params.get("scenario", "route") == "skip":
             return engine_topics_skip()
         return engine_topics()

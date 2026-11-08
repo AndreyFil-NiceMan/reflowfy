@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from reflowfy.reflow_manager.models import Base, Execution, Job, ProcessedContent
+from reflowfy.reflow_manager.models import Base, Execution, Job, ProcessedRecord
 from reflowfy.reflow_manager.content_dedup_scheduler import purge_expired_content, purge_expired_executions
 
 
@@ -17,22 +17,20 @@ def session():
 
 def test_purge_removes_only_expired(session):
     now = datetime(2026, 6, 30, 12, 0, 0)
-    session.add(ProcessedContent(
-        content_hash="old", pipeline_name="p", job_id="j1", execution_id="e1",
-        created_at=now - timedelta(hours=25),
+    session.add(ProcessedRecord(
+        record_hash=b"o" * 32, job_id="j1", created_at=now - timedelta(hours=25),
     ))
-    session.add(ProcessedContent(
-        content_hash="fresh", pipeline_name="p", job_id="j2", execution_id="e2",
-        created_at=now - timedelta(hours=1),
+    session.add(ProcessedRecord(
+        record_hash=b"f" * 32, job_id="j2", created_at=now - timedelta(hours=1),
     ))
     session.commit()
 
     deleted = purge_expired_content(session, retention_hours=24, now=now)
     session.commit()
 
-    remaining = {r.content_hash for r in session.query(ProcessedContent).all()}
+    remaining = {r.record_hash for r in session.query(ProcessedRecord).all()}
     assert deleted == 1
-    assert remaining == {"fresh"}
+    assert remaining == {b"f" * 32}
 
 
 def test_purge_executions_removes_old_finished_with_jobs(session):
@@ -54,18 +52,13 @@ def test_purge_executions_removes_old_finished_with_jobs(session):
 def test_purge_deletes_expired_record_claims_in_chunks(session):
     """4M-record runs leave 4M rows: the purge commits every chunk instead of
     deleting them in one transaction, and keeps going until none are left."""
-    from reflowfy.reflow_manager.models import ProcessedRecord
-
     now = datetime(2026, 6, 30, 12, 0, 0)
     for i in range(23):
         session.add(ProcessedRecord(record_hash=bytes([i]) * 32, job_id="j",
                                     created_at=now - timedelta(hours=30)))
     session.add(ProcessedRecord(record_hash=b"\xff" * 32, job_id="j",
                                 created_at=now - timedelta(hours=1)))
-    session.add(ProcessedContent(content_hash="old", pipeline_name="p", job_id="j",
-                                 execution_id="e", created_at=now - timedelta(hours=30)))
     session.commit()
 
-    assert purge_expired_content(session, retention_hours=24, now=now, chunk_size=5) == 24
+    assert purge_expired_content(session, retention_hours=24, now=now, chunk_size=5) == 23
     assert [r.record_hash for r in session.query(ProcessedRecord)] == [b"\xff" * 32]
-    assert session.query(ProcessedContent).count() == 0
