@@ -284,9 +284,9 @@ class TestPerRecord:
     async def test_missing_placeholder_field_fails_without_request(self, mock_response):
         dest = api_destination(url="https://api.example.com/users/{user_id}", per_record=True)
         calls = await self._capture(dest, mock_response)
-        with pytest.raises(ValueError, match=r"\{user_id\}.*record 2"):
+        with pytest.raises(ValueError, match=r"\{user_id\}.*record 2 of 2"):
             await dest.send([{"user_id": 1}, {"name": "no id"}])
-        assert len(calls) == 1
+        assert calls == []  # every request is built before the first is sent
 
     async def test_placeholder_on_non_dict_record_fails(self, mock_response):
         dest = api_destination(url="https://api.example.com/{id}", per_record=True)
@@ -294,7 +294,8 @@ class TestPerRecord:
         with pytest.raises(ValueError):
             await dest.send(["raw line"])
 
-    async def test_failure_names_the_record_and_stops(self):
+    async def test_failure_names_the_record_and_stops(self, monkeypatch):
+        monkeypatch.setenv("TRANSFORM_CONCURRENCY", "1")  # one at a time: the stop is visible
         ok = MagicMock()
         ok.raise_for_status = MagicMock()
         bad = MagicMock()
@@ -357,9 +358,9 @@ class TestPerRecord:
             url="https://api.example.com", per_record=True, params={"v": "{version}"}
         )
         calls = await self._capture(dest, mock_response)
-        with pytest.raises(ValueError, match=r"params\['v'\].*\{version\}.*record 2"):
+        with pytest.raises(ValueError, match=r"params\['v'\].*\{version\}.*record 2 of 2"):
             await dest.send([{"version": 1}, {"id": 2}])
-        assert len(calls) == 1
+        assert calls == []
 
     async def test_param_placeholders_untouched_without_per_record(self, mock_response):
         dest = api_destination(url="https://api.example.com", params={"v": "{version}"})
@@ -418,7 +419,7 @@ class TestPerRecord:
     async def test_params_field_not_a_dict_fails_without_request(self, mock_response):
         dest = api_destination(url="https://api.example.com", per_record=True, params_field="q")
         calls = await self._capture(dest, mock_response)
-        with pytest.raises(ValueError, match=r"'q' on record 1 must be a dict.*str"):
+        with pytest.raises(ValueError, match=r"'q' on record 1 of 1 must be a dict.*str"):
             await dest.send([{"q": "a=1"}])
         assert calls == []
 
@@ -431,16 +432,6 @@ class TestPerRecord:
             api_destination(
                 url="https://api.example.com", per_record=True, body_field="p", params_field="p"
             )
-
-    def test_unset_params_field_not_in_identity(self):
-        dest = api_destination(url="https://api.example.com", per_record=True)
-        assert "params_field" not in dest.identity_config()
-        dest = api_destination(url="https://api.example.com", per_record=True, params_field="q")
-        assert dest.identity_config()["params_field"] == "q"
-        dest = api_destination(url="https://api.example.com", per_record=True, body_field="k")
-        # Hashed under its old name, so the rename kept every dedup hash.
-        assert dest.identity_config()["key_field"] == "k"
-        assert "body_field" not in dest.identity_config()
 
     def test_body_with_per_record_rejected(self):
         with pytest.raises(ValueError, match="per_record"):

@@ -5,15 +5,10 @@ the record or its `dedup_key` + destination + the job's own params), and the wor
 claims those hashes in `processed_records` before sending, dropping the records
 another job already claimed. The async claim/release helpers run against
 PostgreSQL using whatever AsyncSession factory the worker provides.
-
-`compute_content_hash` is the previous, job-level hash. It is kept only for the
-upgrade guard (`held_by_other_job`): claims the previous release made in
-`processed_content` still mark a job as already written.
 """
 
 import hashlib
 import json
-import os
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Union, cast
 
@@ -21,7 +16,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy import delete, select
 
 from reflowfy.core.serialization import to_json_safe
-from reflowfy.reflow_manager.models import ProcessedContent, ProcessedRecord
+from reflowfy.reflow_manager.models import ProcessedRecord
 
 # Config keys left out of a destination's identity: rotating a credential must not
 # make already-written content look new. Matched as substrings of the key lowercased
@@ -29,25 +24,9 @@ from reflowfy.reflow_manager.models import ProcessedContent, ProcessedRecord
 _SECRET_MARKERS = ("password", "secret", "token", "credential", "auth", "apikey")
 
 
-# How keys were matched before hyphenated keys (an X-API-Key header) counted as secrets.
-_PREVIOUS_SECRET_MARKERS = (
-    "password",
-    "secret",
-    "token",
-    "credential",
-    "auth",
-    "api_key",
-    "apikey",
-)
-
-
 def _is_secret_key(key: Any) -> bool:
     normalized = str(key).lower().replace("-", "").replace("_", "")
     return any(m in normalized for m in _SECRET_MARKERS)
-
-
-def _was_secret_key(key: Any) -> bool:
-    return any(m in str(key).lower() for m in _PREVIOUS_SECRET_MARKERS)
 
 
 def _strip_secrets(value: Any, is_secret: Callable[[Any], bool] = _is_secret_key) -> Any:
@@ -57,13 +36,6 @@ def _strip_secrets(value: Any, is_secret: Callable[[Any], bool] = _is_secret_key
     if isinstance(value, list):
         return [_strip_secrets(v, is_secret) for v in cast(List[Any], value)]
     return value
-
-
-def previous_destination_identity(destination: Any) -> Dict[str, Any]:
-    """destination_identity as the previous release computed it (hyphenated secret
-    keys kept). Claims made under it are honored like the legacy hash, so upgrading
-    does not rewrite content already written to such a destination."""
-    return _identity(destination, _was_secret_key)
 
 
 def destination_identity(destination: Any) -> Dict[str, Any]:
@@ -78,15 +50,11 @@ def destination_identity(destination: Any) -> Dict[str, Any]:
     matches such a destination. Declare what actually identifies the destination with
     ``api_destination(..., dedup_identity=...)`` to opt in.
     """
-    return _identity(destination, _is_secret_key)
-
-
-def _identity(destination: Any, is_secret: Callable[[Any], bool]) -> Dict[str, Any]:
     explicit = getattr(destination, "dedup_identity", None)
     if explicit is not None:
         return {
             "type": type(destination).__name__,
-            "identity": _strip_secrets(explicit, is_secret),
+            "identity": _strip_secrets(explicit),
         }
     identity_config = getattr(destination, "identity_config", None)
     config = (
@@ -94,77 +62,8 @@ def _identity(destination: Any, is_secret: Callable[[Any], bool]) -> Dict[str, A
     )
     return {
         "type": type(destination).__name__,
-        "config": _strip_secrets(config, is_secret) if isinstance(config, dict) else {},
+        "config": _strip_secrets(config) if isinstance(config, dict) else {},
     }
-
-
-def compute_content_hash(
-    pipeline_name: str,
-    transformation_names: List[str],
-    records: List[Any],
-    job_params: Optional[Dict[str, Any]] = None,
-    destination: Optional[Dict[str, Any]] = None,
-) -> str:
-    """Deterministic SHA256 over a whole job's content — the previous, job-level hash.
-
-    Only the upgrade guard uses it now (see :func:`held_by_other_job`).
-
-    ``job_params`` is what the plan attached to this one job (see
-    :func:`reflowfy.job`). Two jobs can hold identical records and still be
-    different work — the same rows for a different tenant, the same children
-    under a different parent — so those params are part of a job's identity.
-    Leaving them out silently dropped the second job as a duplicate.
-
-    Only included when non-empty, so jobs that carry no per-job params keep the
-    hashes they already have.
-
-    ``destination`` is :func:`destination_identity` of the job's destination.
-    Without it, re-running the same data to a different topic was dropped as a
-    duplicate and nothing was written.
-    """
-    stable: Dict[str, Any] = {
-        "pipeline_name": pipeline_name,
-        "transformations": sorted(transformation_names),
-        "records": records,
-    }
-    if job_params:
-        stable["job_params"] = job_params
-    if destination:
-        stable["destination"] = destination
-    content = json.dumps(stable, sort_keys=True, default=str)
-    return hashlib.sha256(content.encode()).hexdigest()
-
-
-def honor_legacy_hash() -> bool:
-    """Whether job-level claims made by earlier releases still block.
-
-    Dedup used to claim one hash per job (and before that, one without the
-    destination). Honoring those claims can wrongly block content going somewhere
-    new — but only until the sweeper's retention (24h) has expired them, and the
-    alternative is writing everything a second time at upgrade. Set
-    DEDUP_HONOR_LEGACY_HASH=false once that window has passed.
-    """
-    return os.getenv("DEDUP_HONOR_LEGACY_HASH", "true").strip().lower() not in ("0", "false", "no")
-
-
-async def held_by_other_job(session_factory: Any, job_hashes: Sequence[str], job_id: str) -> bool:
-    """Whether another job holds one of these job-level hashes in processed_content.
-
-    Transition guard: dedup used to claim one hash per job. A job whose old hash
-    another job already holds was written by the previous release, so it is a
-    duplicate even though none of its record hashes are claimed yet. Only checked
-    while :func:`honor_legacy_hash` is on.
-    """
-    hashes = list(dict.fromkeys(h for h in job_hashes if h))
-    if not hashes:
-        return False
-    async with session_factory() as db:
-        owners = (
-            await db.execute(
-                select(ProcessedContent.job_id).where(ProcessedContent.content_hash.in_(hashes))
-            )
-        ).scalars()
-        return any(owner != job_id for owner in owners)
 
 
 # Plan keys that only say which slice a job is. Two jobs can carry the same record

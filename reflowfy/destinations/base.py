@@ -1,13 +1,77 @@
 """Base destination interface with retry logic."""
 
+import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, TypeVar, cast
 from tenacity import (
     stop_after_attempt,
     wait_exponential,
     retry_if_exception_type,
 )
+
+
+T = TypeVar("T")
+
+
+class ConnectionPool:
+    """Connections shared by several destinations of one job.
+
+    A ``@record_destination`` gives one to all its routed destinations, so those that
+    reach the same cluster or host share a Kafka producer or an HTTP client instead
+    of each opening its own (a client costs ~17 ms of CPU, a producer a connection
+    and a metadata round trip). The pool, not the destination, closes them.
+    """
+
+    def __init__(self, request_limit: Optional[int] = None) -> None:
+        self._items: Dict[str, Any] = {}
+        self._closers: Dict[str, Callable[[], Awaitable[None]]] = {}
+        self._locks: Dict[str, asyncio.Lock] = {}
+        self.request_limit = request_limit
+        self._requests: Optional[asyncio.Semaphore] = None
+
+    @property
+    def requests(self) -> Optional[asyncio.Semaphore]:
+        """One budget of requests in flight for every destination of the job (or None).
+
+        Created on first use, inside the loop that sends.
+        """
+        if self.request_limit is None:
+            return None
+        if self._requests is None:
+            self._requests = asyncio.Semaphore(self.request_limit)
+        return self._requests
+
+    async def get(
+        self,
+        key: str,
+        create: Callable[[], Awaitable[T]],
+        close: Callable[[T], Awaitable[None]],
+    ) -> T:
+        """The connection for ``key``, created by ``create()`` the first time it is asked for."""
+        if key in self._items:
+            return cast(T, self._items[key])
+        lock = self._locks.setdefault(key, asyncio.Lock())
+        async with lock:  # destinations are sent concurrently: create it once
+            if key not in self._items:
+                item = await create()
+                self._items[key] = item
+                self._closers[key] = lambda: close(item)
+        return cast(T, self._items[key])
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    async def close(self) -> None:
+        """Close every connection; the first error is raised after all were tried."""
+        closers = list(self._closers.values())
+        self._items.clear()
+        self._closers.clear()
+        self._locks.clear()
+        errors = await asyncio.gather(*(c() for c in closers), return_exceptions=True)
+        first = next((e for e in errors if isinstance(e, BaseException)), None)
+        if first is not None:
+            raise first
 
 
 @dataclass
@@ -43,6 +107,12 @@ class BaseDestination(ABC):
         self.retry_config = retry_config or RetryConfig()
         # What identifies this destination for content dedup; None = the whole config.
         self.dedup_identity: Optional[Any] = None
+        # Set by a @record_destination: connections shared with the job's other
+        # destinations. None: this destination opens and closes its own.
+        self.connection_pool: Optional[ConnectionPool] = None
+        # Set by a @record_destination: requests in flight at once, for destinations
+        # that send one request per record. None: the destination's default.
+        self.send_concurrency: Optional[int] = None
 
     @abstractmethod
     async def send(self, records: List[Any], metadata: Optional[Dict[str, Any]] = None) -> None:
@@ -67,6 +137,14 @@ class BaseDestination(ABC):
             True if healthy, False otherwise
         """
         pass
+
+    def health_key(self) -> Optional[str]:
+        """Destinations with the same key share one health check per job; None: its own.
+
+        A ``@record_destination`` checks each distinct key once — one probe per host or
+        cluster, not one per routed destination.
+        """
+        return None
 
     def identity_config(self) -> Dict[str, Any]:
         """The part of ``config`` that says where records are written, for content dedup.

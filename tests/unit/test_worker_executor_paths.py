@@ -367,7 +367,7 @@ class TestOutcomes:
 # ---------------------------------------------------------------- content dedup
 
 
-def _claims(monkeypatch, won: bool = True, legacy_held: bool = False):
+def _claims(monkeypatch, won: bool = True):
     """Stub the record claim: every hash is won (or none is). Returns the claim mock."""
 
     async def claim(session_factory, hashes, job_id):
@@ -375,7 +375,6 @@ def _claims(monkeypatch, won: bool = True, legacy_held: bool = False):
 
     claim_mock = AsyncMock(side_effect=claim)
     monkeypatch.setattr(executor_mod, "claim_record_hashes", claim_mock)
-    monkeypatch.setattr(executor_mod, "held_by_other_job", AsyncMock(return_value=legacy_held))
     return claim_mock
 
 
@@ -401,44 +400,6 @@ class TestContentDedup:
         # one hash per record, claimed under this job
         args = claim.await_args.args
         assert len(args[1]) == 2 and args[2] == "j"
-
-    async def test_a_job_the_previous_release_wrote_is_deduplicated(
-        self, register, stub_worker, monkeypatch
-    ):
-        dest = FakeDest()
-        register(FakePipeline("p2-legacy", dest))
-        claim = _claims(monkeypatch, legacy_held=True)
-
-        assert await stub_worker.execute_job(_payload("p2-legacy", dedup_check=True)) is True
-        assert stub_worker.updates[0].deduplicated is True
-        assert dest.sent == []
-        claim.assert_not_awaited()
-
-    async def test_the_legacy_guard_can_be_switched_off(
-        self, register, stub_worker, monkeypatch
-    ):
-        monkeypatch.setenv("DEDUP_HONOR_LEGACY_HASH", "false")
-        dest = FakeDest()
-        register(FakePipeline("p2-legacy-off", dest))
-        _claims(monkeypatch, legacy_held=True)
-
-        assert await stub_worker.execute_job(_payload("p2-legacy-off", dedup_check=True)) is True
-        executor_mod.held_by_other_job.assert_not_awaited()  # type: ignore[attr-defined]
-        assert dest.sent == [{"id": 1}, {"id": 2}]
-
-    async def test_the_guard_checks_the_previous_releases_destination_identity(
-        self, register, stub_worker, monkeypatch
-    ):
-        """The release before last kept an X-API-Key header in the identity; a job it
-        wrote is still found by that hash."""
-        dest = FakeDest()
-        dest.config = {"url": "http://x", "headers": {"X-API-Key": "k"}}
-        register(FakePipeline("p2-legacy-prev", dest))
-        _claims(monkeypatch)
-
-        assert await stub_worker.execute_job(_payload("p2-legacy-prev", dedup_check=True))
-        job_hashes = executor_mod.held_by_other_job.await_args.args[1]  # type: ignore[attr-defined]
-        assert len(job_hashes) == 3 and len(set(job_hashes)) == 3
 
     async def test_no_claim_without_dedup_check(self, register, stub_worker, monkeypatch):
         register(FakePipeline("p2-nodedup", FakeDest()))

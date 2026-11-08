@@ -45,7 +45,7 @@ from reflowfy.destinations.decorators import (
 from reflowfy.destinations.record import RecordDestination, RecordDestinationError
 from reflowfy.transformations.decorators import record_transformation, transformation
 
-__version__ = "1.1.3"
+__version__ = "1.1.4"
 
 __all__ = [
     "load_query",

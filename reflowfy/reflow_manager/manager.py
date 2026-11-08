@@ -13,7 +13,7 @@ import logging
 from typing import Any, Dict, List, NamedTuple, Optional
 from sqlalchemy.orm import Session
 
-from reflowfy.reflow_manager.models import Execution, Job
+from reflowfy.reflow_manager.models import Execution
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
 from reflowfy.reflow_manager.rate_limiter import RateLimiter
@@ -154,10 +154,6 @@ class ReflowManager:
             return None
         cancelled = self.job_manager.cancel_unstarted_jobs(execution_id)
         return CancelResult(execution=execution, cancelled_jobs=cancelled)
-
-    def get_checkpoints(self, execution_id: str, state: Optional[str] = None) -> List[Job]:
-        """Get jobs (formerly checkpoints) for an execution."""
-        return self.job_manager.get_jobs(execution_id, state)
 
     # ===== Pipeline Execution (delegated) =====
 
