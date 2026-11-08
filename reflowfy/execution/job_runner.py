@@ -44,11 +44,9 @@ def _route_concurrency(destination: RecordDestination) -> Optional[int]:
     """Records routed at once, for an ``async def`` destination function; else None."""
     import inspect
 
-    from reflowfy.transformations.base import default_record_concurrency
-
     if not inspect.iscoroutinefunction(destination.destination_for_record):
         return None
-    return destination.concurrency or default_record_concurrency()
+    return destination.effective_concurrency()
 
 
 def check_record_type(pipeline: Any, records: List[Any]) -> Tuple[List[Any], AppliedStep]:

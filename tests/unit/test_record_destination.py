@@ -44,6 +44,10 @@ class Sink(BaseDestination):
     unhealthy: set = set()
     built = 0
     closed: List[str] = []
+    send_delay = 0.0
+    in_flight = 0
+    peak = 0
+    order: List[str] = []  # topics in the order their send started
 
     def __init__(self, topic: str, password: str = "s3cret", **extra: Any):
         Sink.built += 1
@@ -55,6 +59,14 @@ class Sink(BaseDestination):
     async def send(self, records: List[Any], metadata: Optional[Dict[str, Any]] = None) -> None:
         topic = self.config["topic"]
         Sink.send_calls[topic] = Sink.send_calls.get(topic, 0) + 1
+        Sink.order.append(topic)
+        Sink.in_flight += 1
+        Sink.peak = max(Sink.peak, Sink.in_flight)
+        try:
+            if Sink.send_delay:
+                await asyncio.sleep(Sink.send_delay)
+        finally:
+            Sink.in_flight -= 1
         if Sink.fail_topics.get(topic, 0) > 0:
             Sink.fail_topics[topic] -= 1
             raise DestinationError("sink", "broker down")
@@ -75,11 +87,20 @@ def reset_sink():
     Sink.unhealthy = set()
     Sink.built = 0
     Sink.closed = []
+    Sink.send_delay = 0.0
+    Sink.in_flight = 0
+    Sink.peak = 0
+    Sink.order = []
 
 
 @record_destination("rd_by_topic")
 def by_topic(record: Any, params: Any) -> Sink:
     return Sink(topic=f"{params.get('env', 'dev')}.{record['engine']}")
+
+
+@record_destination("rd_by_topic_serial", concurrency=1)
+def by_topic_serial(record: Any, params: Any) -> Sink:
+    return Sink(topic=f"dev.{record['engine']}")
 
 
 @record_destination("rd_by_topic_skip", on_error="skip")
@@ -363,7 +384,7 @@ class TestSendHealthClose:
 
     async def test_a_destination_failing_after_its_retries_fails_the_send(self):
         Sink.fail_topics = {"dev.b": 99}
-        dest = by_topic()
+        dest = by_topic_serial()
         await dest.route(_records("a", "b", "c"), {})
         with pytest.raises(DestinationError):
             await dest.send_with_retry(_records("a", "b", "c"), {})  # unrouted copies: route
@@ -399,13 +420,142 @@ class TestSendHealthClose:
         await dest.route(_records("a", "b"), {})
         with pytest.raises(RuntimeError, match="close a"):
             await dest.close()
-        assert Sink.closed == ["a", "b"]
+        assert sorted(Sink.closed) == ["a", "b"]
 
     async def test_close_is_quiet_when_all_close(self):
         dest = by_topic()
         await dest.route(_records("a", "b"), {})
         await dest.close()
-        assert Sink.closed == ["dev.a", "dev.b"]
+        assert sorted(Sink.closed) == ["dev.a", "dev.b"]
+
+
+# ---------------------------------------------------------------- concurrency and timeout
+
+
+class TestConcurrency:
+    async def test_destinations_are_sent_to_concurrently_by_default(self, monkeypatch):
+        monkeypatch.delenv("TRANSFORM_CONCURRENCY", raising=False)
+        Sink.send_delay = 0.02
+        dest = by_topic()
+        assert dest.effective_concurrency() == 16
+        await _route_and_send(dest, _records(*"abcde"))
+        assert Sink.peak == 5
+        assert {t: len(r) for t, r in Sink.ledger.items()} == {f"dev.{c}": 1 for c in "abcde"}
+
+    async def test_concurrency_caps_destinations_in_flight(self):
+        @record_destination("rd_conc_two", concurrency=2)
+        def two(record: Any, params: Any) -> Sink:
+            return Sink(record["engine"])
+
+        Sink.send_delay = 0.02
+        await _route_and_send(two(), _records(*"abcde"))
+        assert Sink.peak == 2
+        assert sorted(Sink.ledger) == list("abcde")
+
+    async def test_the_env_default_applies(self, monkeypatch):
+        monkeypatch.setenv("TRANSFORM_CONCURRENCY", "3")
+        Sink.send_delay = 0.02
+        dest = by_topic()
+        assert dest.effective_concurrency() == 3
+        await _route_and_send(dest, _records(*"abcde"))
+        assert Sink.peak == 3
+
+    async def test_concurrency_one_sends_in_order_one_at_a_time(self):
+        Sink.send_delay = 0.01
+        await _route_and_send(by_topic_serial(), _records("c", "a", "b", "a"))
+        assert Sink.peak == 1
+        assert Sink.order == ["dev.c", "dev.a", "dev.b"]  # first-seen order
+        assert [r["id"] for r in Sink.ledger["dev.a"]] == [2, 4]  # order within a group
+
+    async def test_plain_send_is_concurrent_too(self):
+        Sink.send_delay = 0.02
+        dest = by_topic()
+        result = await dest.route(_records(*"abc"), {})
+        await dest.send(result.records, {})
+        assert Sink.peak == 3
+
+    async def test_a_failure_cancels_the_sends_still_in_flight(self):
+        class Slow(Sink):
+            async def send(self, records: List[Any], metadata: Any = None) -> None:
+                if self.config["topic"] == "boom":
+                    raise DestinationError("sink", "down")
+                await asyncio.sleep(5)  # cancelled long before this ends
+                await super().send(records, metadata)
+
+        @record_destination("rd_cancel")
+        def cancel(record: Any, params: Any) -> Sink:
+            return Slow(record["engine"])
+
+        dest = cancel()
+        result = await dest.route(_records("slow1", "boom", "slow2"), {})
+        with pytest.raises(DestinationError):
+            await asyncio.wait_for(dest.send(result.records, {}), timeout=2)
+        assert Sink.ledger == {}
+
+    async def test_health_checks_run_concurrently(self):
+        in_flight = 0
+        peak = 0
+
+        class SlowHealth(Sink):
+            async def health_check(self) -> bool:
+                nonlocal in_flight, peak
+                in_flight += 1
+                peak = max(peak, in_flight)
+                await asyncio.sleep(0.02)
+                in_flight -= 1
+                return self.config["topic"] != "sick"
+
+        @record_destination("rd_health_conc")
+        def slow_health(record: Any, params: Any) -> Sink:
+            return SlowHealth(record["engine"])
+
+        dest = slow_health()
+        await dest.route(_records("a", "b", "c"), {})
+        assert await dest.health_check() and peak == 3
+        await dest.route(_records("sick"), {})
+        assert not await dest.health_check()
+
+
+class TestTimeout:
+    @staticmethod
+    def _slow(name: str, **kw: Any) -> Any:
+        @record_destination(name, timeout=0.05, **kw)
+        async def slow(record: Any, params: Any) -> Sink:
+            if record["engine"] == "slow":
+                await asyncio.sleep(5)
+            return Sink(record["engine"])
+
+        return slow
+
+    def test_timeout_is_on_the_class(self):
+        assert self._slow("rd_timeout_attr").timeout == 0.05
+        assert by_topic.timeout is None
+
+    async def test_a_slow_record_fails_the_job(self):
+        with pytest.raises(RecordDestinationError) as excinfo:
+            await self._slow("rd_timeout_fail")().route(_records("a", "slow"), {})
+        assert str(excinfo.value) == (
+            "record_destination 'rd_timeout_fail' failed on record 2 of 2: TimeoutError"
+        )
+        assert "timed out after 0.05s" in str(excinfo.value.original_error)
+
+    async def test_a_slow_record_is_skipped_with_on_error_skip(self):
+        dest = self._slow("rd_timeout_skip", on_error="skip")()
+        result = await dest.route(_records("a", "slow", "b"), {})
+        assert [r["id"] for r in result.records] == [1, 3]
+        assert result.skip_reasons == {"TimeoutError": 1}
+
+    def test_timeout_needs_an_async_function(self):
+        with pytest.raises(TypeError, match="timeout needs an `async def` function"):
+
+            @record_destination("rd_timeout_sync", timeout=1)
+            def sync(record: Any, params: Any) -> Sink:
+                return Sink("t")
+
+    @pytest.mark.parametrize("timeout", [0, -1])
+    def test_bad_timeout_is_rejected(self, timeout):
+        with pytest.raises(ValueError, match="timeout must be > 0"):
+            record_destination("x", timeout=timeout)
 
 
 # ---------------------------------------------------------------- the job runner
