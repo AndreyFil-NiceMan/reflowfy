@@ -198,12 +198,12 @@ async def update_execution_state(
     """
     if request.state not in ExecutionManager.STATES:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=422,  # Unprocessable Content
             detail=f"Unknown state '{request.state}'; states are {list(ExecutionManager.STATES)}",
         )
     if request.state not in ("failed", "cancelled"):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=422,  # Unprocessable Content
             detail=(
                 f"State '{request.state}' cannot be set directly. Use POST /executions/{{id}}/pause "
                 "or /resume; '/retry-failed' reopens a failed run; 'completed' is set by the "
@@ -391,23 +391,6 @@ async def get_execution_errors(
     ]
 
 
-@app.get("/executions/{execution_id}/checkpoints")
-async def get_checkpoints(
-    execution_id: str,
-    state: Optional[str] = None,
-    manager: ReflowManager = Depends(get_reflow_manager),
-) -> JSONResponse:
-    """Deprecated: use GET /executions/{id}/jobs instead."""
-    jobs = manager.job_manager.get_jobs(execution_id, state)
-    return JSONResponse(
-        content=[job.to_dict() for job in jobs],
-        headers={
-            "Deprecation": "true",
-            "Link": f'/executions/{execution_id}/jobs; rel="successor-version"',
-        },
-    )
-
-
 # ===== Pipeline Execution (New Simplified API) =====
 
 
@@ -451,7 +434,7 @@ async def run_pipeline(
         errors = pipeline.validate_parameters(pipeline.apply_defaults(runtime_params))
         if errors:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=422,  # Unprocessable Content
                 detail=f"Invalid parameters: {'; '.join(errors)}",
             )
         if manager.get_execution(execution_id):

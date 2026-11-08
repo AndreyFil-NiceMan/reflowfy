@@ -138,17 +138,11 @@ def _pipeline_tags(pipeline: Any) -> List[str]:
 def _register(
     app: FastAPI, method: str, pipeline: Any, suffix: str, endpoint: Any, **kwargs: Any
 ) -> None:
-    """Register ``endpoint`` under the pipeline's folder-aware path.
-
-    A pipeline in a subfolder keeps answering on the flat ``/pipelines/<name>/<suffix>``
-    too (hidden from Swagger), so clients written before folders appeared still work.
-    """
+    """Register ``endpoint`` under the pipeline's folder-aware path."""
     route = getattr(app, method)
-    base = pipeline_route_base(pipeline)
-    route(f"{base}/{suffix}", tags=_pipeline_tags(pipeline), **kwargs)(endpoint)
-    flat = f"/pipelines/{pipeline.name}"
-    if base != flat:
-        route(f"{flat}/{suffix}", include_in_schema=False, **kwargs)(endpoint)
+    route(f"{pipeline_route_base(pipeline)}/{suffix}", tags=_pipeline_tags(pipeline), **kwargs)(
+        endpoint
+    )
 
 
 def _param_annotation(p: Any):

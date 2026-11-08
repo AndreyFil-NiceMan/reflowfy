@@ -2,7 +2,7 @@
 Kafka destination with ``headers``.
 
 Generated records, each stamped with the test's ``run`` key, go to one topic with
-message headers set in one of three ways (``mode``):
+message headers set in one of three ways (``scenario``):
 
 - ``static``: a mapping with ``{field}`` placeholders filled from each record;
 - ``function``: a function of the record returning str / bytes / None values;
@@ -41,7 +41,7 @@ class KafkaHeadersParams(RuntimeParams, total=False):
     """Parameters for :class:`E2EKafkaHeadersPipeline`."""
 
     run: Annotated[Required[str], Param("Stamped on every record, so a test finds its own")]
-    mode: Annotated[
+    scenario: Annotated[
         NotRequired[Literal["static", "function", "missing"]],
         Param("How the headers are given", default="static"),
     ]
@@ -84,11 +84,11 @@ class E2EKafkaHeadersPipeline(AbstractPipeline[KafkaHeadersParams]):
     def define_destination(
         self, records: Records, runtime_params: KafkaHeadersParams
     ) -> BaseDestination:
-        mode = runtime_params.get("mode", "static")
+        scenario = runtime_params.get("scenario", "static")
         headers: KafkaHeaders
-        if mode == "function":
+        if scenario == "function":
             headers = _function_headers
-        elif mode == "missing":
+        elif scenario == "missing":
             headers = {"tenant": "{tenant_id}"}
         else:
             headers = {"source": "reflowfy-e2e", "run": "{run}", "record-id": "{id}"}

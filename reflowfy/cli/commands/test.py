@@ -11,6 +11,7 @@ does.
 """
 
 import asyncio
+import inspect
 import importlib.util
 import json
 import logging
@@ -334,7 +335,12 @@ def _send_job(
                     raise PipelineError("destination health check failed")
                 await destination.send_with_retry(records, job_params)
             finally:
-                await destination.close()
+                # A duck-typed destination may have no close().
+                close = getattr(destination, "close", None)
+                if close is not None:
+                    closed = close()
+                    if inspect.isawaitable(closed):
+                        await closed
 
         asyncio.run(_send())
         report.sent = True

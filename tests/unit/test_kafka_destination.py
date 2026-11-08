@@ -1,8 +1,7 @@
-"""KafkaDestination: what each message holds (value_field), its key (key=), and the
-deprecated key_field alias. No real Kafka: a fake producer records every send."""
+"""KafkaDestination: what each message holds (value_field) and its key (key=).
+No real Kafka: a fake producer records every send."""
 
 import asyncio
-import warnings
 from typing import Any, Dict, List
 from unittest.mock import patch
 
@@ -49,32 +48,11 @@ class TestValueField:
         assert sent[0]["value"] == b'{"name": "alice"}'
 
 
-class TestKeyFieldAlias:
-    async def test_key_field_still_selects_the_value_and_warns(self):
-        with pytest.warns(DeprecationWarning, match="Use value_field="):
-            dest = kafka_destination(bootstrap_servers="k:9092", topic="t", key_field="payload")
-        sent = await _send(dest, [{"payload": {"a": 1}}])
-        assert sent[0]["value"] == b'{"a": 1}'
-        assert sent[0]["key"] is None  # it never set the key
-        assert dest.config["value_field"] == "payload"
-
-    def test_both_names_rejected(self):
-        with pytest.raises(ValueError, match="pass value_field= only"):
-            kafka_destination(bootstrap_servers="k:9092", topic="t", value_field="a", key_field="a")
-
-    def test_the_rename_keeps_the_dedup_hash(self):
-        """Hashed as key_field, its name until 1.1.4, so upgrading re-sends nothing."""
-        new = kafka_destination(bootstrap_servers="k:9092", topic="t", value_field="payload")
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            old = kafka_destination(bootstrap_servers="k:9092", topic="t", key_field="payload")
-        assert destination_identity(new) == destination_identity(old)
-        assert new.identity_config()["key_field"] == "payload"
-        assert "value_field" not in new.identity_config()
-
-    def test_unset_still_hashes_key_field_none(self):
-        identity = kafka_destination(bootstrap_servers="k:9092", topic="t").identity_config()
-        assert identity["key_field"] is None
+def test_value_field_is_part_of_the_dedup_identity():
+    plain = kafka_destination(bootstrap_servers="k:9092", topic="t")
+    data = kafka_destination(bootstrap_servers="k:9092", topic="t", value_field="data")
+    assert data.identity_config()["value_field"] == "data"
+    assert destination_identity(plain) != destination_identity(data)
 
 
 class TestMessageKey:

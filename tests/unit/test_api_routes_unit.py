@@ -382,7 +382,7 @@ class TestPipelineFolders:
 
         run = paths["/pipelines/bob1_pipeline/folders_route/run"]["post"]
         assert run["tags"] == ["bob1_pipeline"]
-        # The flat alias still answers but is not shown twice in Swagger.
+        # No flat alias: the folder path is the only one.
         assert "/pipelines/folders_route/run" not in paths
 
     def test_top_level_pipeline_is_unchanged(self, make_pipeline):
@@ -391,15 +391,15 @@ class TestPipelineFolders:
 
         assert paths["/pipelines/folders_flat/run"]["post"]["tags"] == ["pipelines"]
 
-    def test_nested_pipeline_runs_on_both_paths(self, make_pipeline):
+    def test_nested_pipeline_runs_on_its_folder_path_only(self, make_pipeline):
         pipeline = make_pipeline(
             "folders_both", RuntimeParams, __module__="pipelines.bob1_pipeline.pipeline1"
         )
         executor = _executor()
         client = TestClient(_app(pipeline, local=executor, distributed=executor))
 
-        for path in ("/pipelines/bob1_pipeline/folders_both", "/pipelines/folders_both"):
-            response = client.post(f"{path}/run?mode=local")
-            assert response.status_code == 200, response.text
-            assert response.json()["pipeline_name"] == "folders_both"
-        assert executor.execute.call_count == 2
+        response = client.post("/pipelines/bob1_pipeline/folders_both/run?mode=local")
+        assert response.status_code == 200, response.text
+        assert response.json()["pipeline_name"] == "folders_both"
+        assert client.post("/pipelines/folders_both/run?mode=local").status_code == 404
+        assert executor.execute.call_count == 1

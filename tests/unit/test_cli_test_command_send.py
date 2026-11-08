@@ -67,3 +67,42 @@ def test_run_single_dry_run_sends_nothing():
     assert report.fetched == 3
     assert report.sent_count == 0
     destination.send_with_retry.assert_not_called()
+
+
+def test_each_jobs_destination_is_closed_after_its_send():
+    destination = _make_destination()
+    report = run_single(_SplittingPipeline(destination), {}, TestOptions(limit=100, dry_run=False))
+    assert report.ok
+    assert destination.close.await_count == 3
+
+
+class _NoClose:
+    """A duck-typed destination with no close(): still sent to, nothing to close."""
+
+    def __init__(self) -> None:
+        self.sent = 0
+
+    async def health_check(self) -> bool:
+        return True
+
+    async def send_with_retry(self, records, metadata):
+        self.sent += 1
+
+
+class _SyncClose(_NoClose):
+    closed = 0
+
+    def close(self) -> None:
+        _SyncClose.closed += 1
+
+
+def test_a_destination_without_close_is_still_sent():
+    destination = _NoClose()
+    report = run_single(_SplittingPipeline(destination), {}, TestOptions(limit=100, dry_run=False))
+    assert report.ok and destination.sent == 3
+
+
+def test_a_synchronous_close_is_called():
+    destination = _SyncClose()
+    report = run_single(_SplittingPipeline(destination), {}, TestOptions(limit=100, dry_run=False))
+    assert report.ok and _SyncClose.closed == 3

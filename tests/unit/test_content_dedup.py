@@ -1,65 +1,13 @@
-from reflowfy.reflow_manager.models import ProcessedContent
-
-
-def test_processed_content_table_shape():
-    cols = {c.name for c in ProcessedContent.__table__.columns}
-    assert {"content_hash", "pipeline_name", "job_id", "execution_id", "created_at"} <= cols
-    assert ProcessedContent.__table__.primary_key.columns.keys() == ["content_hash"]
-
-
-from reflowfy.execution.content_dedup import compute_content_hash
-
-
-def test_hash_is_stable_for_same_content():
-    a = compute_content_hash("p", ["t1", "t2"], [{"id": 1, "v": "x"}])
-    b = compute_content_hash("p", ["t2", "t1"], [{"id": 1, "v": "x"}])  # order-insensitive transforms
-    assert a == b
-    assert len(a) == 64
-
-
-def test_hash_changes_with_records():
-    a = compute_content_hash("p", [], [{"id": 1, "v": "x"}])
-    b = compute_content_hash("p", [], [{"id": 1, "v": "y"}])
-    assert a != b
-
-
-def test_hash_changes_with_pipeline_name():
-    a = compute_content_hash("p1", [], [{"id": 1}])
-    b = compute_content_hash("p2", [], [{"id": 1}])
-    assert a != b
-
-
-def test_hash_changes_with_per_job_params():
-    """Same records, different job — e.g. the same rows for another tenant.
-
-    Without this the second job is claimed as a duplicate of the first and its
-    output is silently never written.
-    """
-    a = compute_content_hash("p", [], [{"id": 1}], {"tenant": "a"})
-    b = compute_content_hash("p", [], [{"id": 1}], {"tenant": "b"})
-    assert a != b
-
-
-def test_hash_is_unchanged_when_there_are_no_per_job_params():
-    """Jobs that carry no params must keep the hash they already have, so
-    enable_duplicate_jobs=False stays idempotent across this upgrade."""
-    baseline = compute_content_hash("p", ["t"], [{"id": 1}])
-
-    assert compute_content_hash("p", ["t"], [{"id": 1}], None) == baseline
-    assert compute_content_hash("p", ["t"], [{"id": 1}], {}) == baseline
-
-
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from reflowfy.reflow_manager.models import Base
 from reflowfy.execution.content_dedup import (
     claim_record_hashes,
     compute_record_hash,
-    held_by_other_job,
     record_identity,
     release_record_hashes,
 )
-from reflowfy.reflow_manager.models import ProcessedContent, ProcessedRecord
+from reflowfy.reflow_manager.models import ProcessedRecord
 
 
 @pytest.fixture
@@ -78,11 +26,11 @@ def test_destination_changes_hash():
 
     a = kafka_destination(bootstrap_servers="k:9092", topic="a")
     b = kafka_destination(bootstrap_servers="k:9092", topic="b")
-    ha = compute_content_hash("p", [], [{"id": 1}], None, destination_identity(a))
-    hb = compute_content_hash("p", [], [{"id": 1}], None, destination_identity(b))
+    ha = compute_record_hash("p", {"id": 1}, destination_identity(a))
+    hb = compute_record_hash("p", {"id": 1}, destination_identity(b))
     assert ha != hb
     same = kafka_destination(bootstrap_servers="k:9092", topic="a")
-    assert compute_content_hash("p", [], [{"id": 1}], None, destination_identity(same)) == ha
+    assert compute_record_hash("p", {"id": 1}, destination_identity(same)) == ha
 
 
 def test_destination_identity_ignores_credentials():
@@ -235,20 +183,3 @@ async def test_claims_are_chunked(session_factory, monkeypatch):
     await release_record_hashes(session_factory, hashes, "j")
     assert await claim_record_hashes(session_factory, hashes, "other") == set(hashes)
     assert await claim_record_hashes(session_factory, [], "j") == set()
-
-
-async def _old_claim(session_factory, content_hash, job_id):
-    async with session_factory() as db:
-        db.add(ProcessedContent(
-            content_hash=content_hash, pipeline_name="p", job_id=job_id, execution_id="e0"
-        ))
-        await db.commit()
-
-
-async def test_a_job_hash_from_the_previous_release_blocks_other_jobs(session_factory):
-    await _old_claim(session_factory, "old-h", "old-job")
-    assert await held_by_other_job(session_factory, ["x", "old-h"], "job1") is True
-    assert await held_by_other_job(session_factory, ["old-h"], "old-job") is False
-    assert await held_by_other_job(session_factory, ["x"], "job1") is False
-    assert await held_by_other_job(session_factory, [], "job1") is False
-

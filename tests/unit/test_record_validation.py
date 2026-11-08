@@ -485,20 +485,3 @@ async def test_worker_fails_the_job_naming_the_record(monkeypatch: pytest.Monkey
     (stats,) = saved
     assert stats.error_type == "RecordValidationError"
     assert stats.error == "record 1 of 1 does not match TypedRecord[Order]: data.amount: missing"
-
-
-async def test_worker_leaves_the_check_out_of_dedup_step_names(monkeypatch: pytest.MonkeyPatch):
-    pipeline = _Pipeline([batch_typed()])
-    ex, _ = _worker(monkeypatch, pipeline)
-    seen: List[Any] = []
-
-    async def claim(*args: Any) -> Any:
-        seen.append(args[5])
-        return args[4], []
-
-    monkeypatch.setattr(ex, "_claim_records", claim)
-    payload = _payload([_order(1)])
-    payload["dedup_check"] = True
-    pipeline.define_destination = lambda records, params: _Dest()  # type: ignore[method-assign]
-    assert await ex.execute_job(payload) is True
-    assert seen == [["rv_batch_typed"]]

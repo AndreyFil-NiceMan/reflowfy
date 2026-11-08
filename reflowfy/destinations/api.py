@@ -431,24 +431,6 @@ class ApiDestination(BaseDestination):
         except Exception:
             return False
 
-    def identity_config(self) -> Dict[str, Any]:
-        """``config`` minus how fast it sends, and minus per-record keys left unset.
-
-        Unset ``per_record``/``body_field``/``params_field`` are dropped so an
-        api_destination that does not use them hashes exactly as it did before
-        they existed. ``body_field`` is hashed under its old name ``key_field``,
-        so renaming it did not change any destination's hash.
-        """
-        identity = dict(self.config)
-        if not identity.get("per_record"):
-            identity.pop("per_record", None)
-        body_field = identity.pop("body_field", None)
-        if body_field is not None:
-            identity["key_field"] = body_field
-        if identity.get("params_field") is None:
-            identity.pop("params_field", None)
-        return identity
-
     def health_key(self) -> Optional[str]:
         """One probe per host (and client settings) per job."""
         return f"{self._connection_key()}|{self.config.get('health_check_enabled', True)}"

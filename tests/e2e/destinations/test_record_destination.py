@@ -93,7 +93,7 @@ async def _consume_run(run: str, expected: int, timeout: float = 60.0) -> List[T
 
 async def test_each_record_lands_once_on_its_engine_topic():
     run = f"rd-route-{uuid.uuid4().hex[:8]}"
-    _, stats = _run_and_wait({"run": run, "mode": "route", "count": 30, "batch_size": 15})
+    _, stats = _run_and_wait({"run": run, "scenario": "route", "count": 30, "batch_size": 15})
 
     assert stats.get("state") == "completed", stats
     assert (stats["total_jobs"], stats["jobs_completed"]) == (2, 2), stats
@@ -107,7 +107,7 @@ async def test_each_record_lands_once_on_its_engine_topic():
 
 async def test_unknown_engines_are_skipped_and_the_rest_is_sent():
     run = f"rd-skip-{uuid.uuid4().hex[:8]}"
-    execution_id, stats = _run_and_wait({"run": run, "mode": "skip", "count": 30})
+    execution_id, stats = _run_and_wait({"run": run, "scenario": "skip", "count": 30})
 
     assert stats.get("state") == "completed", stats
     assert stats["jobs_completed"] == 2, stats
@@ -122,7 +122,7 @@ async def test_unknown_engines_are_skipped_and_the_rest_is_sent():
 
 async def test_unknown_engines_fail_the_job_with_nothing_written():
     run = f"rd-fail-{uuid.uuid4().hex[:8]}"
-    _, stats = _run_and_wait({"run": run, "mode": "fail", "count": 30})
+    _, stats = _run_and_wait({"run": run, "scenario": "fail", "count": 30})
 
     assert stats.get("state") in ("completed", "failed"), stats
     assert stats["jobs_failed"] == stats["total_jobs"] == 2, stats

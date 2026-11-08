@@ -146,17 +146,6 @@ def test_current_checkpoint_when_every_batch_completed(db):
     assert _manager(db).get_execution_stats("e")["current_checkpoint"] == 3  # type: ignore[index]
 
 
-def test_get_checkpoints_delegates_to_the_job_table(db):
-    _execution(db)
-    _jobs(db, 1, completed=1, failed=2)
-    manager = _manager(db)
-    assert len(manager.get_checkpoints("e")) == 3
-    assert {j.state for j in manager.get_checkpoints("e", "failed")} == {"failed"}
-
-
-# ----- ExecutionManager -------------------------------------------------------------
-
-
 def test_update_job_counts_increments_without_committing(db):
     _execution(db, jobs_dispatched=1, jobs_completed=2, jobs_failed=0)
     em = ExecutionManager(db)

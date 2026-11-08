@@ -94,7 +94,7 @@ async def _consume_run(run: str, expected: int, timeout: float = 60.0) -> List[T
 async def test_static_headers_with_placeholders(manager):
     run = f"kafka-hdr-static-{uuid.uuid4().hex[:8]}"
     stats = _run_and_wait(
-        manager, {"run": run, "mode": "static", "count": 20}
+        manager, {"run": run, "scenario": "static", "count": 20}
     )
 
     assert stats.get("state") == "completed", stats
@@ -109,7 +109,7 @@ async def test_static_headers_with_placeholders(manager):
 
 async def test_function_headers_bytes_and_null(manager):
     run = f"kafka-hdr-fn-{uuid.uuid4().hex[:8]}"
-    stats = _run_and_wait(manager, {"run": run, "mode": "function", "count": 20})
+    stats = _run_and_wait(manager, {"run": run, "scenario": "function", "count": 20})
 
     assert stats.get("state") == "completed", stats
     found = await _consume_run(run, expected=20)
@@ -123,7 +123,7 @@ async def test_function_headers_bytes_and_null(manager):
 
 async def test_missing_placeholder_field_fails_and_writes_nothing(manager):
     run = f"kafka-hdr-missing-{uuid.uuid4().hex[:8]}"
-    stats = _run_and_wait(manager, {"run": run, "mode": "missing", "count": 20})
+    stats = _run_and_wait(manager, {"run": run, "scenario": "missing", "count": 20})
 
     assert stats.get("state") in ("completed", "failed"), stats
     assert stats["jobs_failed"] == stats["total_jobs"] == 2, stats

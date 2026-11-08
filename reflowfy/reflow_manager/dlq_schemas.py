@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from typing import Dict, Any, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ScheduleDLQJobRequest(BaseModel):
@@ -30,8 +30,7 @@ class DLQJobResponse(BaseModel):
     processed_at: Optional[datetime] = None
     execution_id: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DLQJobListResponse(BaseModel):
