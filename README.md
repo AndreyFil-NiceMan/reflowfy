@@ -230,8 +230,7 @@ api_destination(
 ```
 
 - `kafka_destination` sends each job's messages as **one batch**: all handed to the producer,
-  acks awaited together. Order on a partition is kept. (`key_field=` is the deprecated name of
-  `value_field=`: it never set the key.)
+  acks awaited together. Order on a partition is kept.
 - A per-record `api_destination` keeps **16 requests in flight** per job
   (`TRANSFORM_CONCURRENCY`), so they may land out of order; make the endpoint idempotent.
 - Neither destination takes `concurrency=` any more (removed in 1.1.4): to set a limit, use

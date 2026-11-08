@@ -122,7 +122,7 @@ class RecordDestination(BaseDestination):
 
     def __init__(self, **options: Any):
         # The routed destinations are what records are written to; this one's config
-        # only names it (repr, and the legacy job-level dedup hash).
+        # only names it.
         super().__init__({"record_destination": self.name})
         self.options = options
         self._groups: List[BaseDestination] = []

@@ -9,7 +9,6 @@ import inspect
 import json
 import logging
 import ssl
-import warnings
 from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Tuple, Union, cast
 from aiokafka import AIOKafkaProducer
 from aiokafka.errors import KafkaError
@@ -98,7 +97,6 @@ class KafkaDestination(BaseDestination):
         value_field: Optional[str] = None,
         key: Optional[KafkaKey] = None,
         headers: Optional[KafkaHeaders] = None,
-        key_field: Optional[str] = None,
         **producer_config: Any,
     ):
         """
@@ -125,7 +123,6 @@ class KafkaDestination(BaseDestination):
                 (``"{customer_id}"``, ``"{data.region}"``) or a function called with
                 each record returning str / bytes / None. Messages with the same key
                 go to the same partition, in order. Default: no key.
-            key_field: Deprecated name of ``value_field`` (it never set the key).
             headers: Kafka headers to set on every message. Either a mapping of
                 header name to string value, where ``{field}`` placeholders are
                 filled from each record (``{"tenant": "{tenant_id}"}``), or a
@@ -142,18 +139,6 @@ class KafkaDestination(BaseDestination):
                 "messages are now sent as one batch, which is faster than any setting "
                 "of it. Remove the argument."
             )
-        if key_field is not None:
-            if value_field is not None:
-                raise ValueError(
-                    "kafka_destination: pass value_field= only (key_field= is its old name)"
-                )
-            warnings.warn(
-                "kafka_destination(key_field=) is deprecated: it sets the message value, "
-                "not its key. Use value_field= (and key= for the message key).",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-            value_field = key_field
         headers_fn, static_headers = _check_headers(headers)
         key_fn, static_key = _check_key(key)
         config = {
@@ -507,16 +492,11 @@ class KafkaDestination(BaseDestination):
         return result
 
     def identity_config(self) -> Dict[str, Any]:
-        """``config`` without ``headers`` or ``key``, ``value_field`` under its old name.
+        """``config`` without ``headers`` or ``key``: they describe a message, not where it goes.
 
-        Headers and the key describe a message, not the topic it lands on, so adding
-        or changing them does not turn records already written into new work.
-        ``value_field`` is hashed as ``key_field``, its name until 1.1.4, so the rename
-        kept every destination's hash.
+        So adding or changing them does not turn records already written into new work.
         """
-        identity = {k: v for k, v in self.config.items() if k not in ("headers", "key")}
-        identity["key_field"] = identity.pop("value_field", None)
-        return identity
+        return {k: v for k, v in self.config.items() if k not in ("headers", "key")}
 
     def health_key(self) -> Optional[str]:
         """One check per cluster per job; per topic and group when it measures lag."""
@@ -674,7 +654,6 @@ def kafka_destination(
     value_field: Optional[str] = None,
     key: Optional[KafkaKey] = None,
     headers: Optional[KafkaHeaders] = None,
-    key_field: Optional[str] = None,
     **producer_config: Any,
 ) -> KafkaDestination:
     """
@@ -715,6 +694,5 @@ def kafka_destination(
         value_field=value_field,
         key=key,
         headers=headers,
-        key_field=key_field,
         **producer_config,
     )

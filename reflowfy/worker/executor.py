@@ -15,17 +15,13 @@ from reflowfy.core.execution_context import build_flat_runtime_params_from_metad
 from reflowfy.core.registry import pipeline_registry
 from reflowfy.execution.content_dedup import (
     claim_record_hashes,
-    compute_content_hash,
     compute_record_hash,
     destination_identity,
-    held_by_other_job,
-    honor_legacy_hash,
-    previous_destination_identity,
     record_identity,
     release_record_hashes,
 )
 from reflowfy.destinations.record import RecordDestination
-from reflowfy.execution.job_runner import ROUTE_MODE, run_job_records_async
+from reflowfy.execution.job_runner import run_job_records_async
 from reflowfy.factories.source_factory import SourceFactory
 from reflowfy.observability import metrics
 from reflowfy.observability.context import log_context
@@ -364,12 +360,7 @@ class WorkerExecutor:
                     pipeline,
                     _pipeline_name,
                     job_id,
-                    records,
                     transformed_records,
-                    # Not the record_type check or a record destination's routing:
-                    # neither is a transformation, and counting them would change
-                    # the legacy job hash.
-                    [step.name for step in applied if step.mode not in ("validate", ROUTE_MODE)],
                     job_params,
                     destination,
                     runtime_params,
@@ -520,9 +511,7 @@ class WorkerExecutor:
         pipeline: Any,
         pipeline_name: str,
         job_id: str,
-        records: List[Any],
         transformed_records: List[Any],
-        transformation_names: List[str],
         job_params: Optional[Dict[str, Any]],
         destination: Any,
         runtime_params: Any,
@@ -533,29 +522,6 @@ class WorkerExecutor:
         as is a second record with the same identity within this job.
         """
         identity = destination_identity(destination)
-        if honor_legacy_hash():
-            # Upgrade guard: the previous release claimed one hash per job in
-            # processed_content. A job it already wrote is a duplicate as a whole.
-            # (Hashing is per record, so the previous identity only when it differs.)
-            previous_identity = previous_destination_identity(destination)
-            job_hashes = [
-                compute_content_hash(
-                    pipeline_name, transformation_names, records, job_params, identity
-                ),
-                compute_content_hash(pipeline_name, transformation_names, records, job_params),
-            ]
-            if previous_identity != identity:
-                job_hashes.append(
-                    compute_content_hash(
-                        pipeline_name,
-                        transformation_names,
-                        records,
-                        job_params,
-                        previous_identity,
-                    )
-                )
-            if await held_by_other_job(self._async_session, job_hashes, job_id):
-                return [], []
 
         dedup_key = getattr(pipeline, "dedup_key", None)
         identities: Dict[int, Dict[str, Any]] = {}

@@ -386,7 +386,7 @@ class PipelineRunner:
             )
             return
 
-        if execution.plan_complete is False and not self._recover_plan(execution_id):
+        if not execution.plan_complete and not self._recover_plan(execution_id):
             return
         self.execution_manager.db.refresh(execution)
 
@@ -1002,7 +1002,7 @@ class PipelineRunner:
             execution = self.execution_manager.get_execution(execution_id)
             if execution is None or execution.state not in ("pending", "running"):
                 return False
-            if execution.plan_complete is not False:
+            if execution.plan_complete:
                 return True
             age = (
                 datetime.now(timezone.utc).replace(tzinfo=None) - execution.created_at

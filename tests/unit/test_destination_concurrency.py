@@ -197,12 +197,9 @@ class TestApiRequestsInFlight:
 
 
 class TestDedupIdentity:
-    def test_kafka_identity_has_the_shape_it_had_before_1_1_4(self):
-        """concurrency was never hashed, and value_field is hashed as key_field."""
-        dest = kafka_destination(bootstrap_servers="k:9092", topic="t", value_field="data")
-        config = destination_identity(dest)["config"]
-        assert "concurrency" not in config and "value_field" not in config
-        assert config["key_field"] == "data"
+    def test_kafka_identity_has_no_concurrency(self):
+        dest = kafka_destination(bootstrap_servers="k:9092", topic="t")
+        assert "concurrency" not in destination_identity(dest)["config"]
 
     def test_api_identity_has_no_concurrency(self):
         dest = api_destination(url="https://x.com/{id}", per_record=True)
@@ -212,26 +209,6 @@ class TestDedupIdentity:
         batched = api_destination(url="https://x.com")
         per_record = api_destination(url="https://x.com", per_record=True)
         assert destination_identity(batched) != destination_identity(per_record)
-
-    def test_plain_api_identity_is_unchanged_by_the_new_options(self):
-        # The config keys an api_destination had before per_record/key_field/concurrency:
-        # its records must keep the hashes they were claimed under.
-        dest = api_destination(url="https://x.com/in", body={"a": 1}, auth_token="secret")
-
-        class ApiDestination:  # stand-in with the old config shape, same type name
-            config = {
-                "url": "https://x.com/in",
-                "method": "POST",
-                "headers": {},
-                "auth_type": None,
-                "auth_token": "secret",
-                "timeout": 30.0,
-                "params": None,
-                "body": {"a": 1},
-                "health_check_enabled": True,
-            }
-
-        assert destination_identity(dest) == destination_identity(ApiDestination())
 
     def test_destination_without_identity_config_uses_its_config(self):
         class Plain:

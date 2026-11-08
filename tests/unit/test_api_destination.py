@@ -433,16 +433,6 @@ class TestPerRecord:
                 url="https://api.example.com", per_record=True, body_field="p", params_field="p"
             )
 
-    def test_unset_params_field_not_in_identity(self):
-        dest = api_destination(url="https://api.example.com", per_record=True)
-        assert "params_field" not in dest.identity_config()
-        dest = api_destination(url="https://api.example.com", per_record=True, params_field="q")
-        assert dest.identity_config()["params_field"] == "q"
-        dest = api_destination(url="https://api.example.com", per_record=True, body_field="k")
-        # Hashed under its old name, so the rename kept every dedup hash.
-        assert dest.identity_config()["key_field"] == "k"
-        assert "body_field" not in dest.identity_config()
-
     def test_body_with_per_record_rejected(self):
         with pytest.raises(ValueError, match="per_record"):
             api_destination(url="https://api.example.com", per_record=True, body={"a": 1})
