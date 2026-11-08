@@ -37,7 +37,12 @@ from reflowfy.destinations.console import console_destination
 
 # Decorators for reusable components
 from reflowfy.sources.decorators import source, source_registry
-from reflowfy.destinations.decorators import destination, destination_registry
+from reflowfy.destinations.decorators import (
+    destination,
+    destination_registry,
+    record_destination,
+)
+from reflowfy.destinations.record import RecordDestination, RecordDestinationError
 from reflowfy.transformations.decorators import record_transformation, transformation
 
 __version__ = "1.1.3"
@@ -81,6 +86,7 @@ __all__ = [
     "RecordValidationError",
     "SourceError",
     "DestinationError",
+    "RecordDestinationError",
     "TransformationError",
     "StepOutputError",
     "elastic_source",
@@ -91,6 +97,8 @@ __all__ = [
     # Decorators
     "source",
     "destination",
+    "record_destination",
+    "RecordDestination",
     "transformation",
     "record_transformation",
     "source_registry",

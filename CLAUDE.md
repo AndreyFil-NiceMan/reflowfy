@@ -298,6 +298,55 @@ Tests: `tests/unit/test_kafka_destination_send.py::TestHeaders`; E2E
 `tests/e2e/destinations/test_kafka_destination_headers.py` (real broker: static, function and
 missing-field modes of `e2e_kafka_headers_test`, topic `e2e-kafka-headers`).
 
+### A destination per record: `@record_destination`
+
+`define_destination` runs once per job; `@record_destination("name", on_error="fail"|"skip",
+concurrency=None, timeout=None)` turns a function `(record, runtime_params, **options) -> BaseDestination`
+(sync or `async def`) into a `RecordDestination` subclass (`destinations/record.py`) that
+`define_destination` returns (`return stt_engines()`; kwargs become `options`). It is for
+records of one job going to different topics/clusters/credentials.
+
+- **Routing is a step of the job runner**, not of the send: `run_job_records_async` calls
+  `RecordDestination.route()` right after `define_destination`, so every record has its
+  destination before dedup and before the first send. It is reported as an `AppliedStep`
+  named after the destination with `mode="route"` (`job_runner.ROUTE_MODE`), so its time and
+  skips appear wherever a transformation's do (worker, `LocalExecutor`, `reflowfy test`); the
+  worker leaves it out of the legacy job hash's step names.
+- **Grouping:** destinations with the same class, `config`, `retry_config` and `dedup_identity`
+  (`_group_key`, JSON) share one — 200 records over 3 topics open 3 producers. Records are
+  mapped to their group by `id(record)` (the route keeps them alive). Anything kept off
+  `config` (a Kafka `headers` function, `ssl_context`) comes from the group's first record.
+- **Failures:** `SkipRecord` skips with its reason; `on_error="skip"` skips any other exception
+  with `type(exc).__name__` as the reason (never the message: it can carry record values, and
+  reasons are counted); `"fail"` (default) raises `RecordDestinationError` (a `PipelineError`)
+  naming the destination, the record's position and the exception type. A return that is not a
+  `BaseDestination` (or is another `RecordDestination`) always fails. `SkipJob` drops the job.
+- **Worker:** dedup hashes each record against **its own** destination
+  (`destination_identity(destination.destination_for(record))`), so one record to two topics is
+  two writes; after dedup the destination is **not** re-resolved for a `RecordDestination`
+  (each was built from its own record, and re-routing would count skips twice).
+  `send_with_retry` sends the groups through `for_each_concurrently` (the record
+  transformations' worker pool), each with its own retries, so a failing group does not
+  re-send the ones already written; the first failure cancels the sends in flight.
+  `health_check` (every group healthy) and `close` (all closed, first error raised after) run
+  through the same pool.
+- **Concurrency/timeout, as `@record_transformation`:** `effective_concurrency()` (the
+  decorator's `concurrency`, else `TRANSFORM_CONCURRENCY`, 16) caps groups in flight and, for
+  an `async def` function, records routed at once (`AppliedStep.concurrency` reports the
+  latter; `None` for a sync function, which routes sequentially in one thread). `concurrency=1`
+  sends groups one at a time in first-seen order. `timeout` (async only — a sync function in a
+  thread cannot be interrupted, so it raises `TypeError` at decoration) wraps each call in
+  `asyncio.wait_for` and turns a timeout into `TimeoutError("timed out after Ns")`, which then
+  follows `on_error` (reason/type `TimeoutError`).
+- Observability: the existing skip path (`records_skipped`/`record_skip_reasons`,
+  `reflowfy_records_skipped_total{transformation=<name>}`, the `… skipped N records` line);
+  `records_routed` info log `<name> routed N records to K destinations`; a warning when every
+  record was skipped; `destinations` (count) in the job's `stats`, present only for a record
+  destination. No new metric: a topic or cluster as a label is unbounded.
+- Tests: `tests/unit/test_record_destination.py`; E2E
+  `tests/e2e/destinations/test_record_destination.py` (`e2e_record_destination_test`, one job to
+  topics `e2e-rd-whisper`/`-google`/`-azure`, in route, skip and fail modes).
+
 ### Execution modes
 
 `EXECUTION_MODE` env var selects `local` (in-process via `LocalDispatcher`, used by the default docker-compose) or `distributed` (Kafka via `KafkaDispatcher`). Same pipeline code runs in both.

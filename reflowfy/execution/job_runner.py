@@ -21,6 +21,7 @@ from reflowfy.core.async_utils import run_coroutine_sync
 from reflowfy.core.exceptions import RecordValidationError, SkipJob, pipeline_step
 from reflowfy.core.record_validation import describe_invalid, find_invalid_records
 from reflowfy.core.serialization import to_json_safe
+from reflowfy.destinations.record import RecordDestination
 from reflowfy.execution.transformation_runner import (
     AppliedStep,
     apply_transformations_iteratively_async,
@@ -31,6 +32,21 @@ logger = get_logger("execution.job_runner")
 
 RECORD_TYPE_STEP = "record_type"
 """Name of the :class:`AppliedStep` that reports the ``record_type`` check."""
+
+ROUTE_MODE = "route"
+"""``AppliedStep.mode`` of a ``@record_destination`` choosing each record's destination.
+
+Not a transformation: reported as a step so its time and skipped records show up
+wherever a transformation's do."""
+
+
+def _route_concurrency(destination: RecordDestination) -> Optional[int]:
+    """Records routed at once, for an ``async def`` destination function; else None."""
+    import inspect
+
+    if not inspect.iscoroutinefunction(destination.destination_for_record):
+        return None
+    return destination.effective_concurrency()
 
 
 def check_record_type(pipeline: Any, records: List[Any]) -> Tuple[List[Any], AppliedStep]:
@@ -249,6 +265,23 @@ async def run_job_records_async(
             destination = await asyncio.to_thread(
                 pipeline.define_destination, transformed_records, runtime_params
             )
+        if isinstance(destination, RecordDestination) and transformed_records:
+            # Choose every record's destination now, before dedup and the send: a
+            # skipped record must not be claimed, and dedup hashes where each goes.
+            start = time.time()
+            routed = await destination.route(transformed_records, runtime_params)
+            applied.append(
+                AppliedStep(
+                    name=destination.name,
+                    duration=time.time() - start,
+                    records_in=len(transformed_records),
+                    records_out=len(routed.records),
+                    mode=ROUTE_MODE,
+                    concurrency=_route_concurrency(destination),
+                    skip_reasons=routed.skip_reasons or None,
+                )
+            )
+            transformed_records = routed.records
     except SkipJob as exc:
         # The pipeline dropped this job. Same shape as an empty slice, which every
         # caller already treats as a no-op — no destination write, no failure.
