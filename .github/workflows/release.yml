@@ -69,9 +69,15 @@ jobs:
       - name: Wait for PyPI to index the release
         run: |
           # Poll the simple index, not the JSON API: pip resolves against
-          # /simple/ and its CDN copy lags the JSON API by minutes.
+          # /simple/ and its CDN copy lags the JSON API by minutes. Check both of
+          # its forms: pip reads the HTML page, uv asks for the JSON one
+          # (PEP 691), and the CDN caches them separately — release 1.1.4 found
+          # the HTML updated while uv, seconds later, still saw no 1.1.4.
+          WHEEL="reflowfy-${VERSION}-py3-none-any.whl"
           for i in $(seq 1 30); do
-            if curl -fsSL "https://pypi.org/simple/reflowfy/" | grep -q "reflowfy-${VERSION}-py3-none-any.whl"; then
+            if curl -fsSL "https://pypi.org/simple/reflowfy/" | grep -q "$WHEEL" \
+              && curl -fsSL -H "Accept: application/vnd.pypi.simple.v1+json" \
+                "https://pypi.org/simple/reflowfy/" | grep -q "$WHEEL"; then
               echo "reflowfy ${VERSION} is available on PyPI"
               exit 0
             fi
@@ -85,7 +91,16 @@ jobs:
         env:
           REFLOWFY_BASE_IMAGE: reflowfy-base
           REFLOWFY_VERSION: ${{ env.VERSION }}
-        run: ./scripts/build_base_image.sh --no-push
+        # Retried: a CDN edge can still serve an index without the new version
+        # for a short while after the check above passed.
+        run: |
+          for attempt in 1 2 3; do
+            ./scripts/build_base_image.sh --no-push && exit 0
+            echo "::warning::base image build failed (attempt $attempt/3); retrying in 30s"
+            sleep 30
+          done
+          echo "::error::base image build failed after 3 attempts"
+          exit 1
 
       - name: Save base image to a gzipped tar
         run: |
