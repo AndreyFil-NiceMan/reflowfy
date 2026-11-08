@@ -91,11 +91,10 @@ async def _consume_run(run: str, expected: int, timeout: float = 60.0) -> List[T
     return found
 
 
-@pytest.mark.parametrize("concurrency", [1, 8])
-async def test_static_headers_with_placeholders(manager, concurrency):
-    run = f"kafka-hdr-static-{concurrency}-{uuid.uuid4().hex[:8]}"
+async def test_static_headers_with_placeholders(manager):
+    run = f"kafka-hdr-static-{uuid.uuid4().hex[:8]}"
     stats = _run_and_wait(
-        manager, {"run": run, "mode": "static", "count": 20, "concurrency": concurrency}
+        manager, {"run": run, "mode": "static", "count": 20}
     )
 
     assert stats.get("state") == "completed", stats

@@ -3,6 +3,7 @@
 Fake aiokafka producer/consumer/admin classes record every call; no broker.
 """
 
+import asyncio
 import datetime as dt
 import logging
 from contextlib import contextmanager
@@ -60,6 +61,7 @@ class FakeProducer:
         self.started = False
         self.stopped = 0
         self.sent: List[Dict[str, Any]] = []
+        self.attempts = 0
         FakeProducer.instances.append(self)
 
     async def start(self) -> None:
@@ -70,13 +72,23 @@ class FakeProducer:
     async def stop(self) -> None:
         self.stopped += 1
 
-    async def send_and_wait(self, topic: str, value: bytes, headers: Any = None) -> None:
-        if (
-            FakeProducer.fail_on_send is not None
-            and len(self.sent) + 1 == FakeProducer.fail_on_send
-        ):
-            raise FakeProducer.send_error
-        self.sent.append({"topic": topic, "value": value, "headers": headers})
+    async def send(self, topic: str, value: bytes, key: Any = None, headers: Any = None):
+        """aiokafka's send(): queue the message, return a future for its ack.
+
+        ``fail_on_send=N`` makes the Nth message's ack fail (the broker refused it);
+        the others are still delivered, as they are in a real batch.
+        """
+        self.attempts += 1
+        future: "asyncio.Future[None]" = asyncio.get_running_loop().create_future()
+        if FakeProducer.fail_on_send is not None and self.attempts == FakeProducer.fail_on_send:
+            future.set_exception(FakeProducer.send_error)
+            return future
+        message = {"topic": topic, "value": value, "headers": headers}
+        if key is not None:
+            message["key"] = key
+        self.sent.append(message)
+        future.set_result(None)
+        return future
 
 
 @pytest.fixture(autouse=True)
@@ -223,7 +235,7 @@ class TestSend:
 
     async def test_empty_batch_sends_nothing(self, fake_producer):
         await _dest().send([])
-        assert fake_producer.instances[0].sent == []
+        assert fake_producer.instances == []  # no producer opened for nothing
 
     async def test_non_dict_records_are_json_encoded(self, fake_producer):
         await _dest().send(["text", 7, None, [1, 2]])
@@ -253,38 +265,91 @@ class TestSend:
         await _dest().send([{"a": 1}], metadata={"n": 1})
         assert fake_producer.instances[0].sent[0]["headers"] is None
 
-    async def test_non_json_value_raises_destination_error(self, fake_producer):
-        with pytest.raises(DestinationError) as excinfo:
+    async def test_non_json_record_fails_before_anything_is_sent(self, fake_producer):
+        with pytest.raises(ValueError) as excinfo:
             await _dest().send([{"ok": 1}, {"when": dt.datetime(2026, 1, 1)}])
 
-        assert excinfo.value.destination_type == "kafka"
-        assert "Unexpected error" in str(excinfo.value)
-        assert isinstance(excinfo.value.original_error, TypeError)
-        # The record before the bad one was already sent.
-        assert len(fake_producer.instances[0].sent) == 1
+        assert str(excinfo.value) == (
+            "kafka_destination: record 2 of 2 is not JSON serializable: TypeError"
+        )
+        assert isinstance(excinfo.value.__cause__, TypeError)
+        assert fake_producer.instances == []  # not even a producer: nothing was written
 
-    async def test_kafka_error_raises_destination_error_naming_the_topic(self, fake_producer):
+    async def test_a_refused_message_fails_the_send_naming_it(self, fake_producer):
         fake_producer.fail_on_send = 2
         with pytest.raises(DestinationError) as excinfo:
             await _dest(topic="events").send([{"i": 1}, {"i": 2}, {"i": 3}])
 
-        assert "Failed to send to topic 'events'" in str(excinfo.value)
+        assert str(excinfo.value) == (
+            "Destination 'kafka' error: Failed to send to topic 'events': record 2 of 3: "
+            "KafkaError: broker gone"
+        )
         assert isinstance(excinfo.value.original_error, KafkaError)
-        assert len(fake_producer.instances[0].sent) == 1  # stopped at the failure
+        # One batch: the others were handed over too, and their acks were awaited.
+        assert [m["value"] for m in fake_producer.instances[0].sent] == [b'{"i": 1}', b'{"i": 3}']
+
+    async def test_a_message_refused_on_hand_over_stops_the_batch(self, fake_producer):
+        dest = _dest(topic="events")
+        producer = await dest._get_producer()
+        real_send = producer.send
+
+        async def full_after_one(topic, value, key=None, headers=None):
+            if producer.attempts == 1:
+                raise KafkaError("buffer full")
+            return await real_send(topic, value, key=key, headers=headers)
+
+        producer.send = full_after_one
+        with pytest.raises(DestinationError) as excinfo:
+            await dest.send([{"i": 1}, {"i": 2}, {"i": 3}])
+        assert "record 2 of 3: KafkaError: buffer full" in str(excinfo.value)
+        assert [m["value"] for m in producer.sent] == [b'{"i": 1}']  # its ack was awaited
+
+    async def test_an_unexpected_producer_error_is_a_destination_error(self, fake_producer):
+        dest = _dest()
+        producer = await dest._get_producer()
+
+        async def broken(topic, value, key=None, headers=None):
+            raise RuntimeError("producer closed")
+
+        producer.send = broken
+        with pytest.raises(DestinationError, match="Unexpected error: producer closed"):
+            await dest.send([{"i": 1}])
+
+    async def test_messages_go_out_as_one_batch(self, fake_producer):
+        """All are handed to the producer before any ack is awaited."""
+        dest = _dest()
+        producer = await dest._get_producer()
+        acks: List[Any] = []
+        real_send = producer.send
+
+        async def held(topic, value, key=None, headers=None):
+            await real_send(topic, value, key=key, headers=headers)
+            future = asyncio.get_running_loop().create_future()
+            acks.append(future)
+            return future
+
+        producer.send = held
+        task = asyncio.create_task(dest.send([{"i": i} for i in range(50)]))
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert len(producer.sent) == 50 and not task.done()  # all queued, none acked yet
+        for future in acks:
+            future.set_result(None)
+        await task
 
     async def test_send_with_retry_retries_a_kafka_error(self, fake_producer):
         dest = _dest(retry_config=RetryConfig(max_attempts=3, min_wait_seconds=0, multiplier=0))
         producer = await dest._get_producer()
-        real_send = producer.send_and_wait
+        real_send = producer.send
         calls = {"n": 0}
 
-        async def flaky(topic, value, headers=None):
+        async def flaky(topic, value, key=None, headers=None):
             calls["n"] += 1
             if calls["n"] == 1:  # first send of the first attempt
                 raise KafkaError("leader not available")
-            await real_send(topic, value, headers)
+            return await real_send(topic, value, key=key, headers=headers)
 
-        producer.send_and_wait = flaky
+        producer.send = flaky
 
         await dest.send_with_retry([{"i": 1}])
 
@@ -297,12 +362,12 @@ class TestSend:
         dest = _dest(retry_config=RetryConfig(max_attempts=2, min_wait_seconds=0, multiplier=0))
         calls = {"n": 0}
 
-        async def always_fail(topic, value, headers=None):
+        async def always_fail(topic, value, key=None, headers=None):
             calls["n"] += 1
             raise KafkaError("nope")
 
         await dest._get_producer()
-        fake_producer.instances[0].send_and_wait = always_fail
+        fake_producer.instances[0].send = always_fail
 
         with pytest.raises(DestinationError):
             await dest.send_with_retry([{"i": 1}])
@@ -523,7 +588,7 @@ class TestHeaders:
         msg = str(excinfo.value)
         assert "header 'tenant'" in msg and "{tenant}" in msg and "record 2 of 2" in msg
         assert "secret-value" not in msg
-        assert fake_producer.instances[0].sent == []
+        assert fake_producer.instances == []  # failed before a producer was opened
 
     async def test_placeholder_on_non_dict_record_fails(self, fake_producer):
         with pytest.raises(ValueError, match="record 1 of 1"):
@@ -547,7 +612,7 @@ class TestHeaders:
             await _dest(headers=lambda r: {"k": r["missing"]}).send([{"a": 1}, {"b": 2}])
         assert "headers function failed on record 1 of 2: KeyError" in str(excinfo.value)
         assert isinstance(excinfo.value.__cause__, KeyError)
-        assert fake_producer.instances[0].sent == []
+        assert fake_producer.instances == []
 
     @pytest.mark.parametrize(
         "produced, match",
@@ -571,11 +636,15 @@ class TestHeaders:
             ("x", b"1"),
         ]
 
-    async def test_headers_with_concurrency(self, fake_producer):
+    async def test_headers_on_every_message_of_a_batch(self, fake_producer):
         records = [{"i": i} for i in range(20)]
-        await _dest(headers={"i": "{i}"}, concurrency=5).send(records)
-        got = {m["value"]: m["headers"] for m in fake_producer.instances[0].sent}
-        assert got == {f'{{"i": {i}}}'.encode(): [("i", str(i).encode())] for i in range(20)}
+        await _dest(headers={"i": "{i}"}).send(records)
+        sent = fake_producer.instances[0].sent
+        assert [m["headers"] for m in sent] == [[("i", str(i).encode())] for i in range(20)]
+
+    async def test_dotted_placeholders_reach_nested_fields(self, fake_producer):
+        await _dest(headers={"region": "{data.region}"}).send([{"data": {"region": "eu"}}])
+        assert fake_producer.instances[0].sent[0]["headers"] == [("region", b"eu")]
 
     def test_static_headers_are_config_but_not_identity(self):
         dest = _dest(headers={"a": "b"})

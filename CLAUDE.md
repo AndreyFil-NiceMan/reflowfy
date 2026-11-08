@@ -268,24 +268,47 @@ removes a key) and leaves that field out of the body. Same failure rule as the U
 missing placeholder field or a non-dict `params_field` fails the job before its request.
 Unset `params_field` is dropped from `identity_config()`, and `body_field` is hashed under
 its old key `key_field` so the rename kept every hash. No `dedup_identity` needed:
-the records are not in the config. Tests: `tests/unit/test_api_destination.py::TestPerRecord`.
+the records are not in the config. Headers are per record too: a `headers` value with a
+`{field}` placeholder is filled per request (the others ride on the client), or `headers=` is a
+function `record -> {str: str} | None` (per-record mode only; kept off `config`). A request
+passes `headers=` to httpx only when it has its own. Tests:
+`tests/unit/test_api_destination.py::TestPerRecord`, `test_destination_pool.py::TestPerRecordHeaders`.
 
-**`concurrency=N`** (both `kafka_destination` and per-record `api_destination`, default 1)
-keeps N messages/requests in flight per job through `core/async_utils.for_each_concurrently`
-— the same fixed worker pool record transformations use, not a task per record. 1 is the old
-behaviour exactly (one at a time, in order); above 1 records start in order but may land
-out of order, and the first failure cancels the rest. It is not part of the dedup hash:
-`BaseDestination.identity_config()` is what `destination_identity` hashes, and destinations
-drop tuning knobs there. `ApiDestination` also drops `per_record`/`body_field` when unset,
-so adding those keys did not change every existing destination's hash (which would have
-re-sent the last 24 h of records once after upgrade). A new config key on a destination
-needs the same treatment. Tests: `tests/unit/test_destination_concurrency.py`; E2E
+**No `concurrency=` on the destinations (removed in 1.1.4).** `kafka_destination` sends a
+job's messages as **one batch**: every message is handed to `producer.send()`, then all the
+ack futures are awaited together (`asyncio.gather`), so aiokafka batches them. Order on a
+partition is kept — aiokafka mutes a partition while its batch is in flight
+(`aiokafka/producer/sender.py`). A message refused on hand-over stops the loop; every future
+already handed over is still awaited; the error names `record N of M`. Measured on a local
+broker (1000 messages, 3 topics): 27–38 ms batched vs 259–725 ms at the old default of one
+ack at a time, and faster than the old `concurrency=16` (42–46 ms). Passing `concurrency=`
+raises a `TypeError` saying so (it would otherwise fall into `**producer_config`). A
+per-record `api_destination` keeps `send_concurrency` requests in flight — set by a
+`@record_destination`, else `default_record_concurrency()` (`TRANSFORM_CONCURRENCY`, 16) —
+through `core/async_utils.for_each_concurrently`, so requests may land out of order. Neither
+key was ever in `identity_config()`, so removing them changed no dedup hash. Tests:
+`tests/unit/test_destination_concurrency.py`; E2E
 `tests/e2e/destinations/test_api_destination_per_record.py` (the mock webhook's
-`/items/<run>/<id>` counts requests open per job) and `test_kafka_destination_concurrency.py`
-(real broker, exactly-once and order at concurrency 1); distributed
+`/items/<run>/<id>` counts requests open per job; the pipeline's `concurrency` param wraps the
+destination in a `@record_destination` with that limit) and `test_kafka_destination_concurrency.py`
+(real broker: exactly-once and each job's order with batching); distributed
 `tests/e2e_distributed/test_destination_concurrency.py` (`dist_per_record`, sink `PUT /record/…`).
 
-**Kafka headers.** `kafka_destination(headers=...)` sets message headers: a `{name: str}`
+**Per-record templates — one engine.** `core/record_templates.py` (`fill`, `fill_value`,
+`lookup`) is the only `{field}` filler: Kafka `headers=`/`key=`, API `url`/`params`/`headers=`.
+`{data.region}` walks nested dicts (a key containing the dot wins first); only `{` + dotted
+identifier + `}` is a placeholder, nothing is evaluated (not `str.format`). A missing field
+raises `TemplateError` (a `ValueError`: not retried) — `"<owner>: <what> placeholder {f} has no
+matching field on record N of M"`. Both destinations build every record's templates **before
+the first send**, so a bad record writes nothing (the API used to fill each request lazily and
+had sent the records before it).
+
+**Kafka value, key, headers.** `value_field="data"` sends `record["data"]` as the message
+value; `key_field=` is its deprecated alias (a `DeprecationWarning`; it never set the key), and
+`identity_config()` hashes it under `key_field` so the rename kept every hash. `key=` sets the
+message key per record: a template (`"{customer_id}"`) or a function `record -> str | bytes |
+None`; like headers it is not in `identity_config()`, a template is `config["key"]`, a function
+stays off `config`. `kafka_destination(headers=...)` sets message headers: a `{name: str}`
 mapping, `{field}` placeholders filled from each record (`{"tenant": "{tenant_id}"}`), or a
 function `record -> {name: str | bytes | None} | None` for anything computed. Headers for every
 record are built before the first send, so a missing field or a function that raises fails the
@@ -321,6 +344,27 @@ records of one job going to different topics/clusters/credentials.
   reasons are counted); `"fail"` (default) raises `RecordDestinationError` (a `PipelineError`)
   naming the destination, the record's position and the exception type. A return that is not a
   `BaseDestination` (or is another `RecordDestination`) always fails. `SkipJob` drops the job.
+- **Shared connections (`destinations/base.py` `ConnectionPool`).** One pool per
+  `RecordDestination` (per job); `_group_index` sets `connection_pool` and `send_concurrency`
+  on every group. Kafka takes its producer from the pool keyed by `_connection_key()` (all
+  producer kwargs — cluster, credentials, compression, producer_config — **not** the topic; an
+  `ssl_context` is keyed by identity), API its client keyed by scheme+host, client headers and
+  timeout. `pool.get` creates each once under a per-key lock (groups send concurrently); the
+  pool, not the destination, closes them, in `RecordDestination.close`. Keyed by host on
+  purpose: one client for the whole job measured ~20% slower than one per host (httpcore pool
+  contention). The shared client's keep-alive pool is sized to the concurrency (httpx keeps 20
+  by default and churned connections above it). `health_check` runs once per
+  `BaseDestination.health_key()` (Kafka: per cluster, or per topic+group when it measures lag;
+  API: per host + client settings; default `None`: every destination). Measured (200 records,
+  5 ms latency, plain HTTP): a destination per record went from 1,685 ms / 200 clients / 200
+  HEADs / 156 ms loop stall to 341 ms / 1 / 1 / 22 ms, the template pattern unchanged.
+- **One request budget.** `ConnectionPool(request_limit=effective_concurrency())` holds an
+  `asyncio.Semaphore` (created lazily, in the sending loop); a pooled per-record API destination
+  acquires it per request, so `concurrency` caps requests across **all** groups together (it
+  used to multiply: groups × each destination's own `concurrency`).
+- **Advice.** A job of `ADVICE_MIN_RECORDS` (10)+ records that built one destination per record
+  logs a warning once per record destination per process (`destination_per_record`): per-record
+  values belong in templates (encoding, grouping).
 - **Worker:** dedup hashes each record against **its own** destination
   (`destination_identity(destination.destination_for(record))`), so one record to two topics is
   two writes; after dedup the destination is **not** re-resolved for a `RecordDestination`
@@ -331,10 +375,10 @@ records of one job going to different topics/clusters/credentials.
   `health_check` (every group healthy) and `close` (all closed, first error raised after) run
   through the same pool.
 - **Concurrency/timeout, as `@record_transformation`:** `effective_concurrency()` (the
-  decorator's `concurrency`, else `TRANSFORM_CONCURRENCY`, 16) caps groups in flight and, for
-  an `async def` function, records routed at once (`AppliedStep.concurrency` reports the
-  latter; `None` for a sync function, which routes sequentially in one thread). `concurrency=1`
-  sends groups one at a time in first-seen order. `timeout` (async only — a sync function in a
+  decorator's `concurrency`, else `TRANSFORM_CONCURRENCY`, 16) is the request budget above, the
+  groups in flight and, for an `async def` function, records routed at once
+  (`AppliedStep.concurrency` reports the latter; `None` for a sync function, which routes
+  sequentially in one thread). `concurrency=1` sends one request / one group at a time. `timeout` (async only — a sync function in a
   thread cannot be interrupted, so it raises `TypeError` at decoration) wraps each call in
   `asyncio.wait_for` and turns a timeout into `TimeoutError("timed out after Ns")`, which then
   follows `on_error` (reason/type `TimeoutError`).
@@ -343,7 +387,12 @@ records of one job going to different topics/clusters/credentials.
   `records_routed` info log `<name> routed N records to K destinations`; a warning when every
   record was skipped; `destinations` (count) in the job's `stats`, present only for a record
   destination. No new metric: a topic or cluster as a label is unbounded.
-- Tests: `tests/unit/test_record_destination.py`; E2E
+- **Sending outside the worker.** `LocalExecutor` used to call `send_with_retry` without
+  awaiting it, so it never sent; `_send_and_close` now runs send and close in one loop (a
+  Kafka producer belongs to its loop), and `reflowfy test` closes the destination in the loop
+  that sent.
+- Tests: `tests/unit/test_record_destination.py`, `test_destination_pool.py`,
+  `test_record_templates.py`; E2E
   `tests/e2e/destinations/test_record_destination.py` (`e2e_record_destination_test`, one job to
   topics `e2e-rd-whisper`/`-google`/`-azure`, in route, skip and fail modes).
 

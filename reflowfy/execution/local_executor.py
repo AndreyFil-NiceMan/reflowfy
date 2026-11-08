@@ -1,8 +1,11 @@
 """Local executor for testing and debugging."""
 
+import inspect
 import logging
 import uuid
-from typing import Any, Dict, Optional, cast
+from typing import Any, Dict, List, Optional, cast
+
+from reflowfy.core.async_utils import run_coroutine_sync
 
 from reflowfy.core.execution_context import (
     ExecutionContext,
@@ -29,6 +32,29 @@ def _log_record_skips(applied: Any) -> None:
                     "records_skipped": step.records_skipped,
                 },
             )
+
+
+def _send_and_close(destination: Any, records: List[Any], metadata: Dict[str, Any]) -> None:
+    """Send one slice and close its destination, in one event loop.
+
+    ``send_with_retry`` is a coroutine: called without awaiting it, nothing was ever
+    sent. Both run in the same loop because a Kafka producer belongs to the loop that
+    started it. A synchronous (test double) destination is called as is.
+    """
+
+    async def run() -> None:
+        try:
+            sent = destination.send_with_retry(records, metadata)
+            if inspect.isawaitable(sent):
+                await sent
+        finally:
+            close = getattr(destination, "close", None)
+            if close is not None:
+                closed = close()
+                if inspect.isawaitable(closed):
+                    await closed
+
+    run_coroutine_sync(run())
 
 
 class LocalExecutor(BaseExecutor):
@@ -174,10 +200,7 @@ class LocalExecutor(BaseExecutor):
                     len(transformed_records),
                     extra={"event": "destination_send"},
                 )
-                destination.send_with_retry(
-                    transformed_records,
-                    metadata=slice_params,
-                )
+                _send_and_close(destination, transformed_records, slice_params)
                 total_fetched += len(records)
                 total_sent += len(transformed_records)
 
@@ -336,10 +359,7 @@ class LocalExecutor(BaseExecutor):
                             extra={"event": "id_transform_done"},
                         )
                     _log_record_skips(applied)
-                    destination.send_with_retry(
-                        transformed_records,
-                        metadata=flat_id_params,
-                    )
+                    _send_and_close(destination, transformed_records, flat_id_params)
                     id_fetched += len(records)
                     id_sent += len(transformed_records)
 

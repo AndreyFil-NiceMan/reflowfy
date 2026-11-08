@@ -47,7 +47,6 @@ class KafkaHeadersParams(RuntimeParams, total=False):
     ]
     count: Annotated[NotRequired[int], Param("Records to generate", default=20)]
     batch_size: Annotated[NotRequired[int], Param("Records per job", default=10)]
-    concurrency: Annotated[NotRequired[int], Param("Messages in flight per job", default=1)]
 
 
 @transformation("stamp_headers_run")
@@ -96,6 +95,5 @@ class E2EKafkaHeadersPipeline(AbstractPipeline[KafkaHeadersParams]):
         return kafka_destination(
             bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
             topic=HEADERS_TOPIC,
-            concurrency=runtime_params.get("concurrency", 1),
             headers=headers,
         )
