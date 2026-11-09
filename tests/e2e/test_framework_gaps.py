@@ -19,6 +19,9 @@ API_URL = os.getenv("E2E_API_URL", "http://localhost:8003")
 MOCK_URL = os.getenv("E2E_MOCK_HTTP_URL", "http://localhost:8091")
 # Where the manager/worker containers reach the mock (callback_url is called from there).
 MOCK_INTERNAL_URL = os.getenv("E2E_MOCK_HTTP_INTERNAL_URL", "http://reflofy-e2e-mock-http:8091")
+# The API's run route takes mode=local|distributed: local on the default stack (no
+# worker), distributed with scripts/e2e-distributed.override.yml.
+RUN_MODE = os.getenv("E2E_RUN_MODE", "local")
 MAX_WAIT = 90
 TERMINAL = ("completed", "failed", "cancelled")
 
@@ -316,7 +319,7 @@ class TestLifecycle:
         callback = f"{MOCK_INTERNAL_URL}/gaps/{run}/callback"
         resp = httpx.post(
             f"{API_URL}/pipelines/e2e_gaps_hooks/run",
-            params={"run": run, "callback_url": callback},
+            params={"run": run, "callback_url": callback, "mode": RUN_MODE},
             timeout=30,
         )
         assert resp.status_code == 200, resp.text
