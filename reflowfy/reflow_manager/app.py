@@ -27,6 +27,7 @@ from reflowfy.reflow_manager.database import get_db, init_db, SessionLocal  # no
 from reflowfy.reflow_manager.manager import ReflowManager  # noqa: E402
 from reflowfy.reflow_manager.execution import ExecutionManager  # noqa: E402
 from reflowfy.reflow_manager import lifecycle  # noqa: E402
+from reflowfy.core.kafka_settings import KafkaSettings  # noqa: E402
 from reflowfy.reflow_manager.factory import make_manager  # noqa: E402
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner  # noqa: E402
 from reflowfy.reflow_manager.schemas import (  # noqa: E402
@@ -631,10 +632,12 @@ async def _startup() -> None:
 
     discover_and_load_pipelines()
 
+    kafka = KafkaSettings.from_env()
     logger.info(
-        "Kafka=%s topic=%s",
-        os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
-        os.getenv("KAFKA_TOPIC", "reflow.jobs"),
+        "Kafka=%s topic=%s auth=%s",
+        kafka.bootstrap_servers,
+        kafka.topic,
+        kafka.describe_auth(),
         extra={"event": "service_config"},
     )
     if os.getenv("MAX_JOBS_PER_MINUTE"):

@@ -5,6 +5,7 @@ sent (on_sent + the return value), in order, and stops at the first transient se
 failure, so the caller leaves the remainder `pending` for the next call.
 """
 
+import ssl
 import asyncio
 import json
 import logging
@@ -165,6 +166,20 @@ class TestProducer:
             "sasl_plain_password": "pw",
             "client_id": "svc",
         }
+
+    async def test_tls_without_sasl_keeps_the_protocol_and_gets_a_context(self, fake_producer):
+        """It used to drop security_protocol here and connect in plaintext."""
+        d = _dispatcher(security_protocol="SSL")
+        await d._get_producer()
+        kwargs = fake_producer.instances[0].kwargs
+        assert kwargs["security_protocol"] == "SSL"
+        assert isinstance(kwargs["ssl_context"], ssl.SSLContext)
+
+    async def test_sasl_ssl_gets_a_context(self, fake_producer):
+        """aiokafka refuses SASL_SSL without one; the job producer could not connect."""
+        d = _dispatcher(security_protocol="SASL_SSL", sasl_username="u", sasl_password="p")
+        await d._get_producer()
+        assert isinstance(fake_producer.instances[0].kwargs["ssl_context"], ssl.SSLContext)
 
     async def test_explicit_sasl_protocol_and_mechanism(self, fake_producer):
         d = _dispatcher(
