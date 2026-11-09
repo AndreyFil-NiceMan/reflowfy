@@ -261,7 +261,7 @@ class KafkaJobConsumer:
                     "kafka_offset": getattr(msg, "offset", None),
                 },
             )
-            metrics.jobs_processed_total.labels(pipeline="unknown", status="invalid").inc()
+            metrics.count_job("unknown", metrics.JobOutcome.INVALID)
             # Commit anyway to skip bad message
             await self.consumer.commit()
 

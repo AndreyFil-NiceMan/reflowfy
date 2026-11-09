@@ -26,6 +26,7 @@ from reflowfy.destinations.record import RecordDestination
 from reflowfy.execution.job_runner import run_job_records_async
 from reflowfy.factories.source_factory import SourceFactory
 from reflowfy.observability import metrics
+from reflowfy.observability.metrics import JobOutcome
 from reflowfy.observability.context import log_context
 from reflowfy.observability.logging import get_logger
 from reflowfy.observability.tracing import extract_and_attach
@@ -197,18 +198,18 @@ class WorkerExecutor:
         # ponytail: error_type = exception class name only — never the message (cardinality).
         """
         if cancelled:
-            status = "cancelled"
+            outcome = JobOutcome.CANCELLED
         elif retry_scheduled:
-            status = "retry_scheduled"
+            outcome = JobOutcome.RETRY_SCHEDULED
         elif redelivered:
-            status = "redelivered"
+            outcome = JobOutcome.REDELIVERED
         elif deduplicated:
-            status = "deduplicated"
+            outcome = JobOutcome.DEDUPLICATED
         elif skipped:
-            status = "skipped"
+            outcome = JobOutcome.SKIPPED
         else:
-            status = "completed" if success else "failed"
-        metrics.jobs_processed_total.labels(pipeline=pipeline, status=status).inc()
+            outcome = JobOutcome.COMPLETED if success else JobOutcome.FAILED
+        metrics.count_job(pipeline, outcome)
         metrics.job_processing_duration_seconds.labels(pipeline=pipeline).observe(duration)
         # Only count records that actually made it through (success); a job that
         # failed at the destination has records_output set but nothing delivered.

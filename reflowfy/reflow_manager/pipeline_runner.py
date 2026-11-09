@@ -1004,9 +1004,7 @@ class PipelineRunner:
 
         def on_unsendable(payload: Dict[str, Any], reason: str) -> None:
             self.job_manager.update_job_state(payload["job_id"], "failed", error_message=reason)
-            metrics.jobs_processed_total.labels(
-                pipeline=payload.get("pipeline_name", "unknown"), status="failed"
-            ).inc()
+            metrics.count_job(payload.get("pipeline_name", "unknown"), metrics.JobOutcome.FAILED)
 
         sent: int = await self.dispatcher.dispatch_jobs_batch(
             jobs=[job.job_payload for job in jobs],
@@ -1042,9 +1040,7 @@ class PipelineRunner:
                 },
             )
         if result["failed"]:
-            metrics.jobs_processed_total.labels(pipeline=pipeline_name, status="lease_expired").inc(
-                result["failed"]
-            )
+            metrics.count_job(pipeline_name, metrics.JobOutcome.LEASE_EXPIRED, result["failed"])
 
     @bind_log_context("execution_id")
     def _recover_plan(self, execution_id: str) -> bool:
