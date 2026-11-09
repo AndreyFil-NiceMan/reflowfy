@@ -107,7 +107,8 @@ HTTP POST /run → API (FastAPI) ──┐
 - **`reflowfy/reflow_manager/`** — the orchestrator. `manager.py` (`ReflowManager`) is a slim coordinator composing `execution.py` (execution records), `job_manager.py` (job + checkpoint tracking), `rate_limiter.py` (token bucket), `dispatcher.py`/`local_dispatcher.py` (Kafka vs in-process), and `pipeline_runner.py` (runs the source, builds jobs). `app.py` is the FastAPI service exposing `/run`, plus routers for DLQ, stats, and schedules. SQL schemas live alongside as `schema.sql` and `dlq_schema.sql`.
 - **`reflowfy/worker/`** — `consumer.py` (`KafkaJobConsumer`) pulls jobs off Kafka; `executor.py` applies transformations and writes to the destination, reporting state back to Postgres directly.
 - **`reflowfy/api/`** — thin FastAPI front door that forwards run requests to the ReflowManager.
-- **`reflowfy/core/`** — the user-facing pipeline model. `abstract_pipeline.py` defines `AbstractPipeline` (with `define_source` / `define_transformations` / `define_destination` / `define_parameters` hooks). `id_based_pipeline.py` is a specialization for ID-range sharding. `execution_context.py` carries runtime params/metadata through a run.
+- **`reflowfy/core/`** — the user-facing pipeline model and the bottom of the import stack. `abstract_pipeline.py` defines `AbstractPipeline` (with `define_source` / `define_transformations` / `define_destination` / `define_parameters` hooks). `id_based_pipeline.py` is a specialization for ID-range sharding. `execution_context.py` carries runtime params/metadata through a run. Also the shared pieces everything above uses: the error hierarchy (`exceptions.py`, including `SourceError`/`DestinationError`/`TransformationError`, re-exported from their old modules), `record_steps.py` (record concurrency, skip-reason counting), `kafka_settings.py` (the one builder of aiokafka connection arguments + `KafkaSettings.from_env()`), `planning.py` (`chunk`).
+- **Import direction** (`tests/unit/test_layering.py`): `core` imports no connector or service; `sources`/`destinations`/`transformations` import no service and not each other; one listed exception (`id_based_pipeline` wraps lists in `StaticSource`). A new upward import fails that test.
 - **`reflowfy/cli/`** — `typer` app (`main.py`); each subcommand registers itself from `commands/` (`init`, `new`, `run`, `build`, `check`, `deploy`, `test`).
 - **`reflowfy/sources/`, `destinations/`, `transformations/`** — built-in connectors plus the `@source`, `@destination`, `@transformation` decorators. `factories/` builds connector instances from serialized config.
 - **`reflowfy/execution/`** — the per-job core shared by the worker and `reflowfy test` (`job_runner.py`, `transformation_runner.py`), content dedup, and `DistributedExecutor` (the API's client for the manager's `/run`; its `mode=local` makes the manager use `LocalDispatcher`).
@@ -147,7 +148,7 @@ Notes:
 
 ### Typed records and hook returns
 
-`reflowfy` exports the names a pipeline author needs to annotate a hook without a deep import: `Record` (`Dict[str, Any]`), `Records` (`List[Record]`), `Transformations` (`Sequence[BaseTransformation]`), plus `BaseSource` and `BaseDestination`. They live in `core/types.py`.
+`reflowfy` exports the names a pipeline author needs to annotate a hook without a deep import: `Record` (`Dict[str, Any]`), `Records` (`List[Record]`), `Transformations` (`Sequence[BaseTransformation]`), plus `BaseSource` and `BaseDestination`. `Record`/`Records`/`TypedRecord` live in `core/types.py`; `Transformations` beside `BaseTransformation` in `transformations/base.py` (so `core` never imports transformations).
 
 **Top-level exports.** Everything a pipeline author touches is importable from `reflowfy`: connectors (`elastic_source`, `sql_source`, `s3_source`, `id_based_api_source`, `mock_source`, `kafka_destination`, `api_destination`, `console_destination`, `fan_out`), `secret`, `RetryConfig`/`JobRetryConfig`, `ExecutionSummary`/`run_pipeline`, and the errors (`PermanentDestinationError`, `SecretError`, `SourceRoundTripError`, `SqlTemplateError`, …). `s3_source` (optional boto3) and `run_pipeline` (pulls in the manager's database layer) load on first use through a module `__getattr__`, with `TYPE_CHECKING` imports so they stay typed; `tests/unit/test_top_level_exports.py` checks every `__all__` name resolves.
 
@@ -571,7 +572,7 @@ harmless); `fetch(limit=n)` is `fetchmany(n)`. Tests: `tests/unit/sources/test_s
   pipeline/type/field.
 - **Redaction.** `BaseSource.secret_fields` names a source's credential keys (Sql:
   `connection_url` — only the URL's password; Elastic: `auth`; S3: `aws_secret_access_key`;
-  API: `auth_token`, `headers`). `redact_row` hides `job_payload`/`runtime_params` in every
+  API: `auth_token`, `headers`). `redact_row` (`reflow_manager/redaction.py`) hides `job_payload`/`runtime_params` in every
   manager route returning job, execution, schedule or DLQ rows: declared fields, any
   credential-named key at any depth (`password`, `token`, `api_key`, `Authorization`,
   `secret`…) and the password of any `scheme://user:pass@host`. The stored rows are unchanged.
