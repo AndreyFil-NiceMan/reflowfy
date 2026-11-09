@@ -9,7 +9,6 @@ import pydantic
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 
-from reflowfy.api.execution import execution_tracker
 from reflowfy.execution.base import ExecutionState
 
 logger = logging.getLogger(__name__)
@@ -86,7 +85,6 @@ def _run_body(
         )
         raise HTTPException(status_code=500, detail=str(e))
 
-    execution_tracker.track(status)
     _check_status(status)
 
     logger.info(

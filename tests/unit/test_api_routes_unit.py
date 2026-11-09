@@ -12,7 +12,6 @@ from fastapi.testclient import TestClient
 from typing_extensions import Annotated, NotRequired, Required
 
 from reflowfy import AbstractPipeline, Param, RuntimeParams, pipeline_registry
-from reflowfy.api.execution import execution_tracker
 from reflowfy.api.routes import _create_run_route, create_pipeline_routes, pipeline_folder
 from reflowfy.core.abstract_pipeline import PipelineParameter
 from reflowfy.execution.base import ExecutionState, ExecutionStatus
@@ -73,12 +72,6 @@ def make_pipeline() -> Iterator[Any]:
     yield factory
     for name in names:
         pipeline_registry.unregister(name)
-
-
-@pytest.fixture(autouse=True)
-def _clean_tracker() -> Iterator[None]:
-    yield
-    execution_tracker.clear()
 
 
 def _executor(state: ExecutionState = ExecutionState.RUNNING, error: str = "") -> MagicMock:
@@ -201,7 +194,6 @@ class TestRunRouteRequests:
             "tags": ["a", "b"],
             "options": None,
         }
-        assert execution_tracker.get_status("exec-1") is not None
 
     def test_default_mode_is_distributed_and_rate_limit_is_forwarded(self, make_pipeline):
         local, distributed = _executor(), _executor()
@@ -262,8 +254,6 @@ class TestRunRouteRequests:
             "error": "source unreachable",
             "execution_id": "exec-1",
         }
-        # Tracked even though it failed, so /executions/{id}/status can find it.
-        assert execution_tracker.get_status("exec-1").state == ExecutionState.FAILED
 
     def test_optional_body_params_do_not_require_a_body(self, make_pipeline):
         pipeline = make_pipeline("routes_optional_body", OptionalBodyParams)
