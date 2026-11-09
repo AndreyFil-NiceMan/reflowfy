@@ -92,6 +92,7 @@ from fastapi import Response  # noqa: E402
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest  # noqa: E402
 from reflowfy.observability.tracing import init_tracing, instrument_fastapi  # noqa: E402
 from reflowfy.store.leases import JobLeases  # noqa: E402
+from reflowfy.store.states import ExecutionState  # noqa: E402
 from reflowfy.reflow_manager.start import (  # noqa: E402
     InvalidParametersError,
     PipelineNotFoundError,
@@ -223,7 +224,7 @@ async def update_execution_state(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Execution '{execution_id}' is already {execution.state}",
         )
-    if request.state == "cancelled":
+    if request.state == ExecutionState.CANCELLED:
         cancelled = manager.cancel_execution(execution_id)
         assert cancelled is not None  # checked non-terminal above
         return public_row(cancelled.execution)
@@ -331,7 +332,7 @@ async def retry_failed_jobs(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Execution '{execution_id}' not found",
         )
-    if execution.state == "paused":
+    if execution.state == ExecutionState.PAUSED:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Execution '{execution_id}' is paused; resume it first",
@@ -339,7 +340,7 @@ async def retry_failed_jobs(
 
     requeued = manager.job_manager.requeue_failed(execution_id, error_contains)
     if requeued:
-        was_running = execution.state == "running"
+        was_running = execution.state == ExecutionState.RUNNING
         manager.execution_manager.reopen_execution(execution_id)
         if not was_running:
             # A running execution already has a loop that will pick the jobs up.
