@@ -19,7 +19,7 @@ from reflowfy.core.runtime_params import RuntimeParams
 from reflowfy.reflow_manager import lifecycle
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.manager import ReflowManager
-from reflowfy.reflow_manager.models import Base, Execution, Job, RateLimitState
+from reflowfy.store.models import Base, Execution, Job, RateLimitState
 from reflowfy.sources.static import StaticSource
 
 

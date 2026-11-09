@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, Optional, Set, Tuple
 from croniter import croniter
 from sqlalchemy.orm import Session
 
-from reflowfy.reflow_manager.models import PipelineSchedule
+from reflowfy.store.models import PipelineSchedule
 from reflowfy.reflow_manager.database import SessionLocal
 
 logger = logging.getLogger(__name__)

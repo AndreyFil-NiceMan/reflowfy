@@ -23,7 +23,7 @@ from reflowfy.reflow_manager.dlq_scheduler import (
     DLQ_MAX_RETRIES,
     DLQScheduler,
 )
-from reflowfy.reflow_manager.models import Base, DLQJob
+from reflowfy.store.models import Base, DLQJob
 
 
 def _now() -> datetime:

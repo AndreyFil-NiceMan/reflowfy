@@ -18,7 +18,7 @@ from reflowfy import AbstractPipeline, RuntimeParams, pipeline_registry
 from reflowfy.reflow_manager.dlq_scheduler import DLQScheduler
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
-from reflowfy.reflow_manager.models import Base, DLQJob, Execution
+from reflowfy.store.models import Base, DLQJob, Execution
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner
 
 PIPE = "start_pipeline_bg_test"

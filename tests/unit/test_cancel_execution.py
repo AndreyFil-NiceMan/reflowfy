@@ -26,7 +26,7 @@ from reflowfy.execution.job_runner import job
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
 from reflowfy.reflow_manager.manager import ReflowManager
-from reflowfy.reflow_manager.models import Base, Execution, Job
+from reflowfy.store.models import Base, Execution, Job
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner
 from reflowfy.worker.executor import WorkerExecutor
 

@@ -25,8 +25,10 @@ from reflowfy.reflow_manager.dispatcher import JobDispatcher
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
 from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
-from reflowfy.reflow_manager.models import Job
+from reflowfy.store.models import Job
 from reflowfy.reflow_manager.rate_limiter import execution_bucket_key
+from reflowfy.store.leases import JobLeases
+from reflowfy.store.states import JobState, ExecutionState
 
 logger = logging.getLogger(__name__)
 
@@ -42,16 +44,14 @@ CHECKPOINT_POLL_INTERVAL = 2.0  # seconds between drive-loop polls when nothing 
 # see lag and scale, bounded so a stalled worker pool can't absorb the whole plan.
 MAX_IN_FLIGHT_JOBS = int(os.getenv("MAX_IN_FLIGHT_JOBS", "1000"))
 
-# Job leases. A job a worker claimed (running) with no result after the running
-# lease lost its worker (killed, OOM) and goes back to pending — or fails after
-# JOB_MAX_ATTEMPTS claims. A job dispatched but never claimed after the dispatch
-# lease lost its message and is sent again. The worker-side claim makes the
-# duplicate message harmless.
-# The worker refreshes a running job's updated_at every JOB_HEARTBEAT_SECONDS (30),
-# so the running lease only has to exceed a few missed beats, not the longest job.
-JOB_RUNNING_LEASE_SECONDS = float(os.getenv("JOB_RUNNING_LEASE_SECONDS", "300"))
-JOB_DISPATCH_LEASE_SECONDS = float(os.getenv("JOB_DISPATCH_LEASE_SECONDS", "3600"))
-JOB_MAX_ATTEMPTS = int(os.getenv("JOB_MAX_ATTEMPTS", "3"))
+# Job leases (store/leases.py). A job a worker claimed (running) with no heartbeat
+# for the running lease lost its worker and goes back to pending, or fails after
+# max_attempts claims; one dispatched but never claimed is sent again. The
+# worker-side claim makes the duplicate message harmless.
+JOB_LEASES = JobLeases.from_env()
+JOB_RUNNING_LEASE_SECONDS = JOB_LEASES.running_lease_seconds
+JOB_DISPATCH_LEASE_SECONDS = JOB_LEASES.dispatch_lease_seconds
+JOB_MAX_ATTEMPTS = JOB_LEASES.max_attempts
 LEASE_CHECK_INTERVAL = 60.0  # seconds between lease sweeps
 
 # The dispatcher hands control back to the drive loop this often, so lease sweeps
@@ -450,9 +450,9 @@ class PipelineRunner:
                 self.job_manager.db.query(Job)
                 .filter(
                     Job.execution_id == execution_id,
-                    Job.state.in_(["dispatched", "running"]),
+                    Job.state.in_(JobState.IN_FLIGHT),
                 )
-                .update({"state": "pending"}, synchronize_session=False)
+                .update({"state": JobState.PENDING}, synchronize_session=False)
             )
             self.job_manager.db.commit()
             if orphaned:
@@ -574,7 +574,7 @@ class PipelineRunner:
         logger.info("Job dispatch starting", extra={"event": "plan_start"})
 
         # Update state to running
-        self.execution_manager.update_execution_state(execution_id, "running")
+        self.execution_manager.update_execution_state(execution_id, ExecutionState.RUNNING)
 
         # Use enriched params (define_source may have added keys) for the context
         # so workers receive them in job metadata.
@@ -630,7 +630,10 @@ class PipelineRunner:
             # first slice); it takes effect as soon as that returns.
             if time.time() - last_state_check >= 1.0:
                 last_state_check = time.time()
-                if self._execution_state(execution_id) in ("cancelled", "failed"):
+                if self._execution_state(execution_id) in (
+                    ExecutionState.CANCELLED,
+                    ExecutionState.FAILED,
+                ):
                     cancelled_jobs = self.job_manager.cancel_unstarted_jobs(execution_id)
                     logger.info(
                         "Execution was stopped while planning (%d jobs cancelled); planning aborted",
@@ -1003,7 +1006,9 @@ class PipelineRunner:
             self.job_manager.mark_job_dispatched(payload["job_id"], sent_after=sent_after)
 
         def on_unsendable(payload: Dict[str, Any], reason: str) -> None:
-            self.job_manager.update_job_state(payload["job_id"], "failed", error_message=reason)
+            self.job_manager.update_job_state(
+                payload["job_id"], JobState.FAILED, error_message=reason
+            )
             metrics.count_job(payload.get("pipeline_name", "unknown"), metrics.JobOutcome.FAILED)
 
         sent: int = await self.dispatcher.dispatch_jobs_batch(
@@ -1063,7 +1068,10 @@ class PipelineRunner:
         while True:
             self.execution_manager.db.expire_all()
             execution = self.execution_manager.get_execution(execution_id)
-            if execution is None or execution.state not in ("pending", "running"):
+            if execution is None or execution.state not in (
+                ExecutionState.PENDING,
+                ExecutionState.RUNNING,
+            ):
                 return False
             if execution.plan_complete:
                 return True
@@ -1142,9 +1150,9 @@ class PipelineRunner:
             total_finished = completed + failed
 
         if total_finished == expected_total:
-            final_state = "completed" if failed == 0 else "failed"
+            final_state = ExecutionState.COMPLETED if failed == 0 else ExecutionState.FAILED
         else:
-            final_state = "failed"
+            final_state = ExecutionState.FAILED
             logger.warning(
                 "Only %d of %d jobs finished",
                 total_finished,
@@ -1174,41 +1182,11 @@ class PipelineRunner:
         return dispatched, completed, failed
 
     def _set_total_jobs(self, execution_id: str, total: int) -> None:
-        """Set total_jobs for an execution (uses SET, not +=)."""
-        execution = self.execution_manager.get_execution(execution_id)
-        if execution:
-            execution.total_jobs = total
-            self.execution_manager.db.commit()
+        self.execution_manager.set_total_jobs(execution_id, total)
 
     def _sync_counts_from_db(self, execution_id: str) -> Tuple[int, int, int]:
-        """
-        Sync job counts from actual job states in database.
-
-        Returns:
-            Tuple of (dispatched, completed, failed)
-        """
-
-        # Get counts directly from jobs table (now the source of truth)
-        job_counts = self.job_manager.get_job_counts(execution_id)
-
-        completed = job_counts.get("completed", 0)
-        failed = job_counts.get("failed", 0)
-        deduplicated = job_counts.get("deduplicated", 0)
-        dispatched = (
-            job_counts.get("dispatched", 0)
-            + job_counts.get("running", 0)
-            + completed
-            + failed
-            + deduplicated
+        """Copy the jobs table's counts onto the execution row; returns (dispatched,
+        finished, failed), deduplicated jobs counting as finished."""
+        return self.execution_manager.store_job_counts(
+            execution_id, self.job_manager.get_job_counts(execution_id)
         )
-
-        # Update execution with real counts
-        execution = self.execution_manager.get_execution(execution_id)
-        if execution:
-            execution.jobs_dispatched = dispatched
-            execution.jobs_completed = completed + deduplicated
-            execution.jobs_failed = failed
-            execution.deduplicated_jobs = deduplicated
-            self.execution_manager.db.commit()
-
-        return (dispatched, completed + deduplicated, failed)

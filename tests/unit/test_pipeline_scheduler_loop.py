@@ -20,7 +20,7 @@ from sqlalchemy.pool import StaticPool
 
 import reflowfy.reflow_manager.pipeline_scheduler as ps_mod
 from reflowfy.reflow_manager.execution import ExecutionManager
-from reflowfy.reflow_manager.models import Base, Execution, PipelineSchedule
+from reflowfy.store.models import Base, Execution, PipelineSchedule
 from reflowfy.reflow_manager.pipeline_scheduler import PipelineScheduler
 
 

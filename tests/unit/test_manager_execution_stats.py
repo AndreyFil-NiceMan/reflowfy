@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.manager import ReflowManager
-from reflowfy.reflow_manager.models import Base, Execution, Job
+from reflowfy.store.models import Base, Execution, Job
 
 
 @pytest.fixture

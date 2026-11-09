@@ -21,7 +21,7 @@ from reflowfy.core.abstract_pipeline import AbstractPipeline, ScheduledRun
 from reflowfy.core.runtime_params import Param, RuntimeParams
 from reflowfy.reflow_manager.database import get_db
 from reflowfy.reflow_manager.manager import ReflowManager
-from reflowfy.reflow_manager.models import Base, Execution, Job, PipelineSchedule
+from reflowfy.store.models import Base, Execution, Job, PipelineSchedule
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner
 from reflowfy.reflow_manager.pipeline_scheduler import PipelineScheduler
 from reflowfy.sources.static import StaticSource

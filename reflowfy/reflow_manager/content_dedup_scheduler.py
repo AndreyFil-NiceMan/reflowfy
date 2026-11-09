@@ -14,7 +14,7 @@ from typing import Any, Optional
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from reflowfy.reflow_manager.models import Execution, Job, ProcessedRecord
+from reflowfy.store.models import Execution, Job, ProcessedRecord
 from reflowfy.reflow_manager.database import SessionLocal
 
 logger = logging.getLogger(__name__)

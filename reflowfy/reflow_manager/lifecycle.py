@@ -41,8 +41,9 @@ from reflowfy.reflow_manager.execution import (
     remove_terminal_listener,
 )
 from reflowfy.reflow_manager.job_manager import JobManager
-from reflowfy.reflow_manager.models import Execution, Job
+from reflowfy.store.models import Execution, Job
 from reflowfy.reflow_manager.rate_limiter import RateLimiter, execution_bucket_key
+from reflowfy.store.states import JobState
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +119,7 @@ def build_summary(db: Session, execution: Execution) -> ExecutionSummary:
         for (message,) in db.query(Job.error_message)
         .filter(
             Job.execution_id == execution_id,
-            Job.state == "failed",
+            Job.state == JobState.FAILED,
             Job.error_message.isnot(None),
         )
         .order_by(Job.completed_at)

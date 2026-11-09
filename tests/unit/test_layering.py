@@ -1,4 +1,5 @@
-"""Imports point down the stack: core at the bottom, then connectors, then the services.
+"""Imports point down the stack: core at the bottom, then connectors, then
+the store, then the services.
 
 A module that imports a more volatile one has to change whenever it does; these rules
 make that visible instead of leaving it to whoever adds the import. Imports under
@@ -23,6 +24,13 @@ FORBIDDEN: Dict[str, Set[str]] = {
     "destinations": SERVICES | {"sources", "transformations", "factories"},
     "transformations": SERVICES | {"sources", "destinations", "factories"},
     "factories": SERVICES,
+    # Persistence sits under the services: the manager, the worker and content
+    # dedup all import it, and it imports none of them.
+    "store": CONNECTORS | SERVICES,
+    # The per-job core and the worker never reach into the manager: they share
+    # state only through the store.
+    "execution": {"worker", "reflow_manager", "api", "cli"},
+    "worker": {"reflow_manager", "api", "cli"},
 }
 
 # Known exceptions, each with the fix that removes it (docs/untangle-plan.md).

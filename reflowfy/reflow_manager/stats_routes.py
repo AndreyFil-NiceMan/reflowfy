@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, case, desc
 
 from reflowfy.reflow_manager.database import get_db
-from reflowfy.reflow_manager.models import Execution, Job, DLQJob, DLQJobArchive
+from reflowfy.store.models import Execution, Job, DLQJob, DLQJobArchive
+from reflowfy.store.states import JobState, ExecutionState
 
 router = APIRouter(prefix="/stats", tags=["Stats"])
 
@@ -130,8 +131,8 @@ async def get_pipeline_stats(db: Session = Depends(get_db)):
         db.query(
             Execution.pipeline_name,
             func.count(Job.job_id).label("total_jobs"),
-            func.sum(case((Job.state == "completed", 1), else_=0)).label("jobs_completed"),
-            func.sum(case((Job.state == "failed", 1), else_=0)).label("jobs_failed"),
+            func.sum(case((Job.state == JobState.COMPLETED, 1), else_=0)).label("jobs_completed"),
+            func.sum(case((Job.state == JobState.FAILED, 1), else_=0)).label("jobs_failed"),
         )
         .join(
             Job,
@@ -237,8 +238,8 @@ async def get_pipeline_detail(
     job_row = (
         db.query(
             func.count(Job.job_id).label("total_jobs"),
-            func.sum(case((Job.state == "completed", 1), else_=0)).label("jobs_completed"),
-            func.sum(case((Job.state == "failed", 1), else_=0)).label("jobs_failed"),
+            func.sum(case((Job.state == JobState.COMPLETED, 1), else_=0)).label("jobs_completed"),
+            func.sum(case((Job.state == JobState.FAILED, 1), else_=0)).label("jobs_failed"),
         )
         .join(
             Execution,
@@ -311,7 +312,7 @@ async def get_failure_stats(
         limit: Number of failed executions to return (default 20)
     """
     # Failed executions query
-    query = db.query(Execution).filter(Execution.state == "failed")
+    query = db.query(Execution).filter(Execution.state == ExecutionState.FAILED)
     if pipeline_name:
         query = query.filter(Execution.pipeline_name == pipeline_name)
 
@@ -334,7 +335,7 @@ async def get_failure_stats(
         )
 
     # Total failed jobs across all (or filtered) executions
-    jobs_query = db.query(func.count(Job.job_id)).filter(Job.state == "failed")
+    jobs_query = db.query(func.count(Job.job_id)).filter(Job.state == JobState.FAILED)
     if pipeline_name:
         jobs_query = jobs_query.join(
             Execution,

@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 import reflowfy.reflow_manager.app as app_module
 import reflowfy.reflow_manager.pipeline_runner as runner_mod
-from reflowfy.reflow_manager.models import Base, Execution, Job
+from reflowfy.store.models import Base, Execution, Job
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner
 
 HOST = socket.gethostname()

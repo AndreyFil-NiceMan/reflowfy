@@ -18,7 +18,7 @@ from reflowfy.core.secrets import REDACTED
 from reflowfy.execution.distributed_executor import DistributedExecutor
 from reflowfy.reflow_manager.database import get_db
 from reflowfy.reflow_manager.manager import ReflowManager
-from reflowfy.reflow_manager.models import (
+from reflowfy.store.models import (
     Base,
     DLQJob,
     DLQJobArchive,

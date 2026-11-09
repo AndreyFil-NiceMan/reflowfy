@@ -11,7 +11,6 @@ client, so a dead peer is dropped in about ``idle + interval * count`` seconds.
 import os
 from typing import Dict
 
-
 DEFAULT_DATABASE_URL = "postgresql://reflowfy:reflowfy@localhost:5432/reflowfy"
 
 

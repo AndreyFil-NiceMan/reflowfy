@@ -23,7 +23,7 @@ from reflowfy.observability import metrics
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
 from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
-from reflowfy.reflow_manager.models import Base, Execution, Job
+from reflowfy.store.models import Base, Execution, Job
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner
 from reflowfy.reflow_manager.rate_limiter import RateLimiter
 from reflowfy.worker.executor import JobStats, WorkerExecutor

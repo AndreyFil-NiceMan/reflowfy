@@ -11,7 +11,7 @@ from reflowfy.core.abstract_pipeline import AbstractPipeline
 from reflowfy.core.id_based_pipeline import IdBasedPipeline
 from reflowfy.core.registry import pipeline_registry
 from reflowfy.reflow_manager.job_manager import JobManager
-from reflowfy.reflow_manager.models import Base, Execution, Job
+from reflowfy.store.models import Base, Execution, Job
 from reflowfy.reflow_manager.pipeline_runner import CHECKPOINT_BATCH_SIZE, PipelineRunner
 
 

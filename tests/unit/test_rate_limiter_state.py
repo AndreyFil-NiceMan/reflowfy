@@ -15,7 +15,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 import reflowfy.reflow_manager.rate_limiter as rl_mod
-from reflowfy.reflow_manager.models import Base, RateLimitState
+from reflowfy.store.models import Base, RateLimitState
 from reflowfy.reflow_manager.rate_limiter import RateLimiter
 
 T0 = datetime(2026, 10, 20, 12, 0, 0)

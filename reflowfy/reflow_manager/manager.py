@@ -13,13 +13,14 @@ import logging
 from typing import Any, Dict, List, NamedTuple, Optional
 from sqlalchemy.orm import Session
 
-from reflowfy.reflow_manager.models import Execution
+from reflowfy.store.models import Execution
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
 from reflowfy.reflow_manager.rate_limiter import RateLimiter
 from reflowfy.reflow_manager.dispatcher import KafkaDispatcher
 from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner
+from reflowfy.store.states import JobState, jobs_dispatched
 
 logger = logging.getLogger(__name__)
 
@@ -198,11 +199,7 @@ class ReflowManager:
             "pipeline_name": execution.pipeline_name,
             "state": execution.state,
             "total_jobs": execution.total_jobs,
-            "jobs_dispatched": job_counts.get("dispatched", 0)
-            + job_counts.get("running", 0)
-            + job_counts.get("completed", 0)
-            + job_counts.get("failed", 0)
-            + job_counts.get("deduplicated", 0),
+            "jobs_dispatched": jobs_dispatched(job_counts),
             "jobs_pending": job_counts.get("pending", 0),
             # Pending, waiting for a job_retry backoff to pass (included in jobs_pending).
             "jobs_retry_scheduled": self.job_manager.count_scheduled_retries(execution_id),
@@ -232,7 +229,7 @@ class ReflowManager:
 
     def _get_batch_checkpoint_stats(self, execution_id: str) -> List[Dict[str, Any]]:
         """Get stats grouped by batch_number using unified Job table."""
-        from reflowfy.reflow_manager.models import Job
+        from reflowfy.store.models import Job
         from sqlalchemy import func, case
 
         # Query unified Job table directly
@@ -240,9 +237,9 @@ class ReflowManager:
             self.db.query(
                 Job.batch_number,
                 func.count(Job.job_id).label("total_jobs"),
-                func.sum(case((Job.state == "pending", 1), else_=0)).label("pending"),
-                func.sum(case((Job.state == "completed", 1), else_=0)).label("completed"),
-                func.sum(case((Job.state == "failed", 1), else_=0)).label("failed"),
+                func.sum(case((Job.state == JobState.PENDING, 1), else_=0)).label("pending"),
+                func.sum(case((Job.state == JobState.COMPLETED, 1), else_=0)).label("completed"),
+                func.sum(case((Job.state == JobState.FAILED, 1), else_=0)).label("failed"),
             )
             .filter(Job.execution_id == execution_id, Job.batch_number.isnot(None))
             .group_by(Job.batch_number)

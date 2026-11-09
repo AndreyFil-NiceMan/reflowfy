@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session, sessionmaker
 import reflowfy.reflow_manager.pipeline_runner as runner_mod
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
-from reflowfy.reflow_manager.models import Base, Execution, Job
+from reflowfy.store.models import Base, Execution, Job
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner
 from reflowfy.worker.executor import WorkerExecutor
 
