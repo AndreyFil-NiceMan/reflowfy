@@ -11,6 +11,10 @@ from reflowfy.execution.base import BaseExecutor, ExecutionStatus, ExecutionStat
 logger = logging.getLogger(__name__)
 
 
+#: Manager request timeout. /run answers 202 at once; the dispatch runs on the manager.
+DEFAULT_TIMEOUT_SECONDS = 30.0
+
+
 class DistributedExecutor(BaseExecutor):
     """
     Distributed executor for /run mode.
@@ -27,7 +31,7 @@ class DistributedExecutor(BaseExecutor):
     def __init__(
         self,
         reflow_manager_url: str = "http://localhost:8001",
-        timeout: float = 120.0,  # Increased from 30s to handle large rate-limited dispatches
+        timeout: float = DEFAULT_TIMEOUT_SECONDS,
         mode: str = "distributed",
     ):
         """
@@ -224,7 +228,7 @@ def get_executor(mode: str, **kwargs: Any) -> BaseExecutor:
     elif mode == "distributed":
         return DistributedExecutor(
             reflow_manager_url=kwargs.get("reflow_manager_url", "http://localhost:8001"),
-            timeout=kwargs.get("timeout", 30.0),
+            timeout=kwargs.get("timeout", DEFAULT_TIMEOUT_SECONDS),
             mode=kwargs.get("execution_mode", "distributed"),
         )
 

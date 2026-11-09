@@ -187,6 +187,15 @@ class TestRun:
         assert "Build failed" in result.output
         assert seen == [["docker", "compose", "build", "--no-cache"]]
 
+    def test_a_failed_up_exits_non_zero(self, monkeypatch):
+        """It used to exit 0 whatever docker compose up returned."""
+        monkeypatch.setattr(
+            run_mod.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 17)
+        )
+        result = cli("run")
+        assert result.exit_code == 17
+        assert "docker compose up failed (exit 17)" in result.output
+
     def test_ctrl_c_stops_cleanly(self, monkeypatch):
         def interrupted(cmd: List[str], **kwargs: Any) -> None:
             raise KeyboardInterrupt

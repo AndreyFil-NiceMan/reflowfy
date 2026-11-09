@@ -369,7 +369,32 @@ class TestExecution:
         deploy(*BASE)
         for call in calls[1:]:
             assert call["stdout"] is subprocess.DEVNULL
-            assert call["stderr"] is subprocess.DEVNULL
+            assert call["stderr"] is subprocess.PIPE  # read, to tell AlreadyExists apart
+
+    def test_an_existing_route_is_fine(self, calls, monkeypatch):
+        def run(cmd: List[str], **kwargs: Any) -> subprocess.CompletedProcess:
+            calls.append({"cmd": list(cmd), **kwargs})
+            if cmd[0] == "oc":
+                return subprocess.CompletedProcess(cmd, 1, stderr='routes "x" AlreadyExists')
+            return subprocess.CompletedProcess(cmd, 0)
+
+        monkeypatch.setattr(deploy_mod.subprocess, "run", run)
+        result = deploy(*BASE)
+        assert "Routes created/verified" in result.output
+
+    def test_a_failed_route_is_reported_not_claimed(self, calls, monkeypatch):
+        """It used to print 'Routes created/verified' whatever oc said."""
+
+        def run(cmd: List[str], **kwargs: Any) -> subprocess.CompletedProcess:
+            calls.append({"cmd": list(cmd), **kwargs})
+            if cmd[0] == "oc":
+                return subprocess.CompletedProcess(cmd, 1, stderr="Forbidden: no access")
+            return subprocess.CompletedProcess(cmd, 0)
+
+        monkeypatch.setattr(deploy_mod.subprocess, "run", run)
+        result = deploy(*BASE)
+        assert "Routes created/verified" not in result.output
+        assert "Could not create route reflowfy-api: Forbidden: no access" in result.output
 
     def test_helm_command_is_printed(self, calls):
         result = deploy(*BASE)
