@@ -16,9 +16,15 @@ CREATE TABLE IF NOT EXISTS executions (
     completed_at TIMESTAMP,
     error_message TEXT,
     runtime_params JSONB,
-    rate_limit DOUBLE PRECISION,  -- /run override (jobs/min), reused on resume
+    rate_limit DOUBLE PRECISION,  -- effective rate (jobs/min, NULL = unlimited), reused on resume
     driver_id VARCHAR(255),        -- dispatch loop that owns the execution
-    driver_heartbeat_at TIMESTAMP  -- its last heartbeat; stale => another loop may take over
+    driver_heartbeat_at TIMESTAMP, -- its last heartbeat; stale => another loop may take over
+    plan_complete BOOLEAN NOT NULL DEFAULT FALSE,
+    deduplicated_jobs INTEGER DEFAULT 0,
+    hooks_fired_at TIMESTAMP,      -- lifecycle hooks claimed (exactly once per terminal state)
+    hook_error TEXT,               -- what failed in a hook or the callback
+    parent_execution_id VARCHAR(255),  -- the execution whose hook started this one
+    callback_url TEXT              -- /run callback_url, POSTed the summary at the end
 );
 
 -- Indexes for executions
@@ -26,10 +32,12 @@ CREATE INDEX IF NOT EXISTS idx_executions_pipeline_name ON executions(pipeline_n
 CREATE INDEX IF NOT EXISTS idx_executions_state ON executions(state);
 CREATE INDEX IF NOT EXISTS idx_executions_created_at ON executions(created_at);
 CREATE INDEX IF NOT EXISTS idx_executions_completed_at ON executions(completed_at) WHERE completed_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_executions_parent_execution_id ON executions(parent_execution_id);
 
 
 -- Rate limit state table
--- Stores token bucket state for rate limiting
+-- Stores token bucket state for rate limiting: one bucket per execution, keyed
+-- '<pipeline>:<execution_id>' (historical column name), deleted when the execution ends
 CREATE TABLE IF NOT EXISTS rate_limit_state (
     pipeline_name VARCHAR(255) PRIMARY KEY,
     tokens FLOAT NOT NULL,
@@ -52,10 +60,12 @@ CREATE TABLE IF NOT EXISTS jobs (
     -- State tracking
     state VARCHAR(50) NOT NULL,  -- pending, dispatched, running, completed, failed, deduplicated
     attempts INTEGER NOT NULL DEFAULT 0,  -- worker claims; caps lease re-dispatch
+    next_attempt_at TIMESTAMP,  -- job_retry: pending, but not dispatched before this
     
     -- Worker results
     processed_records INTEGER DEFAULT 0,
     error_message TEXT,
+    error_traceback TEXT,
     stats JSONB,
     
     -- Timestamps

@@ -49,7 +49,8 @@ class Execution(Base):
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     runtime_params: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
-    # The /run rate_limit override (jobs/min); a resume after a manager restart reuses it.
+    # The rate limit the execution runs at (jobs/min; None = unlimited): the /run override,
+    # else the pipeline's define_rate_limit / rate_limit. A resume reuses it.
     rate_limit: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     # Which dispatch loop owns this execution, and when it last proved it is alive.
     # A loop takes over only once the heartbeat is stale (see PipelineRunner).
@@ -58,6 +59,17 @@ class Execution(Base):
     # False while the manager is still planning (saving) the execution's jobs, True once
     # every job is saved.
     plan_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Lifecycle hooks: when they were fired (exactly once per terminal state, claimed by
+    # setting this), and what went wrong in them or the callback. Never changes `state`.
+    hooks_fired_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    hook_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # The execution whose hook started this one (run_pipeline from a hook), if any.
+    parent_execution_id: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True, index=True
+    )
+    # /run callback_url: POSTed the execution summary once it ends. Not in to_dict (a URL
+    # may carry a token).
+    callback_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Relationship to jobs
     jobs: Mapped[List["Job"]] = relationship(
@@ -80,6 +92,10 @@ class Execution(Base):
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "error_message": self.error_message,
             "runtime_params": self.runtime_params,
+            "rate_limit": self.rate_limit,
+            "parent_execution_id": self.parent_execution_id,
+            "hooks_fired_at": self.hooks_fired_at.isoformat() if self.hooks_fired_at else None,
+            "hook_error": self.hook_error,
         }
 
 
@@ -87,7 +103,9 @@ class RateLimitState(Base):
     """
     Rate limiter token bucket state.
 
-    Stores the current token count for each pipeline's rate limiter.
+    One token bucket per execution (keyed ``<pipeline>:<execution_id>``, see
+    ``rate_limiter.execution_bucket_key``; the column keeps its historical name), so
+    concurrent executions of a pipeline don't share a rate. Deleted when the execution ends.
     """
 
     __tablename__ = "rate_limit_state"
@@ -132,6 +150,9 @@ class Job(Base):
     state: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     # Times a worker has claimed (started) this job; caps lease re-dispatch.
     attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    # A job_retry retry scheduled by the worker: the job is pending but not dispatched
+    # before this time. None for every other job.
+    next_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     # Worker results
     processed_records: Mapped[int] = mapped_column(Integer, default=0)
@@ -166,6 +187,7 @@ class Job(Base):
             "state": self.state,
             "batch_number": self.batch_number,
             "attempts": self.attempts,
+            "next_attempt_at": self.next_attempt_at.isoformat() if self.next_attempt_at else None,
             "processed_records": self.processed_records,
             "error_message": self.error_message,
             "error_traceback": self.error_traceback,

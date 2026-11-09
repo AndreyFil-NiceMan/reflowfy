@@ -57,6 +57,8 @@ from typing import (
 import typing_extensions
 
 from reflowfy.core.exceptions import pipeline_step
+from reflowfy.core.execution_summary import ExecutionSummary
+from reflowfy.core.job_retry import JobRetryConfig
 from reflowfy.core.query_loader import QueryLoaderMixin
 from reflowfy.core.runtime_params import P, Param, RuntimeParams
 
@@ -458,6 +460,9 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
     - Override `define_parameters()` to expose required runtime parameters
     - Override `define_rate_limit()` for dynamic rate limiting
     - Override `should_apply_transformation()` for runtime condition checks
+    - Set `job_retry` (a :class:`JobRetryConfig`) to retry jobs that fail transiently
+    - Override `on_execution_complete()` / `on_execution_failed()` /
+      `on_execution_cancelled()` to act once the whole execution has ended
     - Declare their parameters as a type: subclass :class:`RuntimeParams` and
       pass it as the type argument (``AbstractPipeline[MyParams]``). Every hook
       then receives that type instead of an opaque dict, and
@@ -499,6 +504,11 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
     # A key that ignores a field means a change to that field is not resent.
     dedup_key: Optional[Union[str, Callable[[Any, Any], Any]]] = None
 
+    # Automatic job retries (opt-in): a job that fails with a transient error (source or
+    # destination down, timeout, refused connection) goes back to the queue after a
+    # backoff instead of failing. None = a failed job stays failed (as before).
+    job_retry: Optional[JobRetryConfig] = None
+
     # Runtime record checks (see core/record_validation.py):
     #   record_type       = the TypedDict every fetched record must match, e.g.
     #                       TypedRecord[Order]; checked right after source.fetch
@@ -528,6 +538,7 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
         config: Optional[Dict[str, Any]] = None,
         enable_duplicate_jobs: Optional[bool] = None,
         dedup_key: Optional[Union[str, Callable[[Any, Any], Any]]] = None,
+        job_retry: Optional[JobRetryConfig] = None,
     ):
         """
         Initialize the abstract pipeline.
@@ -539,6 +550,7 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
                 False = each record is sent at most once per destination
             dedup_key: What identifies a record for dedup — a field name or
                 ``fn(record, runtime_params)``; None hashes the whole record
+            job_retry: Retry jobs that fail transiently (see :class:`JobRetryConfig`)
         """
         if rate_limit is not None:
             self.rate_limit = rate_limit
@@ -548,6 +560,14 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
             self.enable_duplicate_jobs = enable_duplicate_jobs
         if dedup_key is not None:
             self.dedup_key = dedup_key
+        if job_retry is not None:
+            self.job_retry = job_retry
+        job_retry_value = cast(object, self.job_retry)
+        if job_retry_value is not None and not isinstance(job_retry_value, JobRetryConfig):
+            raise TypeError(
+                f"{self.__class__.__name__}.job_retry must be a JobRetryConfig or None, "
+                f"got {self.job_retry!r}"
+            )
         if self.dedup_key is not None:
             if not (isinstance(self.dedup_key, str) or callable(self.dedup_key)):
                 raise ValueError(
@@ -763,6 +783,27 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
         """
         return self.rate_limit
 
+    # Lifecycle hooks. Called once by the manager when the execution ends — not per job,
+    # and never by `reflowfy test` (there is no execution). Each runs in a thread with
+    # HOOK_TIMEOUT_SECONDS (60) to finish; an error or a timeout is logged and stored on
+    # the execution (`hook_error`) and never changes its state. To start another
+    # pipeline from one, call `reflowfy.reflow_manager.lifecycle.run_pipeline`.
+
+    def on_execution_complete(self, summary: ExecutionSummary, runtime_params: P) -> None:
+        """Called once when an execution of this pipeline has completed.
+
+        Args:
+            summary: Job and record counts, duration and the first errors.
+            runtime_params: The execution's parameters (with defaults applied).
+        """
+
+    def on_execution_failed(self, summary: ExecutionSummary, runtime_params: P) -> None:
+        """Called once when an execution of this pipeline has failed (a job failed, or
+        the run was force-failed or abandoned while planning)."""
+
+    def on_execution_cancelled(self, summary: ExecutionSummary, runtime_params: P) -> None:
+        """Called once when an execution of this pipeline was cancelled."""
+
     def should_apply_transformation(
         self, transformation: "BaseTransformation", runtime_params: P, records: List[Any]
     ) -> bool:
@@ -952,6 +993,7 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
             "config": self.config,
             "transformations": self.get_transformation_names(),
             "enable_duplicate_jobs": self.enable_duplicate_jobs,
+            "job_retry": self.job_retry.to_dict() if self.job_retry is not None else None,
             "dedup_key": (
                 self.dedup_key
                 if self.dedup_key is None or isinstance(self.dedup_key, str)
