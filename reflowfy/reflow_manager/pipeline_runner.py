@@ -314,18 +314,9 @@ class PipelineRunner:
         ``background_runner`` builds the runner the thread uses: it needs its own
         database session, since this one belongs to the caller's thread.
         """
-        from reflowfy.core.registry import pipeline_registry
+        from reflowfy.reflow_manager.start import check_runnable, drive_execution
 
-        pipeline = pipeline_registry.get(pipeline_name)
-        if not pipeline:
-            raise ValueError(
-                f"Pipeline '{pipeline_name}' not found in registry"
-                f"{pipeline_registry.describe_missing(pipeline_name)}"
-            )
-        errors = pipeline.validate_parameters(pipeline.apply_defaults(dict(runtime_params)))
-        if errors:
-            raise ValueError(f"Invalid parameters: {'; '.join(errors)}")
-
+        check_runnable(pipeline_name, runtime_params)
         self.execution_manager.create_execution(
             execution_id=execution_id,
             pipeline_name=pipeline_name,
@@ -334,32 +325,13 @@ class PipelineRunner:
 
         def drive() -> None:
             runner = background_runner()
-            try:
-                runner.run_pipeline_jobs(
-                    execution_id=execution_id,
-                    pipeline_name=pipeline_name,
-                    runtime_params=runtime_params,
-                )
-            except Exception as exc:
-                logger.exception(
-                    "Background execution failed",
-                    extra={
-                        "event": "execution_failed",
-                        "execution_id": execution_id,
-                        "pipeline_name": pipeline_name,
-                    },
-                )
-                try:
-                    runner.execution_manager.update_execution_state(
-                        execution_id, "failed", error_message=str(exc)
-                    )
-                except Exception:
-                    logger.exception(
-                        "Failed to mark execution as failed",
-                        extra={"event": "execution_mark_failed_error"},
-                    )
-            finally:
-                runner.execution_manager.db.close()
+            drive_execution(
+                runner.execution_manager.db,
+                lambda _db: runner,
+                execution_id,
+                pipeline_name,
+                runtime_params,
+            )
 
         threading.Thread(target=drive, name=f"run-{execution_id[:12]}", daemon=True).start()
 

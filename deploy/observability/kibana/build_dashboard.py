@@ -209,7 +209,7 @@ PANELS: List[Dict[str, Any]] = [
     {"id": "pod-jobs", "x": 0, "y": 92, "w": 24, "h": 14, "obj": bars("Jobs by pod", "event.action: (job_completed or job_failed)", _col_count(), "kubernetes.pod.name")},
     {"id": "pod-errors", "x": 24, "y": 92, "w": 24, "h": 14, "obj": table("Warnings and errors by pod", "log.level: (warning or error)", ["kubernetes.pod.name", "service.name", "event.action"])},
     # --- schedulers and DLQ
-    {"id": "sched", "x": 0, "y": 106, "w": 24, "h": 14, "obj": bars("Schedule triggers", "event.action: (schedule_trigger or schedule_dispatched or schedule_trigger_error or schedule_dispatch_error)", _col_count(), "schedule_name")},
+    {"id": "sched", "x": 0, "y": 106, "w": 24, "h": 14, "obj": bars("Schedule triggers", "event.action: (schedule_trigger or schedule_dispatched or schedule_trigger_error)", _col_count(), "schedule_name")},
     {"id": "dlq", "x": 24, "y": 106, "w": 24, "h": 14, "obj": bars("DLQ activity", "event.action: (dlq_scheduled or dlq_due or dlq_dispatched or dlq_rescheduled or dlq_archived or dlq_cancelled or dlq_dispatch_error)", _col_count(), "event.action")},
 ]
 

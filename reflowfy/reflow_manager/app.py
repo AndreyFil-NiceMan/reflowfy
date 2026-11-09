@@ -94,6 +94,7 @@ from fastapi import Response  # noqa: E402
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest  # noqa: E402
 from reflowfy.observability.tracing import init_tracing, instrument_fastapi  # noqa: E402
 from reflowfy.store.leases import JobLeases  # noqa: E402
+from reflowfy.reflow_manager.start import InvalidParametersError, PipelineNotFoundError, check_runnable, drive_execution  # noqa: E402
 
 
 @app.get("/metrics")
@@ -396,34 +397,22 @@ async def run_pipeline(
     Use GET /executions/{execution_id} to check progress.
     """
     import uuid
-    from reflowfy.core.registry import pipeline_registry
 
     try:
         # Generate execution ID if not provided
         execution_id = request.execution_id or str(uuid.uuid4())
 
-        # Validate pipeline exists before accepting
-        pipeline = pipeline_registry.get(request.pipeline_name)
-        if not pipeline:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=(
-                    f"Pipeline '{request.pipeline_name}' not found in registry"
-                    f"{pipeline_registry.describe_missing(request.pipeline_name)}"
-                ),
-            )
-
-        manager = make_manager(db)
-
         # Reject what can never run now, with a 4xx, instead of accepting it (202) and
         # failing in the background where the caller has to go and look.
         runtime_params = request.runtime_params or {}
-        errors = pipeline.validate_parameters(pipeline.apply_defaults(runtime_params))
-        if errors:
-            raise HTTPException(
-                status_code=422,  # Unprocessable Content
-                detail=f"Invalid parameters: {'; '.join(errors)}",
-            )
+        try:
+            pipeline = check_runnable(request.pipeline_name, runtime_params)
+        except PipelineNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+        except InvalidParametersError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))  # Unprocessable Content
+
+        manager = make_manager(db)
         if manager.get_execution(execution_id):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -546,38 +535,17 @@ def _dispatch_pipeline_jobs(
     mode: Optional[str] = None,
     enable_duplicate_jobs: Optional[bool] = None,
 ) -> None:
-    """Background task to dispatch pipeline jobs."""
-    # Create a new database session for background task
-    db = SessionLocal()
-
-    try:
-        manager = make_manager(db, mode=mode)
-
-        # Run the pipeline (this updates the existing execution record)
-        manager.run_pipeline_jobs(
-            execution_id=execution_id,
-            pipeline_name=pipeline_name,
-            runtime_params=runtime_params,
-            rate_limit_override=rate_limit_override,
-            enable_duplicate_jobs=enable_duplicate_jobs,
-        )
-
-    except Exception as e:
-        logger.exception("Background job dispatch failed", extra={"event": "dispatch_failed"})
-
-        # Update execution state to failed. Use a fresh ExecutionManager so this
-        # works even when ReflowManager construction above failed (manager unbound).
-        try:
-            ExecutionManager(db).update_execution_state(
-                execution_id, "failed", error_message=str(e)
-            )
-        except Exception:
-            logger.exception(
-                "Failed to mark execution as failed", extra={"event": "execution_mark_failed_error"}
-            )
-
-    finally:
-        db.close()
+    """Background task: plan and drive the execution ``/run`` just created."""
+    drive_execution(
+        SessionLocal(),
+        lambda db: make_manager(db, mode=mode),
+        execution_id,
+        pipeline_name,
+        runtime_params,
+        log=logger,
+        rate_limit_override=rate_limit_override,
+        enable_duplicate_jobs=enable_duplicate_jobs,
+    )
 
 
 # ===== Statistics =====
