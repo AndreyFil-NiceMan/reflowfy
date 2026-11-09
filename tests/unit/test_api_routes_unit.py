@@ -114,7 +114,7 @@ class TestRunRouteSchema:
         op = _app(pipeline).openapi()["paths"]["/pipelines/routes_schema_typed/run"]["post"]
         params = {p["name"]: p for p in op["parameters"]}
 
-        assert set(params) == {"mode", "rate_limit", "env", "limit"}
+        assert set(params) == {"mode", "rate_limit", "callback_url", "env", "limit"}
         assert all(p["in"] == "query" for p in params.values())
 
         env = params["env"]
@@ -314,6 +314,47 @@ class TestForwardingToManager:
             "tags": ["x"],
             "options": {"k": 1},
         }
+
+    def test_callback_url_is_forwarded_to_the_manager(self, make_pipeline):
+        seen: List[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={"jobs_dispatched": 1})
+
+        pipeline = make_pipeline("routes_callback", RouteParams)
+        app = _app(pipeline, distributed=_distributed(handler))
+        resp = TestClient(app).post(
+            "/pipelines/routes_callback/run?env=dev&callback_url=https://hooks.example/done",
+            json={"tags": ["x"], "options": {}},
+        )
+
+        assert resp.status_code == 200, resp.text
+        sent = json.loads(seen[0].content)
+        assert sent["callback_url"] == "https://hooks.example/done"
+        assert "callback_url" not in sent["runtime_params"]
+
+    def test_no_callback_url_sends_none(self, make_pipeline):
+        seen: List[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={"jobs_dispatched": 1})
+
+        pipeline = make_pipeline("routes_no_callback", RouteParams)
+        app = _app(pipeline, distributed=_distributed(handler))
+        resp = TestClient(app).post(
+            "/pipelines/routes_no_callback/run?env=dev", json={"tags": [], "options": {}}
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert "callback_url" not in json.loads(seen[0].content)
+
+    def test_callback_url_is_a_documented_query_param(self, make_pipeline):
+        pipeline = make_pipeline("routes_callback_schema", RouteParams)
+        schema = TestClient(_app(pipeline)).get("/openapi.json").json()
+        params = schema["paths"]["/pipelines/routes_callback_schema/run"]["post"]["parameters"]
+        assert any(p["name"] == "callback_url" and p["in"] == "query" for p in params)
 
     def test_manager_error_response_fails_the_run(self, make_pipeline):
         def handler(request: httpx.Request) -> httpx.Response:
