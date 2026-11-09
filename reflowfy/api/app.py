@@ -158,12 +158,22 @@ def setup_pipeline_routes(app: FastAPI) -> None:
     # Create routes for each pipeline. Sorted by folder so Swagger lists the
     # top-level "pipelines" section first, then each subfolder's section.
     for pipeline in sorted(pipelines, key=lambda p: (pipeline_folder(p), p.name)):
-        create_pipeline_routes(
-            app=app,
-            pipeline=pipeline,
-            local_executor=local_executor,
-            distributed_executor=distributed_executor,
-        )
+        try:
+            create_pipeline_routes(
+                app=app,
+                pipeline=pipeline,
+                local_executor=local_executor,
+                distributed_executor=distributed_executor,
+            )
+        except ValueError as exc:
+            # One misconfigured pipeline (e.g. a parameter named like a reserved route
+            # parameter) must not take every other pipeline's routes down with it.
+            logger.error(
+                "Pipeline '%s' has no API route: %s",
+                pipeline.name,
+                exc,
+                extra={"event": "pipeline_route_failed"},
+            )
 
     logger.info("Routes configured", extra={"event": "routes_ready"})
 

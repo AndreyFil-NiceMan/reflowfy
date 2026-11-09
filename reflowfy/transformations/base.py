@@ -378,6 +378,25 @@ class RecordTransformation(AsyncTransformation):
         return results
 
 
+class DecoratedTransformation(BaseTransformation):
+    """What ``@transformation`` / ``@record_transformation`` turn a function into.
+
+    Its constructor takes the function's options as keyword arguments
+    (``multiply(factor=2)``), checked against the function's signature at once, so
+    ``step(option=...)`` type-checks for callers. A hand-written subclass of
+    :class:`BaseTransformation` keeps object's constructor and still rejects
+    arguments it does not declare.
+    """
+
+    options: Dict[str, Any]
+
+    def __init__(self, **options: Any) -> None:
+        bind_options = getattr(type(self), "_bind_options", None)
+        if bind_options is not None:
+            bind_options(options)
+        self.options = options
+
+
 class TransformationError(Exception):
     """Raised when a transformation fails.
 

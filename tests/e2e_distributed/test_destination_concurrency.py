@@ -91,7 +91,9 @@ class TestPerRecordFailure:
         already been accepted arrive a second time: per-record mode does not resume where
         it stopped (the docstring of ``api_destination`` says so). Only that job may repeat."""
         sink.rules(channel, record_fail_ids=[113])  # job 2 (ids 101-150), its 13th record
-        execution = manager.run(PIPELINE, params(total=200, per_job=50))
+        # One request at a time, so "the job stopped at its 13th record" is exact. The
+        # default (16 in flight) cancels the requests still open when 113 fails.
+        execution = manager.run(PIPELINE, params(total=200, per_job=50, dest_concurrency=1))
 
         stats = manager.wait(execution)
 

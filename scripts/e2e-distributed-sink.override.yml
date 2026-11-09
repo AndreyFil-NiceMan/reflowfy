@@ -1,0 +1,26 @@
+# Adds the distributed suite's delivery sink (tests/e2e_distributed/sink/server.py) to
+# the local E2E stack, so `pytest tests/e2e_distributed` runs against Docker instead of
+# a Kubernetes deployment. Use together with e2e-distributed.override.yml:
+#
+#   ./scripts/run_e2e_tests.sh --keep-docker
+#   cd e2e_workspace
+#   cp ../tests/e2e_distributed/pipelines/dist_*.py tests/e2e/test_pipelines/
+#   REFLOWFY_BASE_IMAGE=reflowfy-base:local docker compose \
+#     -f docker-compose.yml -f ../scripts/e2e-distributed.override.yml \
+#     -f ../scripts/e2e-distributed-sink.override.yml up -d --build worker reflow-manager e2e-sink
+#   cd .. && E2E_DIST_MANAGER_URL=http://localhost:8002 E2E_DIST_SINK_URL=http://localhost:8090 \
+#     uv run pytest tests/e2e_distributed -m "not chaos and not needs_es"
+services:
+  e2e-sink:
+    image: python:3.11-slim
+    container_name: reflofy-e2e-sink
+    command: python /app/tests/e2e_distributed/sink/server.py
+    working_dir: /app
+    volumes:
+      - ./tests:/app/tests:ro
+    ports:
+      - "8090:8080"
+    networks:
+      reflowfy-network:
+        aliases:
+          - e2e-sink

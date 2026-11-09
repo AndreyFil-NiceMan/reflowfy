@@ -36,11 +36,12 @@ import inspect
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, cast
 
 if TYPE_CHECKING:
+    from reflowfy.transformations.base import DecoratedTransformation
     from typing import Awaitable, Mapping
 
     from typing_extensions import Concatenate
 
-    from reflowfy.transformations.base import BaseTransformation, OnError
+    from reflowfy.transformations.base import OnError
 
     TransformFn = Callable[Concatenate[Any, Any, ...], Any]
     """Shape of a decorated transformation: ``(records, runtime_params, **options) -> records``.
@@ -63,7 +64,7 @@ if TYPE_CHECKING:
 
 def transformation(
     name: str,
-) -> Callable[["TransformFn"], "type[BaseTransformation]"]:
+) -> Callable[["TransformFn"], "type[DecoratedTransformation]"]:
     """
     Decorator to create a reusable transformation from a function.
 
@@ -91,7 +92,7 @@ def transformation(
             return [filter_active()]  # Instantiate to use
     """
 
-    def decorator(func: "TransformFn") -> "type[BaseTransformation]":
+    def decorator(func: "TransformFn") -> "type[DecoratedTransformation]":
         from reflowfy.transformations.base import AsyncTransformation, BaseTransformation
 
         # Plain `type`: the bases are abstract until the methods below fill them in.
@@ -120,7 +121,7 @@ def record_transformation(
     concurrency: Optional[int] = None,
     timeout: Optional[float] = None,
     on_error: "OnError" = "fail",
-) -> Callable[["RecordTransformFn"], "type[BaseTransformation]"]:
+) -> Callable[["RecordTransformFn"], "type[DecoratedTransformation]"]:
     """
     Decorator to create a transformation that awaits a coroutine once per record.
 
@@ -161,7 +162,7 @@ def record_transformation(
 
     check_on_error(f"record_transformation {name!r}", on_error)
 
-    def decorator(func: "RecordTransformFn") -> "type[BaseTransformation]":
+    def decorator(func: "RecordTransformFn") -> "type[DecoratedTransformation]":
         from reflowfy.transformations.base import RecordTransformation
 
         if not inspect.iscoroutinefunction(func):
@@ -187,29 +188,30 @@ def record_transformation(
 
 def _make_class(
     func: Callable[..., Any], name: str, base: type, methods: Dict[str, Any]
-) -> "type[BaseTransformation]":
+) -> "type[DecoratedTransformation]":
     """Create (and so auto-register) the transformation class for ``func``."""
     signature = inspect.signature(func)
 
-    def __init__(self: Any, **options: Any) -> None:
+    from reflowfy.transformations.base import DecoratedTransformation
+
+    def bind_options(options: Dict[str, Any]) -> None:
         try:
             # Two placeholders stand for (records, runtime_params).
             signature.bind(None, None, **options)
         except TypeError as exc:
             raise TypeError(f"transformation {name!r} ({func.__name__}): {exc}") from None
-        self.options = options
 
     cls = type(
         func.__name__,
-        (base,),
+        (DecoratedTransformation, base),
         {
             "name": name,
             **methods,
-            "__init__": __init__,
+            "_bind_options": staticmethod(bind_options),
             # Read by validate_steps for the record type the return annotation promises.
             "_transform_fn": staticmethod(func),
             "__doc__": func.__doc__ or f"Transformation: {name}",
             "__module__": func.__module__,
         },
     )
-    return cast("type[BaseTransformation]", cls)
+    return cast("type[DecoratedTransformation]", cls)

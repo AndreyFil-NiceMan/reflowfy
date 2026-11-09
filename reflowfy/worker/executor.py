@@ -36,6 +36,12 @@ from reflowfy.transformations.base import count_skip_reason, top_skip_reasons
 logger = get_logger("worker.executor")
 
 
+def _carries_job_retry(job_payload: Dict[str, Any]) -> bool:
+    """Whether the job message carries a ``job_retry`` config (not whether it parses)."""
+    raw: Any = job_payload.get("metadata")
+    return isinstance(raw, dict) and isinstance(cast(Dict[str, Any], raw).get("job_retry"), dict)
+
+
 class JobStats:
     """Statistics for a job execution."""
 
@@ -73,6 +79,10 @@ class JobStats:
         # This failure was not final: the job went back to pending to be retried.
         self.retry_scheduled = False
         self.retry_in_seconds: Optional[float] = None
+        # The job message carries a job_retry config: a run that ends any other way than
+        # a failure keeps the retry count earlier runs left (else a job that needed
+        # retries looks, after the fact, like one that worked first time).
+        self.job_retry_enabled = False
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -95,6 +105,9 @@ class JobStats:
             "records_skipped": self.records_skipped,
             "record_skip_reasons": self.record_skip_reasons,
             "success": self.success,
+            # The exception class of a failed job (never its message): what tells a
+            # RecordValidationError or PermanentDestinationError apart from other failures.
+            **({"error_type": self.error_type} if self.error_type else {}),
             # Only for a @record_destination, so other jobs' stats keep their shape.
             **({"destinations": self.destinations} if self.destinations is not None else {}),
             **(
@@ -206,6 +219,8 @@ class WorkerExecutor:
     async def execute_job(self, job_payload: Dict[str, Any]) -> bool:
         """Execute a job: bind log context, continue the trace, record metrics."""
         stats = JobStats()
+        # Just "is there one": a malformed config is reported where a failure reads it.
+        stats.job_retry_enabled = _carries_job_retry(job_payload)
         execution_id = job_payload.get("execution_id", "unknown")
         job_id = job_payload.get("job_id", "unknown")
         pipeline_name = job_payload.get("pipeline_name", "unknown")
@@ -820,6 +835,12 @@ class WorkerExecutor:
         Returns:
             True if the row was written.
         """
+        if stats.job_retry_enabled and stats.retry_count is None:
+            # Not a failure (those set it): keep what earlier runs of this job recorded.
+            count, history = await self._previous_retries(job_id)
+            if count:
+                stats.retry_count = count
+                stats.error_history = history
         async with self._async_session() as db:
             try:
                 from datetime import timedelta
