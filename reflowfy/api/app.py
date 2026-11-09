@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from reflowfy import __version__
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from reflowfy.core.api_auth import install_api_auth
 from reflowfy.core.registry import pipeline_registry
 from reflowfy.core.pipeline_discovery import discover_and_load_pipelines
 from reflowfy.observability import (  # noqa: F401  (register families)
@@ -56,6 +57,9 @@ def create_app() -> FastAPI:
         version=__version__,
         lifespan=lifespan,
     )
+
+    # Optional bearer token (REFLOWFY_API_TOKEN); CORS stays outermost.
+    install_api_auth(app, service="api")
 
     # CORS middleware
     app.add_middleware(

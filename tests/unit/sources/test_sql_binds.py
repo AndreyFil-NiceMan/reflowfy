@@ -193,7 +193,9 @@ class TestFetch:
         assert _ids(src.fetch({}, limit=2)) == [9, 10]
 
     def test_template_off_keeps_the_query_verbatim(self, db_url: str) -> None:
-        src = SqlSource(db_url, "SELECT * FROM events WHERE id = :x", params={"x": 3}, template=False)
+        src = SqlSource(
+            db_url, "SELECT * FROM events WHERE id = :x", params={"x": 3}, template=False
+        )
         assert _ids(src.fetch({})) == [3]
 
 
@@ -247,3 +249,16 @@ class TestSplit:
             [6, 7, 8],
             [9, 10],
         ]
+
+
+def test_quoted_identifiers_without_values_pass_through() -> None:
+    sql, binds = render_sql_template('SELECT "Col" FROM x WHERE a = {{ a }}', {"a": 1})
+    assert sql == 'SELECT "Col" FROM x WHERE a = :reflowfy_p0'
+    assert binds == {"reflowfy_p0": 1}
+
+
+def test_ident_of_a_missing_parameter() -> None:
+    with pytest.raises(SqlTemplateError, match="no runtime parameter 'tbl'"):
+        render_sql_template("SELECT * FROM {{ tbl | ident }}", {})
+    # ...but in a comment it is dropped like any other value
+    assert render_sql_template("-- {{ tbl | ident }}\nSELECT 1", {}) == ("-- \nSELECT 1", {})
