@@ -21,6 +21,24 @@ _ctx: contextvars.ContextVar[Dict[str, Any]] = contextvars.ContextVar(
 _installed = False
 
 
+class _ContextFieldsDict(Dict[str, Any]):
+    """A LogRecord's ``__dict__`` whose context fields do not count as taken.
+
+    ``Logger.makeRecord`` raises ``KeyError("Attempt to overwrite ...")`` when an
+    ``extra=`` key is already on the record — and the factory below has already put
+    every bound context field there. So ``logger.info(..., extra={"pipeline_name": n})``
+    inside ``log_context(pipeline_name=n)`` raised, and a log line failed the whole
+    run. Context fields are defaults: a call's own ``extra`` replaces them.
+    """
+
+    context_keys: frozenset[str] = frozenset()
+
+    def __contains__(self, key: object) -> bool:
+        if key in self.context_keys:
+            return False
+        return super().__contains__(key)
+
+
 def install_context_filter() -> None:
     """Install the context-injecting record factory. Idempotent."""
     global _installed
@@ -30,8 +48,12 @@ def install_context_filter() -> None:
 
     def factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
         record = old_factory(*args, **kwargs)
-        for key, val in _ctx.get().items():
-            setattr(record, key, val)
+        fields = _ctx.get()
+        if fields:
+            values = _ContextFieldsDict(record.__dict__)
+            values.update(fields)
+            values.context_keys = frozenset(fields)
+            record.__dict__ = values
         return record
 
     logging.setLogRecordFactory(factory)

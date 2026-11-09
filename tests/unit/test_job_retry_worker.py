@@ -210,8 +210,12 @@ async def test_a_retried_job_that_succeeds_completes(db, db_file, monkeypatch):
     job = _job(db)
     assert job.state == "completed"
     assert destination.sent == [{"id": 1}]
-    # The stats of the run that succeeded: no retry fields from the failed runs.
-    assert "retry_count" not in (job.stats or {})
+    # The run that succeeded keeps the retry history of the runs before it, so a job
+    # that needed a retry does not look like one that worked first time.
+    assert job.stats["retry_count"] == 1
+    assert [h["type"] for h in job.stats["error_history"]] == ["TimeoutError"]
+    assert "retry_scheduled" not in job.stats
+    assert "error_type" not in job.stats  # the final run did not fail
 
 
 async def test_an_error_that_is_not_retried_fails_at_once(db, db_file, monkeypatch, caplog):
@@ -305,6 +309,20 @@ async def test_previous_retries_ignore_malformed_stats(db, db_file):
 def test_retry_fields_stay_out_of_stats_without_job_retry() -> None:
     stats = JobStats().to_dict()
     assert not {"retry_count", "error_history", "retry_scheduled"} & set(stats)
+
+
+async def test_a_first_time_success_with_job_retry_has_no_retry_fields(
+    db, db_file, monkeypatch
+):
+    _register(monkeypatch, _Destination([]))
+    assert await _run(db_file, _payload(JobRetryConfig())) is True
+    assert "retry_count" not in (_job(db).stats or {})
+
+
+async def test_a_failed_job_stores_its_error_type(db, db_file, monkeypatch):
+    _register(monkeypatch, _Destination([DestinationError("kafka", "down")]))
+    assert await _run(db_file, _payload(None)) is False
+    assert _job(db).stats["error_type"] == "DestinationError"
 
 
 # ----- manager side ---------------------------------------------------------------------

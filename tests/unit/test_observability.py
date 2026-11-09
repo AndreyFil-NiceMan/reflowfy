@@ -2,6 +2,8 @@
 
 import json
 import logging
+
+import pytest
 import time
 
 
@@ -313,6 +315,32 @@ def test_log_context_injects_and_clears():
     assert getattr(records[0], "execution_id") == "e9"
     assert getattr(records[0], "job_id") == "j9"
     assert getattr(records[1], "execution_id", None) is None
+
+
+def test_extra_may_repeat_a_bound_context_field():
+    """``extra=`` naming a field log_context already bound used to raise
+    "Attempt to overwrite 'pipeline_name' in LogRecord" and fail the run that logged."""
+    records = []
+
+    class Cap(logging.Handler):
+        def emit(self, r):
+            records.append(r)
+
+    log = logging.getLogger("reflowfy.ctxtest.extra")
+    log.addHandler(Cap())
+    log.setLevel(logging.INFO)
+    with log_context(pipeline_name="bound", execution_id="e1"):
+        log.warning("explicit wins", extra={"pipeline_name": "explicit", "event": "x"})
+        log.info("context only")
+    assert getattr(records[0], "pipeline_name") == "explicit"
+    assert getattr(records[0], "execution_id") == "e1"
+    assert getattr(records[1], "pipeline_name") == "bound"
+    # The context fields are real attributes of the record, as before.
+    assert records[1].__dict__["execution_id"] == "e1"
+    with pytest.raises(KeyError):
+        # A LogRecord's own attributes are still protected.
+        with log_context(execution_id="e2"):
+            log.info("x", extra={"message": "no"})
 
 
 # --- trace propagation ---
