@@ -23,10 +23,10 @@ from reflowfy import (
 from reflowfy.core.record_validation import (
     describe_invalid,
     find_invalid_records,
-    step_output_type,
     type_label,
 )
 from reflowfy.execution.job_runner import RECORD_TYPE_STEP, run_job_records
+from reflowfy.transformations.output_type import step_output_type
 from reflowfy.worker.executor import WorkerExecutor
 
 

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from reflowfy.core.secrets import redact_row
+from reflowfy.reflow_manager.redaction import redact_row
 from reflowfy.reflow_manager.database import get_db
 from reflowfy.reflow_manager.models import DLQJobArchive, Execution, PipelineSchedule
 

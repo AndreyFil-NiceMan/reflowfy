@@ -18,12 +18,11 @@ from reflowfy.core.secrets import (
     literal_secret_fields,
     mask_url_password,
     redact_config,
-    redact_job_payload,
-    redact_row,
     secret,
 )
 from reflowfy.factories.source_factory import SourceFactory
 from reflowfy.reflow_manager.pipeline_runner import build_job_payload
+from reflowfy.reflow_manager.redaction import redact_job_payload, redact_row
 from reflowfy.sources.api import IDBasedAPISource
 from reflowfy.sources.elastic import ElasticSource
 from reflowfy.sources.s3 import S3Source

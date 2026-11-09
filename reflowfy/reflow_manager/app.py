@@ -19,7 +19,8 @@ load_dotenv()
 from reflowfy import __version__  # noqa: E402
 
 from reflowfy.core.api_auth import install_api_auth  # noqa: E402
-from reflowfy.core.secrets import mask_url_passwords_in_text, redact_row  # noqa: E402
+from reflowfy.core.secrets import mask_url_passwords_in_text  # noqa: E402
+from reflowfy.reflow_manager.redaction import redact_row  # noqa: E402
 from reflowfy.observability.context import bind_log_context  # noqa: E402
 from reflowfy.observability.logging import setup_logging  # noqa: E402
 from reflowfy.reflow_manager.database import get_db, init_db, SessionLocal  # noqa: E402
