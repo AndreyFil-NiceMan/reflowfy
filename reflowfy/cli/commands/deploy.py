@@ -255,15 +255,26 @@ def register(app: typer.Typer):
         # OpenShift Routes
         console.print("\n🌐 Creating OpenShift Routes...", style="blue")
         try:
-            subprocess.run(
-                ["oc", "expose", "svc/reflowfy-api", "--name=reflowfy-api", "-n", namespace],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-            subprocess.run(
-                ["oc", "expose", "svc/reflowfy-reflow-manager", "--name=reflowfy-manager", "-n", namespace],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-            console.print("✅ Routes created/verified", style="green")
+            routes_ok = True
+            for service, route in (
+                ("reflowfy-api", "reflowfy-api"),
+                ("reflowfy-reflow-manager", "reflowfy-manager"),
+            ):
+                result = subprocess.run(
+                    ["oc", "expose", f"svc/{service}", f"--name={route}", "-n", namespace],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                # A route left by an earlier deploy is fine; anything else is not.
+                if result.returncode != 0 and "AlreadyExists" not in (result.stderr or ""):
+                    routes_ok = False
+                    console.print(
+                        f"⚠️ Could not create route {route}: {(result.stderr or '').strip()}",
+                        style="yellow",
+                    )
+            if routes_ok:
+                console.print("✅ Routes created/verified", style="green")
         except FileNotFoundError:
             console.print("⚠️ 'oc' command not found. Skipping route creation.", style="yellow")
 
