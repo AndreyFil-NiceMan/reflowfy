@@ -107,7 +107,7 @@ def test_preview_stops_once_max_records_is_reached(logs: List[str]) -> None:
     assert status.state is ExecutionState.COMPLETED
     assert status.metadata == {"records_fetched": 2, "records_sent": 4}
     assert dest.sent == [[{"job": 0}] * 4]  # jobs 1 and 2 never ran
-    assert any("Applied transformation: gaps_local_double (2 -> 4" in m for m in logs)
+    assert any("Applied transformation: gaps_local_double (sync, 2 -> 4" in m for m in logs)
 
 
 def test_a_dropped_job_is_logged_with_its_reason_and_sends_nothing(logs: List[str]) -> None:
@@ -222,7 +222,7 @@ def test_id_preview_caps_each_id_and_logs_applied_steps(logs: List[str]) -> None
     assert status.metadata == {"ids_processed": 2, "records_fetched": 4, "records_sent": 4}
     # one slice per ID: the second slice of each ID is past the cap
     assert [[r["n"] for r in batch] for batch in dest.sent] == [[0, 1], [0, 1]]
-    assert any(m.startswith("Applied: gaps_local_tag (2 -> 2") for m in logs)
+    assert any(m.startswith("Applied: gaps_local_tag (sync, 2 -> 2") for m in logs)
 
 
 def test_id_with_a_dropped_job_counts_as_done_without_records(logs: List[str]) -> None:

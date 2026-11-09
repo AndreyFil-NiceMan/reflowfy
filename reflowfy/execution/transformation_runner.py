@@ -16,6 +16,7 @@ import asyncio
 import time
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple, cast
 
+from reflowfy.core.abstract_pipeline import AbstractPipeline
 from reflowfy.core.async_utils import run_coroutine_sync
 from reflowfy.core.exceptions import SkipJob, SkipRecord
 from reflowfy.core.record_validation import (
@@ -37,6 +38,9 @@ logger = get_logger("execution.transformation_runner")
 
 DEFAULT_MAX_STEPS = 1000
 
+SKIPPED_MODE = "skipped"
+"""``AppliedStep.mode`` of a step ``should_apply_transformation`` declined."""
+
 
 class AppliedStep(NamedTuple):
     """One applied transformation: what it was, how long it took, what it did.
@@ -54,6 +58,8 @@ class AppliedStep(NamedTuple):
     mode: str = "sync"
     """How the step ran: ``"sync"`` (in a thread), ``"async"`` or ``"per_record"``.
 
+    ``"skipped"``: the pipeline's ``should_apply_transformation`` declined it, so it
+    did not run (``records_in == records_out``; ``duration`` is the hook's time).
     ``"validate"`` is not a transformation: it is the pipeline's ``record_type``
     check on the fetched records (see ``job_runner.check_record_type``)."""
     concurrency: Optional[int] = None
@@ -146,6 +152,46 @@ def _check_step_output(
     )
 
 
+def _decides_steps(pipeline: Any) -> bool:
+    """Whether ``pipeline`` overrides ``should_apply_transformation``.
+
+    The default always says yes; not calling it saves a thread hop per step.
+    """
+    hook = getattr(cast(object, type(pipeline)), "should_apply_transformation", None)
+    if hook is None:
+        return False
+    return hook is not AbstractPipeline.should_apply_transformation
+
+
+async def _should_apply(
+    pipeline: Any,
+    transformation: Any,
+    records: List[Any],
+    runtime_params: Dict[str, Any],
+    step_index: int,
+    applied: List[AppliedStep],
+) -> bool:
+    """Ask the pipeline whether to run this step; its failure fails the job, naming the step."""
+    try:
+        # User code: in a thread, like define_transformations and a sync apply.
+        return bool(
+            await asyncio.to_thread(
+                pipeline.should_apply_transformation, transformation, runtime_params, records
+            )
+        )
+    except SkipJob:
+        raise
+    except Exception as exc:
+        raise TransformationError(
+            transformation_name=getattr(transformation, "name", "<unknown>"),
+            message=f"should_apply_transformation raised {type(exc).__name__}: {exc}",
+            original_error=exc,
+            step_index=step_index,
+            records_in=len(records),
+            applied_steps=list(applied),
+        ) from exc
+
+
 def apply_transformations_iteratively(
     pipeline: Any,
     original_records: List[Any],
@@ -176,6 +222,11 @@ async def apply_transformations_iteratively_async(
     Steps run one after another whatever their kind; only the records inside one
     ``RecordTransformation`` step run concurrently.
 
+    Before each step the pipeline's ``should_apply_transformation(transformation,
+    runtime_params, records)`` is asked (``records`` as they are at that point). A
+    declined step keeps its position — it counts as applied, so re-resolution never
+    offers it again — and is reported with ``mode="skipped"``.
+
     Args:
         pipeline: A resolved pipeline exposing ``name`` and ``define_transformations``.
         original_records: The pre-transformation records for this job/batch.
@@ -195,6 +246,7 @@ async def apply_transformations_iteratively_async(
     transformed = original_records
     applied: List[AppliedStep] = []
     applied_count = 0
+    decides_steps = _decides_steps(pipeline)
 
     def resolve() -> List[Any]:
         return list(pipeline.define_transformations(original_records, runtime_params))
@@ -219,6 +271,29 @@ async def apply_transformations_iteratively_async(
         concurrency: Optional[int] = None
         skip_reasons: Optional[Dict[str, int]] = None
         start = time.time()
+        if decides_steps and not await _should_apply(
+            pipeline, transformation, transformed, runtime_params, applied_count, applied
+        ):
+            logger.info(
+                "Transformation %s not applied: should_apply_transformation declined it",
+                getattr(transformation, "name", "<unknown>"),
+                extra={
+                    "event": "transform_declined",
+                    "transformation": getattr(transformation, "name", "<unknown>"),
+                    "records_in": records_in,
+                },
+            )
+            applied.append(
+                AppliedStep(
+                    name=transformation.name,
+                    duration=time.time() - start,
+                    records_in=records_in,
+                    records_out=records_in,
+                    mode=SKIPPED_MODE,
+                )
+            )
+            applied_count += 1
+            continue
         try:
             if isinstance(transformation, RecordTransformation):
                 mode, concurrency = "per_record", transformation.effective_concurrency()

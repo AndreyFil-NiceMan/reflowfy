@@ -213,12 +213,17 @@ already running, e.g. inside FastAPI). Three kinds of step, freely mixed in one 
   `AsyncTransformation.apply` still works for sync callers. It is a separate method name
   because overriding sync `apply` with an `async def` is an LSP error.
 - **per_record** (`RecordTransformation.apply_record`, or `@record_transformation(name,
-  concurrency=, timeout=)` on an `async def f(record, params) -> record | None`): every record
+  concurrency=, timeout=, on_error=)` on an `async def f(record, params) -> record | None`): every record
   awaited, `concurrency` at a time (default `TRANSFORM_CONCURRENCY`, 16) by a fixed pool of
   workers, not a task per record. Order is kept, `None` drops the record, the first failure
   cancels the rest and raises `TransformationError` with the exact `culprit_index` (via
-  `RecordFailure`), `SkipJob` from any record drops the job, and `raise SkipRecord("why")`
-  drops just that record *with* a reason (see below). Subclass it for a client shared by
+  `RecordFailure`) — or, with `on_error="skip"`, drops that record instead (see "Dropping a
+  record") — `SkipJob` from any record drops the job, and `raise SkipRecord("why")`
+  drops just that record *with* a reason (see below). It must return **one record (a `dict`,
+  so `Record`/`TypedRecord`) or `None`**: a list, tuple, string or scalar fails the job with
+  `record N: RecordContractError: returned list; a per-record step returns one record or None`
+  — a contract error, so `on_error="skip"` does not hide it (it used to pass a list on as one
+  "record"). Subclass it for a client shared by
   the step's records: `setup()` / `teardown()` run once around them. An `httpx.AsyncClient`
   costs ~40 ms of CPU to build, so one per record is slow *and* stalls the loop.
 
@@ -235,6 +240,34 @@ state or metric: its outcomes are the existing ones (the one new counter is for 
 `tests/e2e/test_async_transform.py` (the mock API counts lookups in flight),
 `tests/e2e_distributed/test_async_pipelines.py` (`dist_async`, per-job peak from the sink).
 
+### Authoring transformations: options and `should_apply_transformation`
+
+**Options.** A `@transformation` / `@record_transformation` function's parameters after
+`(records|record, runtime_params)` are options, given as keyword arguments when the step is
+built and passed to every call: `def multiply(records, params, *, factor)` is used as
+`multiply(factor=2)`. The constructor binds them against the function's signature
+(`inspect.signature(...).bind`, signature taken once at decoration), so an unknown or missing
+option raises `TypeError` naming the transformation inside `define_transformations`, not
+mid-job; they are kept on the instance as `.options`. `TransformFn` is
+`Callable[Concatenate[Any, Any, ...], Any]` (the per-record one returns
+`Awaitable[Mapping[str, Any] | None]`, `Mapping` so a TypedDict return is accepted): it still
+rejects a function with fewer than two positional parameters, and admits the options.
+`validate_steps` keeps reading the function's return annotation (`_transform_fn`).
+
+**`should_apply_transformation(transformation, runtime_params, records)`** (a pipeline method,
+default yes) is asked before each step, in a thread like other sync user code, with the records
+as they are at that point. A declined step keeps its position — it counts as applied, so
+re-resolution never offers it again (append-only rule) — and is reported as an `AppliedStep`
+with `mode="skipped"` (`SKIPPED_MODE`), `records_in == records_out`, `duration` = the hook's
+time; it is not run and not validated. The hook is not called at all when the pipeline does
+not override it (no thread hop). If it raises, the job fails with a `TransformationError`
+naming the step ("should_apply_transformation raised KeyError: …"); `SkipJob` drops the job.
+Observability: info log `transform_declined` from the runner (so worker, `LocalExecutor` and
+`reflowfy test` all have it), the worker's existing `transform_applied` debug line with
+`mode=skipped`, `reflowfy test` prints `– <step>  not applied (should_apply_transformation
+declined it)` at any verbosity and `"mode"` per step in `--json`. No job state or metric: the
+job's outcome is unchanged. Tests: `tests/unit/test_transformation_authoring.py`.
+
 ### Dropping a record
 
 `raise SkipRecord("why")` inside a per-record transformation drops that one record; the job goes
@@ -242,7 +275,12 @@ on. Returning `None` drops it silently (a filter); `SkipRecord` keeps the reason
 returns its skips beside its records (`RecordTransformation.apply_records` → `RecordResults`), so
 nothing is stored on the shared transformation instance. Raised from a sync or whole-batch async
 step it fails the job saying to use `@record_transformation` (there is no "current record"
-there). Observability: `AppliedStep.skip_reasons`; the worker logs `Job <id>: <step> skipped N
+there). `@record_transformation(..., on_error="skip")` (subclass form: `on_error = "skip"` class
+attribute, checked at class definition; the decorator checks its value at decoration) drops a
+record whose call raised — a timeout included — through the same path, reason
+`type(exc).__name__` (never the message: it can carry record values, and reasons are counted),
+the same semantics as `@record_destination`'s `on_error`. `"fail"` is the default; `SkipJob` and
+`SkipRecord` keep their meaning either way, and a wrong return type still fails. Observability: `AppliedStep.skip_reasons`; the worker logs `Job <id>: <step> skipped N
 records ('reason' xN, …)`, stores `records_skipped` and `record_skip_reasons` in the job's
 `stats`, and counts `reflowfy_records_skipped_total{pipeline, transformation}` — a new counter,
 because a record outcome has no place on the per-job `jobs_processed_total` and adding a label to
