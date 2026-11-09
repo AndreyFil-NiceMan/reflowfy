@@ -257,13 +257,13 @@ def test_a_hook_that_calls_sys_exit_does_not_end_the_manager(db, engine) -> None
 
 def test_a_hook_that_runs_too_long_is_reported(db, engine, monkeypatch) -> None:
     monkeypatch.setenv("HOOK_TIMEOUT_SECONDS", "0.05")
-    CALLS.sleep = 0.5
+    CALLS.sleep = 3.0  # far beyond the timeout, so a loaded machine still tells them apart
     _execution(db, "completed")
 
     started = time.time()
     lifecycle.fire_execution_hooks(engine, "e")
 
-    assert time.time() - started < 0.4
+    assert time.time() - started < 2.0  # the hook's 3 s are never waited out
     assert _row(db).hook_error == "on_execution_complete timed out after 0.05s"
 
 
@@ -405,7 +405,13 @@ def test_wait_for_hooks_times_out(monkeypatch) -> None:
 
 def test_run_pipeline_from_a_hook_records_the_parent(db, engine, monkeypatch) -> None:
     driven: List[Any] = []
-    monkeypatch.setattr(lifecycle, "_drive_child", lambda *args: driven.append(args))
+    started = threading.Event()
+
+    def drive(*args: Any) -> None:
+        driven.append(args)
+        started.set()
+
+    monkeypatch.setattr(lifecycle, "_drive_child", drive)
     CALLS.chain = {}
     _execution(db, "completed")
 
@@ -416,10 +422,9 @@ def test_run_pipeline_from_a_hook_records_the_parent(db, engine, monkeypatch) ->
     child = _row(db, child_id)
     assert child.parent_execution_id == "e"
     assert child.state == "pending" and child.runtime_params == {"step": 2}
-    for _ in range(100):  # the child is started in its own thread
-        if driven:
-            break
-        time.sleep(0.01)
+    # The child is started in its own thread: wait for it rather than poll for a fixed
+    # second, which a loaded machine (coverage, a busy CI runner) overran.
+    assert started.wait(timeout=30)
     assert driven[0][1:] == (child_id, PIPE, {"step": 2}, None, None)
     assert lifecycle.current_execution_id() is None  # only inside the hook
 
