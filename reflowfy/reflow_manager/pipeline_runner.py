@@ -798,7 +798,7 @@ class PipelineRunner:
                     try:
                         self.job_manager.db.rollback()
                     except Exception:
-                        pass
+                        pass  # the connection is gone; the next query reconnects
                     await asyncio.sleep(db_backoff)
                     continue
                 db_backoff = 0.0

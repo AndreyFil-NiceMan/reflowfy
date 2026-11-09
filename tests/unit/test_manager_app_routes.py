@@ -164,9 +164,31 @@ def test_health_is_503_until_the_database_is_ready(client, monkeypatch):
 
 def test_health_once_the_database_is_ready(client, monkeypatch):
     monkeypatch.setattr(app_module, "_db_ready", True)
+    monkeypatch.setattr(app_module, "_failed_components", [])
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "healthy" and response.json()["version"] == __version__
+
+
+def test_health_is_degraded_while_a_scheduler_failed_to_start(client, monkeypatch):
+    monkeypatch.setattr(app_module, "_db_ready", True)
+    monkeypatch.setattr(app_module, "_failed_components", ["DLQ Scheduler"])
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "degraded"
+    assert response.json()["failed_components"] == ["DLQ Scheduler"]
+
+
+def test_a_component_that_fails_to_start_is_recorded(monkeypatch):
+    monkeypatch.setattr(app_module, "_failed_components", [])
+
+    def broken() -> None:
+        raise RuntimeError("no database")
+
+    app_module._start_component("Pipeline Scheduler", broken)
+    app_module._start_component("Content Dedup Sweeper", lambda: None)
+
+    assert app_module._failed_components == ["Pipeline Scheduler"]
 
 
 def test_metrics_endpoint_serves_prometheus_text(client):

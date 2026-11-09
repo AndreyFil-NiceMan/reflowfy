@@ -11,6 +11,7 @@ from elastic_transport import TransportError
 from reflowfy.core.types import Record, Records, wrap_as_record
 from reflowfy.observability.logging import get_logger
 from reflowfy.sources.base import BaseSource, SourceError
+from reflowfy.core.health import log_unhealthy
 
 # The manager opens a PIT while planning; workers search it later, as the
 # rate-limited dispatch loop sends their jobs. Each search extends the
@@ -779,8 +780,8 @@ class ElasticSource(BaseSource):
             client = self._get_client()
             health = client.cluster.health()
             return health["status"] in ["green", "yellow"]
-        except Exception:
-            return False
+        except Exception as exc:
+            return log_unhealthy(logger, "Elasticsearch source", exc)
 
 
 def elastic_source(

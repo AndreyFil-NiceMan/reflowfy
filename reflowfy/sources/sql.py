@@ -21,6 +21,10 @@ from sqlalchemy.sql.elements import BindParameter, TextClause
 from reflowfy.core.execution_context import parameter_resolver
 from reflowfy.core.types import Records, wrap_as_record
 from reflowfy.sources.base import BaseSource, SourceError
+from reflowfy.core.health import log_unhealthy
+from reflowfy.observability.logging import get_logger
+
+logger = get_logger(__name__)
 
 #: Prefix of the bind parameters a template's ``{{ }}`` values become. Starts with a
 #: letter: Oracle rejects bind names that start with an underscore.
@@ -473,8 +477,8 @@ class SqlSource(BaseSource):
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
             return True
-        except Exception:
-            return False
+        except Exception as exc:
+            return log_unhealthy(logger, "SQL source", exc)
 
 
 def sql_source(

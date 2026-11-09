@@ -6,7 +6,6 @@ Background scheduler that polls for due DLQ jobs and processes them.
 import json
 import logging
 import os
-import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
@@ -17,6 +16,7 @@ from sqlalchemy.orm import Session
 from reflowfy.observability import metrics
 from reflowfy.store.models import DLQJob, DLQJobArchive
 from reflowfy.reflow_manager.database import SessionLocal
+from reflowfy.reflow_manager.periodic import PeriodicTask
 
 logger = logging.getLogger(__name__)
 
@@ -26,13 +26,15 @@ DLQ_DEFAULT_DELAY_MINUTES = int(os.getenv("DLQ_DEFAULT_DELAY_MINUTES", "60"))  #
 DLQ_MAX_RETRIES = int(os.getenv("DLQ_MAX_RETRIES", "5"))
 
 
-class DLQScheduler:
+class DLQScheduler(PeriodicTask):
     """
     Background scheduler for processing DLQ jobs.
 
     Polls the database at regular intervals for jobs whose scheduled_at
     time has passed, groups them by pipeline, and creates executions.
     """
+
+    label = "DLQ Scheduler"
 
     def __init__(
         self,
@@ -46,57 +48,16 @@ class DLQScheduler:
             poll_interval: Seconds between polling cycles
             pipeline_runner_factory: Callable that returns a PipelineRunner instance
         """
+        super().__init__()
         self.poll_interval = poll_interval
         self.pipeline_runner_factory = pipeline_runner_factory
-        self._running = False
-        self._thread: Optional[threading.Thread] = None
-        self._stop_event = threading.Event()
 
-    def start(self):
-        """Start the background polling thread."""
-        if self._running:
-            logger.warning(
-                "DLQ Scheduler already running", extra={"event": "scheduler_already_running"}
-            )
-            return
+    @property
+    def interval_seconds(self) -> float:
+        return self.poll_interval
 
-        self._running = True
-        self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run_loop, daemon=True)
-        self._thread.start()
-        logger.info(
-            "DLQ Scheduler started (polling every %ss)",
-            self.poll_interval,
-            extra={"event": "scheduler_start"},
-        )
-
-    def stop(self):
-        """Stop the scheduler gracefully."""
-        if not self._running:
-            return
-
-        logger.info("Stopping DLQ Scheduler", extra={"event": "scheduler_stopping"})
-        self._running = False
-        self._stop_event.set()
-
-        if self._thread:
-            self._thread.join(timeout=10)
-            self._thread = None
-
-        logger.info("DLQ Scheduler stopped", extra={"event": "scheduler_stopped"})
-
-    def _run_loop(self):
-        """Main polling loop."""
-        while self._running:
-            try:
-                self._poll_and_process()
-            except Exception:
-                logger.error(
-                    "DLQ Scheduler error", exc_info=True, extra={"event": "scheduler_error"}
-                )
-
-            # Wait for poll interval or stop event
-            self._stop_event.wait(timeout=self.poll_interval)
+    def tick(self) -> None:
+        self._poll_and_process()
 
     def _poll_and_process(self):
         """Poll for due jobs and process them."""

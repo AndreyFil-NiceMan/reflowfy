@@ -877,11 +877,18 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
         """
         Return list of all possible transformation names.
 
-        This is used for worker registration.
+        Metadata only (``GET /pipelines``): the hook is called with no records and no
+        params, which a real ``define_transformations`` may not handle, so a failure
+        here means "not listable", not a broken pipeline.
         """
         try:
             return [t.name for t in self.define_transformations([], cast(P, {}))]
-        except Exception:
+        except Exception as exc:
+            logger.debug(
+                "%s: transformation names not listable without records (%s)",
+                self.name,
+                type(exc).__name__,
+            )
             return []
 
     def get_runtime_parameters(self) -> List[str]:

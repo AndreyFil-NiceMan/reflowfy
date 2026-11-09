@@ -9,6 +9,10 @@ import boto3
 from botocore.exceptions import ClientError
 from reflowfy.core.types import Records, wrap_as_record
 from reflowfy.sources.base import BaseSource, SourceError
+from reflowfy.core.health import log_unhealthy
+from reflowfy.observability.logging import get_logger
+
+logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     # boto3.client() is typed by overloads on a literal service name, so the
@@ -235,8 +239,8 @@ class S3Source(BaseSource):
             client = self._get_client()
             client.head_bucket(Bucket=self.config["bucket"])
             return True
-        except Exception:
-            return False
+        except Exception as exc:
+            return log_unhealthy(logger, "S3 source", exc)
 
 
 def s3_source(

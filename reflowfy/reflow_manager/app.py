@@ -5,7 +5,7 @@ import os
 import socket
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Depends, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -94,7 +94,12 @@ from fastapi import Response  # noqa: E402
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest  # noqa: E402
 from reflowfy.observability.tracing import init_tracing, instrument_fastapi  # noqa: E402
 from reflowfy.store.leases import JobLeases  # noqa: E402
-from reflowfy.reflow_manager.start import InvalidParametersError, PipelineNotFoundError, check_runnable, drive_execution  # noqa: E402
+from reflowfy.reflow_manager.start import (  # noqa: E402
+    InvalidParametersError,
+    PipelineNotFoundError,
+    check_runnable,
+    drive_execution,
+)
 
 
 @app.get("/metrics")
@@ -121,6 +126,8 @@ def get_reflow_manager(db: Session = Depends(get_db)) -> ReflowManager:
 # ===== Health Check =====
 
 _db_ready: bool = False  # set to True after successful init_db()
+# Background components that failed to start: /health reports "degraded" and names them.
+_failed_components: List[str] = []
 
 
 @app.get("/health")
@@ -131,6 +138,15 @@ async def health_check() -> Any:
             status_code=503,
             content={"status": "starting", "service": "reflow-manager", "version": __version__},
         )
+    if _failed_components:
+        # 200, not 503: the API itself works and a restart would not fix a bad schedule
+        # row, but a scheduler that is not running must not look healthy.
+        return {
+            "status": "degraded",
+            "service": "reflow-manager",
+            "version": __version__,
+            "failed_components": list(_failed_components),
+        }
     return {
         "status": "healthy",
         "service": "reflow-manager",
@@ -626,42 +642,30 @@ async def _startup() -> None:
     logger.info("Checking for interrupted executions...", extra={"event": "recovery_check"})
     await _recover_interrupted_executions()
 
-    # Initialize DLQ scheduler
-    try:
-        init_dlq_scheduler(_pipeline_runner_factory)
-        logger.info("DLQ Scheduler initialized", extra={"event": "scheduler_ready"})
-    except Exception:
-        logger.exception(
-            "Failed to initialize DLQ scheduler", extra={"event": "scheduler_init_failed"}
-        )
+    _failed_components.clear()
+    _start_component("DLQ Scheduler", lambda: init_dlq_scheduler(_pipeline_runner_factory))
+    _start_component("Pipeline Scheduler", _start_pipeline_scheduler)
+    _start_component("Content Dedup Sweeper", init_content_dedup_scheduler)
 
-    # Initialize Pipeline Scheduler (cron-based)
-    try:
-        scheduler = init_pipeline_scheduler(_pipeline_runner_factory)
 
-        sync_db = SessionLocal()
-        try:
-            scheduler.sync_schedules_from_registry(sync_db)
-            sync_db.commit()
-            logger.info(
-                "Pipeline Scheduler initialized and schedules synced",
-                extra={"event": "scheduler_ready"},
-            )
-        finally:
-            sync_db.close()
-    except Exception:
-        logger.exception(
-            "Failed to initialize Pipeline Scheduler", extra={"event": "scheduler_init_failed"}
-        )
-
-    # Initialize Content Dedup Sweeper
+def _start_component(name: str, start: Callable[[], Any]) -> None:
+    """Start one background component; a failure is logged and shows on /health."""
     try:
-        init_content_dedup_scheduler()
-        logger.info("Content Dedup Sweeper initialized", extra={"event": "scheduler_ready"})
+        start()
+        logger.info("%s initialized", name, extra={"event": "scheduler_ready"})
     except Exception:
-        logger.exception(
-            "Failed to initialize Content Dedup Sweeper", extra={"event": "scheduler_init_failed"}
-        )
+        _failed_components.append(name)
+        logger.exception("Failed to initialize %s", name, extra={"event": "scheduler_init_failed"})
+
+
+def _start_pipeline_scheduler() -> None:
+    scheduler = init_pipeline_scheduler(_pipeline_runner_factory)
+    sync_db = SessionLocal()
+    try:
+        scheduler.sync_schedules_from_registry(sync_db)
+        sync_db.commit()
+    finally:
+        sync_db.close()
 
 
 async def _recover_interrupted_executions() -> None:
