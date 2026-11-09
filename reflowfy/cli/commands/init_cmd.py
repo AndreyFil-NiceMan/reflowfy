@@ -9,6 +9,7 @@ from typing import Optional
 
 import typer
 
+from reflowfy.cli.project import template_path as project_template
 from reflowfy.cli.utils import console, get_dockerfiles_path, get_package_path
 
 
@@ -106,9 +107,7 @@ def register(app: typer.Typer):
         pipelines_dir = target_dir / "src" / "pipelines"
         sample_pipeline = pipelines_dir / f"{name}.py"
         try:
-            template_path = get_package_path() / "templates" / "pipeline_template.py"
-            if not template_path.exists():
-                template_path = Path("reflowfy/templates/pipeline_template.py")
+            template_path = project_template("pipeline_template.py")
 
             content = template_path.read_text()
             sample_pipeline.write_text(content)
@@ -135,9 +134,7 @@ class {class_name}(AbstractPipeline):
         # Create sample source
         source_file = target_dir / "src" / "sources" / "example_source.py"
         try:
-            template_path = get_package_path() / "templates" / "source_template.py"
-            if not template_path.exists():
-                template_path = Path("reflowfy/templates/source_template.py")
+            template_path = project_template("source_template.py")
             if template_path.exists():
                 source_file.write_text(template_path.read_text())
                 console.print("  ✅ Created source: src/sources/example_source.py", style="green")
@@ -147,9 +144,7 @@ class {class_name}(AbstractPipeline):
         # Create sample destination
         dest_file = target_dir / "src" / "destinations" / "example_destination.py"
         try:
-            template_path = get_package_path() / "templates" / "destination_template.py"
-            if not template_path.exists():
-                template_path = Path("reflowfy/templates/destination_template.py")
+            template_path = project_template("destination_template.py")
             if template_path.exists():
                 dest_file.write_text(template_path.read_text())
                 console.print(
@@ -161,9 +156,7 @@ class {class_name}(AbstractPipeline):
         # Create sample transformation
         transform_file = target_dir / "src" / "transformations" / "example_transform.py"
         try:
-            template_path = get_package_path() / "templates" / "transformation_template.py"
-            if not template_path.exists():
-                template_path = Path("reflowfy/templates/transformation_template.py")
+            template_path = project_template("transformation_template.py")
             if template_path.exists():
                 transform_file.write_text(template_path.read_text())
                 console.print(
@@ -180,9 +173,7 @@ class {class_name}(AbstractPipeline):
         ]:
             query_file = target_dir / "src" / "queries" / out_name
             try:
-                template_path = get_package_path() / "templates" / tpl_name
-                if not template_path.exists():
-                    template_path = Path(f"reflowfy/templates/{tpl_name}")
+                template_path = project_template(tpl_name)
                 if template_path.exists():
                     query_file.write_text(template_path.read_text())
                     console.print(f"  ✅ Created query: src/queries/{out_name}", style="green")
@@ -216,9 +207,7 @@ class {class_name}(AbstractPipeline):
 
         # Generate .env file from template
         try:
-            env_template_path = get_package_path() / "templates" / ".env.template"
-            if not env_template_path.exists():
-                env_template_path = Path("reflowfy/templates/.env.template")
+            env_template_path = project_template(".env.template")
 
             env_dest = target_dir / ".env"
             if env_template_path.exists() and not env_dest.exists():

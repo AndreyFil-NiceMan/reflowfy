@@ -540,8 +540,19 @@ constants.
      - The rest carry a comment naming their reason (rollback on a dead
        connection, version lookup during import).
    - The scheduler's own swallowing dispatch thread went with F4.
-12. **F12, then comments.**
-13. **Repeat:** audit again for special cases, hidden links, needless links and
+12. **F12:** ✅ done.
+   - `cli/project.py` holds what `build`, `deploy`, `check` and `init` share:
+     `IMAGES` (service → image), `RELEASE`, `image_repository()`,
+     `require_registry()` (the one "Registry is required" exit) and
+     `template_path()` (the bundled template, else the source tree's, which
+     was copied six times in `init`).
+   - Not done:
+     - `new` still inlines its scaffolds. Its output is user-facing text that
+       tests pin line by line.
+     - python-on-whales vs subprocess, and `kubectl` vs `oc`. Each is a CLI
+       behaviour change for users, not a cleanup.
+13. **Comments.**
+14. **Repeat:** audit again for special cases, hidden links, needless links and
     surplus until nothing worth fixing is left. Then run the unit tests and the
     local and distributed E2E suites.
 

@@ -3,6 +3,7 @@
 import subprocess
 import typer
 
+from reflowfy.cli.project import RELEASE
 from reflowfy.cli.utils import console
 
 
@@ -15,4 +16,4 @@ def register(app: typer.Typer):
         Verify deployment health.
         """
         console.print("🔍 Checking Pod Status...")
-        subprocess.run(["kubectl", "get", "pods", "-l", "app.kubernetes.io/instance=reflowfy"])
+        subprocess.run(["kubectl", "get", "pods", "-l", f"app.kubernetes.io/instance={RELEASE}"])

@@ -4,12 +4,12 @@ import os
 import subprocess
 import typer
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import List, Optional
 from urllib.parse import urlparse
 
 import reflowfy
 from reflowfy.cli.utils import console, get_helm_chart_path
+from reflowfy.cli.project import RELEASE, image_repository, require_registry
 
 
 _SECRET_KEY_MARKERS = ("password", "secret", "token")
@@ -76,11 +76,7 @@ def register(app: typer.Typer):
         kafka_topic = kafka_topic or "reflow.jobs"
         kafka_group_id = kafka_group_id or "reflowfy-workers"
 
-        if not registry:
-            console.print("❌ Registry is required. Set --registry or REGISTRY in .env", style="red")
-            if not Path(".env").exists():
-                 console.print("⚠️  No .env file found in current directory.", style="yellow")
-            raise typer.Exit(code=1)
+        registry = require_registry(registry)
 
         if not kafka:
             console.print("❌ Kafka is required. Set --kafka or KAFKA_BOOTSTRAP_SERVERS in .env", style="red")
@@ -110,11 +106,11 @@ def register(app: typer.Typer):
 
         # Construct Helm command
         cmd = [
-            "helm", "upgrade", "--install", "reflowfy", str(chart_path),
+            "helm", "upgrade", "--install", RELEASE, str(chart_path),
             "--namespace", namespace,
-            "--set", f"api.image.repository={registry}/{project}/reflowfy-api",
-            "--set", f"reflowManager.image.repository={registry}/{project}/reflowfy-reflow-manager",
-            "--set", f"worker.image.repository={registry}/{project}/reflowfy-worker",
+            "--set", f"api.image.repository={image_repository(registry, project, 'api')}",
+            "--set", f"reflowManager.image.repository={image_repository(registry, project, 'reflow-manager')}",
+            "--set", f"worker.image.repository={image_repository(registry, project, 'worker')}",
             "--set", f"api.image.tag={image_tag}",
             "--set", f"reflowManager.image.tag={image_tag}",
             "--set", f"worker.image.tag={image_tag}",

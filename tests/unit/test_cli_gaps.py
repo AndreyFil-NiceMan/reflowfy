@@ -27,6 +27,7 @@ from reflowfy.sources.mock import MockSource
 from reflowfy.transformations.base import BaseTransformation, TransformationError
 from reflowfy.transformations.registry import transformation_registry
 from test_cli_deploy_unit import BASE, calls, deploy  # type: ignore[import-not-found]  # noqa: F401
+import reflowfy.cli.project as project_mod
 
 # Built into URLs at runtime: a credentialed URL literal reads as a leaked secret
 # to secret scanners (SonarCloud).
@@ -111,6 +112,7 @@ def test_init_still_scaffolds_a_project_when_the_package_files_are_unreadable(
         raise OSError("package data missing")
 
     monkeypatch.setattr(init_cmd, "get_package_path", broken)
+    monkeypatch.setattr(project_mod, "get_package_path", broken)
     monkeypatch.setattr(init_cmd, "get_dockerfiles_path", broken)
     monkeypatch.setattr(console, "_width", 300)
 

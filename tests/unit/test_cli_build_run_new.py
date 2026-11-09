@@ -24,6 +24,7 @@ from reflowfy.cli.commands import init_cmd as init_mod
 from reflowfy.cli.commands import run as run_mod
 from reflowfy.cli.main import app
 from reflowfy.cli.utils import console
+import reflowfy.cli.project as project_mod
 
 runner = CliRunner()
 
@@ -362,6 +363,7 @@ class TestInit:
         empty = tmp_path / "no_package"
         empty.mkdir()
         monkeypatch.setattr(init_mod, "get_package_path", lambda: empty)
+        monkeypatch.setattr(project_mod, "get_package_path", lambda: empty)
         monkeypatch.setattr(init_mod, "get_dockerfiles_path", lambda: empty)
 
         result = cli("init", "proj", "--name", "fallback_pipe")
