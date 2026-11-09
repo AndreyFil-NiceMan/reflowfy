@@ -80,7 +80,7 @@ class GapsSqlPipeline(AbstractPipeline[SqlParams]):
     def define_source(self, runtime_params: SqlParams) -> Any:
         query = (
             "SELECT id, status FROM {{ table | ident }} "
-            "WHERE status = {{ status }} AND id <= 5 ORDER BY id"
+            "WHERE status = {{ status }} ORDER BY id LIMIT 5"
         )
         if runtime_params.get("semicolon"):
             query += ";"
@@ -124,7 +124,7 @@ async def gaps_returns_list(record: Dict[str, Any], runtime_params: Any) -> Any:
 
 class TransformParams(RuntimeParams, total=False):
     run: str
-    mode: Annotated[NotRequired[str], Param(default="ok")]
+    scenario: Annotated[NotRequired[str], Param(default="ok")]
 
 
 class GapsTransformPipeline(AbstractPipeline[TransformParams]):
@@ -137,7 +137,7 @@ class GapsTransformPipeline(AbstractPipeline[TransformParams]):
         self, records: List[Any], runtime_params: TransformParams
     ) -> List[Any]:
         steps: List[Any] = [gaps_label(label="opt"), gaps_declined(), gaps_skip_odd()]
-        if runtime_params.get("mode") == "contract":
+        if runtime_params.get("scenario") == "contract":
             steps.append(gaps_returns_list())
         return steps
 
@@ -166,7 +166,7 @@ def gaps_multicast(record: Dict[str, Any], runtime_params: Any) -> Any:
 
 class DestParams(RuntimeParams, total=False):
     run: str
-    mode: str
+    scenario: str
 
 
 class GapsDestPipeline(AbstractPipeline[DestParams]):
@@ -174,14 +174,14 @@ class GapsDestPipeline(AbstractPipeline[DestParams]):
 
     def define_jobs(self, runtime_params: DestParams) -> Any:
         # One record where a test counts requests: a job-level retry re-sends them all.
-        single = runtime_params.get("mode") in ("permanent", "retry_after")
+        single = runtime_params.get("scenario") in ("permanent", "retry_after")
         yield job([{"id": 1}] if single else [{"id": i} for i in range(1, 5)])
 
     def define_transformations(self, records: List[Any], runtime_params: DestParams) -> List[Any]:
         return []
 
     def define_destination(self, records: List[Any], runtime_params: DestParams) -> Any:
-        run, mode = runtime_params.get("run", "x"), runtime_params.get("mode")
+        run, mode = runtime_params.get("run", "x"), runtime_params.get("scenario")
         if mode == "fanout":
             broken = gap_destination(run, "optional", status=500, retry_config=NO_RETRY)
             return fan_out(gap_destination(run, "main"), broken, optional=[broken])

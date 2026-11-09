@@ -161,7 +161,7 @@ class TestTransformations:
 
     def test_a_per_record_step_returning_a_list_fails_the_job(self, manager):
         run = _run_key("tfcontract")
-        execution_id = _start(manager, "e2e_gaps_transform", {"run": run, "mode": "contract"})
+        execution_id = _start(manager, "e2e_gaps_transform", {"run": run, "scenario": "contract"})
         stats = _wait(manager, execution_id)
         assert stats["state"] == "failed", stats
         job = _jobs(manager, execution_id)[0]
@@ -177,7 +177,7 @@ class TestTransformations:
 class TestDestinations:
     def test_fan_out_with_a_failing_optional_destination(self, manager):
         run = _run_key("fanout")
-        execution_id = _start(manager, "e2e_gaps_dest", {"run": run, "mode": "fanout"})
+        execution_id = _start(manager, "e2e_gaps_dest", {"run": run, "scenario": "fanout"})
         stats = _wait(manager, execution_id)
         assert stats["state"] == "completed", stats
         assert _ids(_requests(run, "main")) == [1, 2, 3, 4]
@@ -188,21 +188,21 @@ class TestDestinations:
     def test_fan_out_with_a_failing_required_destination_fails_the_job(self, manager):
         run = _run_key("fanoutreq")
         execution_id = _start(
-            manager, "e2e_gaps_dest", {"run": run, "mode": "fanout_required"}
+            manager, "e2e_gaps_dest", {"run": run, "scenario": "fanout_required"}
         )
         stats = _wait(manager, execution_id)
         assert stats["state"] == "failed", stats
 
     def test_define_destination_returning_a_list(self, manager):
         run = _run_key("list")
-        stats = _wait(manager, _start(manager, "e2e_gaps_dest", {"run": run, "mode": "list"}))
+        stats = _wait(manager, _start(manager, "e2e_gaps_dest", {"run": run, "scenario": "list"}))
         assert stats["state"] == "completed", stats
         assert _ids(_requests(run, "main")) == [1, 2, 3, 4]
         assert _ids(_requests(run, "copy")) == [1, 2, 3, 4]
 
     def test_record_destination_multicast(self, manager):
         run = _run_key("multi")
-        execution_id = _start(manager, "e2e_gaps_dest", {"run": run, "mode": "multicast"})
+        execution_id = _start(manager, "e2e_gaps_dest", {"run": run, "scenario": "multicast"})
         stats = _wait(manager, execution_id)
         assert stats["state"] == "completed", stats
         assert _ids(_requests(run, "main")) == [1, 2, 3, 4]
@@ -210,7 +210,7 @@ class TestDestinations:
 
     def test_a_404_is_not_retried(self, manager):
         run = _run_key("perm")
-        execution_id = _start(manager, "e2e_gaps_dest", {"run": run, "mode": "permanent"})
+        execution_id = _start(manager, "e2e_gaps_dest", {"run": run, "scenario": "permanent"})
         stats = _wait(manager, execution_id)
         assert stats["state"] == "failed", stats
         assert len(_requests(run, "permanent")) == 1
@@ -220,7 +220,7 @@ class TestDestinations:
 
     def test_retry_after_is_honoured(self, manager):
         run = _run_key("ra")
-        execution_id = _start(manager, "e2e_gaps_dest", {"run": run, "mode": "retry_after"})
+        execution_id = _start(manager, "e2e_gaps_dest", {"run": run, "scenario": "retry_after"})
         stats = _wait(manager, execution_id)
         assert stats["state"] == "completed", stats
         sent = _requests(run, "retry_after")

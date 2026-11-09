@@ -60,7 +60,7 @@ class TestTransformations:
     def test_the_one_record_contract_fails_jobs(
         self, manager: Manager, sink: Sink, channel: str, params: Params
     ):
-        execution = manager.run("dist_gaps_transform", params(total=10, per_job=5, mode="contract"))
+        execution = manager.run("dist_gaps_transform", params(total=10, per_job=5, scenario="contract"))
         stats = manager.wait(execution)
 
         assert stats["state"] == "failed", stats
@@ -74,7 +74,7 @@ class TestDestinations:
     ):
         sink.rules(f"{channel}-opt", fail_next=1000)
         try:
-            execution = manager.run("dist_gaps_dest", params(total=20, per_job=5, mode="fanout"))
+            execution = manager.run("dist_gaps_dest", params(total=20, per_job=5, scenario="fanout"))
             stats = manager.wait(execution)
         finally:
             sink.reset(f"{channel}-opt")
@@ -86,7 +86,7 @@ class TestDestinations:
     def test_define_destination_returning_a_list(
         self, manager: Manager, sink: Sink, channel: str, params: Params
     ):
-        execution = manager.run("dist_gaps_dest", params(total=20, per_job=5, mode="list"))
+        execution = manager.run("dist_gaps_dest", params(total=20, per_job=5, scenario="list"))
         try:
             assert manager.wait(execution)["state"] == "completed"
             assert_exactly_once(sink, channel, ids(20))
@@ -97,7 +97,7 @@ class TestDestinations:
     def test_record_destination_multicast(
         self, manager: Manager, sink: Sink, channel: str, params: Params
     ):
-        execution = manager.run("dist_gaps_dest", params(total=20, per_job=5, mode="multicast"))
+        execution = manager.run("dist_gaps_dest", params(total=20, per_job=5, scenario="multicast"))
         try:
             assert manager.wait(execution)["state"] == "completed"
             assert_exactly_once(sink, channel, ids(20))

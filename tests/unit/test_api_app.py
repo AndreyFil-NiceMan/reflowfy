@@ -133,6 +133,24 @@ class TestLifespan:
         assert executors == []
         assert not [p for p in app.openapi()["paths"] if p.startswith("/pipelines/")]
 
+    def test_a_pipeline_with_a_reserved_parameter_does_not_take_the_others_down(
+        self, isolated_registry, executors, caplog
+    ):
+        from reflowfy import PipelineParameter
+
+        _register(
+            "app_reserved_param",
+            define_parameters=lambda self: [PipelineParameter(name="mode")],
+        )
+        _register("app_fine_pipeline")
+        app = FastAPI()
+        with caplog.at_level(logging.ERROR, logger="reflowfy.api.app"):
+            api_app.setup_pipeline_routes(app)
+        paths = list(app.openapi()["paths"])
+        assert "/pipelines/app_fine_pipeline/run" in paths
+        assert "/pipelines/app_reserved_param/run" not in paths
+        assert "Pipeline 'app_reserved_param' has no API route" in caplog.text
+
     def test_default_manager_url(self, monkeypatch, isolated_registry, executors):
         monkeypatch.delenv("REFLOW_MANAGER_URL", raising=False)
         _register("app_default_url")
