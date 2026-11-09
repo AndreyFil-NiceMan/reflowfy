@@ -33,6 +33,20 @@ def test_ecs_formatter_emits_expected_fields():
     assert "@timestamp" in out
 
 
+def test_ecs_formatter_keeps_a_scalar_named_like_an_ecs_object_as_a_label():
+    """extra={"service": "api"} beside service.name made Elasticsearch reject the
+    document ("object mapping for [service] tried to parse field [service] as object"),
+    so the line never arrived."""
+    rec = _record("auth on")
+    rec.service = "api"
+    rec.host = "h1"
+    out = json.loads(ECSJSONFormatter(service_name="api").format(rec))
+    assert "service" not in out and "host" not in out
+    assert out["labels.service"] == "api"
+    assert out["labels.host"] == "h1"
+    assert out["service.name"] == "api"
+
+
 def test_setup_logging_is_idempotent(monkeypatch):
     monkeypatch.setenv("LOG_DESTINATION", "stdout")
     a = setup_logging(service_name="worker")
