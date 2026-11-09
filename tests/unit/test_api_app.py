@@ -12,7 +12,6 @@ from fastapi.testclient import TestClient
 
 import reflowfy.api.app as api_app
 from reflowfy import AbstractPipeline, RuntimeParams, __version__, pipeline_registry
-from reflowfy.api.execution import execution_tracker
 
 
 def _register(name: str, **attrs: Any) -> None:
@@ -65,12 +64,6 @@ def executors(monkeypatch) -> List[Dict[str, Any]]:
 @pytest.fixture
 def no_logging_setup(monkeypatch) -> None:
     monkeypatch.setattr(api_app, "setup_logging", lambda service_name="api": None)
-
-
-@pytest.fixture(autouse=True)
-def _clean_tracker() -> Iterator[None]:
-    yield
-    execution_tracker.clear()
 
 
 class TestLifespan:
