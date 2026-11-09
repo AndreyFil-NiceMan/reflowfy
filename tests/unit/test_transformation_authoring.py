@@ -119,6 +119,27 @@ class TestOptions:
         assert multiply(factor=2).options == {"factor": 2}
         assert add_async().options == {}
 
+    def test_decorated_steps_are_decorated_transformations(self):
+        # The decorators are typed to return type[DecoratedTransformation], whose
+        # constructor takes **options, so `multiply(factor=2)` type-checks for users.
+        from reflowfy.transformations.base import AsyncTransformation, DecoratedTransformation
+
+        assert isinstance(multiply(factor=2), DecoratedTransformation)
+        assert isinstance(add_async(), DecoratedTransformation)
+        assert isinstance(add_async(), AsyncTransformation)
+        assert isinstance(label(prefix="x"), RecordTransformation)
+
+    def test_a_hand_written_subclass_without_bind_options_keeps_its_options(self):
+        from reflowfy.transformations.base import DecoratedTransformation
+
+        class Manual(DecoratedTransformation):
+            name = "authoring_manual_decorated"
+
+            def apply(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
+                return records
+
+        assert Manual(anything=1).options == {"anything": 1}
+
     def test_two_instances_keep_their_own_options(self):
         steps = [multiply(factor=2), multiply(factor=5)]
         out, _ = apply_transformations_iteratively(_Pipeline(steps), _records(2), {})
