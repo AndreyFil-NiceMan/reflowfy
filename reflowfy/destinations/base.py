@@ -1,77 +1,28 @@
 """Base destination interface with retry logic."""
 
-import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Dict, List, Optional, TypeVar, cast
+from typing import Any, Awaitable, Callable, Dict, List, Optional, TypeVar
 from tenacity import (
+    RetryCallState,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
 )
 
+from reflowfy.destinations.pool import ConnectionPool, loop_pool
+
+__all__ = [
+    "BaseDestination",
+    "ConnectionPool",
+    "DestinationError",
+    "PermanentDestinationError",
+    "RetryConfig",
+    "check_concurrency",
+    "is_retryable",
+]
 
 T = TypeVar("T")
-
-
-class ConnectionPool:
-    """Connections shared by several destinations of one job.
-
-    A ``@record_destination`` gives one to all its routed destinations, so those that
-    reach the same cluster or host share a Kafka producer or an HTTP client instead
-    of each opening its own (a client costs ~17 ms of CPU, a producer a connection
-    and a metadata round trip). The pool, not the destination, closes them.
-    """
-
-    def __init__(self, request_limit: Optional[int] = None) -> None:
-        self._items: Dict[str, Any] = {}
-        self._closers: Dict[str, Callable[[], Awaitable[None]]] = {}
-        self._locks: Dict[str, asyncio.Lock] = {}
-        self.request_limit = request_limit
-        self._requests: Optional[asyncio.Semaphore] = None
-
-    @property
-    def requests(self) -> Optional[asyncio.Semaphore]:
-        """One budget of requests in flight for every destination of the job (or None).
-
-        Created on first use, inside the loop that sends.
-        """
-        if self.request_limit is None:
-            return None
-        if self._requests is None:
-            self._requests = asyncio.Semaphore(self.request_limit)
-        return self._requests
-
-    async def get(
-        self,
-        key: str,
-        create: Callable[[], Awaitable[T]],
-        close: Callable[[T], Awaitable[None]],
-    ) -> T:
-        """The connection for ``key``, created by ``create()`` the first time it is asked for."""
-        if key in self._items:
-            return cast(T, self._items[key])
-        lock = self._locks.setdefault(key, asyncio.Lock())
-        async with lock:  # destinations are sent concurrently: create it once
-            if key not in self._items:
-                item = await create()
-                self._items[key] = item
-                self._closers[key] = lambda: close(item)
-        return cast(T, self._items[key])
-
-    def __len__(self) -> int:
-        return len(self._items)
-
-    async def close(self) -> None:
-        """Close every connection; the first error is raised after all were tried."""
-        closers = list(self._closers.values())
-        self._items.clear()
-        self._closers.clear()
-        self._locks.clear()
-        errors = await asyncio.gather(*(c() for c in closers), return_exceptions=True)
-        first = next((e for e in errors if isinstance(e, BaseException)), None)
-        if first is not None:
-            raise first
 
 
 @dataclass
@@ -113,6 +64,40 @@ class BaseDestination(ABC):
         # Set by a @record_destination: requests in flight at once, for destinations
         # that send one request per record. None: the destination's default.
         self.send_concurrency: Optional[int] = None
+        # The pool this destination took a connection from, released by close().
+        self._used_pool: Optional[ConnectionPool] = None
+
+    def _active_pool(self) -> Optional[ConnectionPool]:
+        """Where this destination's connections come from: its job's pool, else the loop's.
+
+        None outside any pool scope: the destination opens and closes its own.
+        """
+        return self.connection_pool if self.connection_pool is not None else loop_pool()
+
+    async def _pooled(
+        self,
+        pool: ConnectionPool,
+        key: str,
+        create: Callable[[], Awaitable[T]],
+        close: Callable[[T], Awaitable[None]],
+    ) -> T:
+        """The pooled connection for ``key``, held until :meth:`_release_pooled`."""
+        self._used_pool = pool
+        return await pool.get(key, create, close, holder=self)
+
+    async def _release_pooled(self) -> None:
+        """Release (never close) the pooled connections this destination used."""
+        pool, self._used_pool = self._used_pool, None
+        if pool is not None:
+            await pool.release(self)
+
+    async def _cached_health(self, probe: Callable[[], Awaitable[bool]]) -> bool:
+        """``probe()``, reused for ``HEALTH_CACHE_SECONDS`` per ``health_key()`` when pooled."""
+        pool = self._active_pool()
+        key = self.health_key()
+        if pool is None or key is None:
+            return await probe()
+        return await pool.cached_health(key, probe)
 
     @abstractmethod
     async def send(self, records: List[Any], metadata: Optional[Dict[str, Any]] = None) -> None:
@@ -171,20 +156,36 @@ class BaseDestination(ABC):
         """
         Send records with automatic retry and exponential backoff.
 
+        A :class:`DestinationError` is retried, except a
+        :class:`PermanentDestinationError` (retrying cannot fix it). A ``retry_after``
+        on the error replaces the backoff, capped at ``max_wait_seconds``.
+
         Args:
             records: Records to send
             metadata: Optional metadata
         """
         from tenacity import AsyncRetrying
 
+        config = self.retry_config
+        backoff = wait_exponential(
+            multiplier=config.multiplier,
+            min=config.min_wait_seconds,
+            max=config.max_wait_seconds,
+        )
+
+        def wait(state: RetryCallState) -> float:
+            # A server that said when to come back (Retry-After) is believed, up to
+            # max_wait_seconds; otherwise exponential backoff.
+            error = state.outcome.exception() if state.outcome is not None else None
+            retry_after = getattr(error, "retry_after", None)
+            if isinstance(retry_after, (int, float)):
+                return min(max(float(retry_after), 0.0), config.max_wait_seconds)
+            return backoff(state)
+
         async for attempt in AsyncRetrying(
-            stop=stop_after_attempt(self.retry_config.max_attempts),
-            wait=wait_exponential(
-                multiplier=self.retry_config.multiplier,
-                min=self.retry_config.min_wait_seconds,
-                max=self.retry_config.max_wait_seconds,
-            ),
-            retry=retry_if_exception_type(DestinationError),
+            stop=stop_after_attempt(config.max_attempts),
+            wait=wait,
+            retry=retry_if_exception(is_retryable),
             reraise=True,
         ):
             with attempt:
@@ -206,9 +207,35 @@ def check_concurrency(destination_type: str, concurrency: object) -> int:
 
 
 class DestinationError(Exception):
-    """Raised when a destination operation fails."""
+    """Raised when a destination operation fails. ``send_with_retry`` retries it.
 
-    def __init__(self, destination_type: str, message: str, original_error: Optional[Exception] = None):
+    ``retry_after``: seconds the server asked to wait before the next attempt
+    (HTTP ``Retry-After``), or None.
+    """
+
+    def __init__(
+        self,
+        destination_type: str,
+        message: str,
+        original_error: Optional[Exception] = None,
+        retry_after: Optional[float] = None,
+    ):
         self.destination_type = destination_type
         self.original_error = original_error
+        self.retry_after = retry_after
+        self.reason = message
         super().__init__(f"Destination '{destination_type}' error: {message}")
+
+
+class PermanentDestinationError(DestinationError):
+    """A destination failure that sending again cannot fix, so it is not retried.
+
+    For example an HTTP 4xx other than 408/425/429: the request itself is wrong
+    (bad URL, rejected payload, missing permission). The job fails at once instead
+    of after every retry.
+    """
+
+
+def is_retryable(error: BaseException) -> bool:
+    """What ``send_with_retry`` retries: a DestinationError that is not permanent."""
+    return isinstance(error, DestinationError) and not isinstance(error, PermanentDestinationError)

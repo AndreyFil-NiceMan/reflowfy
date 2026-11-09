@@ -6,6 +6,7 @@ import uuid
 from typing import Any, Dict, List, Optional, cast
 
 from reflowfy.core.async_utils import run_coroutine_sync
+from reflowfy.destinations.pool import loop_pool_scope
 
 from reflowfy.core.execution_context import (
     ExecutionContext,
@@ -39,20 +40,22 @@ def _send_and_close(destination: Any, records: List[Any], metadata: Dict[str, An
 
     ``send_with_retry`` is a coroutine: called without awaiting it, nothing was ever
     sent. Both run in the same loop because a Kafka producer belongs to the loop that
-    started it. A synchronous (test double) destination is called as is.
+    started it — which is also why its connection pool lives only as long as this
+    loop. A synchronous (test double) destination is called as is.
     """
 
     async def run() -> None:
-        try:
-            sent = destination.send_with_retry(records, metadata)
-            if inspect.isawaitable(sent):
-                await sent
-        finally:
-            close = getattr(destination, "close", None)
-            if close is not None:
-                closed = close()
-                if inspect.isawaitable(closed):
-                    await closed
+        async with loop_pool_scope():
+            try:
+                sent = destination.send_with_retry(records, metadata)
+                if inspect.isawaitable(sent):
+                    await sent
+            finally:
+                close = getattr(destination, "close", None)
+                if close is not None:
+                    closed = close()
+                    if inspect.isawaitable(closed):
+                        await closed
 
     run_coroutine_sync(run())
 

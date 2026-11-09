@@ -305,7 +305,18 @@ alone keeps the value's type, so a list repeats the param; httpx does the encodi
 removes a key) and leaves that field out of the body. Same failure rule as the URL: a
 missing placeholder field or a non-dict `params_field` fails the job before its request.
 Its `identity_config()` is the whole config. No `dedup_identity` needed: the records are not
-in the config. Headers are per record too: a `headers` value with a
+in the config.
+
+**Errors (behaviour change, 2026-11).** A 4xx other than 408/425/429 raises
+`PermanentDestinationError` (`destinations/base.py`, a `DestinationError` subclass) and is
+**not retried** — it used to be retried `max_attempts` times. 5xx, 408/425/429 and connection
+errors are retried; a 429/503 `Retry-After` (seconds or HTTP date, `core/http_errors.py`) replaces
+the backoff, capped at `retry_config.max_wait_seconds` (`DestinationError.retry_after`, read by
+`BaseDestination.send_with_retry`). Messages carry no response body: `HTTP 404 Not Found
+(application/json, 812 bytes)` (`describe_response`); the body is a debug log, 200 characters
+(`log_response_body`). The `id_based_api` source formats its errors the same way. The health
+check probes once more after `health_retry_delay` (1 s) before failing, and in a pool a healthy
+result is cached 30 s per `health_key()`. Tests: `tests/unit/test_api_destination_errors.py`. Headers are per record too: a `headers` value with a
 `{field}` placeholder is filled per request (the others ride on the client), or `headers=` is a
 function `record -> {str: str} | None` (per-record mode only; kept off `config`). A request
 passes `headers=` to httpx only when it has its own. Tests:
@@ -378,13 +389,14 @@ records of one job going to different topics/clusters/credentials.
   reasons are counted); `"fail"` (default) raises `RecordDestinationError` (a `PipelineError`)
   naming the destination, the record's position and the exception type. A return that is not a
   `BaseDestination` (or is another `RecordDestination`) always fails. `SkipJob` drops the job.
-- **Shared connections (`destinations/base.py` `ConnectionPool`).** One pool per
-  `RecordDestination` (per job); `_group_index` sets `connection_pool` and `send_concurrency`
-  on every group. Kafka takes its producer from the pool keyed by `_connection_key()` (all
+- **Shared connections (`destinations/pool.py` `ConnectionPool`).** One pool per
+  `RecordDestination` (per job, carrying its request budget), which takes its connections from
+  the event loop's pool when one is open (see "Connection pool per worker" below);
+  `_group_index` sets `connection_pool` and `send_concurrency` on every group. Kafka takes its producer from the pool keyed by `_connection_key()` (all
   producer kwargs — cluster, credentials, compression, producer_config — **not** the topic; an
   `ssl_context` is keyed by identity), API its client keyed by scheme+host, client headers and
   timeout. `pool.get` creates each once under a per-key lock (groups send concurrently); the
-  pool, not the destination, closes them, in `RecordDestination.close`. Keyed by host on
+  pool, not the destination, closes them (a destination's `close()` only releases them). Keyed by host on
   purpose: one client for the whole job measured ~20% slower than one per host (httpcore pool
   contention). The shared client's keep-alive pool is sized to the concurrency (httpx keeps 20
   by default and churned connections above it). `health_check` runs once per
@@ -425,10 +437,59 @@ records of one job going to different topics/clusters/credentials.
   awaiting it, so it never sent; `_send_and_close` now runs send and close in one loop (a
   Kafka producer belongs to its loop), and `reflowfy test` closes the destination in the loop
   that sent.
+- **Several destinations per record.** The function may return a list (a multicast) or
+  `fan_out(d1, d2, optional=[d2])`: the record joins each group. A group is optional only
+  while every record that chose it said so; an optional group that fails (after its own
+  retries) or is unhealthy is logged (`destination_optional_failed` /
+  `destination_optional_unhealthy`) and appended to `failed_optional`, and the job completes.
+  Dedup claims one hash per (record, destination); a record already in one destination is
+  narrowed to the others with `keep_only`.
 - Tests: `tests/unit/test_record_destination.py`, `test_destination_pool.py`,
-  `test_record_templates.py`; E2E
+  `test_record_templates.py`, `test_fan_out.py`; E2E
   `tests/e2e/destinations/test_record_destination.py` (`e2e_record_destination_test`, one job to
   topics `e2e-rd-whisper`/`-google`/`-azure`, in route, skip and fail modes).
+
+### Several destinations: a list or `fan_out`
+
+`define_destination` may return a list, or `fan_out(d1, d2, optional=[d2])`
+(`destinations/fan_out.py`): every record goes to each. `job_runner.run_job_records_async`
+turns a list into a `fan_out` (`as_destination`); `FanOut` is a `RecordDestination` whose
+function returns the same targets for every record, so routing, grouping, per-group retries,
+pooling, health checks and per-(record, destination) dedup are the record destination's
+(above). It is reported as a route step named `fan_out`. A required destination that fails fails
+the job; an optional one is logged and counted — `destinations_failed_optional` in the job's
+`stats`, present (like `destinations`) only for a record destination. No new metric: a
+destination is not a low-cardinality label, and the job's own outcome is still `completed`.
+Like any record destination it is **not** re-resolved after dedup drops records, so an
+`api_destination` whose body carries the records belongs in `per_record=True` mode there.
+`fan_out` / `PermanentDestinationError` are not exported from `reflowfy` yet (import them from
+`reflowfy.destinations.fan_out` / `.base`). Tests: `tests/unit/test_fan_out.py`.
+
+### Connection pool per worker
+
+`destinations/pool.py`. Every Kafka/API destination takes its producer/client from the event
+loop's `ConnectionPool` when one is open (`BaseDestination._active_pool`: its job's pool, else
+`loop_pool()`), keyed by `_connection_key()` — so jobs, executions and pipelines writing to the
+same cluster with the same credentials share one producer, and the same host with the same
+client settings one client; different credentials never share. Scopes: the worker opens one for
+its life (`KafkaJobConsumer.start`) and closes it after draining; `LocalDispatcher` opens one per
+execution loop and `close()` (end of the drive loop) closes it; `LocalExecutor._send_and_close`
+and `reflowfy test` use `loop_pool_scope()` around one job's send. A producer belongs to its loop,
+so a pool never outlives one (`WeakKeyDictionary` by loop). Outside any scope a destination owns
+its connection as before.
+
+- `close()` on a destination **releases** (`_release_pooled`), never closes, a pooled
+  connection. A job still completes only after every ack (Kafka `send` awaits them all).
+- Idle eviction: unheld connections unused for `DESTINATION_POOL_IDLE_SECONDS` (default 300) are
+  closed on the next `get` and by a sweeper task. A destination that saw a connection fail
+  (Kafka send/ack error, httpx `TransportError`) calls `evict`, so the retry builds a new one;
+  an evicted connection still held is closed on its last release.
+- Health: `pool.cached_health(health_key, probe)` reuses a healthy result 30 s; an unhealthy one
+  is not cached; concurrent checks of a key share one probe.
+- Observability: info `pool_connection_created` / `pool_connection_evicted` (reason `idle` or
+  `error`) / `pool_closed`, debug `pool_connection_reused` (once per destination joining, not per
+  request). Keys are logged as `kafka#<hash>` — a Kafka key holds the SASL password. No metric.
+- Tests: `tests/unit/test_destination_loop_pool.py`.
 
 ### Execution modes
 

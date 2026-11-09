@@ -11,6 +11,7 @@ from typing import Any, List, Optional, Union
 from aiokafka import AIOKafkaConsumer
 from aiokafka.errors import CommitFailedError, KafkaError
 
+from reflowfy.destinations.pool import close_loop_pool, open_loop_pool
 from reflowfy.observability import metrics
 from reflowfy.worker.executor import WorkerExecutor
 
@@ -137,6 +138,9 @@ class KafkaJobConsumer:
                     raise
 
         self._running = True
+        # One pool of destination connections for the worker's life: every job,
+        # execution and pipeline writing to the same cluster or host reuses them.
+        open_loop_pool()
 
         try:
             await self._consume_until_stopped()
@@ -145,6 +149,8 @@ class KafkaJobConsumer:
             # right away instead of after the session timeout.
             await self.consumer.stop()
             await self.executor.close()
+            # Drained: no job is sending any more, so every pooled connection closes.
+            await close_loop_pool()
 
     async def _consume_until_stopped(self) -> None:
         """Process messages one at a time until :meth:`request_stop`.

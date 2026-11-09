@@ -4,10 +4,14 @@ from typing import Any, Dict, Iterator, List, Optional, Union, cast
 
 import httpx
 
+from reflowfy.core.http_errors import describe_response, log_response_body
 from reflowfy.core.types import Records, wrap_as_record
 from reflowfy.http_auth import build_auth_headers
+from reflowfy.observability.logging import get_logger
 from reflowfy.sources.base import BaseSource, SourceError, SourceJob
 from reflowfy.sources.schemas import IDBasedAPISourceConfig
+
+logger = get_logger(__name__)
 
 
 class IDBasedAPISource(BaseSource):
@@ -180,10 +184,9 @@ class IDBasedAPISource(BaseSource):
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as e:
+            log_response_body(logger, e.response, "id_based_api")  # never in the message
             raise SourceError(
-                "id_based_api",
-                f"HTTP {e.response.status_code} for id {id_value}: {e.response.text[:200]}",
-                e,
+                "id_based_api", f"{describe_response(e.response)} for id {id_value}", e
             )
         except httpx.RequestError as e:
             raise SourceError("id_based_api", f"Request failed for id {id_value}: {e}", e)
@@ -211,9 +214,8 @@ class IDBasedAPISource(BaseSource):
             response.raise_for_status()
             return [wrap_as_record(item) for item in self._extract_records(response.json())]
         except httpx.HTTPStatusError as e:
-            raise SourceError(
-                "id_based_api", f"HTTP {e.response.status_code}: {e.response.text}", e
-            )
+            log_response_body(logger, e.response, "id_based_api")  # never in the message
+            raise SourceError("id_based_api", describe_response(e.response), e)
         except httpx.RequestError as e:
             raise SourceError("id_based_api", f"Request failed: {e}", e)
 

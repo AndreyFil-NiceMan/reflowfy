@@ -1,5 +1,6 @@
 """API destination for webhooks and REST endpoints."""
 
+import asyncio
 import json
 from typing import Any, Callable, Dict, List, Mapping, NamedTuple, Optional, Union, cast
 from urllib.parse import quote
@@ -7,8 +8,19 @@ from urllib.parse import quote
 import httpx
 
 from reflowfy.core.async_utils import for_each_concurrently
+from reflowfy.core.http_errors import (
+    describe_response,
+    is_permanent,
+    log_response_body,
+    retry_after_seconds,
+)
 from reflowfy.core.record_templates import fill, fill_value, has_placeholders
-from reflowfy.destinations.base import BaseDestination, DestinationError, RetryConfig
+from reflowfy.destinations.base import (
+    BaseDestination,
+    DestinationError,
+    PermanentDestinationError,
+    RetryConfig,
+)
 from reflowfy.http_auth import build_auth_headers
 from reflowfy.observability.logging import get_logger
 
@@ -198,8 +210,9 @@ class ApiDestination(BaseDestination):
         )
 
     async def _get_client(self) -> httpx.AsyncClient:
-        """Get or create async HTTP client (the job's shared one for this host, when pooled)."""
-        if self.connection_pool is not None:
+        """The HTTP client: the pool's one for this host and settings, else this destination's."""
+        pool = self._active_pool()
+        if pool is not None:
 
             async def create() -> httpx.AsyncClient:
                 return self._new_client()
@@ -207,7 +220,7 @@ class ApiDestination(BaseDestination):
             async def close(client: httpx.AsyncClient) -> None:
                 await client.aclose()
 
-            return await self.connection_pool.get(self._connection_key(), create, close)
+            return await self._pooled(pool, self._connection_key(), create, close)
         if self._client is None:
             self._client = self._new_client()
         return self._client
@@ -256,9 +269,12 @@ class ApiDestination(BaseDestination):
                         )
             except DestinationError as e:
                 # Say which record, not what it held (URL and body are record data).
-                reason = str(e).removeprefix("Destination 'api' error: ")
-                raise DestinationError(
-                    "api", f"record {index + 1} of {total}: {reason}", e.original_error
+                # Same class and Retry-After: a 404 stays permanent.
+                raise type(e)(
+                    "api",
+                    f"record {index + 1} of {total}: {e.reason}",
+                    e.original_error,
+                    retry_after=e.retry_after,
                 ) from e
 
         await for_each_concurrently(requests, concurrency, send_one)
@@ -388,7 +404,12 @@ class ApiDestination(BaseDestination):
         params: Optional[Dict[str, Any]],
         headers: Optional[Dict[str, str]] = None,
     ) -> None:
-        """Issue one request; ``body`` follows the dict/list → JSON, str/bytes → raw rule."""
+        """Issue one request; ``body`` follows the dict/list → JSON, str/bytes → raw rule.
+
+        Raises:
+            PermanentDestinationError: a 4xx other than 408/425/429 (not retried).
+            DestinationError: any other failure; a 429/503 carries its Retry-After.
+        """
         client = await self._get_client()
         method = self.config["method"]
 
@@ -404,20 +425,50 @@ class ApiDestination(BaseDestination):
                 response = await client.request(method, url, json=body, **extra)
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
-            raise DestinationError(
-                "api",
-                f"HTTP {e.response.status_code}: {e.response.text}",
-                e,
-            )
+            # The status, type and size — never the body, which can echo the request
+            # (record values) and be any size. It goes to a debug log, truncated.
+            response = e.response
+            log_response_body(logger, response, "api_destination")
+            message = describe_response(response)
+            if is_permanent(response.status_code):
+                raise PermanentDestinationError(
+                    "api",
+                    f"{message} — not retried: a 4xx means the request itself was "
+                    "rejected (check the URL, payload and credentials)",
+                    e,
+                )
+            raise DestinationError("api", message, e, retry_after=retry_after_seconds(response))
         except httpx.RequestError as e:
+            if isinstance(e, httpx.TransportError) and self._used_pool is not None:
+                # The connection may be what broke: the next attempt gets a new client.
+                await self._used_pool.evict(self._connection_key(), client)
             raise DestinationError("api", f"Request failed: {e}", e)
         except Exception as e:
             raise DestinationError("api", f"Unexpected error: {e}", e)
 
+    health_retry_delay: float = 1.0
+    """Seconds between a failed health probe and its one retry."""
+
     async def health_check(self) -> bool:
-        """Check if the API endpoint is accessible."""
+        """Check if the API endpoint is accessible.
+
+        One probe per host and client settings (:meth:`health_key`) per worker: a
+        healthy result is reused for 30 s by every job. A failed probe is tried once
+        more after :attr:`health_retry_delay` before the job fails, so one dropped
+        connection does not fail it.
+        """
         if not self.config.get("health_check_enabled", True):
             return True
+
+        async def probe_with_retry() -> bool:
+            if await self._probe():
+                return True
+            await asyncio.sleep(self.health_retry_delay)
+            return await self._probe()
+
+        return await self._cached_health(probe_with_retry)
+
+    async def _probe(self) -> bool:
         try:
             client = await self._get_client()
             # A per-record URL template is probed up to its first placeholder.
@@ -436,7 +487,8 @@ class ApiDestination(BaseDestination):
         return f"{self._connection_key()}|{self.config.get('health_check_enabled', True)}"
 
     async def close(self) -> None:
-        """Close HTTP client (a pooled one is closed by its pool)."""
+        """Close this destination's own client; a pooled one is only released."""
+        await self._release_pooled()
         if self._client:
             await self._client.aclose()
             self._client = None
@@ -500,6 +552,13 @@ def api_destination(
     ``@record_destination`` its ``concurrency``), so they may land out of order, and a
     retry (``retry_config``) re-sends the whole job, records already accepted included —
     make the endpoint idempotent (PUT/upsert) when that matters.
+
+    Errors: a 4xx other than 408/425/429 raises ``PermanentDestinationError`` and is
+    not retried (the request itself is wrong); 5xx, 408/425/429 and connection errors
+    are retried, and a 429/503 ``Retry-After`` is waited out, up to
+    ``retry_config.max_wait_seconds``. Messages name the status, content type and size
+    (``HTTP 404 Not Found (application/json, 812 bytes)``), never the body, which is
+    logged at debug level only (first 200 characters).
     """
     destination = ApiDestination(
         url=url,

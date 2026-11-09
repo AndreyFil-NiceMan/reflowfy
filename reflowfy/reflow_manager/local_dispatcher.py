@@ -4,6 +4,7 @@ import logging
 from typing import Dict, Any, List, Optional
 
 
+from reflowfy.destinations.pool import close_loop_pool, loop_pool_scope, open_loop_pool
 from reflowfy.reflow_manager.dispatcher import (
     TOKEN_WAIT_SECONDS,
     BaseDispatcher,
@@ -25,6 +26,10 @@ class LocalDispatcher(BaseDispatcher):
 
     Supports rate limiting via the same token-bucket RateLimiter
     used by KafkaDispatcher.
+
+    Destination connections are pooled per event loop — the loop that drives one
+    execution — and closed by :meth:`close` at the end of it: a Kafka producer
+    belongs to the loop that started it.
     """
 
     def __init__(self, rate_limiter: RateLimiter, db_session: Any = None):
@@ -55,7 +60,8 @@ class LocalDispatcher(BaseDispatcher):
 
         executor = self._create_executor()
         try:
-            await executor.execute_job(job_payload)
+            async with loop_pool_scope():
+                await executor.execute_job(job_payload)
             return True
         except Exception:
             logger.error(
@@ -78,6 +84,7 @@ class LocalDispatcher(BaseDispatcher):
     ) -> int:
         """Dispatch batch locally with rate limiting and a fresh executor."""
         executor = self._create_executor()
+        open_loop_pool()  # kept across this execution's batches; close() closes it
         dispatched = 0
 
         try:
@@ -116,5 +123,5 @@ class LocalDispatcher(BaseDispatcher):
         return dispatched
 
     async def close(self) -> None:
-        """No persistent resources to close."""
-        pass
+        """Close the destination connections pooled in this (execution's) loop."""
+        await close_loop_pool()

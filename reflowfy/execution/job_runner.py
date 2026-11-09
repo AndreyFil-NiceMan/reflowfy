@@ -21,6 +21,7 @@ from reflowfy.core.async_utils import run_coroutine_sync
 from reflowfy.core.exceptions import RecordValidationError, SkipJob, pipeline_step
 from reflowfy.core.record_validation import describe_invalid, find_invalid_records
 from reflowfy.core.serialization import to_json_safe
+from reflowfy.destinations.fan_out import as_destination
 from reflowfy.destinations.record import RecordDestination
 from reflowfy.execution.transformation_runner import (
     AppliedStep,
@@ -237,6 +238,9 @@ async def run_job_records_async(
 
     Does NOT send — the caller owns sending, stats, and presentation.
 
+    A ``define_destination`` that returns a list gets a :func:`fan_out` of it, routed
+    like any ``@record_destination`` (so the caller always gets one destination).
+
     Returns ``(records, transformed_records, applied, destination)`` where
     ``applied`` is the list of :class:`AppliedStep` from the
     transformation runner.
@@ -262,8 +266,11 @@ async def run_job_records_async(
         )
         applied = checks + applied
         with pipeline_step("define_destination", name):
-            destination = await asyncio.to_thread(
-                pipeline.define_destination, transformed_records, runtime_params
+            # A list is several destinations: fan_out(...) sends every record to each.
+            destination = as_destination(
+                await asyncio.to_thread(
+                    pipeline.define_destination, transformed_records, runtime_params
+                )
             )
         if isinstance(destination, RecordDestination) and transformed_records:
             # Choose every record's destination now, before dedup and the send: a

@@ -60,8 +60,10 @@ class JobStats:
         self.redelivered = False
         # The execution was cancelled before this job started; the message was skipped.
         self.cancelled = False
-        # Distinct destinations a @record_destination sent this job's records to.
+        # Distinct destinations a @record_destination (or fan_out) sent this job's
+        # records to, and how many of its optional ones failed without failing the job.
         self.destinations: Optional[int] = None
+        self.destinations_failed_optional: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -86,6 +88,11 @@ class JobStats:
             "success": self.success,
             # Only for a @record_destination, so other jobs' stats keep their shape.
             **({"destinations": self.destinations} if self.destinations is not None else {}),
+            **(
+                {"destinations_failed_optional": self.destinations_failed_optional}
+                if self.destinations_failed_optional is not None
+                else {}
+            ),
         }
 
 
@@ -231,7 +238,7 @@ class WorkerExecutor:
         # job_id/execution_id/pipeline_name are bound onto every record here by the
         # log_context() the caller entered — no need to pass them per call.
         claimed_record_hashes: List[bytes] = []
-        destination = None
+        destination: Any = None
         heartbeat: Optional["asyncio.Task[None]"] = None
 
         try:
@@ -395,7 +402,10 @@ class WorkerExecutor:
                     if not isinstance(destination, RecordDestination):
                         await destination.close()
                         with pipeline_step("define_destination", _pipeline_name):
-                            destination = pipeline.define_destination(kept, runtime_params)
+                            # User code: off the loop, like the first call (job_runner).
+                            destination = await asyncio.to_thread(
+                                pipeline.define_destination, kept, runtime_params
+                            )
                 transformed_records = kept
                 stats.records_output = len(kept)
 
@@ -424,6 +434,9 @@ class WorkerExecutor:
             dest_start = time.time()
             await destination.send_with_retry(transformed_records, runtime_params)
             stats.destination_write_time = time.time() - dest_start
+            if isinstance(destination, RecordDestination):
+                # Logged by the destination as each failed; kept on the job here.
+                stats.destinations_failed_optional = len(destination.failed_optional)
 
             # Mark as successful
             stats.success = True
@@ -516,42 +529,59 @@ class WorkerExecutor:
         destination: Any,
         runtime_params: Any,
     ) -> Tuple[List[Any], List[bytes]]:
-        """Claim a hash per record about to be sent. Returns (records to send, claimed).
+        """Claim a hash per (record, destination) about to be sent.
 
-        A record whose hash another job holds was already sent there and is dropped,
-        as is a second record with the same identity within this job.
+        Returns (records to send, claimed). A pair whose hash another job holds was
+        already written there and is dropped, as is a second record with the same
+        identity within this job. A record destination (``@record_destination``,
+        ``fan_out``) writes each record somewhere of its own, maybe several places:
+        each is hashed, so the same record sent to two topics is two writes, and a
+        record already in one is still sent to the other (``keep_only``). A record
+        left with nowhere to go is dropped.
         """
-        identity = destination_identity(destination)
-
         dedup_key = getattr(pipeline, "dedup_key", None)
         identities: Dict[int, Dict[str, Any]] = {}
 
-        def identity_of(record: Any) -> Dict[str, Any]:
-            # A record destination writes each record somewhere of its own: hash
-            # that place, so the same record sent to two topics is two writes.
-            if not isinstance(destination, RecordDestination):
-                return identity
-            routed = destination.destination_for(record)
-            if id(routed) not in identities:
-                identities[id(routed)] = destination_identity(routed)
-            return identities[id(routed)]
+        def targets_of(record: Any) -> List[Any]:
+            if isinstance(destination, RecordDestination):
+                return list(destination.destinations_for(record))
+            return [destination]
 
-        hashes = [
-            compute_record_hash(
-                pipeline_name,
-                record_identity(record, dedup_key, runtime_params),
-                identity_of(record),
-                job_params,
+        def identity_of(target: Any) -> Dict[str, Any]:
+            if id(target) not in identities:
+                identities[id(target)] = destination_identity(target)
+            return identities[id(target)]
+
+        hashed: List[Tuple[Any, List[Tuple[Any, bytes]]]] = []
+        for record in transformed_records:
+            identity = record_identity(record, dedup_key, runtime_params)
+            hashed.append(
+                (
+                    record,
+                    [
+                        (
+                            target,
+                            compute_record_hash(
+                                pipeline_name, identity, identity_of(target), job_params
+                            ),
+                        )
+                        for target in targets_of(record)
+                    ],
+                )
             )
-            for record in transformed_records
-        ]
-        won = await claim_record_hashes(self._async_session, hashes, job_id)
+        won = await claim_record_hashes(
+            self._async_session, [h for _, pairs in hashed for _, h in pairs], job_id
+        )
         kept: List[Any] = []
         seen: Set[bytes] = set()
-        for record, record_hash in zip(transformed_records, hashes):
-            if record_hash in won and record_hash not in seen:
-                seen.add(record_hash)
-                kept.append(record)
+        for record, pairs in hashed:
+            new_targets = [target for target, h in pairs if h in won and h not in seen]
+            seen.update(h for _, h in pairs)
+            if not new_targets:
+                continue
+            if isinstance(destination, RecordDestination) and len(new_targets) < len(pairs):
+                destination.keep_only(record, new_targets)
+            kept.append(record)
         return kept, list(won)
 
     async def _heartbeat_job(self, job_id: str) -> None:

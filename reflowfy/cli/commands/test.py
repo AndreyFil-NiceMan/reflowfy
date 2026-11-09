@@ -33,6 +33,7 @@ if TYPE_CHECKING:  # Runtime imports stay lazy — these are only for annotation
 from reflowfy.cli.utils import console
 from reflowfy.core.exceptions import PipelineError
 from reflowfy.core.execution_context import ExecutionContext
+from reflowfy.destinations.pool import loop_pool_scope
 from reflowfy.execution.job_runner import job_runtime_params, plan_slices, run_job_records
 from reflowfy.execution.transformation_runner import SKIPPED_MODE, AppliedStep
 from reflowfy.observability.context import log_context
@@ -337,18 +338,20 @@ def _send_job(
 
         async def _send() -> None:
             # Closed in the same loop that sent: a Kafka producer belongs to its loop,
-            # and an unclosed one leaks a connection per job.
-            try:
-                if not await destination.health_check():
-                    raise PipelineError("destination health check failed")
-                await destination.send_with_retry(records, job_params)
-            finally:
-                # A duck-typed destination may have no close().
-                close = getattr(destination, "close", None)
-                if close is not None:
-                    closed = close()
-                    if inspect.isawaitable(closed):
-                        await closed
+            # and an unclosed one leaks a connection per job. So the connection pool
+            # is this job's too, closed when the scope ends.
+            async with loop_pool_scope():
+                try:
+                    if not await destination.health_check():
+                        raise PipelineError("destination health check failed")
+                    await destination.send_with_retry(records, job_params)
+                finally:
+                    # A duck-typed destination may have no close().
+                    close = getattr(destination, "close", None)
+                    if close is not None:
+                        closed = close()
+                        if inspect.isawaitable(closed):
+                            await closed
 
         asyncio.run(_send())
         report.sent = True

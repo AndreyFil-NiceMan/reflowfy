@@ -245,8 +245,9 @@ class KafkaDestination(BaseDestination):
         return "kafka:" + json.dumps(self._producer_kwargs(), sort_keys=True, default=_object_key)
 
     async def _get_producer(self) -> AIOKafkaProducer:
-        """Get or create async Kafka producer (the job's shared one, when pooled)."""
-        if self.connection_pool is not None:
+        """The producer: the pool's one for this cluster and settings, else this destination's."""
+        pool = self._active_pool()
+        if pool is not None:
             producer_kwargs = self._producer_kwargs()
 
             async def create() -> AIOKafkaProducer:
@@ -257,7 +258,7 @@ class KafkaDestination(BaseDestination):
             async def stop(producer: AIOKafkaProducer) -> None:
                 await producer.stop()
 
-            return await self.connection_pool.get(self._connection_key(), create, stop)
+            return await self._pooled(pool, self._connection_key(), create, stop)
 
         if self._producer is None or not self._started:
             self._producer = AIOKafkaProducer(**self._producer_kwargs())
@@ -382,6 +383,7 @@ class KafkaDestination(BaseDestination):
                         )
                     )
             except KafkaError as e:
+                await self._evict(producer)
                 raise DestinationError(
                     "kafka",
                     f"Failed to send to topic '{topic}': record {len(futures) + 1} of {total}: {e}",
@@ -393,6 +395,7 @@ class KafkaDestination(BaseDestination):
                 results = await asyncio.gather(*futures, return_exceptions=True)
             for index, result in enumerate(results):
                 if isinstance(result, BaseException):
+                    await self._evict(producer)
                     raise DestinationError(
                         "kafka",
                         f"Failed to send to topic '{topic}': record {index + 1} of {total}: "
@@ -409,6 +412,11 @@ class KafkaDestination(BaseDestination):
             topic,
             extra={"event": "kafka_batch_sent", "messages": total},
         )
+
+    async def _evict(self, producer: AIOKafkaProducer) -> None:
+        """A pooled producer that failed is replaced: the retry gets a fresh one."""
+        if self._used_pool is not None:
+            await self._used_pool.evict(self._connection_key(), producer)
 
     def _payload(self, record: Any) -> Any:
         """The message value: ``record[value_field]`` when set and present, else the record."""
@@ -515,7 +523,12 @@ class KafkaDestination(BaseDestination):
         consumer_group_id against the destination topic.  Returns False if lag
         exceeds lag_threshold, causing the calling pipeline to be rescheduled
         via the DLQ rather than dispatching jobs right now.
+
+        Pooled (a worker), a healthy result is reused for 30 s per :meth:`health_key`.
         """
+        return await self._cached_health(self._probe)
+
+    async def _probe(self) -> bool:
         try:
             await self._get_producer()
         except Exception:
@@ -557,8 +570,9 @@ class KafkaDestination(BaseDestination):
 
         return True
 
-    async def close(self):
-        """Close producer connection."""
+    async def close(self) -> None:
+        """Stop this destination's own producer; a pooled one is only released."""
+        await self._release_pooled()
         if self._producer and self._started:
             await self._producer.stop()
             self._producer = None
