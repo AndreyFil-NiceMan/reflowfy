@@ -2,7 +2,12 @@
 
 import pytest
 
-from reflowfy.execution.transformation_runner import apply_transformations_iteratively
+from reflowfy.core.async_utils import run_coroutine_sync
+from reflowfy.execution.transformation_runner import apply_transformations_iteratively_async
+
+
+def apply_transformations_iteratively(*args, **kwargs):
+    return run_coroutine_sync(apply_transformations_iteratively_async(*args, **kwargs))
 from reflowfy.transformations.base import BaseTransformation, TransformationError
 
 

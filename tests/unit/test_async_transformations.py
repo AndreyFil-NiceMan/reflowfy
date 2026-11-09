@@ -26,7 +26,6 @@ from reflowfy import (
 from reflowfy.core.async_utils import run_coroutine_sync
 from reflowfy.execution.job_runner import run_job_records, run_job_records_async
 from reflowfy.execution.transformation_runner import (
-    apply_transformations_iteratively,
     apply_transformations_iteratively_async,
 )
 from reflowfy.sources.static import StaticSource
@@ -39,6 +38,10 @@ from reflowfy.transformations.base import (
     top_skip_reasons,
 )
 from reflowfy.worker.executor import JobStats, WorkerExecutor
+
+
+def apply_transformations_iteratively(*args, **kwargs):
+    return run_coroutine_sync(apply_transformations_iteratively_async(*args, **kwargs))
 
 
 class _Pipeline:

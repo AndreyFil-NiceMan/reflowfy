@@ -22,7 +22,11 @@ from reflowfy.execution.content_dedup import (
 )
 from reflowfy.destinations.base import DestinationError
 from reflowfy.destinations.record import RecordDestination
-from reflowfy.execution.job_runner import run_job_records_async
+from reflowfy.execution.job_runner import (
+    log_job_dropped,
+    log_skipped_records,
+    run_job_records_async,
+)
 from reflowfy.factories.source_factory import SourceFactory
 from reflowfy.observability import metrics
 from reflowfy.observability.metrics import JobOutcome
@@ -32,7 +36,7 @@ from reflowfy.observability.tracing import extract_and_attach
 from reflowfy.store.db_settings import async_connect_args
 from reflowfy.store.db_settings import database_url as env_database_url
 from reflowfy.store.models import Execution, Job
-from reflowfy.core.record_steps import count_skip_reason, top_skip_reasons
+from reflowfy.core.record_steps import count_skip_reason
 from reflowfy.store.leases import JobLeases
 from reflowfy.store.states import JobState, ExecutionState
 
@@ -86,6 +90,35 @@ class JobStats:
         # a failure keeps the retry count earlier runs left (else a job that needed
         # retries looks, after the fact, like one that worked first time).
         self.job_retry_enabled = False
+
+    @property
+    def outcome(self) -> JobOutcome:
+        """The ``reflowfy_jobs_processed_total`` status label for this delivery.
+
+        Finer than :attr:`stored_state`: a job dropped with ``SkipJob`` is stored
+        ``completed`` but counted ``skipped``, and a delivery skipped because the job
+        was cancelled or already claimed stores nothing at all.
+        """
+        if self.cancelled:
+            return JobOutcome.CANCELLED
+        if self.retry_scheduled:
+            return JobOutcome.RETRY_SCHEDULED
+        if self.redelivered:
+            return JobOutcome.REDELIVERED
+        if self.deduplicated:
+            return JobOutcome.DEDUPLICATED
+        if self.skip_reason is not None:
+            return JobOutcome.SKIPPED
+        return JobOutcome.COMPLETED if self.success else JobOutcome.FAILED
+
+    @property
+    def stored_state(self) -> str:
+        """The job row's state once this run ends (see :attr:`outcome`)."""
+        if self.retry_scheduled:
+            return JobState.PENDING
+        if self.deduplicated:
+            return JobState.DEDUPLICATED
+        return JobState.COMPLETED if self.success else JobState.FAILED
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -177,49 +210,28 @@ class WorkerExecutor:
             expire_on_commit=False,
         )
 
-    def record_job_metrics(
-        self,
-        pipeline: str,
-        success: bool,
-        deduplicated: bool,
-        error_type: Optional[str],
-        duration: float,
-        records: int,
-        skipped: bool = False,
-        redelivered: bool = False,
-        cancelled: bool = False,
-        records_deduplicated: int = 0,
-        retry_scheduled: bool = False,
-    ) -> None:
-        """Emit Prometheus metrics for one finished job.
+    @staticmethod
+    def record_job_metrics(pipeline: str, stats: JobStats) -> None:
+        """Emit Prometheus metrics for one finished job delivery.
 
         A failure that ``job_retry`` sent back to the queue is ``retry_scheduled``, not
         ``failed``: the job is not over, and ``jobs_failed_total`` counts only final ones.
 
         # ponytail: error_type = exception class name only — never the message (cardinality).
         """
-        if cancelled:
-            outcome = JobOutcome.CANCELLED
-        elif retry_scheduled:
-            outcome = JobOutcome.RETRY_SCHEDULED
-        elif redelivered:
-            outcome = JobOutcome.REDELIVERED
-        elif deduplicated:
-            outcome = JobOutcome.DEDUPLICATED
-        elif skipped:
-            outcome = JobOutcome.SKIPPED
-        else:
-            outcome = JobOutcome.COMPLETED if success else JobOutcome.FAILED
-        metrics.count_job(pipeline, outcome)
+        metrics.count_job(pipeline, stats.outcome)
+        duration = (stats.end_time or time.time()) - stats.start_time
         metrics.job_processing_duration_seconds.labels(pipeline=pipeline).observe(duration)
         # Only count records that actually made it through (success); a job that
         # failed at the destination has records_output set but nothing delivered.
-        if success and records:
-            metrics.records_processed_total.labels(pipeline=pipeline).inc(records)
-        if success and records_deduplicated:
-            metrics.records_deduplicated_total.labels(pipeline=pipeline).inc(records_deduplicated)
-        if not success and error_type and not retry_scheduled:
-            metrics.jobs_failed_total.labels(pipeline=pipeline, error_type=error_type).inc()
+        if stats.success and stats.records_output:
+            metrics.records_processed_total.labels(pipeline=pipeline).inc(stats.records_output)
+        if stats.success and stats.records_deduplicated:
+            metrics.records_deduplicated_total.labels(pipeline=pipeline).inc(
+                stats.records_deduplicated
+            )
+        if not stats.success and stats.error_type and not stats.retry_scheduled:
+            metrics.jobs_failed_total.labels(pipeline=pipeline, error_type=stats.error_type).inc()
 
     async def execute_job(self, job_payload: Dict[str, Any]) -> bool:
         """Execute a job: bind log context, continue the trace, record metrics."""
@@ -255,20 +267,7 @@ class WorkerExecutor:
                         job_payload, stats, execution_id, job_id, pipeline_name
                     )
         finally:
-            duration = (stats.end_time or time.time()) - stats.start_time
-            self.record_job_metrics(
-                pipeline_name,
-                success=stats.success,
-                deduplicated=stats.deduplicated,
-                skipped=stats.skip_reason is not None,
-                redelivered=stats.redelivered,
-                cancelled=stats.cancelled,
-                error_type=stats.error_type,
-                duration=duration,
-                records=stats.records_output,
-                records_deduplicated=stats.records_deduplicated,
-                retry_scheduled=stats.retry_scheduled,
-            )
+            self.record_job_metrics(pipeline_name, stats)
 
     async def _execute_job_inner(
         self,
@@ -276,7 +275,7 @@ class WorkerExecutor:
         stats: "JobStats",
         execution_id: str,
         job_id: str,
-        _pipeline_name: str,
+        pipeline_name: str,
     ) -> bool:
         """Fetch the slice, transform, write to destination, report to Postgres."""
         # job_id/execution_id/pipeline_name are bound onto every record here by the
@@ -321,11 +320,11 @@ class WorkerExecutor:
             source = SourceFactory.create(source_descriptor["type"], source_descriptor["config"])
 
             # Pipeline is required to resolve transforms + destination dynamically.
-            pipeline = pipeline_registry.get(_pipeline_name)
+            pipeline = pipeline_registry.get(pipeline_name)
             if pipeline is None:
                 raise RuntimeError(
-                    f"Pipeline '{_pipeline_name}' not found in worker registry"
-                    f"{pipeline_registry.describe_missing(_pipeline_name)}; "
+                    f"Pipeline '{pipeline_name}' not found in worker registry"
+                    f"{pipeline_registry.describe_missing(pipeline_name)}; "
                     "worker-side sourcing requires the pipeline to be discoverable."
                 )
 
@@ -344,11 +343,7 @@ class WorkerExecutor:
                 # just an empty slice.
                 stats.skip_reason = runtime_params.get("skip_reason")
                 if stats.skip_reason:
-                    logger.info(
-                        "Job dropped by pipeline (%s)",
-                        stats.skip_reason,
-                        extra={"event": "job_dropped", "skip_reason": stats.skip_reason},
-                    )
+                    log_job_dropped(logger, stats.skip_reason)
                 else:
                     logger.info("No records to process", extra={"event": "job_empty"})
                 stats.success = True
@@ -384,21 +379,9 @@ class WorkerExecutor:
                     stats.records_skipped += step.records_skipped
                     for reason, times in (step.skip_reasons or {}).items():
                         count_skip_reason(stats.record_skip_reasons, reason, times)
-                    # Reasons stay in the message: as a field their keys would be
-                    # unbounded mapping names in the log index.
-                    logger.info(
-                        "%s skipped %d records (%s)",
-                        step.name,
-                        step.records_skipped,
-                        top_skip_reasons(step.skip_reasons or {}),
-                        extra={
-                            "event": "records_skipped",
-                            "transformation": step.name,
-                            "records_skipped": step.records_skipped,
-                        },
-                    )
+                    log_skipped_records(logger, step)
                     metrics.records_skipped_total.labels(
-                        pipeline=_pipeline_name, transformation=step.name
+                        pipeline=pipeline_name, transformation=step.name
                     ).inc(step.records_skipped)
 
             stats.records_output = len(transformed_records)
@@ -409,7 +392,7 @@ class WorkerExecutor:
                 job_params: Optional[Dict[str, Any]] = job_payload.get("job_params") or None
                 kept, claimed_record_hashes = await self._claim_records(
                     pipeline,
-                    _pipeline_name,
+                    pipeline_name,
                     job_id,
                     transformed_records,
                     job_params,
@@ -445,7 +428,7 @@ class WorkerExecutor:
                     # alone, and routing again would report its skips twice.
                     if not isinstance(destination, RecordDestination):
                         await destination.close()
-                        with pipeline_step("define_destination", _pipeline_name):
+                        with pipeline_step("define_destination", pipeline_name):
                             # User code: off the loop, like the first call (job_runner).
                             destination = await asyncio.to_thread(
                                 pipeline.define_destination, kept, runtime_params
@@ -592,15 +575,15 @@ class WorkerExecutor:
         dedup_key = getattr(pipeline, "dedup_key", None)
         identities: Dict[int, Dict[str, Any]] = {}
 
-        def targets_of(record: Any) -> List[Any]:
-            if isinstance(destination, RecordDestination):
-                return list(destination.destinations_for(record))
-            return [destination]
-
         def identity_of(target: Any) -> Dict[str, Any]:
             if id(target) not in identities:
                 identities[id(target)] = destination_identity(target)
             return identities[id(target)]
+
+        def targets_of(record: Any) -> List[Any]:
+            if isinstance(destination, RecordDestination):
+                return list(destination.destinations_for(record))
+            return [destination]
 
         hashed: List[Tuple[Any, List[Tuple[Any, bytes]]]] = []
         for record in transformed_records:
@@ -914,14 +897,7 @@ class WorkerExecutor:
 
                 from sqlalchemy import select, update
 
-                if retry_in is not None:
-                    state = JobState.PENDING
-                elif stats.deduplicated:
-                    state = JobState.DEDUPLICATED
-                elif stats.success:
-                    state = JobState.COMPLETED
-                else:
-                    state = JobState.FAILED
+                state = stats.stored_state
                 now = datetime.now(timezone.utc).replace(tzinfo=None)
 
                 # Update job state

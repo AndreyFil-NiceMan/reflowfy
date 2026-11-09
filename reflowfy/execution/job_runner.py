@@ -30,7 +30,7 @@ from reflowfy.execution.transformation_runner import (
     apply_transformations_iteratively_async,
 )
 from reflowfy.observability.logging import get_logger
-from reflowfy.core.record_steps import count_skip_reason
+from reflowfy.core.record_steps import count_skip_reason, top_skip_reasons
 
 logger = get_logger("execution.job_runner")
 
@@ -85,6 +85,37 @@ def check_record_type(pipeline: Any, records: List[Any]) -> Tuple[List[Any], App
         skip_reasons=skip_reasons,
     )
     return kept, step
+
+
+def log_job_dropped(log: Any, reason: str) -> None:
+    """The ``job_dropped`` line for a job a pipeline dropped with ``SkipJob``: one
+    wording for the worker and ``reflowfy test`` (each passes its own logger)."""
+    log.info(
+        "Job dropped by pipeline (%s)",
+        reason,
+        extra={"event": "job_dropped", "skip_reason": reason},
+    )
+
+
+def log_skipped_records(log: Any, step: AppliedStep) -> None:
+    """The ``records_skipped`` line for a step that dropped records, if it did.
+
+    Reasons stay in the message: as a field their keys would be unbounded mapping
+    names in the log index.
+    """
+    if not step.records_skipped:
+        return
+    log.info(
+        "%s skipped %d records (%s)",
+        step.name,
+        step.records_skipped,
+        top_skip_reasons(step.skip_reasons or {}),
+        extra={
+            "event": "records_skipped",
+            "transformation": step.name,
+            "records_skipped": step.records_skipped,
+        },
+    )
 
 
 def job(records: List[Any], **params: Any) -> PlannedJob:

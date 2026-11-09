@@ -402,12 +402,12 @@ def test_metrics_endpoint_exposes_counter():
 
 
 def test_record_job_metrics_increments():
-    from reflowfy.worker.executor import WorkerExecutor
+    from reflowfy.worker.executor import JobStats, WorkerExecutor
 
-    ex = WorkerExecutor.__new__(WorkerExecutor)  # skip DB engine
     before = m.jobs_processed_total.labels(pipeline="p1", status="completed")._value.get()
-    ex.record_job_metrics("p1", success=True, deduplicated=False, error_type=None,
-                          duration=0.5, records=3)
+    stats = JobStats()
+    stats.success, stats.records_output = True, 3
+    WorkerExecutor.record_job_metrics("p1", stats)
     after = m.jobs_processed_total.labels(pipeline="p1", status="completed")._value.get()
     assert after == before + 1
     assert m.records_processed_total.labels(pipeline="p1")._value.get() >= 3
@@ -415,12 +415,12 @@ def test_record_job_metrics_increments():
 
 def test_record_job_metrics_skips_records_on_failure():
     """A failed job must not inflate records_processed_total."""
-    from reflowfy.worker.executor import WorkerExecutor
+    from reflowfy.worker.executor import JobStats, WorkerExecutor
 
-    ex = WorkerExecutor.__new__(WorkerExecutor)
     before = m.records_processed_total.labels(pipeline="pf")._value.get()
-    ex.record_job_metrics("pf", success=False, deduplicated=False,
-                          error_type="ValueError", duration=0.1, records=7)
+    stats = JobStats()
+    stats.error_type, stats.records_output = "ValueError", 7
+    WorkerExecutor.record_job_metrics("pf", stats)
     after = m.records_processed_total.labels(pipeline="pf")._value.get()
     assert after == before  # no records counted for a failed job
 

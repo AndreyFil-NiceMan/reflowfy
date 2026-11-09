@@ -35,12 +35,16 @@ from reflowfy.core.exceptions import PipelineError
 from reflowfy.core.execution_context import ExecutionContext
 from reflowfy.destinations.pool import loop_pool_scope
 from reflowfy.core.planning import chunk
-from reflowfy.execution.job_runner import plan_slices, run_job_records
+from reflowfy.execution.job_runner import (
+    log_job_dropped,
+    log_skipped_records,
+    plan_slices,
+    run_job_records,
+)
 from reflowfy.sources.static import StaticSource
 from reflowfy.execution.transformation_runner import SKIPPED_MODE, AppliedStep
 from reflowfy.observability.context import log_context
 from reflowfy.observability.logging import get_logger, setup_logging
-from reflowfy.core.record_steps import top_skip_reasons
 from reflowfy.transformations.base import TransformationError
 
 logger = get_logger("cli.test")
@@ -426,26 +430,9 @@ def log_skips(job_params: Dict[str, Any], applied: List[AppliedStep], report: Ba
     skip_reason = job_params.get("skip_reason")
     if skip_reason:
         report.jobs_dropped.append(str(skip_reason))
-        logger.info(
-            "Job dropped by pipeline (%s)",
-            skip_reason,
-            extra={"event": "job_dropped", "skip_reason": skip_reason},
-        )
+        log_job_dropped(logger, str(skip_reason))
     for step in applied:
-        if step.records_skipped:
-            # Reasons stay in the message, as in the worker: as a field their keys
-            # would be unbounded mapping names in the log index.
-            logger.info(
-                "%s skipped %d records (%s)",
-                step.name,
-                step.records_skipped,
-                top_skip_reasons(step.skip_reasons or {}),
-                extra={
-                    "event": "records_skipped",
-                    "transformation": step.name,
-                    "records_skipped": step.records_skipped,
-                },
-            )
+        log_skipped_records(logger, step)
 
 
 def report_batch(report: BatchReport, opts: TestOptions, indent: str = "") -> None:
