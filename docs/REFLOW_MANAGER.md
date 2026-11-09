@@ -192,7 +192,6 @@ GET /health
 | `DATABASE_URL`            | `postgresql://reflowfy:reflowfy@localhost:5432/reflowfy` | PostgreSQL connection string    |
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092`                                         | Kafka broker addresses          |
 | `KAFKA_TOPIC`             | `reflow.jobs`                                            | Kafka topic for job dispatch    |
-| `MAX_JOBS_PER_MINUTE`     | `6000`                                                   | Global rate limit (jobs/minute) |
 | `HOST`                    | `0.0.0.0`                                                | Server host                     |
 | `PORT`                    | `8001`                                                   | Server port                     |
 | `LOG_LEVEL`               | `INFO`                                                   | Logging level                   |
@@ -216,7 +215,6 @@ curl http://localhost:8001/health
 # Set environment variables
 export DATABASE_URL=postgresql://user:pass@host:5432/db
 export KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-export MAX_JOBS_PER_MINUTE=6000
 
 # Run the service
 python -m reflowfy.reflow_manager.app
@@ -376,11 +374,11 @@ SELECT * FROM rate_limit_state;
    docker-compose logs kafka
    ```
 
-3. Increase rate limit:
+3. Check the execution's rate limit. There is no global limit: a run is limited
+   only by the `/run` `rate_limit` override, the pipeline's `define_rate_limit()`
+   or its `rate_limit` attribute, and is unlimited when none is set:
    ```bash
-   # Update docker-compose.yml
-   MAX_JOBS_PER_MINUTE: 12000
-   docker-compose restart reflow-manager
+   curl http://localhost:8001/executions/<execution_id>/stats
    ```
 
 ### Pause/Resume Not Working

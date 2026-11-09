@@ -136,7 +136,6 @@ reflowManager:
     type: NodePort
     port: 8001
     # nodePort: 30001  # Optional: fix the port
-  maxJobsPerMinute: 6000
   pipelineModule: 'pipelines'
   logLevel: 'INFO'
   resources:
