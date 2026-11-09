@@ -358,7 +358,7 @@ constants.
 1. **Safety net:** record the baseline of unit tests, coverage (≥ 99%), ruff,
    pyright (0) and mypy's error count.
 2. **Bugs above:** ✅ done (see status). The DLQ decision is still open.
-3. **Surplus** (dead code from F2, F4, F6, F8, F10): shrinks everything that
+3. **Surplus** (dead code from F2, F4, F6, F8, F10, plus `LocalExecutor` and `kafka_config`'s unused helpers): shrinks everything that
    follows.
 4. **F8 + F7 + F13:** layering, settings and names. These are mostly moves, with
    re-exports kept.
