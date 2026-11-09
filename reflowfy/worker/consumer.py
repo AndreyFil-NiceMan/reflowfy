@@ -286,7 +286,3 @@ class KafkaJobConsumer:
     def stop_requested(self) -> bool:
         """True once :meth:`request_stop` was called (a second signal then forces exit)."""
         return self._stop_requested
-
-    async def stop(self):
-        """Stop consuming."""
-        self.request_stop()

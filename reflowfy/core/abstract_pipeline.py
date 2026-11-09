@@ -55,6 +55,7 @@ from typing import (
 )
 
 import typing_extensions
+from croniter import croniter
 
 from reflowfy.core.exceptions import pipeline_step
 from reflowfy.core.execution_summary import ExecutionSummary
@@ -100,17 +101,12 @@ def _validate_schedules(schedules: List["ScheduledRun"], pipeline_name: str) -> 
             )
         seen_names.add(run.name)
 
-        try:
-            from croniter import croniter as _croniter
-
-            if not _croniter.is_valid(run.cron):
-                raise ValueError(
-                    f"Pipeline '{pipeline_name}' schedule '{run.name}' has invalid cron "
-                    f"expression: '{run.cron}'. "
-                    f"(reflowfy uses 5-field cron: minute hour day month weekday)"
-                )
-        except ImportError:
-            pass  # croniter not installed; validated at runtime by scheduler
+        if not croniter.is_valid(run.cron):
+            raise ValueError(
+                f"Pipeline '{pipeline_name}' schedule '{run.name}' has invalid cron "
+                f"expression: '{run.cron}'. "
+                f"(reflowfy uses 5-field cron: minute hour day month weekday)"
+            )
 
 
 class PipelineMeta(ABCMeta):
@@ -906,8 +902,6 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
 
     _resolved_params: Optional[Dict[str, Any]] = None
     _source: Any = None
-    _destination: Any = None
-    _transformations: List[Any] | None = None
 
     def fork(self) -> "AbstractPipeline[P]":
         """A private copy of this pipeline for one execution.
@@ -945,10 +939,6 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
         self._resolved_params = cast(Dict[str, Any], params)
         with pipeline_step("define_jobs", self.name):
             self._source = self.define_jobs(params)
-        # destination and transformations are resolved per-job/per-batch,
-        # once records are available.
-        self._destination = None
-        self._transformations = None
 
         return self
 
@@ -960,24 +950,6 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
                 "Pipeline not resolved. Call pipeline.resolve(runtime_params) before execution."
             )
         return self._source
-
-    @property
-    def destination(self) -> Any:
-        """Get the resolved destination. Call resolve() first."""
-        if self._destination is None:
-            raise RuntimeError(
-                "Pipeline not resolved. Call pipeline.resolve(runtime_params) before execution."
-            )
-        return self._destination
-
-    @property
-    def transformations(self) -> List[Any]:
-        """Get the resolved transformations. Call resolve() first."""
-        if self._transformations is None:
-            raise RuntimeError(
-                "Pipeline not resolved. Call pipeline.resolve(runtime_params) before execution."
-            )
-        return self._transformations
 
     @property
     def is_scheduled(self) -> bool:

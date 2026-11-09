@@ -210,19 +210,16 @@ class SourceFactory:
 
 def _register_builtin_sources() -> None:
     """Import the built-in sources: each registers itself when its class is defined."""
+    import reflowfy.sources.api  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    import reflowfy.sources.elastic  # noqa: F401  # pyright: ignore[reportUnusedImport]
     import reflowfy.sources.mock  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    import reflowfy.sources.sql  # noqa: F401  # pyright: ignore[reportUnusedImport]
     import reflowfy.sources.static  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
-    for module in (
-        "reflowfy.sources.elastic",
-        "reflowfy.sources.sql",
-        "reflowfy.sources.s3",
-        "reflowfy.sources.api",
-    ):
-        try:
-            __import__(module)
-        except ImportError:
-            pass  # optional dependency (boto3, elasticsearch) not installed
+    try:
+        import reflowfy.sources.s3  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    except ImportError:
+        pass  # boto3 is the optional [s3] extra
 
 
 # Auto-register on import

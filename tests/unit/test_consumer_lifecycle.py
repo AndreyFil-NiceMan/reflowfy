@@ -380,8 +380,8 @@ class TestDrain:
         assert len(consumer.queue) == 1  # j2 stays in Kafka for another worker
         worker.executor.close.assert_awaited_once()  # type: ignore[attr-defined]
 
-    async def test_stop_coroutine_requests_a_drain(self):
+    async def test_request_stop_asks_for_a_drain(self):
         worker = _worker()
         worker._running = True
-        await worker.stop()
-        assert worker._running is False
+        worker.request_stop()
+        assert worker._running is False and worker.stop_requested
