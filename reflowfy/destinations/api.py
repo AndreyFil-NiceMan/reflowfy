@@ -23,6 +23,7 @@ from reflowfy.destinations.base import (
 )
 from reflowfy.http_auth import build_auth_headers
 from reflowfy.observability.logging import get_logger
+from reflowfy.core.record_steps import default_record_concurrency
 
 logger = get_logger(__name__)
 
@@ -195,7 +196,6 @@ class ApiDestination(BaseDestination):
 
     def _concurrency(self) -> int:
         """Requests in flight per job: the record destination's limit, else the default."""
-        from reflowfy.transformations.base import default_record_concurrency
 
         return self.send_concurrency or default_record_concurrency()
 

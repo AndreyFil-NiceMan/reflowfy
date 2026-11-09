@@ -31,7 +31,7 @@ from reflowfy.observability.logging import get_logger
 from reflowfy.observability.tracing import extract_and_attach
 from reflowfy.reflow_manager.db_settings import async_connect_args
 from reflowfy.reflow_manager.models import Execution, Job
-from reflowfy.transformations.base import count_skip_reason, top_skip_reasons
+from reflowfy.core.record_steps import count_skip_reason, top_skip_reasons
 
 logger = get_logger("worker.executor")
 

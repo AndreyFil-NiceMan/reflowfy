@@ -67,6 +67,7 @@ from reflowfy.core.async_utils import for_each_concurrently
 from reflowfy.core.exceptions import PipelineError, SkipJob, SkipRecord
 from reflowfy.destinations.base import BaseDestination, ConnectionPool, DestinationError
 from reflowfy.observability.logging import get_logger
+from reflowfy.core.record_steps import count_skip_reason, default_record_concurrency
 
 logger = get_logger("destinations.record")
 
@@ -157,7 +158,6 @@ class RecordDestination(BaseDestination):
 
     def effective_concurrency(self) -> int:
         """The cap this destination runs with."""
-        from reflowfy.transformations.base import default_record_concurrency
 
         return self.concurrency if self.concurrency is not None else default_record_concurrency()
 
@@ -193,7 +193,6 @@ class RecordDestination(BaseDestination):
         Every record is routed before the caller sends any, so a record that fails
         the job (``on_error="fail"``) fails it with nothing written.
         """
-        from reflowfy.transformations.base import count_skip_reason
 
         total = len(records)
         results: List[Union[_Targets, _Skipped, None]] = [None] * total
