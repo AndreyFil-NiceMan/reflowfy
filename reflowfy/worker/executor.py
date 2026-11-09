@@ -12,6 +12,7 @@ from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from reflowfy.core.exceptions import pipeline_step
 from reflowfy.core.execution_context import build_flat_runtime_params_from_metadata
+from reflowfy.core.job_retry import ERROR_HISTORY_MAX, JobRetryConfig, describe_error
 from reflowfy.core.registry import pipeline_registry
 from reflowfy.execution.content_dedup import (
     claim_record_hashes,
@@ -20,6 +21,7 @@ from reflowfy.execution.content_dedup import (
     record_identity,
     release_record_hashes,
 )
+from reflowfy.destinations.base import DestinationError
 from reflowfy.destinations.record import RecordDestination
 from reflowfy.execution.job_runner import run_job_records_async
 from reflowfy.factories.source_factory import SourceFactory
@@ -28,7 +30,7 @@ from reflowfy.observability.context import log_context
 from reflowfy.observability.logging import get_logger
 from reflowfy.observability.tracing import extract_and_attach
 from reflowfy.reflow_manager.db_settings import async_connect_args
-from reflowfy.reflow_manager.models import Job
+from reflowfy.reflow_manager.models import Execution, Job
 from reflowfy.transformations.base import count_skip_reason, top_skip_reasons
 
 logger = get_logger("worker.executor")
@@ -64,6 +66,13 @@ class JobStats:
         # records to, and how many of its optional ones failed without failing the job.
         self.destinations: Optional[int] = None
         self.destinations_failed_optional: Optional[int] = None
+        # job_retry (only for a pipeline that sets it): retries scheduled so far, and the
+        # failures that led to them (type + short message, the last ERROR_HISTORY_MAX).
+        self.retry_count: Optional[int] = None
+        self.error_history: Optional[List[Dict[str, str]]] = None
+        # This failure was not final: the job went back to pending to be retried.
+        self.retry_scheduled = False
+        self.retry_in_seconds: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -91,6 +100,14 @@ class JobStats:
             **(
                 {"destinations_failed_optional": self.destinations_failed_optional}
                 if self.destinations_failed_optional is not None
+                else {}
+            ),
+            # Only with job_retry, so other jobs' stats keep their shape.
+            **({"retry_count": self.retry_count} if self.retry_count is not None else {}),
+            **({"error_history": self.error_history} if self.error_history is not None else {}),
+            **(
+                {"retry_scheduled": True, "retry_in_seconds": self.retry_in_seconds}
+                if self.retry_scheduled
                 else {}
             ),
         }
@@ -154,13 +171,19 @@ class WorkerExecutor:
         redelivered: bool = False,
         cancelled: bool = False,
         records_deduplicated: int = 0,
+        retry_scheduled: bool = False,
     ) -> None:
         """Emit Prometheus metrics for one finished job.
+
+        A failure that ``job_retry`` sent back to the queue is ``retry_scheduled``, not
+        ``failed``: the job is not over, and ``jobs_failed_total`` counts only final ones.
 
         # ponytail: error_type = exception class name only — never the message (cardinality).
         """
         if cancelled:
             status = "cancelled"
+        elif retry_scheduled:
+            status = "retry_scheduled"
         elif redelivered:
             status = "redelivered"
         elif deduplicated:
@@ -177,7 +200,7 @@ class WorkerExecutor:
             metrics.records_processed_total.labels(pipeline=pipeline).inc(records)
         if success and records_deduplicated:
             metrics.records_deduplicated_total.labels(pipeline=pipeline).inc(records_deduplicated)
-        if not success and error_type:
+        if not success and error_type and not retry_scheduled:
             metrics.jobs_failed_total.labels(pipeline=pipeline, error_type=error_type).inc()
 
     async def execute_job(self, job_payload: Dict[str, Any]) -> bool:
@@ -224,6 +247,7 @@ class WorkerExecutor:
                 duration=duration,
                 records=stats.records_output,
                 records_deduplicated=stats.records_deduplicated,
+                retry_scheduled=stats.retry_scheduled,
             )
 
     async def _execute_job_inner(
@@ -422,7 +446,13 @@ class WorkerExecutor:
                 stats.end_time = time.time()
                 if claimed_record_hashes:
                     await release_record_hashes(self._async_session, claimed_record_hashes, job_id)
-                await self._update_job_in_db(execution_id, job_id, stats)
+                await self._finish_failed_job(
+                    job_payload,
+                    execution_id,
+                    job_id,
+                    stats,
+                    DestinationError("health_check", "Destination health check failed"),
+                )
                 return False
 
             # Send to destination and track time (async)
@@ -482,8 +512,9 @@ class WorkerExecutor:
                 except Exception:
                     pass
 
-            # Update job status in PostgreSQL (async)
-            await self._update_job_in_db(execution_id, job_id, stats)
+            # Update job status in PostgreSQL (async): failed, or back to pending when
+            # the pipeline's job_retry retries this error.
+            await self._finish_failed_job(job_payload, execution_id, job_id, stats, e)
 
             return False
 
@@ -584,6 +615,110 @@ class WorkerExecutor:
             kept.append(record)
         return kept, list(won)
 
+    async def _finish_failed_job(
+        self,
+        job_payload: Dict[str, Any],
+        execution_id: str,
+        job_id: str,
+        stats: JobStats,
+        error: BaseException,
+    ) -> None:
+        """Record a failed job: ``failed``, or ``pending`` again when ``job_retry`` says so.
+
+        Retried when the job message carries a ``job_retry`` config, the error matches it
+        and retries are left: the job goes back to ``pending`` with ``next_attempt_at`` set
+        after the backoff, and the drive loop sends it again then. The content-dedup
+        claims were released before this, so the retry re-claims its records.
+        """
+        try:
+            retry = JobRetryConfig.from_payload(job_payload)
+        except Exception:
+            logger.warning(
+                "Ignoring an unreadable job_retry config",
+                exc_info=True,
+                extra={"event": "job_retry_config_error"},
+            )
+            retry = None
+        if retry is None:
+            await self._update_job_in_db(execution_id, job_id, stats)
+            return
+
+        previous_count, history = await self._previous_retries(job_id)
+        stats.retry_count = previous_count
+        stats.error_history = (history + [describe_error(error)])[-ERROR_HISTORY_MAX:]
+        error_type = type(error).__name__
+        if retry.should_retry(error) and previous_count < retry.max_retries:
+            retry_number = previous_count + 1
+            delay = retry.delay_for(retry_number, error)
+            stats.retry_count = retry_number
+            stats.retry_scheduled = True
+            stats.retry_in_seconds = round(delay, 3)
+            if await self._update_job_in_db(execution_id, job_id, stats, retry_in=delay):
+                logger.info(
+                    "Job failed (%s), retry %d/%d in %.0fs",
+                    error_type,
+                    retry_number,
+                    retry.max_retries,
+                    delay,
+                    extra={
+                        "event": "job_retry_scheduled",
+                        "error_type": error_type,
+                        "retry": retry_number,
+                        "max_retries": retry.max_retries,
+                        "retry_in_s": round(delay, 3),
+                    },
+                )
+                return
+            # The execution ended meanwhile (cancelled, force-failed): no retry.
+            stats.retry_count = previous_count
+            stats.retry_scheduled = False
+            stats.retry_in_seconds = None
+        else:
+            reason = (
+                f"{previous_count} retr{'y' if previous_count == 1 else 'ies'} used"
+                if retry.should_retry(error)
+                else "error is not retried"
+            )
+            logger.info(
+                "Job failed (%s), not retried: %s",
+                error_type,
+                reason,
+                extra={
+                    "event": "job_retry_exhausted",
+                    "error_type": error_type,
+                    "retry_count": previous_count,
+                },
+            )
+        await self._update_job_in_db(execution_id, job_id, stats)
+
+    async def _previous_retries(self, job_id: str) -> Tuple[int, List[Dict[str, str]]]:
+        """The retry count and error history earlier runs of this job left in its stats."""
+        from sqlalchemy import select
+
+        try:
+            async with self._async_session() as db:
+                previous: Any = (
+                    await db.execute(select(Job.stats).where(Job.job_id == job_id))
+                ).scalar_one_or_none()
+        except Exception:
+            logger.warning(
+                "Could not read the job's earlier retries; counting from zero",
+                exc_info=True,
+                extra={"event": "job_retry_read_error"},
+            )
+            return 0, []
+        if not isinstance(previous, dict):
+            return 0, []
+        stats_dict = cast(Dict[str, Any], previous)
+        count: Any = stats_dict.get("retry_count")
+        history: Any = stats_dict.get("error_history")
+        return (
+            count if isinstance(count, int) and not isinstance(count, bool) else 0,
+            [cast(Dict[str, str], h) for h in cast(List[Any], history) if isinstance(h, dict)]
+            if isinstance(history, list)
+            else [],
+        )
+
     async def _heartbeat_job(self, job_id: str) -> None:
         """Refresh the running job's ``updated_at`` every JOB_HEARTBEAT_SECONDS.
 
@@ -623,13 +758,26 @@ class WorkerExecutor:
         """
         from sqlalchemy import select, update
 
+        from sqlalchemy import or_
+
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         try:
             async with self._async_session() as db:
+                # A pending job whose job_retry backoff has not passed is not claimed: an
+                # old message delivered again must not cut the backoff short.
                 result = await db.execute(
                     update(Job)
-                    .where(Job.job_id == job_id, Job.state.in_(["pending", "dispatched"]))
-                    .values(state="running", attempts=Job.attempts + 1, updated_at=now)
+                    .where(
+                        Job.job_id == job_id,
+                        Job.state.in_(["pending", "dispatched"]),
+                        or_(Job.next_attempt_at.is_(None), Job.next_attempt_at <= now),
+                    )
+                    .values(
+                        state="running",
+                        attempts=Job.attempts + 1,
+                        updated_at=now,
+                        next_attempt_at=None,
+                    )
                 )
                 if (getattr(result, "rowcount", 0) or 0) == 1:
                     await db.commit()
@@ -647,7 +795,13 @@ class WorkerExecutor:
             )
             return None
 
-    async def _update_job_in_db(self, execution_id: str, job_id: str, stats: JobStats):
+    async def _update_job_in_db(
+        self,
+        execution_id: str,
+        job_id: str,
+        stats: JobStats,
+        retry_in: Optional[float] = None,
+    ) -> bool:
         """
         Update job status directly in PostgreSQL asynchronously.
 
@@ -658,12 +812,23 @@ class WorkerExecutor:
             execution_id: Execution ID
             job_id: Job ID
             stats: Job statistics
+            retry_in: Schedule a job_retry retry this many seconds from now: the job goes
+                back to ``pending`` with ``next_attempt_at`` set, ``attempts`` reset (each
+                retry gets the full JOB_MAX_ATTEMPTS lease budget), and the error kept.
+                Only while the execution has not ended; otherwise nothing is written.
+
+        Returns:
+            True if the row was written.
         """
         async with self._async_session() as db:
             try:
-                from sqlalchemy import update
+                from datetime import timedelta
 
-                if stats.deduplicated:
+                from sqlalchemy import select, update
+
+                if retry_in is not None:
+                    state = "pending"
+                elif stats.deduplicated:
                     state = "deduplicated"
                 elif stats.success:
                     state = "completed"
@@ -672,13 +837,19 @@ class WorkerExecutor:
                 now = datetime.now(timezone.utc).replace(tzinfo=None)
 
                 # Update job state
-                update_data = {
+                update_data: Dict[str, Any] = {
                     "state": state,
                     "updated_at": now,
                     "completed_at": now,
                     "processed_records": stats.records_output,
                     "stats": stats.to_dict(),
                 }
+                if retry_in is not None:
+                    update_data.update(
+                        completed_at=None,
+                        attempts=0,
+                        next_attempt_at=now + timedelta(seconds=retry_in),
+                    )
 
                 if stats.error:
                     update_data["error_message"] = stats.error
@@ -686,17 +857,32 @@ class WorkerExecutor:
                     update_data["error_traceback"] = stats.error_traceback
 
                 # Update the job using async execute
-                stmt = update(Job).where(Job.job_id == job_id).values(**update_data)
-                result = await db.execute(stmt)
+                stmt = update(Job).where(Job.job_id == job_id)
+                if retry_in is not None:
+                    # A job of an execution that was cancelled or force-failed meanwhile
+                    # is not put back in the queue (nothing would ever take it).
+                    stmt = stmt.where(
+                        Job.execution_id.in_(
+                            select(Execution.execution_id).where(
+                                Execution.execution_id == execution_id,
+                                Execution.state.in_(["pending", "running", "paused"]),
+                            )
+                        )
+                    )
+                result = await db.execute(stmt.values(**update_data))
 
                 rowcount = getattr(result, "rowcount", None)
                 if rowcount == 0:
-                    logger.warning("Job not found in database", extra={"event": "job_row_missing"})
                     await db.rollback()
-                    return
+                    if retry_in is None:
+                        logger.warning(
+                            "Job not found in database", extra={"event": "job_row_missing"}
+                        )
+                    return False
 
                 await db.commit()
                 logger.debug("Status updated in database", extra={"event": "job_status_saved"})
+                return True
 
             except Exception as e:
                 logger.error(
@@ -706,6 +892,7 @@ class WorkerExecutor:
                     extra={"event": "db_update_error"},
                 )
                 await db.rollback()
+                return False
 
     async def close(self):
         """Close database connections."""
