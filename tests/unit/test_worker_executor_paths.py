@@ -568,14 +568,39 @@ class TestUpdateJobInDb:
         assert "Job not found in database" in logs
         assert await _rows(url) == {}
 
-    async def test_database_error_is_logged_not_raised(self, tmp_path):
+    async def test_database_error_is_retried_then_logged_not_raised(self, tmp_path):
         worker = WorkerExecutor(database_url=f"sqlite+aiosqlite:///{tmp_path}/none.db")
+        worker._save_retry_delays = (0.0, 0.0)
         try:
             with capture_logs() as logs:
-                await worker._update_job_in_db("e", "j", JobStats())
+                assert await worker._update_job_in_db("e", "j", JobStats()) is False
         finally:
             await worker.close()
-        assert any(m.startswith("Failed to update database:") for m in logs)
+        assert sum(m.startswith("Failed to update database (attempt") for m in logs) == 2
+        assert any(m.startswith("Job outcome not saved after 3 attempts") for m in logs)
+
+    async def test_a_transient_database_error_does_not_lose_the_outcome(self, tmp_path):
+        url = await _make_db(tmp_path, {"j": "running"})
+        worker = WorkerExecutor(database_url=url)
+        worker._save_retry_delays = (0.0,)
+        real_write = worker._write_job_row
+        calls = 0
+
+        async def flaky(*args: Any, **kwargs: Any) -> bool:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise ConnectionError("postgres restarting")
+            return await real_write(*args, **kwargs)
+
+        worker._write_job_row = flaky  # type: ignore[method-assign]
+        try:
+            stats = JobStats()
+            stats.success = True
+            assert await worker._update_job_in_db("e", "j", stats) is True
+        finally:
+            await worker.close()
+        assert (await _rows(url))["j"].state == "completed"
 
 
 @pytest.mark.real_claim
@@ -670,3 +695,16 @@ class TestEndToEndOnSqlite:
 
         failures = [m for m in logs if m == "Heartbeat failed; will retry"]
         assert len(failures) >= 2  # kept beating after the first failure
+
+
+async def test_a_failed_claim_release_is_logged(monkeypatch):
+    import reflowfy.worker.executor as executor_mod
+
+    async def broken(*args: Any, **kwargs: Any) -> None:
+        raise ConnectionError("postgres down")
+
+    monkeypatch.setattr(executor_mod, "release_record_hashes", broken)
+    worker = WorkerExecutor(database_url="postgresql://x/y")
+    with capture_logs() as logs:
+        await worker._release_claims([b"h1", b"h2"], "j")
+    assert "Could not release 2 content-dedup claims" in logs

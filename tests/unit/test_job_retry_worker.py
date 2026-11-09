@@ -279,15 +279,37 @@ async def test_an_unreadable_config_is_ignored(db, db_file, monkeypatch, caplog)
     assert "unreadable job_retry" in caplog.text
 
 
-async def test_earlier_retries_count_from_zero_when_they_cannot_be_read(monkeypatch, caplog):
+async def test_earlier_retries_are_unknown_when_they_cannot_be_read(monkeypatch, caplog):
     executor = WorkerExecutor(database_url="postgresql://x/y")
 
     def broken() -> Any:
         raise RuntimeError("database down")
 
     monkeypatch.setattr(executor, "_async_session", broken)
-    assert await executor._previous_retries("j") == (0, [])
+    assert await executor._previous_retries("j") is None
     assert "earlier retries" in caplog.text
+
+
+async def test_no_retry_is_scheduled_when_earlier_retries_cannot_be_read(
+    db, db_file, monkeypatch, caplog
+):
+    """Counting from zero here made every failure retry 1: max_retries was never hit."""
+    _register(monkeypatch, _Destination([DestinationError("kafka", "down")]))
+    executor = WorkerExecutor(database_url=f"sqlite+aiosqlite:///{db_file}")
+
+    async def unreadable(job_id: str) -> None:
+        return None
+
+    monkeypatch.setattr(executor, "_previous_retries", unreadable)
+    try:
+        assert await executor.execute_job(_payload(JobRetryConfig(max_retries=5))) is False
+    finally:
+        await executor.close()
+
+    job = _job(db)
+    assert job.state == "failed"
+    assert not job.stats.get("retry_scheduled")
+    assert "earlier retries could not be read" in caplog.text
 
 
 async def test_previous_retries_ignore_malformed_stats(db, db_file):
