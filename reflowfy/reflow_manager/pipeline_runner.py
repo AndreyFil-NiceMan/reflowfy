@@ -8,7 +8,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 
 from sqlalchemy.exc import DBAPIError
@@ -370,6 +370,71 @@ class PipelineRunner:
             "jobs_dispatched": execution.jobs_dispatched,
             "rate_limit": execution.rate_limit,
         }
+
+    def start_pipeline(
+        self,
+        pipeline_name: str,
+        runtime_params: Dict[str, Any],
+        execution_id: str,
+        background_runner: Callable[[], "PipelineRunner"],
+    ) -> None:
+        """Create an execution now, then plan and drive it on a thread of its own.
+
+        Raises ``ValueError`` here, before anything is created, when the pipeline is
+        not registered or the params are invalid. Anything that goes wrong later
+        (planning, dispatch) marks the execution ``failed``, as for ``/run``.
+
+        ``background_runner`` builds the runner the thread uses: it needs its own
+        database session, since this one belongs to the caller's thread.
+        """
+        from reflowfy.core.registry import pipeline_registry
+
+        pipeline = pipeline_registry.get(pipeline_name)
+        if not pipeline:
+            raise ValueError(
+                f"Pipeline '{pipeline_name}' not found in registry"
+                f"{pipeline_registry.describe_missing(pipeline_name)}"
+            )
+        errors = pipeline.validate_parameters(pipeline.apply_defaults(dict(runtime_params)))
+        if errors:
+            raise ValueError(f"Invalid parameters: {'; '.join(errors)}")
+
+        self.execution_manager.create_execution(
+            execution_id=execution_id,
+            pipeline_name=pipeline_name,
+            runtime_params=runtime_params,
+        )
+
+        def drive() -> None:
+            runner = background_runner()
+            try:
+                runner.run_pipeline_jobs(
+                    execution_id=execution_id,
+                    pipeline_name=pipeline_name,
+                    runtime_params=runtime_params,
+                )
+            except Exception as exc:
+                logger.exception(
+                    "Background execution failed",
+                    extra={
+                        "event": "execution_failed",
+                        "execution_id": execution_id,
+                        "pipeline_name": pipeline_name,
+                    },
+                )
+                try:
+                    runner.execution_manager.update_execution_state(
+                        execution_id, "failed", error_message=str(exc)
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to mark execution as failed",
+                        extra={"event": "execution_mark_failed_error"},
+                    )
+            finally:
+                runner.execution_manager.db.close()
+
+        threading.Thread(target=drive, name=f"run-{execution_id[:12]}", daemon=True).start()
 
     @bind_log_context("execution_id")
     def resume_execution(
