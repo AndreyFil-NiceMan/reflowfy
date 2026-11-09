@@ -1,10 +1,33 @@
 """Execution management for ReflowManager."""
 
+import logging
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, List, Optional
+from typing import Callable, Dict, Any, List, Optional
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 from reflowfy.reflow_manager.models import Execution
+
+logger = logging.getLogger(__name__)
+
+# Called as fn(bind, execution_id, state) right after an execution was moved to a terminal
+# state by update_execution_state — the one place every terminal transition goes through
+# (drive loop, /cancel, PATCH state, planning-crash recovery, a run that raised). The
+# manager service registers the lifecycle hooks here at startup (lifecycle.install());
+# nothing is registered elsewhere (unit tests, the CLI).
+TerminalListener = Callable[[Any, str, str], None]
+_terminal_listeners: List[TerminalListener] = []
+
+
+def add_terminal_listener(listener: TerminalListener) -> None:
+    """Call ``listener(bind, execution_id, state)`` whenever an execution ends (idempotent)."""
+    if listener not in _terminal_listeners:
+        _terminal_listeners.append(listener)
+
+
+def remove_terminal_listener(listener: TerminalListener) -> None:
+    """Undo :func:`add_terminal_listener` (no-op if it was not added)."""
+    if listener in _terminal_listeners:
+        _terminal_listeners.remove(listener)
 
 
 class ExecutionManager:
@@ -19,6 +42,8 @@ class ExecutionManager:
         pipeline_name: str,
         runtime_params: Optional[Dict[str, Any]] = None,
         rate_limit: Optional[float] = None,
+        parent_execution_id: Optional[str] = None,
+        callback_url: Optional[str] = None,
     ) -> Execution:
         """
         Create new execution record.
@@ -28,6 +53,8 @@ class ExecutionManager:
             pipeline_name: Name of the pipeline
             runtime_params: Runtime parameters for the pipeline
             rate_limit: The request's rate_limit override, if any (jobs/min)
+            parent_execution_id: The execution whose hook started this one, if any
+            callback_url: URL POSTed the execution summary once it ends, if any
 
         Returns:
             Created Execution object
@@ -39,6 +66,8 @@ class ExecutionManager:
             runtime_params=runtime_params or {},
             rate_limit=rate_limit,
             plan_complete=False,
+            parent_execution_id=parent_execution_id,
+            callback_url=callback_url,
         )
 
         self.db.add(execution)
@@ -70,6 +99,7 @@ class ExecutionManager:
         execution_id: str,
         state: str,
         error_message: Optional[str] = None,
+        notify: bool = True,
     ) -> Optional[Execution]:
         """
         Update execution state.
@@ -78,6 +108,9 @@ class ExecutionManager:
             execution_id: Execution identifier
             state: New state (pending, running, paused, completed, failed)
             error_message: Optional error message if failed
+            notify: Tell the terminal listeners (lifecycle hooks) when the state is
+                terminal. False when the caller finishes the transition first (cancel
+                also cancels the jobs) and calls :meth:`notify_terminal` itself.
 
         Returns:
             Updated Execution object or None if not found
@@ -90,13 +123,58 @@ class ExecutionManager:
         if error_message:
             execution.error_message = error_message
 
-        if state in ["completed", "failed", "cancelled"]:
+        if state in self.TERMINAL_STATES:
             execution.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
         self.db.commit()
         self.db.refresh(execution)
 
+        if notify and state in self.TERMINAL_STATES:
+            self.notify_terminal(execution_id, state)
+
         return execution
+
+    def notify_terminal(self, execution_id: str, state: str) -> None:
+        """Tell the terminal listeners (lifecycle hooks); never raises into the caller."""
+        for listener in list(_terminal_listeners):
+            try:
+                listener(self.db.get_bind(), execution_id, state)
+            except Exception:
+                logger.warning(
+                    "Terminal-state listener failed",
+                    exc_info=True,
+                    extra={"event": "terminal_listener_error", "execution_id": execution_id},
+                )
+
+    def set_rate_limit(self, execution_id: str, rate_limit: Optional[float]) -> None:
+        """Persist the rate limit the execution runs at, so a resume reuses it."""
+        self.db.query(Execution).filter(Execution.execution_id == execution_id).update(
+            {"rate_limit": rate_limit}, synchronize_session=False
+        )
+        self.db.commit()
+
+    def claim_hooks(self, execution_id: str) -> bool:
+        """Claim the right to fire this execution's lifecycle hooks. True exactly once.
+
+        ``UPDATE ... SET hooks_fired_at = now WHERE hooks_fired_at IS NULL``: of any
+        number of callers (two manager pods, a cancel racing the drive loop's end) one
+        gets the row.
+        """
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        claimed = (
+            self.db.query(Execution)
+            .filter(Execution.execution_id == execution_id, Execution.hooks_fired_at.is_(None))
+            .update({"hooks_fired_at": now}, synchronize_session=False)
+        )
+        self.db.commit()
+        return claimed == 1
+
+    def set_hook_error(self, execution_id: str, error: Optional[str]) -> None:
+        """Record what failed in a hook or the callback (never touches ``state``)."""
+        self.db.query(Execution).filter(Execution.execution_id == execution_id).update(
+            {"hook_error": error}, synchronize_session=False
+        )
+        self.db.commit()
 
     def update_job_counts(
         self,
@@ -153,17 +231,21 @@ class ExecutionManager:
     STATES = ("pending", "running", "paused", "completed", "failed", "cancelled")
     TERMINAL_STATES = ("completed", "failed", "cancelled")
 
-    def cancel_execution(self, execution_id: str) -> Optional[Execution]:
+    def cancel_execution(self, execution_id: str, notify: bool = True) -> Optional[Execution]:
         """Mark a pending, running or paused execution ``cancelled``.
 
         Returns None if it does not exist or is already finished. Cancelling its jobs
         is the caller's job (see ``JobManager.cancel_unstarted_jobs``): this only moves the
-        execution, which is what stops its dispatch loop and its planner.
+        execution, which is what stops its dispatch loop and its planner. A caller that
+        cancels the jobs passes ``notify=False`` and calls :meth:`notify_terminal` after,
+        so the hooks' summary counts them.
         """
         execution = self.get_execution(execution_id)
         if not execution or execution.state in self.TERMINAL_STATES:
             return None
-        return self.update_execution_state(execution_id, "cancelled", error_message="Cancelled")
+        return self.update_execution_state(
+            execution_id, "cancelled", error_message="Cancelled", notify=notify
+        )
 
     def mark_plan_complete(self, execution_id: str) -> None:
         """Record that every job of the execution is saved (planning finished)."""
@@ -180,6 +262,9 @@ class ExecutionManager:
         execution.state = "running"
         execution.completed_at = None
         execution.error_message = None
+        # Its next end fires the hooks again (they reported the run before the retry).
+        execution.hooks_fired_at = None
+        execution.hook_error = None
         self.db.commit()
         self.db.refresh(execution)
         return execution
