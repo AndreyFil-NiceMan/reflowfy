@@ -96,6 +96,17 @@ def _apply_column_migrations() -> None:
         # Planning finished: False while the manager saves the jobs, True once all are saved
         "ALTER TABLE executions ADD COLUMN IF NOT EXISTS plan_complete BOOLEAN NOT NULL "
         "DEFAULT FALSE",
+        # job_retry: a retried job is pending but not dispatched before this time
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMP",
+        # Lifecycle hooks: fired exactly once (claimed by setting hooks_fired_at), errors kept
+        "ALTER TABLE executions ADD COLUMN IF NOT EXISTS hooks_fired_at TIMESTAMP",
+        "ALTER TABLE executions ADD COLUMN IF NOT EXISTS hook_error TEXT",
+        # Chaining: the execution whose hook started this one
+        "ALTER TABLE executions ADD COLUMN IF NOT EXISTS parent_execution_id VARCHAR(255)",
+        # /run callback_url, POSTed the execution summary once it ends
+        "ALTER TABLE executions ADD COLUMN IF NOT EXISTS callback_url TEXT",
+        "CREATE INDEX IF NOT EXISTS idx_executions_parent_execution_id "
+        "ON executions(parent_execution_id)",
         # Retention sweeper filters on completed_at; partial index skips unfinished rows
         "CREATE INDEX IF NOT EXISTS idx_executions_completed_at "
         "ON executions(completed_at) WHERE completed_at IS NOT NULL",
