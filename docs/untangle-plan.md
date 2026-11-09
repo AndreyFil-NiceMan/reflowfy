@@ -564,9 +564,17 @@ constants.
    - Two "Import here to avoid circular dependency" comments were false (both
      registries import nothing from reflowfy). The imports are now at module
      top.
-14. **Repeat:** audit again for special cases, hidden links, needless links and
-    surplus until nothing worth fixing is left. Then run the unit tests and the
-    local and distributed E2E suites.
+14. **Re-audit:** ✅ done.
+   - Bare state strings in comparisons are down to three in `app.py`, now
+     replaced. The ones left in `sql.py` and `execution_summary` are a
+     tokenizer state and the summary's own field.
+   - No "import cycle" lazy imports remain, and `test_layering.py` has no
+     exceptions.
+   - The `getattr(pipeline, …)` reads that remain are for optional pipeline
+     attributes on duck-typed pipelines in tests. They are a known, not
+     hidden, link.
+   - Baselines after the whole plan: unit tests 1952 passed (from 1937),
+     coverage 99.67%, pyright 0, mypy 99 (from 103).
 
 Every step keeps `reflowfy`'s top-level exports, the v2 Kafka job message and the
 database contents compatible. If a step cannot, it stops and asks first.

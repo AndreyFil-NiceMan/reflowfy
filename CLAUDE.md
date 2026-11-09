@@ -30,7 +30,7 @@ uv run pytest tests/unit/test_api_destination.py::TestClassName::test_name -v   
 # Lint / format / type-check (line-length 100; mypy strict; pyright strict)
 uv run ruff check reflowfy/
 uv run black reflowfy/
-uv run mypy reflowfy/       # NOT clean: ~133 pre-existing errors, mostly no-untyped-def.
+uv run mypy reflowfy/       # NOT clean: ~99 pre-existing errors, mostly no-untyped-def.
                             # The bar for a change is "the count does not go up".
                             # `redundant-cast` is disabled in [tool.mypy]: mypy and
                             # pyright disagree about isinstance-narrowed Any, and the
