@@ -1,7 +1,7 @@
 # Untangle plan (decision log)
 
 Skill: `untangle-codebase`. Options chosen: **Comments** (yes), **Tests** (no).
-Status: **plan only, no code changed yet.** First full audit pass done (2026-11-09):
+Status: **bug fixes landed; structural fixes not started.** First full audit pass done (2026-11-09):
 scripted scans plus four area audits (core, execution/worker, manager/api,
 connectors/cli). The headline claims were re-checked by hand: items marked ✔.
 
@@ -19,49 +19,58 @@ connectors/cli). The headline claims were re-checked by hand: items marked ✔.
 - 111 `except Exception`, 12 sleeps, 98 environment-variable reads, about 200
   bare state strings, 19 `ALTER TABLE` statements.
 
-## Bugs found along the way (fix first, each with a test)
+## Bugs found along the way: status
 
-The skill says not to go bug hunting. These turned up anyway, and some are
-serious enough not to wait for the refactor that would remove their cause.
+Fixed on this branch, each with a regression test that fails on the old code:
 
-- ✔ **Credential leak:** `GET /executions/{id}/stats` returns `runtime_params`
-  unredacted (`manager.py:246`, `app.py:595`). Every other execution route
-  redacts them. `/executions/{id}/errors` (`app.py:385`) returns raw
-  messages and tracebacks.
-- ✔ **Secrets in logs:** `BaseDestination.__repr__` prints the whole config,
-  including `sasl_password` and `auth_token` (`destinations/base.py:194`).
-- ✔ **Lost job outcomes:** `_update_job_in_db` returns False on failure, but
-  5 of its 6 callers ignore that (`worker/executor.py:352,424,504,658,707`). The
-  consumer then commits the Kafka offset anyway.
-- **Unbounded retries:** `_previous_retries` fails open to `(0, [])`
-  (`worker/executor.py:718`). If the stats read keeps failing, every failure is
-  treated as retry 1, so `max_retries` is never reached.
-- **Swallowed cancellation:** `except BaseException: pass` on claim release
-  (`worker/executor.py:544`) swallows a second cancel. `:527` swallows
-  release failures with no log.
-- ✔ **Wrong ID batching locally:** `LocalExecutor._execute_id_based` calls
-  `resolve()`, which plans every ID, and then calls `resolve_for_id` once per
-  ID. So it ignores `ids_batch_size`, calls `define_source` twice per ID, drops
-  per-job `job_params` (`:345`) and reports a stale `skip_reason` across slices
-  (`:348`).
-- **Scheduled runs skip validation:** `pipeline_scheduler.py:196` creates
-  executions without `validate_parameters`.
-- **DLQ runs block the queue:** the DLQ scheduler drives each execution to
-  completion while holding `FOR UPDATE` row locks (`dlq_scheduler.py:115,241`).
-- **API status never updates:** `/executions/{id}/status` reads an in-memory
-  snapshot that is never updated (`ExecutionTracker.update_job_completion` has
-  no callers). `status_url: /executions/{id}` (`app.py:506`) points at a route
-  that does not exist.
-- **Graceful drain fails during startup:** a SIGTERM during the consumer's
-  start-up backoff (up to ~8.5 min, `consumer.py:111-140`) force-exits, because
-  `_running` is set only after connecting.
-- **Inconsistent defaults:** `distributed_executor.py:29` defaults to 120 s
-  but `get_executor` passes 30 s. Kafka security protocol defaults disagree
-  (`kafka_config.py:25` vs `:59`). Elasticsearch `verify_certs` defaults are
-  opposite in the log handler and the source.
-- **CLI exits 0 on failure:** a failed `docker compose up` (`run.py:39`) or
-  `oc expose` (`deploy.py:258`) exits 0, and so do the swallowed scaffold
-  steps in `init_cmd.py`.
+- **Fixed: credential leak.** `GET /executions/{id}/stats` returned
+  `runtime_params` unredacted. `/executions/{id}/errors` returned messages and
+  tracebacks that quote connection URLs with their passwords.
+- **Fixed: secrets in reprs.** `BaseDestination.__repr__` printed
+  `sasl_password`, `auth_token` and `Authorization` headers.
+- **Fixed: unsaved job outcomes.** A database error while saving an outcome was
+  logged once and dropped. The job stayed `running` until the lease sweep re-ran
+  it, re-sending its records. The write is now retried (1, 2, 4 s), and a final
+  failure logs `job_outcome_not_saved`.
+- **Fixed: unbounded retries.** When the retry count could not be read, it
+  counted as zero, so `max_retries` was never reached. The job now fails without
+  scheduling a retry.
+- **Fixed: silent claim release.** A failed release of content-dedup claims was
+  swallowed; it is now logged, and on shutdown the release is shielded from a
+  second cancel.
+- **Fixed: SIGTERM during connect.** The first SIGTERM during the consumer's
+  connect backoff force-exited with code 1. A stop during the backoff now exits
+  cleanly.
+- **Fixed: frozen API status.** The API's `/executions/{id}/status` was a snapshot
+  that never changed. It now reads the manager live. `status_url` pointed at a
+  route that does not exist.
+- **Fixed: CLI exit codes.** `reflowfy run` exited 0 when `docker compose up`
+  failed, and `deploy` claimed its routes were created whatever `oc` returned.
+- **Fixed: conflicting timeouts.** The executor had a 120 s default while
+  `get_executor` passed 30 s; there is now one 30 s default.
+
+Checked and **not** bugs (the audit overstated them):
+
+- *Scheduled runs skip validation.* `resolve()` validates. A scheduled run with
+  bad params ends `failed` with "Invalid parameters: …", which is right when
+  there is no caller to send a 422 to.
+- *Kafka default conflicts in `kafka_config.py`.* Only tests call those
+  helpers, so they move to the surplus step.
+- *Elasticsearch `verify_certs` opposite defaults.* The log handler's off
+  default is deliberate and documented (it works with ES 8's self-signed cert).
+  Whether to flip it is a security-posture decision, not a bug.
+
+Left for a decision:
+
+- **DLQ runs block the queue.** The DLQ scheduler drives each execution to the
+  end inside its poll, holding `FOR UPDATE` row locks. This is deliberate: the
+  DLQ's retry and archive logic depends on the run raising synchronously.
+  Moving the run to a thread changes what a DLQ retry means. Committing
+  `processing` first releases the locks, but a crash then strands rows. See F4.
+- **`LocalExecutor` ID batching.** It is wrong (ignores `ids_batch_size`, calls
+  `define_source` twice per ID), but `LocalExecutor` has no production caller:
+  the API's local mode goes through the manager. It moves to the surplus step
+  instead of being fixed.
 
 ## Fixes, each with the problems it solves
 
@@ -348,8 +357,7 @@ constants.
 
 1. **Safety net:** record the baseline of unit tests, coverage (≥ 99%), ruff,
    pyright (0) and mypy's error count.
-2. **Bugs above:** fix them, each with a regression test. Redaction and the
-   lost job outcomes go first.
+2. **Bugs above:** ✅ done (see status). The DLQ decision is still open.
 3. **Surplus** (dead code from F2, F4, F6, F8, F10): shrinks everything that
    follows.
 4. **F8 + F7 + F13:** layering, settings and names. These are mostly moves, with
