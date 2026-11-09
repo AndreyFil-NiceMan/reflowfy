@@ -30,3 +30,13 @@ def _no_uv_lock(monkeypatch):
     from reflowfy.cli.commands import init_cmd
 
     monkeypatch.setattr(init_cmd, "_find_uv", lambda: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_lifecycle_listener():
+    """`_startup` installs the lifecycle hooks' terminal listener process-wide; a later
+    test's terminal transition would then fire hooks in a thread on its database."""
+    yield
+    from reflowfy.reflow_manager import lifecycle
+
+    lifecycle.uninstall()

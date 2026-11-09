@@ -44,7 +44,7 @@ class ReflowManager:
         db_session: Session,
         kafka_bootstrap_servers: str = "localhost:9092",
         kafka_topic: str = "reflow.jobs",
-        max_jobs_per_minute: float = 6000.0,
+        max_jobs_per_minute: Optional[float] = None,
         execution_mode: str = "distributed",  # "distributed" or "local"
         # SASL Authentication
         kafka_security_protocol: Optional[str] = None,
@@ -59,7 +59,9 @@ class ReflowManager:
             db_session: SQLAlchemy database session
             kafka_bootstrap_servers: Kafka broker addresses
             kafka_topic: Topic for job dispatch
-            max_jobs_per_minute: Default global rate limit (jobs per minute)
+            max_jobs_per_minute: Ignored (kept for compatibility). A pipeline with no
+                rate limit (no /run override, ``define_rate_limit`` or ``rate_limit``)
+                is unlimited; there is no global default any more.
             execution_mode: "distributed" (Kafka) or "local" (In-process)
             kafka_security_protocol: SASL security protocol (e.g., "SASL_PLAINTEXT")
             kafka_sasl_mechanism: SASL mechanism (e.g., "SCRAM-SHA-256")
@@ -75,7 +77,7 @@ class ReflowManager:
         # Initialize component managers
         self.execution_manager = ExecutionManager(db_session)
         self.job_manager = JobManager(db_session)
-        self.rate_limiter = RateLimiter(db_session, max_jobs_per_minute)
+        self.rate_limiter = RateLimiter(db_session)
 
         # Select dispatcher based on mode
         if execution_mode == "local":
@@ -114,9 +116,16 @@ class ReflowManager:
         pipeline_name: str,
         runtime_params: Optional[Dict[str, Any]] = None,
         rate_limit: Optional[float] = None,
+        parent_execution_id: Optional[str] = None,
+        callback_url: Optional[str] = None,
     ) -> Execution:
         return self.execution_manager.create_execution(
-            execution_id, pipeline_name, runtime_params, rate_limit
+            execution_id,
+            pipeline_name,
+            runtime_params,
+            rate_limit,
+            parent_execution_id=parent_execution_id,
+            callback_url=callback_url,
         )
 
     def get_execution(self, execution_id: str) -> Optional[Execution]:
@@ -149,10 +158,12 @@ class ReflowManager:
     def cancel_execution(self, execution_id: str) -> Optional["CancelResult"]:
         """Cancel an execution: stop dispatching and planning, cancel every job no worker
         has started. Jobs already running finish. None if it is unknown or already finished."""
-        execution = self.execution_manager.cancel_execution(execution_id)
+        execution = self.execution_manager.cancel_execution(execution_id, notify=False)
         if not execution:
             return None
         cancelled = self.job_manager.cancel_unstarted_jobs(execution_id)
+        # After the jobs: the lifecycle hooks' summary counts them as cancelled.
+        self.execution_manager.notify_terminal(execution_id, "cancelled")
         return CancelResult(execution=execution, cancelled_jobs=cancelled)
 
     # ===== Pipeline Execution (delegated) =====
@@ -220,6 +231,8 @@ class ReflowManager:
             + job_counts.get("failed", 0)
             + job_counts.get("deduplicated", 0),
             "jobs_pending": job_counts.get("pending", 0),
+            # Pending, waiting for a job_retry backoff to pass (included in jobs_pending).
+            "jobs_retry_scheduled": self.job_manager.count_scheduled_retries(execution_id),
             "jobs_running": job_counts.get("running", 0),
             "jobs_cancelled": job_counts.get("cancelled", 0),
             "jobs_completed": job_counts.get("completed", 0),
@@ -231,6 +244,16 @@ class ReflowManager:
             "completed_at": execution.completed_at.isoformat() if execution.completed_at else None,
             "error_message": execution.error_message,
             "runtime_params": execution.runtime_params,
+            "rate_limit": execution.rate_limit,
+            "parent_execution_id": execution.parent_execution_id,
+            # Lifecycle hooks + callback: when they fired (once the execution ended) and
+            # what failed in them. Never part of the execution's own state.
+            "hooks": {
+                "fired_at": (
+                    execution.hooks_fired_at.isoformat() if execution.hooks_fired_at else None
+                ),
+                "error": execution.hook_error,
+            },
             "checkpoints": checkpoints,
         }
 

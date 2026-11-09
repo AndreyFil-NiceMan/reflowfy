@@ -26,6 +26,7 @@ from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
 from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
 from reflowfy.reflow_manager.models import Job
+from reflowfy.reflow_manager.rate_limiter import execution_bucket_key
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,45 @@ def _iter_plan(pipeline_name: str, slices: Iterator[Any]) -> Iterator[Any]:
 
 # Worker job message schema version
 JOB_SCHEMA_VERSION = 2
+
+
+def _rate_value(value: Any, where: str) -> Optional[float]:
+    """A rate limit (jobs/min) as a float; None (or 0, as before) means unlimited."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"{where} must be a number of jobs per minute or None, got {value!r}")
+    if value < 0:
+        raise ValueError(f"{where} must be positive (jobs per minute), got {value}")
+    return float(value) if value else None
+
+
+def resolve_rate_limit(
+    pipeline: Any,
+    runtime_params: Dict[str, Any],
+    override: Optional[float] = None,
+    persisted: Optional[float] = None,
+) -> Optional[float]:
+    """The rate (jobs/min) an execution runs at; None = unlimited.
+
+    Precedence: the ``/run`` override > the rate persisted on the execution (what an
+    earlier run of it resolved, reused on resume) > ``pipeline.define_rate_limit(params)``
+    > the ``rate_limit`` attribute. ``define_rate_limit`` returning None falls through to
+    the attribute. There is no global default: nothing set means unlimited.
+    """
+    if override is not None:
+        return _rate_value(override, "The /run rate_limit")
+    if persisted is not None:
+        return _rate_value(persisted, "The execution's rate_limit")
+    name = getattr(pipeline, "name", "?")
+    value: Any = None
+    define = getattr(pipeline, "define_rate_limit", None)
+    if callable(define):
+        with pipeline_step("define_rate_limit", name):
+            value = define(runtime_params)
+    if value is None:
+        value = getattr(pipeline, "rate_limit", None)
+    return _rate_value(value, f"The rate limit of pipeline '{name}'")
 
 
 def _finished_count(completed: int, failed: int, deduplicated: int) -> int:
@@ -328,7 +368,7 @@ class PipelineRunner:
             "pipeline_name": pipeline_name,
             "state": execution.state,
             "jobs_dispatched": execution.jobs_dispatched,
-            "rate_limit": rate_limit_override,
+            "rate_limit": execution.rate_limit,
         }
 
     @bind_log_context("execution_id")
@@ -401,13 +441,15 @@ class PipelineRunner:
             self._finalize_execution_state(execution_id, counts["total"], (0, 0, 0))
             return
 
-        # Determine effective rate limit. The original /run override is persisted on the
-        # execution; without it a restart silently fell back to the class rate_limit.
-        effective_rate_limit = rate_limit_override
-        if effective_rate_limit is None:
-            effective_rate_limit = execution.rate_limit
-        if effective_rate_limit is None and pipeline.rate_limit:
-            effective_rate_limit = pipeline.rate_limit
+        # The rate the run resolved is persisted on the execution; without it a restart
+        # silently fell back to the class rate_limit. Executions from before it was
+        # persisted resolve it again from the pipeline.
+        params: Dict[str, Any] = dict(execution.runtime_params or {})
+        if hasattr(pipeline, "apply_defaults"):
+            params = pipeline.apply_defaults(params)
+        effective_rate_limit = resolve_rate_limit(
+            pipeline, params, override=rate_limit_override, persisted=execution.rate_limit
+        )
 
         # Local mode runs jobs in-process, so whatever was dispatched or running died
         # with the restart. Requeue it now instead of waiting out the leases. In
@@ -554,10 +596,17 @@ class PipelineRunner:
             runtime_params=enriched_params,
         )
 
-        # Determine effective rate limit
-        effective_rate_limit = rate_limit_override
-        if effective_rate_limit is None and pipeline.rate_limit:
-            effective_rate_limit = pipeline.rate_limit
+        # The rate it runs at, persisted so a resume (manager restart, /resume) reuses it.
+        # (What is persisted at this point is only the /run override, passed in here.)
+        effective_rate_limit = resolve_rate_limit(
+            pipeline, enriched_params, override=rate_limit_override
+        )
+        self.execution_manager.set_rate_limit(execution_id, effective_rate_limit)
+
+        # Automatic retries travel in each job's metadata: the worker that runs the job
+        # decides, without reading the pipeline class again.
+        job_retry = getattr(pipeline, "job_retry", None)
+        job_retry_dict = job_retry.to_dict() if job_retry is not None else None
 
         logger.info(
             "Splitting source data into jobs (rate: %s/min)",
@@ -611,6 +660,8 @@ class PipelineRunner:
             job_params = {**default_job_params, **own_params} if own_params else default_job_params
             context_dict["runtime_params"] = dict(job_params)
             metadata = {**context_dict, "source_metadata": None}
+            if job_retry_dict is not None:
+                metadata["job_retry"] = job_retry_dict
             if "current_ids" in job_params:
                 metadata["current_ids"] = job_params["current_ids"]
 
@@ -769,7 +820,7 @@ class PipelineRunner:
             )
             return self._sync_counts_from_db(execution_id)
         # Execution-scoped key: concurrent executions of one pipeline don't share a bucket.
-        rate_limit_key = f"{pipeline_name}:{execution_id}"
+        rate_limit_key = execution_bucket_key(pipeline_name, execution_id)
         started = time.time()
         # Loop bookkeeping carried between steps.
         track: Dict[str, float] = {
@@ -819,6 +870,25 @@ class PipelineRunner:
                     exc_info=True,
                     extra={"event": "dispatcher_close_error"},
                 )
+            self._drop_rate_bucket(execution_id, rate_limit_key)
+
+    def _drop_rate_bucket(self, execution_id: str, rate_limit_key: str) -> None:
+        """Delete the execution's token bucket once it has ended (best effort).
+
+        A paused execution keeps it: its resumed loop goes on at the same rate.
+        """
+        limiter = getattr(self.dispatcher, "rate_limiter", None)
+        if limiter is None:
+            return
+        try:
+            if self._execution_state(execution_id) in ExecutionManager.TERMINAL_STATES:
+                limiter.delete_bucket(rate_limit_key)
+        except Exception:
+            logger.warning(
+                "Could not delete the rate-limit bucket",
+                exc_info=True,
+                extra={"event": "rate_bucket_cleanup_error"},
+            )
 
     async def _drive_step(
         self,
@@ -865,17 +935,20 @@ class PipelineRunner:
             track["finished"], track["progress_at"] = finished, now
         elif now - max(track["progress_at"], track["warned_at"]) >= STALL_WARN_SECONDS:
             # No batch timeout fails the run any more, so say so when it's stuck.
+            retrying = self.job_manager.count_scheduled_retries(execution_id)
             logger.warning(
                 "No job finished for %.0f min with %d in flight "
-                "and %d pending — are workers running?",
+                "and %d pending (%d waiting to be retried) — are workers running?",
                 (now - track["progress_at"]) / 60,
                 in_flight,
                 counts["pending"],
+                retrying,
                 extra={
                     "event": "dispatch_stalled",
                     "stalled_minutes": round((now - track["progress_at"]) / 60),
                     "jobs_in_flight": in_flight,
                     "jobs_pending": counts["pending"],
+                    "jobs_retry_scheduled": retrying,
                 },
             )
             track["warned_at"] = now
@@ -913,6 +986,9 @@ class PipelineRunner:
         second of the execution being paused.
         """
         started = time.time()
+        # Before every send of this call: a retry a worker schedules after one of them
+        # has a later next_attempt_at, so mark_job_dispatched leaves it pending.
+        sent_after = datetime.now(timezone.utc).replace(tzinfo=None)
         last_check = 0.0
         stop = False
 
@@ -933,7 +1009,7 @@ class PipelineRunner:
             return stop
 
         def on_sent(payload: Dict[str, Any]) -> None:
-            self.job_manager.mark_job_dispatched(payload["job_id"])
+            self.job_manager.mark_job_dispatched(payload["job_id"], sent_after=sent_after)
 
         def on_unsendable(payload: Dict[str, Any], reason: str) -> None:
             self.job_manager.update_job_state(payload["job_id"], "failed", error_message=reason)
