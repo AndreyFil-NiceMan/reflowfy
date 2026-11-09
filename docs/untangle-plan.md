@@ -517,8 +517,31 @@ constants.
        connector, not a cleanup pass.
      - SQL's `split()` keeps its explicit list: its slices change the query and
        turn templating off, so they are not a copy of the parent config.
-11. **F11, F12, then comments.**
-12. **Repeat:** audit again for special cases, hidden links, needless links and
+11. **F11:** ✅ done.
+   - `reflow_manager/periodic.py` `PeriodicTask` is the one start/stop/loop. The
+     DLQ scheduler, the cron scheduler and the retention sweeper only define
+     `tick()` and their interval. A failing sweep is still logged as
+     `sweeper_error`, now by the loop.
+   - A scheduler that fails to start is listed in `/health`
+     (`"status": "degraded"`, `failed_components`). It answers 200, because a
+     restart would not fix it, but it no longer reports healthy.
+   - Swallowed exceptions, decided one by one:
+     - The six connector health probes that returned `False` silently (SQL, S3,
+       Elasticsearch and API sources; Kafka and API destinations) now log
+       `health_check_failed` with the exception type and message, URL passwords
+       masked (`core/health.py`).
+     - An unknown `auth_type` raises instead of sending requests with no auth
+       (behaviour change), and the check is case-insensitive.
+     - Optional tracing packages are caught as `ImportError`; any other
+       instrumentation failure is logged (`tracing_error`).
+     - The Elasticsearch log handler uses logging's `handleError` when a record
+       will not format.
+     - `get_transformation_names` logs at debug why names are not listable.
+     - The rest carry a comment naming their reason (rollback on a dead
+       connection, version lookup during import).
+   - The scheduler's own swallowing dispatch thread went with F4.
+12. **F12, then comments.**
+13. **Repeat:** audit again for special cases, hidden links, needless links and
     surplus until nothing worth fixing is left. Then run the unit tests and the
     local and distributed E2E suites.
 

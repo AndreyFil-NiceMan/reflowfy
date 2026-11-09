@@ -7,7 +7,6 @@ worker that crashed between claiming a hash and finishing the send.
 
 import logging
 import os
-import threading
 from datetime import datetime, timezone, timedelta
 from typing import Any, Optional
 
@@ -16,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from reflowfy.store.models import Execution, Job, ProcessedRecord
 from reflowfy.reflow_manager.database import SessionLocal
+from reflowfy.reflow_manager.periodic import PeriodicTask
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +75,11 @@ def purge_expired_executions(
     return getattr(result, "rowcount", 0) or 0
 
 
-class ContentDedupScheduler:
+class ContentDedupScheduler(PeriodicTask):
     """Daemon thread that periodically purges expired content hashes."""
+
+    label = "Content Dedup Sweeper"
+    error_event = "sweeper_error"
 
     def __init__(
         self,
@@ -84,20 +87,16 @@ class ContentDedupScheduler:
         sweep_interval: int = CONTENT_DEDUP_SWEEP_INTERVAL,
         execution_retention_hours: int = EXECUTION_RETENTION_HOURS,
     ):
+        super().__init__()
         self.execution_retention_hours = execution_retention_hours
         self.retention_hours = retention_hours
         self.sweep_interval = sweep_interval
-        self._running = False
-        self._thread: Optional[threading.Thread] = None
-        self._stop_event = threading.Event()
 
-    def start(self) -> None:
-        if self._running:
-            return
-        self._running = True
-        self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run_loop, daemon=True)
-        self._thread.start()
+    @property
+    def interval_seconds(self) -> float:
+        return self.sweep_interval
+
+    def _log_started(self) -> None:
         logger.info(
             "Content Dedup Sweeper started (every %ss, retain %sh)",
             self.sweep_interval,
@@ -105,43 +104,30 @@ class ContentDedupScheduler:
             extra={"event": "sweeper_start", "sweep_interval_s": self.sweep_interval},
         )
 
-    def stop(self) -> None:
-        if not self._running:
-            return
-        self._running = False
-        self._stop_event.set()
-        if self._thread:
-            self._thread.join(timeout=10)
-            self._thread = None
-
-    def _run_loop(self) -> None:
-        while self._running:
-            db = SessionLocal()
-            try:
-                deleted = purge_expired_content(db, self.retention_hours)
-                executions = purge_expired_executions(db, self.execution_retention_hours)
-                db.commit()
-                if deleted:
-                    logger.info(
-                        "Content Dedup Sweeper purged %d expired hash(es)",
-                        deleted,
-                        extra={"event": "dedup_hashes_purged", "hashes_purged": deleted},
-                    )
-                if executions:
-                    logger.info(
-                        "Retention sweeper purged %d execution(s) older than %dh with their jobs",
-                        executions,
-                        self.execution_retention_hours,
-                        extra={"event": "executions_purged", "executions_purged": executions},
-                    )
-            except Exception:  # pragma: no cover
-                db.rollback()
-                logger.error(
-                    "Content Dedup Sweeper error", exc_info=True, extra={"event": "sweeper_error"}
+    def tick(self) -> None:
+        db = SessionLocal()
+        try:
+            deleted = purge_expired_content(db, self.retention_hours)
+            executions = purge_expired_executions(db, self.execution_retention_hours)
+            db.commit()
+            if deleted:
+                logger.info(
+                    "Content Dedup Sweeper purged %d expired hash(es)",
+                    deleted,
+                    extra={"event": "dedup_hashes_purged", "hashes_purged": deleted},
                 )
-            finally:
-                db.close()
-            self._stop_event.wait(timeout=self.sweep_interval)
+            if executions:
+                logger.info(
+                    "Retention sweeper purged %d execution(s) older than %dh with their jobs",
+                    executions,
+                    self.execution_retention_hours,
+                    extra={"event": "executions_purged", "executions_purged": executions},
+                )
+        except Exception:
+            db.rollback()
+            raise  # logged as sweeper_error by the loop
+        finally:
+            db.close()
 
 
 _sweeper: Optional[ContentDedupScheduler] = None

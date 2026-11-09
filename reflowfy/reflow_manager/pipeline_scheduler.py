@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from reflowfy.store.models import PipelineSchedule
 from reflowfy.reflow_manager.database import SessionLocal
 from reflowfy.reflow_manager.start import check_runnable, drive_execution
+from reflowfy.reflow_manager.periodic import PeriodicTask
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 PIPELINE_SCHEDULER_POLL_INTERVAL = int(os.getenv("PIPELINE_SCHEDULER_POLL_INTERVAL_SECONDS", "30"))
 
 
-class PipelineScheduler:
+class PipelineScheduler(PeriodicTask):
     """
     Background scheduler for cron-based pipeline execution.
 
@@ -32,61 +33,23 @@ class PipelineScheduler:
     whose next_run_at has elapsed, then fires a new execution for each.
     """
 
+    label = "Pipeline Scheduler"
+
     def __init__(
         self,
         poll_interval: int = PIPELINE_SCHEDULER_POLL_INTERVAL,
         pipeline_runner_factory: Optional[Callable[..., Any]] = None,
     ):
+        super().__init__()
         self.poll_interval = poll_interval
         self.pipeline_runner_factory = pipeline_runner_factory
-        self._running = False
-        self._thread: Optional[threading.Thread] = None
-        self._stop_event = threading.Event()
 
-    def start(self) -> None:
-        """Start the background polling thread."""
-        if self._running:
-            logger.warning(
-                "Pipeline Scheduler already running", extra={"event": "scheduler_already_running"}
-            )
-            return
+    @property
+    def interval_seconds(self) -> float:
+        return self.poll_interval
 
-        self._running = True
-        self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run_loop, daemon=True)
-        self._thread.start()
-        logger.info(
-            "Pipeline Scheduler started (polling every %ss)",
-            self.poll_interval,
-            extra={"event": "scheduler_start", "poll_interval_s": self.poll_interval},
-        )
-
-    def stop(self) -> None:
-        """Stop the scheduler gracefully."""
-        if not self._running:
-            return
-
-        logger.info("Stopping Pipeline Scheduler", extra={"event": "scheduler_stopping"})
-        self._running = False
-        self._stop_event.set()
-
-        if self._thread:
-            self._thread.join(timeout=10)
-            self._thread = None
-
-        logger.info("Pipeline Scheduler stopped", extra={"event": "scheduler_stopped"})
-
-    def _run_loop(self) -> None:
-        """Main polling loop."""
-        while self._running:
-            try:
-                self._poll_and_trigger()
-            except Exception:
-                logger.error(
-                    "Pipeline Scheduler error", exc_info=True, extra={"event": "scheduler_error"}
-                )
-
-            self._stop_event.wait(timeout=self.poll_interval)
+    def tick(self) -> None:
+        self._poll_and_trigger()
 
     def _poll_and_trigger(self) -> None:
         """Poll for due scheduled pipelines and trigger executions."""

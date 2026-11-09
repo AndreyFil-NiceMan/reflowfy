@@ -251,7 +251,13 @@ class IdBasedPipeline(AbstractPipeline[P]):
                     cast(P, {"current_ids": ["__discovery__"], "current_id": "__discovery__"}),
                 )
             ]
-        except Exception:
+        except Exception as exc:
+            # Metadata only: a hook that needs real records cannot be listed this way.
+            logger.debug(
+                "%s: transformation names not listable without records (%s)",
+                self.name,
+                type(exc).__name__,
+            )
             return []
 
     def to_dict(self) -> Dict[str, Any]:

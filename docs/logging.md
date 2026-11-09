@@ -39,6 +39,7 @@ Every log line is one ECS-shaped JSON object (`LOG_JSON=false` gives text with t
 - `api/routes.py`: `route_registered`, `run_failed`, `run_finished`, `run_requested`
 - `core/abstract_pipeline.py`: `pipeline_register_failed`
 - `core/api_auth.py`: `auth_configured`, `auth_rejected`
+- `core/health.py`: `health_check_failed`
 - `core/http_errors.py`: `http_error_body`
 - `core/pipeline_discovery.py`: `component_load_failed`, `component_loaded`, `discovery_done`, `discovery_empty`, `discovery_start`
 - `core/registry.py`: `pipeline_registered`
@@ -51,18 +52,20 @@ Every log line is one ECS-shaped JSON object (`LOG_JSON=false` gives text with t
 - `execution/job_runner.py`: `job_dropped`, `records_skipped`, `skipjob_raised`
 - `execution/transformation_runner.py`: `transform_declined`, `transform_per_record_start`
 - `factories/source_factory.py`: `literal_secret_serialized`
+- `observability/tracing.py`: `tracing_error`
 - `reflow_manager/app.py`: `config_ignored`, `db_init`, `db_ready`, `driver_leases_released`, `hooks_abandoned`, `recovery_check`, `recovery_found`, `recovery_none`, `recovery_resume_scheduled`, `recovery_scheduled`, `resume_failed`, `run_accepted`, `run_failed`, `run_undeclared_params`, `scheduler_init_failed`, `scheduler_ready`, `service_config`, `service_listen`, `service_start`, `service_stop`, `service_stopped`, `stats_error`
-- `reflow_manager/content_dedup_scheduler.py`: `dedup_hashes_purged`, `executions_purged`, `sweeper_error`, `sweeper_start`
+- `reflow_manager/content_dedup_scheduler.py`: `dedup_hashes_purged`, `executions_purged`, `sweeper_start`
 - `reflow_manager/database.py`: `db_connect_retry`, `migration_skipped`
 - `reflow_manager/dispatcher.py`: `job_unsendable`, `kafka_send_error`, `producer_reset`, `rate_limit_wait`
 - `reflow_manager/dlq_routes.py`: `dlq_cancel_rejected`, `dlq_cancelled`, `dlq_dispatch_empty`, `dlq_dispatch_error`, `dlq_dispatch_rejected`, `dlq_dispatch_requested`, `dlq_schedule_rejected`, `dlq_scheduled`
-- `reflow_manager/dlq_scheduler.py`: `dlq_archived`, `dlq_dispatch_error`, `dlq_dispatched`, `dlq_due`, `dlq_job_due`, `dlq_poll_error`, `dlq_process`, `dlq_rescheduled`, `scheduler_already_running`, `scheduler_error`, `scheduler_start`, `scheduler_stopped`, `scheduler_stopping`
+- `reflow_manager/dlq_scheduler.py`: `dlq_archived`, `dlq_dispatch_error`, `dlq_dispatched`, `dlq_due`, `dlq_job_due`, `dlq_poll_error`, `dlq_process`, `dlq_rescheduled`
 - `reflow_manager/execution.py`: `terminal_listener_error`
 - `reflow_manager/lifecycle.py`: `callback_failed`, `callback_sent`, `execution_chained`, `hook_failed`, `hook_fired`, `hooks_already_fired`, `rate_bucket_cleanup_error`
 - `reflow_manager/local_dispatcher.py`: `local_dispatch_error`, `rate_limit_wait`
 - `reflow_manager/manager.py`: `manager_init`
+- `reflow_manager/periodic.py`: `scheduler_already_running`, `scheduler_start`, `scheduler_stopped`, `scheduler_stopping`
 - `reflow_manager/pipeline_runner.py`: `backfill_batches_error`, `dispatch_db_error`, `dispatch_skipped`, `dispatch_stalled`, `dispatch_stopped`, `dispatcher_close_error`, `driver_claim_db_error`, `driver_release_error`, `driver_replaced`, `driver_standby`, `execution_drive_end`, `execution_finished`, `execution_resume`, `jobs_missing`, `lease_expired`, `orphaned_jobs_requeued`, `plan_abandoned`, `plan_aborted`, `plan_complete`, `plan_heartbeat_error`, `plan_lease_error`, `plan_save`, `plan_split`, `plan_start`, `plan_waiting`, `rate_bucket_cleanup_error`, `resume_nothing_to_do`, `resume_pipeline_missing`, `resume_skipped`, `sync_counts_error`
-- `reflow_manager/pipeline_scheduler.py`: `schedule_disabled`, `schedule_dispatched`, `schedule_due`, `schedule_registered`, `schedule_trigger`, `schedule_trigger_error`, `schedule_updated`, `scheduler_already_running`, `scheduler_error`, `scheduler_poll_error`, `scheduler_start`, `scheduler_stopped`, `scheduler_stopping`
+- `reflow_manager/pipeline_scheduler.py`: `schedule_disabled`, `schedule_dispatched`, `schedule_due`, `schedule_registered`, `schedule_trigger`, `schedule_trigger_error`, `schedule_updated`, `scheduler_poll_error`
 - `reflow_manager/start.py`: `db_close_error`, `dispatch_failed`, `execution_mark_failed_error`
 - `sources/base.py`: `source_type_replaced`
 - `sources/decorators.py`: `source_registered`

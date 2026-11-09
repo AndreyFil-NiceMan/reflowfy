@@ -9,6 +9,7 @@ from reflowfy.core.types import Records, wrap_as_record
 from reflowfy.http_auth import build_auth_headers
 from reflowfy.observability.logging import get_logger
 from reflowfy.sources.base import BaseSource, SourceError
+from reflowfy.core.health import log_unhealthy
 
 logger = get_logger(__name__)
 
@@ -262,8 +263,8 @@ class IDBasedAPISource(BaseSource):
             client = self._get_client()
             response = client.request("HEAD", "/", timeout=5.0)
             return response.status_code < 500
-        except Exception:
-            return False
+        except Exception as exc:
+            return log_unhealthy(logger, "API source", exc)
 
 
 # Factory functions

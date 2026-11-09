@@ -19,6 +19,7 @@ from reflowfy.destinations.base import (
     DestinationError,
     RetryConfig,
 )
+from reflowfy.core.health import log_unhealthy
 
 logger = logging.getLogger(__name__)
 
@@ -518,8 +519,8 @@ class KafkaDestination(BaseDestination):
     async def _probe(self) -> bool:
         try:
             await self._get_producer()
-        except Exception:
-            return False
+        except Exception as exc:
+            return log_unhealthy(logger, "Kafka destination", exc)
 
         if not self.config.get("lag_health_check_enabled"):
             return True
