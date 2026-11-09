@@ -385,8 +385,32 @@ constants.
 
    Net effect for the branch so far, bug fixes included: `reflowfy/` +289 / −1,609 lines,
    `tests/` +451 / −1,533; mypy errors 114 → 105.
-4. **F8 + F7 + F13:** layering, settings and names. These are mostly moves, with
-   re-exports kept.
+4. **F8 + F7 + F13:** ✅ done.
+   - **Layering (F8).** `core` no longer imports anything above it at runtime:
+     `chunk` → `core/planning.py`; record concurrency and skip counting →
+     `core/record_steps.py`; `SourceError`, `DestinationError`,
+     `PermanentDestinationError`, `TransformationError`, `StepOutputError` →
+     `core/exceptions.py` (re-exported from their old modules);
+     `step_output_type` → `transformations/output_type.py`; `Transformations` →
+     beside `BaseTransformation`; `redact_row` → `reflow_manager/redaction.py`; the
+     source-type registry → `sources/base.py`, which removes the sources↔factories
+     cycle. `tests/unit/test_layering.py` fails on any new upward import. One listed
+     exception is left for F2: `id_based_pipeline` wraps lists in `StaticSource`.
+   - **Settings (F7).** `core/kafka_settings.py` is the one builder of aiokafka
+     connection arguments, and `KafkaSettings.from_env()` reads `KAFKA_*` once. This
+     fixed a real bug: the worker's consumer and the manager's job producer dropped
+     `SSL` without SASL (plaintext) and crashed on `SASL_SSL` (no `ssl_context`).
+     There is one `DATABASE_URL` default (`db_settings.database_url()`). `reflowfy
+     init`'s example destination no longer reads `KAFKA_BOOTSTRAP_SERVERS`, which
+     the scaffold pins to `ignored:9092`.
+   - **Names (F13).** The `JobOutcome` enum and `metrics.count_job` hold every
+     `jobs_processed_total` status; `StepMode` holds every `AppliedStep.mode`;
+     `step_name()` replaces 11 inconsistent name reads.
+   - Deferred to F3: the worker heartbeat vs the manager's running lease (one
+     store will own claim, heartbeat and lease).
+   - One compatibility note: `job_retry` writes exception import paths into job
+     messages. New ones say `reflowfy.core.exceptions.X`; old messages still load.
+     During a mixed-version rollout, an older worker would not retry those errors.
 5. **F3:** `store/`, the enums and a single schema definition.
 6. **F2 → F1:** the plan as a value, then one job pipeline. This is the biggest
    change.
