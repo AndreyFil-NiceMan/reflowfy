@@ -503,7 +503,7 @@ async def run_pipeline(
             "pipeline_name": request.pipeline_name,
             "state": "pending",  # Will become "running" once background task starts
             "message": "Pipeline execution accepted. Jobs are being dispatched in background.",
-            "status_url": f"/executions/{execution_id}",
+            "status_url": f"/executions/{execution_id}/stats",
         }
         if unknown:
             accepted["warnings"] = [f"parameters not declared by the pipeline (ignored): {unknown}"]
