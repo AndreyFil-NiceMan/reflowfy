@@ -236,13 +236,22 @@ class DLQScheduler:
             "_dlq_job_ids": [job.id for job in jobs],
         }
 
-        # Get pipeline runner and run
-        runner = self.pipeline_runner_factory()
-        runner.run_pipeline(
-            pipeline_name=pipeline_name,
-            runtime_params=runtime_params,
-            execution_id=execution_id,
-        )
+        # Validated and created here, so a missing pipeline or bad params still
+        # takes the retry/archive path below. The run itself goes on a thread of
+        # its own: driven inline it held this poll's row locks and stalled every
+        # other due job for as long as it ran. A run that fails later ends its
+        # execution `failed`; the DLQ job has done its work (started it).
+        factory = self.pipeline_runner_factory
+        runner = factory()
+        try:
+            runner.start_pipeline(
+                pipeline_name=pipeline_name,
+                runtime_params=runtime_params,
+                execution_id=execution_id,
+                background_runner=factory,
+            )
+        finally:
+            runner.execution_manager.db.close()
 
         return execution_id
 
