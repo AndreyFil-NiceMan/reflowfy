@@ -209,8 +209,8 @@ Observability: a skip is the existing record-skip path — `records_skipped`/`re
 
 A transformation may be a coroutine. The per-job core is async
 (`run_job_records_async` / `apply_transformations_iteratively_async`) and the worker awaits it on
-its own event loop; the sync `run_job_records` / `apply_transformations_iteratively` that
-`reflowfy test` calls drive the same coroutine through
+its own event loop; the sync `run_job_records` that
+`reflowfy test` calls drives the same coroutine through
 `core/async_utils.run_coroutine_sync` (one loop per job; on a helper thread when a loop is
 already running, e.g. inside FastAPI). Three kinds of step, freely mixed in one chain:
 

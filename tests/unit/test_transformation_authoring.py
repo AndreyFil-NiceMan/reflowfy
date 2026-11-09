@@ -37,10 +37,14 @@ from reflowfy.execution.job_runner import run_job_records
 from reflowfy.execution.transformation_runner import (
     SKIPPED_MODE,
     AppliedStep,
-    apply_transformations_iteratively,
     apply_transformations_iteratively_async,
 )
 from reflowfy.sources.static import StaticSource
+from reflowfy.core.async_utils import run_coroutine_sync
+
+
+def apply_transformations_iteratively(*args, **kwargs):
+    return run_coroutine_sync(apply_transformations_iteratively_async(*args, **kwargs))
 
 
 class _Pipeline:

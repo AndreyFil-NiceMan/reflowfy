@@ -446,12 +446,29 @@ constants.
      no longer imports `sources`: `test_layering.py` has no exceptions left.
    - Removed: `resolve_for_ids`, `resolve_for_id`, `job_runtime_params`,
      `get_required_parameters`.
-      **F1** (next): the plan as a value, then one job pipeline. This is the biggest
-   change.
-7. **F4 + F5 + F6:** one start path, one serializer and a thin API.
-8. **F9 + F10:** connector specs and shared building blocks.
-9. **F11, F12, then comments.**
-10. **Repeat:** audit again for special cases, hidden links, needless links and
+7. **F1:** ✅ done, in the scope that still applies.
+   - With `LocalExecutor` gone there are two drivers (the worker and
+     `reflowfy test`), and both already run the shared `run_job_records_async`.
+   - The skip log lines are now one pair of helpers in `job_runner`
+     (`log_job_dropped`, `log_skipped_records`). Each driver passes its own
+     logger, so the log source stays the service's.
+   - The outcome is classified in one place: `JobStats.outcome` (metrics label)
+     beside `JobStats.stored_state` (the job row). `record_job_metrics(pipeline,
+     stats)` replaces the 11 unpacked arguments, and `_pipeline_name` is
+     `pipeline_name` again.
+   - The sync `apply_transformations_iteratively` (tests only) is deleted.
+   - Kept, on purpose:
+     - The worker's `isinstance(RecordDestination)` checks. Moving
+       `destinations_for` onto every destination broke duck-typed destinations,
+       which the worker accepts today.
+     - `SkipJob`'s reason on `runtime_params["skip_reason"]`. It is a documented
+       reserved key that user code can read.
+     - The record-claim release sites. Each exit path (unhealthy destination,
+       error, shutdown) needs its own ordering against the job row write.
+8. **F4 + F5 + F6:** one start path, one serializer and a thin API.
+9. **F9 + F10:** connector specs and shared building blocks.
+10. **F11, F12, then comments.**
+11. **Repeat:** audit again for special cases, hidden links, needless links and
     surplus until nothing worth fixing is left. Then run the unit tests and the
     local and distributed E2E suites.
 

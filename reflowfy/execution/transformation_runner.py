@@ -9,7 +9,6 @@ The loop is async so a transformation can await (an ``AsyncTransformation``, or
 a ``RecordTransformation`` running its records concurrently) on the worker's
 event loop. Synchronous user code — plain ``apply``, ``define_transformations`` —
 runs in a thread, so it never stalls that loop (and with it the Kafka heartbeat).
-The sync :func:`apply_transformations_iteratively` drives the same loop.
 """
 
 import asyncio
@@ -17,7 +16,6 @@ import time
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple, cast
 
 from reflowfy.core.abstract_pipeline import AbstractPipeline
-from reflowfy.core.async_utils import run_coroutine_sync
 from reflowfy.core.exceptions import SkipJob, SkipRecord
 from reflowfy.core.record_validation import describe_invalid, find_invalid_records
 from reflowfy.observability.logging import get_logger
@@ -204,20 +202,6 @@ async def _should_apply(
             records_in=len(records),
             applied_steps=list(applied),
         ) from exc
-
-
-def apply_transformations_iteratively(
-    pipeline: Any,
-    original_records: List[Any],
-    runtime_params: Dict[str, Any],
-    max_steps: int = DEFAULT_MAX_STEPS,
-) -> Tuple[List[Any], List[AppliedStep]]:
-    """Synchronous form of :func:`apply_transformations_iteratively_async`."""
-    return run_coroutine_sync(
-        apply_transformations_iteratively_async(
-            pipeline, original_records, runtime_params, max_steps=max_steps
-        )
-    )
 
 
 async def apply_transformations_iteratively_async(
