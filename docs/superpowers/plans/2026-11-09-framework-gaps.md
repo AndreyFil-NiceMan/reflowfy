@@ -179,3 +179,27 @@ job_retry = JobRetryConfig(
 
 Each stage is one PR with unit tests, E2E where a broker/API is involved, and CLAUDE.md
 updated.
+
+---
+
+## PR split and merge order
+
+The stages were regrouped by **file ownership** so PRs A, B and C can be built in
+parallel without touching the same code. Nobody but PR E edits `reflowfy/__init__.py`.
+
+| # | PR / branch | Items | Owns | Starts from |
+|---|---|---|---|---|
+| 0 | `claude/framework-gaps-bugs-a3gs3a` | this plan + deferred ideas (docs only) | `docs/superpowers/` | main |
+| A | `claude/framework-gaps-sources-security` | #2, #4, #5, #6 | `sources/`, `factories/source_factory.py`, secrets, API redaction/auth, helm, compose template | main (parallel) |
+| B | `claude/framework-gaps-transformations` | #3 (should_apply part), #10, #11, #14 | `transformations/`, `execution/transformation_runner.py` | main (parallel) |
+| C | `claude/framework-gaps-destinations` | #7, #8, #17, #22 | `destinations/`, `execution/job_runner.py`, `worker/` | main (parallel) |
+| D | `claude/framework-gaps-retries-lifecycle` | #3 (rate-limit part), #23, #25 | `reflow_manager/pipeline_runner.py`, `rate_limiter.py`, models/schema, `core/abstract_pipeline.py`, retry path of `worker/executor.py` | **stacked on C** (uses `PermanentDestinationError`, edits `worker/executor.py`) |
+| E | `claude/framework-gaps-exports` | #21 + exports added by A–D (`secret`, `fan_out`, `PermanentDestinationError`, `JobRetryConfig`, `run_pipeline`) | `reflowfy/__init__.py` | main after A–D merged |
+
+Merge order: **0 → A → B → C → D → E.**
+
+- 0, A, B, C touch disjoint code; the only shared file is `CLAUDE.md` (each PR adds or
+  edits its own sections). After each merge, the next PR is rebased on main and any
+  `CLAUDE.md` overlap resolved before merging.
+- D is opened against C's branch; once C merges, D is rebased onto main and retargeted.
+- E is last because every PR adds public names.
