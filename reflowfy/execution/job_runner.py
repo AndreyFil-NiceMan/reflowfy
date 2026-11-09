@@ -18,6 +18,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple, cast
 
 from reflowfy.core.async_utils import run_coroutine_sync
 from reflowfy.core.exceptions import RecordValidationError, SkipJob, pipeline_step
+from reflowfy.core.planning import PlannedJob
 from reflowfy.core.planning import chunk as chunk  # its old home; kept importable
 from reflowfy.core.record_validation import describe_invalid, find_invalid_records
 from reflowfy.core.serialization import to_json_safe
@@ -86,7 +87,7 @@ def check_record_type(pipeline: Any, records: List[Any]) -> Tuple[List[Any], App
     return kept, step
 
 
-def job(records: List[Any], **params: Any) -> Any:
+def job(records: List[Any], **params: Any) -> PlannedJob:
     """One job carrying ``records``, plus the params that job alone should see.
 
     ``define_jobs`` decides what a job is; this is how it says what a job is
@@ -96,78 +97,59 @@ def job(records: List[Any], **params: Any) -> Any:
     custom plan's jobs all share the execution's params and cannot tell each
     other apart.
 
-    Args:
-        records: The records for this one job.
-        **params: Extra runtime_params for this job only.
-
-    Returns:
-        A source carrying the records and the per-job params.
-
     Example:
         >>> def define_jobs(self, params):
         ...     for entity_id in params.get("input_ids", []):
         ...         yield job(fetch_rows(entity_id), current_id=entity_id)
     """
-    from reflowfy.sources.static import StaticSource
-
-    source = StaticSource(records)
-    source.job_params = params
-    return source
+    return PlannedJob(records, params)
 
 
-def job_runtime_params(source: Any, runtime_params: Dict[str, Any]) -> Dict[str, Any]:
-    """The runtime_params one planned job runs with: the execution's, plus its own.
+def plan_slices(jobs: Any, runtime_params: Dict[str, Any]) -> Iterator[PlannedJob]:
+    r"""Yield one :class:`PlannedJob` per job of a plan (what ``define_jobs`` returned).
 
-    Keeps the local/preview runners agreeing with what the manager writes into
-    each dispatched job's metadata.
+    - A source is split with :meth:`BaseSource.split` (one job per narrowed source);
+      a duck-typed source with no ``split`` is one job.
+    - A :class:`PlannedJob` (from :func:`job` or the ID-based plan) keeps its params
+      on every job its source splits into; a list of records as its source is one
+      job carrying them.
+    - Any other iterable is the plan itself: each element is one job, a list of
+      records (wrapped in a :class:`StaticSource` so it travels in the job payload),
+      a source or a :class:`PlannedJob`. A generator is consumed lazily, so a
+      ``define_jobs`` that ``yield``\ s plans an unbounded number of jobs in constant
+      memory; the caller writes each job out as it arrives.
     """
-    return {**runtime_params, **(getattr(source, "job_params", None) or {})}
-
-
-def plan_slices(source: Any, runtime_params: Dict[str, Any]) -> Iterator[Any]:
-    """Yield the per-job narrowed sources for ``source``.
-
-    Uses :meth:`BaseSource.split` when the source provides it (the v2
-    planning hook). Falls back to a single job — the source itself — for
-    duck-typed or custom sources that don't implement ``split``, so local
-    preview/test runs work with any source shape.
-
-    Any other iterable is the job plan itself (what ``define_jobs`` returns):
-    each element is one job, either a list of records — wrapped in a
-    :class:`StaticSource` so it travels in the job payload — or a source that
-    splits itself. A generator works and is consumed lazily, so a
-    ``define_jobs`` that ``yield``\\ s plans an unbounded number of jobs in
-    constant memory; the caller writes each job out as it arrives.
-    """
-    split = getattr(source, "split", None)
-    if split is not None:
-        # split() builds new narrowed sources, so anything the planner attached
-        # to the parent (job_params — the params this job's records belong to)
-        # has to be carried onto each child, or it is lost before dispatch.
-        parent_job_params = getattr(source, "job_params", None)
-        for narrowed in split(runtime_params):
-            if parent_job_params is not None and getattr(narrowed, "job_params", None) is None:
-                narrowed.job_params = parent_job_params
-            yield narrowed
-        return
-
-    if isinstance(source, (str, bytes, dict)) or not hasattr(source, "__iter__"):
-        # Duck-typed or custom source with no split() — one job, the source itself.
-        yield source
-        return
-
     from reflowfy.sources.base import BaseSource
     from reflowfy.sources.static import StaticSource
 
-    for item in source:
-        if isinstance(item, BaseSource):
+    if isinstance(jobs, PlannedJob):
+        source: Any = jobs.source
+        if isinstance(source, list):
+            source = StaticSource(cast(List[Any], source))
+        for planned in plan_slices(source, runtime_params):
+            yield PlannedJob(planned.source, jobs.params)
+        return
+
+    split = getattr(jobs, "split", None)
+    if split is not None:
+        for narrowed in split(runtime_params):
+            yield PlannedJob(narrowed)
+        return
+
+    if isinstance(jobs, (str, bytes, dict)) or not hasattr(jobs, "__iter__"):
+        # Duck-typed or custom source with no split() — one job, the source itself.
+        yield PlannedJob(jobs)
+        return
+
+    for item in jobs:
+        if isinstance(item, (BaseSource, PlannedJob)):
             yield from plan_slices(item, runtime_params)
         elif isinstance(item, list):
             # Empty chunk = no job, consistent with StaticSource.split().
             if item:
                 # ponytail: records ride in the job payload; chunks approaching
                 # Kafka's 1MB limit need a custom BaseSource that re-fetches.
-                yield StaticSource(cast(List[Any], item))
+                yield PlannedJob(StaticSource(cast(List[Any], item)))
         else:
             raise TypeError(
                 "define_jobs returned an iterable, so each element must be one job: "

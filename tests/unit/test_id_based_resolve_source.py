@@ -1,8 +1,9 @@
-"""Unit tests for IdBasedPipeline.resolve_source coercion."""
+"""IdBasedPipeline.resolve_source and plan_batch: what one batch of IDs plans."""
 
 import pytest
 
 from reflowfy.core.id_based_pipeline import IdBasedPipeline
+from reflowfy.execution.job_runner import plan_slices
 from reflowfy.sources.base import BaseSource
 from reflowfy.sources.mock import MockSource
 from reflowfy.sources.static import StaticSource
@@ -52,17 +53,10 @@ class _BadSourcePipeline(IdBasedPipeline):
 
 
 class TestResolveSource:
-    def test_list_return_is_wrapped_in_static_source(self):
+    def test_list_return_is_kept_as_records(self):
         pipeline = _ListSourcePipeline()
         batch_params = {"current_ids": [101, 102], "current_id": 101}
-        source = pipeline.resolve_source(batch_params)
-        assert isinstance(source, StaticSource)
-
-    def test_list_records_are_raw_ids(self):
-        pipeline = _ListSourcePipeline()
-        batch_params = {"current_ids": [101, 102], "current_id": 101}
-        source = pipeline.resolve_source(batch_params)
-        assert source.fetch(batch_params) == [101, 102]
+        assert pipeline.resolve_source(batch_params) == [101, 102]
 
     def test_base_source_is_passed_through(self):
         pipeline = _RealSourcePipeline()
@@ -78,9 +72,10 @@ class TestResolveSource:
             pipeline.resolve_source(batch_params)
 
 
-class TestResolveForIdsUsesCoercion:
-    def test_resolve_for_ids_returns_static_source_for_list(self):
-        pipeline = _ListSourcePipeline()
-        resolved = pipeline.resolve_for_ids({}, [101, 102])
-        assert isinstance(resolved["source"], StaticSource)
-        assert resolved["source"].fetch(resolved["batch_params"]) == [101, 102]
+class TestPlanBatch:
+    def test_a_list_becomes_one_static_job_carrying_the_raw_ids(self):
+        planned = _ListSourcePipeline().plan_batch({}, [101, 102])
+        (job,) = plan_slices(planned, {})
+        assert isinstance(job.source, StaticSource)
+        assert job.source.fetch({}) == [101, 102]
+        assert job.params == {"current_ids": [101, 102], "current_id": 101}

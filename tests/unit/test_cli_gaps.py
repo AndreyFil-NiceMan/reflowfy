@@ -11,6 +11,7 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
+from reflowfy.core.planning import PlannedJob
 from reflowfy.cli.commands import init_cmd
 from reflowfy.cli.commands import test as test_cmd
 from reflowfy.cli.commands.test import BatchReport
@@ -275,8 +276,9 @@ class TestRunBatchErrors:
             return item
 
         monkeypatch.setattr(test_cmd, "run_job_records", run_job_records)
-        monkeypatch.setattr(test_cmd, "plan_slices", lambda source, params: iter(source))
-        monkeypatch.setattr(test_cmd, "job_runtime_params", lambda sub, params: dict(params))
+        monkeypatch.setattr(
+            test_cmd, "plan_slices", lambda source, params: (PlannedJob(s) for s in source)
+        )
         return script
 
     def test_a_non_transformation_error_is_recorded_as_is(self, jobs: List[Any]) -> None:

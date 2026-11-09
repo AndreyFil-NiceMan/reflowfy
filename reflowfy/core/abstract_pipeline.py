@@ -26,7 +26,6 @@ Example:
     ...         return [MyTransformation()]
 """
 
-import copy
 import logging
 import re
 import typing
@@ -60,6 +59,7 @@ from croniter import croniter
 from reflowfy.core.exceptions import pipeline_step
 from reflowfy.core.execution_summary import ExecutionSummary
 from reflowfy.core.job_retry import JobRetryConfig
+from reflowfy.core.planning import ResolvedPlan
 from reflowfy.core.query_loader import QueryLoaderMixin
 from reflowfy.core.runtime_params import P, Param, RuntimeParams
 
@@ -835,10 +835,6 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
         """
         return self.define_parameters()
 
-    def get_required_parameters(self) -> Set[str]:
-        """Get names of required parameters."""
-        return {p.name for p in self.get_all_parameters() if p.required}
-
     def validate_parameters(self, runtime_params: P) -> List[str]:
         """
         Validate runtime parameters against defined parameters.
@@ -896,60 +892,30 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
         """
         return [p.name for p in self.get_all_parameters()]
 
-    # =========================================================================
-    # Execution Support - Properties for compatibility with execution engine
-    # =========================================================================
+    # Params the execution receives but no single job does (see ResolvedPlan).
+    execution_only_params: Tuple[str, ...] = ()
 
-    _resolved_params: Optional[Dict[str, Any]] = None
-    _source: Any = None
+    def resolve(self, runtime_params: P) -> ResolvedPlan:
+        """Validate ``runtime_params``, apply defaults and call ``define_jobs``.
 
-    def fork(self) -> "AbstractPipeline[P]":
-        """A private copy of this pipeline for one execution.
+        Returns the plan as a value and stores nothing on the pipeline, so the one
+        registered instance can plan any number of executions at once.
 
-        The registry holds a single instance per pipeline and :meth:`resolve` stores the
-        plan on the instance (``_source``, ``_resolved_params``). Two executions of the
-        same pipeline resolving that one instance at the same moment — a burst of
-        ``/run`` calls, two schedules firing together — overwrote each other's plan: of
-        16 simultaneous runs every one got the wrong job count, most of them none, and
-        finished ``completed`` having processed nothing. Resolve a fork, never the
-        registered instance.
+        Raises:
+            ValueError: the params are invalid.
         """
-        return copy.copy(self)
-
-    def resolve(self, runtime_params: P) -> "AbstractPipeline[P]":
-        """
-        Resolve the pipeline with specific runtime parameters.
-
-        This method prepares the pipeline for execution by calling all
-        define_* methods and caching the results. Should be called before
-        passing the pipeline to an executor.
-
-        Args:
-            runtime_params: Runtime parameters for this execution
-
-        Returns:
-            self (for chaining)
-        """
-        # Apply defaults and validate
         params = self.apply_defaults(runtime_params)
         errors = self.validate_parameters(params)
         if errors:
             raise ValueError(f"Invalid parameters: {'; '.join(errors)}")
 
-        self._resolved_params = cast(Dict[str, Any], params)
         with pipeline_step("define_jobs", self.name):
-            self._source = self.define_jobs(params)
-
-        return self
-
-    @property
-    def source(self) -> Any:
-        """Get the resolved source. Call resolve() first."""
-        if self._source is None:
-            raise RuntimeError(
-                "Pipeline not resolved. Call pipeline.resolve(runtime_params) before execution."
-            )
-        return self._source
+            jobs = self.define_jobs(params)
+        return ResolvedPlan(
+            params=cast(Dict[str, Any], params),
+            jobs=jobs,
+            execution_only=self.execution_only_params,
+        )
 
     @property
     def is_scheduled(self) -> bool:

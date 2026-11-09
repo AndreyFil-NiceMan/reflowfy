@@ -34,11 +34,7 @@ FORBIDDEN: Dict[str, Set[str]] = {
 }
 
 # Known exceptions, each with the fix that removes it (docs/untangle-plan.md).
-ALLOWED: Set[Tuple[str, str]] = {
-    # F2: define_source may return a list, which the ID-based plan wraps in a
-    # StaticSource; it goes once planning returns job envelopes instead.
-    ("core/id_based_pipeline.py", "sources"),
-}
+ALLOWED: Set[Tuple[str, str]] = set()
 
 
 def _runtime_imports(tree: ast.Module) -> Iterator[str]:
