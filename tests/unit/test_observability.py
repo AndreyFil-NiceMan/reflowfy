@@ -338,7 +338,7 @@ def test_build_job_payload_carries_traceparent(monkeypatch):
     from reflowfy.reflow_manager import pipeline_runner as pr
 
     trace.set_tracer_provider(TracerProvider())
-    monkeypatch.setattr(pr.SourceFactory, "serialize", lambda s: {"type": "x", "config": {}})
+    monkeypatch.setattr(pr.SourceFactory, "serialize", lambda s, **_: {"type": "x", "config": {}})
     with trace.get_tracer("t").start_as_current_span("run"):
         payload = pr.build_job_payload("e", "j", "p", object(), {"foo": 1})
     assert "traceparent" in payload["metadata"]

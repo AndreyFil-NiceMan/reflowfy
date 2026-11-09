@@ -223,3 +223,11 @@ observability:
   otel:
     endpoint: ''               # e.g. http://apm-server:8200 — blank disables tracing
     tracesSamplerArg: '0.1'    # 10% head sampling
+
+# API authentication. When a token is set, the API and the reflow-manager require
+# "Authorization: Bearer <token>" on every route except /health and /metrics (probes
+# and Prometheus keep working). The API forwards the same token to the manager.
+auth:
+  apiToken: ''                 # stored in a chart-managed Secret (<release>-api-token)
+  existingSecret: ''           # optional: reference a pre-created Secret instead
+  existingSecretKey: token

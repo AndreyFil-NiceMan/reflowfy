@@ -28,6 +28,9 @@ class IDBasedAPISource(BaseSource):
     ``body=None`` sends no request body.
     """
 
+    # auth_token, and the credential-named headers (Authorization, X-Api-Key…).
+    secret_fields = ("auth_token", "headers")
+
     def __init__(
         self,
         base_url: str,

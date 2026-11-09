@@ -155,6 +155,9 @@ class ElasticSource(BaseSource):
     - Job splitting per scroll page
     """
 
+    # (username, password): the password is hidden in API responses.
+    secret_fields = ("auth",)
+
     def __init__(
         self,
         url: str,

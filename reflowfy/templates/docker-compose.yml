@@ -58,6 +58,9 @@ services:
       HOST: 0.0.0.0
       PORT: 8001
       EXECUTION_MODE: local
+      # Set in .env to require 'Authorization: Bearer <token>' on every route but
+      # /health and /metrics; the api service must get the same value.
+      REFLOWFY_API_TOKEN: ${REFLOWFY_API_TOKEN:-}
       # Observability — configure where logs go via .env (LOG_DESTINATION=stdout|elastic|both)
       ENVIRONMENT: ${ENVIRONMENT:-local}
       LOG_DESTINATION: ${LOG_DESTINATION:-stdout}
@@ -104,6 +107,8 @@ services:
       API_PORT: 8000
       REFLOW_MANAGER_URL: http://reflow-manager:8001
       PIPELINE_MODULE: pipelines
+      # Same token as reflow-manager (sent to it on every run); empty = no auth
+      REFLOWFY_API_TOKEN: ${REFLOWFY_API_TOKEN:-}
       # Observability — see .env (LOG_DESTINATION=stdout|elastic|both)
       ENVIRONMENT: ${ENVIRONMENT:-local}
       LOG_DESTINATION: ${LOG_DESTINATION:-stdout}
