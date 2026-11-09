@@ -117,8 +117,11 @@ def test_per_id_non_404_error_fails_the_job_instead_of_dropping_the_id(transport
     seen = transport(lambda req: httpx.Response(status, text="slow down"))
     src = id_based_api_source("https://api.test", "/users/{id}", ids=[1, 2])
 
-    with pytest.raises(SourceError, match=f"HTTP {status} for id 1"):
+    with pytest.raises(
+        SourceError, match=rf"HTTP {status} [A-Za-z ]+ \(text/plain, 9 bytes\) for id 1"
+    ) as exc:
         src.fetch({})
+    assert "slow down" not in str(exc.value)  # the body is not in the message
     assert len(seen) == 1  # stops at the first failure
 
 
@@ -192,7 +195,7 @@ def test_batch_mode_raw_list_body(transport) -> None:
 
 def test_batch_mode_http_error_and_connection_error(transport) -> None:
     transport(lambda req: httpx.Response(429, text="rate limited"))
-    with pytest.raises(SourceError, match="HTTP 429: rate limited"):
+    with pytest.raises(SourceError, match=r"HTTP 429 Too Many Requests \(text/plain, 12 bytes\)$"):
         id_based_api_source("https://api.test", "/b").fetch({})
 
     def boom(req: httpx.Request) -> httpx.Response:

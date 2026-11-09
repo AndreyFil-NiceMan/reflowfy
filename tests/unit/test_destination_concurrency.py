@@ -124,10 +124,7 @@ def _api(seen: InFlight, fail_url: Any = None, url: str = "https://api.example.c
         await seen.run(url)
         resp = MagicMock()
         if url == fail_url:
-            bad = MagicMock(status_code=503, text="Unavailable")
-            resp.raise_for_status = MagicMock(
-                side_effect=httpx.HTTPStatusError("503", request=MagicMock(), response=bad)
-            )
+            return httpx.Response(503, text="Unavailable", request=httpx.Request(method, url))
         return resp
 
     client = MagicMock()
@@ -182,7 +179,7 @@ class TestApiRequestsInFlight:
         with pytest.raises(DestinationError) as exc_info:
             await dest.send([{"id": i} for i in range(100)])
         assert str(exc_info.value) == (
-            "Destination 'api' error: record 6 of 100: HTTP 503: Unavailable"
+            "Destination 'api' error: record 6 of 100: HTTP 503 Service Unavailable (text/plain, 11 bytes)"
         )
         assert len(urls) < 100
 
