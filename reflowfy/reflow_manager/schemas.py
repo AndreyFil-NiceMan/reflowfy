@@ -1,7 +1,9 @@
 """Pydantic schemas for ReflowManager API."""
 
 from typing import Dict, Any, List, Optional
-from pydantic import BaseModel
+from urllib.parse import urlsplit
+
+from pydantic import BaseModel, field_validator
 
 
 class CreateExecutionRequest(BaseModel):
@@ -39,6 +41,19 @@ class RunPipelineRequest(BaseModel):
     enable_duplicate_jobs: Optional[bool] = (
         None  # None = use pipeline default; True = allow duplicates; False = each unique job runs at most once
     )
+    # POSTed the execution summary (JSON) once the execution ends, after the pipeline's
+    # lifecycle hooks. A failure is logged and stored in executions.hook_error.
+    callback_url: Optional[str] = None
+
+    @field_validator("callback_url")
+    @classmethod
+    def _http_url(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        parts = urlsplit(value)
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            raise ValueError("callback_url must be an http(s) URL")
+        return value
 
 
 class DestinationConfig(BaseModel):

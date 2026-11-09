@@ -25,6 +25,8 @@ from reflowfy.observability.logging import setup_logging  # noqa: E402
 from reflowfy.reflow_manager.database import get_db, init_db, SessionLocal  # noqa: E402
 from reflowfy.reflow_manager.manager import ReflowManager  # noqa: E402
 from reflowfy.reflow_manager.execution import ExecutionManager  # noqa: E402
+from reflowfy.reflow_manager import lifecycle  # noqa: E402
+from reflowfy.reflow_manager.factory import manager_config_from_env  # noqa: E402
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner  # noqa: E402
 from reflowfy.reflow_manager.schemas import (  # noqa: E402
     UpdateExecutionStateRequest,
@@ -103,18 +105,7 @@ instrument_fastapi(app)
 
 def _get_kafka_config() -> Dict[str, Any]:
     """Get Kafka/execution configuration from environment variables (including SASL)."""
-    return {
-        "kafka_bootstrap_servers": os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
-        "kafka_topic": os.getenv("KAFKA_TOPIC", "reflow.jobs"),
-        "max_jobs_per_minute": float(os.getenv("MAX_JOBS_PER_MINUTE", "6000")),
-        # Execution mode: "distributed" (Kafka) or "local" (in-process)
-        "execution_mode": os.getenv("EXECUTION_MODE", "distributed"),
-        # SASL Authentication (set by Helm chart)
-        "kafka_security_protocol": os.getenv("KAFKA_SECURITY_PROTOCOL"),
-        "kafka_sasl_mechanism": os.getenv("KAFKA_SASL_MECHANISM"),
-        "kafka_sasl_username": os.getenv("KAFKA_SASL_USERNAME"),
-        "kafka_sasl_password": os.getenv("KAFKA_SASL_PASSWORD"),
-    }
+    return manager_config_from_env()
 
 
 def _make_manager(db: Session, mode: Optional[str] = None) -> ReflowManager:
@@ -475,6 +466,7 @@ async def run_pipeline(
             pipeline_name=request.pipeline_name,
             runtime_params=request.runtime_params or {},
             rate_limit=request.rate_limit,
+            callback_url=request.callback_url,
         )
 
         # Reset cron schedule timer if this pipeline is scheduled,
@@ -652,12 +644,22 @@ async def _startup() -> None:
     discover_and_load_pipelines()
 
     logger.info(
-        "Kafka=%s topic=%s rate_limit=%s jobs/min",
+        "Kafka=%s topic=%s",
         os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
         os.getenv("KAFKA_TOPIC", "reflow.jobs"),
-        os.getenv("MAX_JOBS_PER_MINUTE", "6000"),
         extra={"event": "service_config"},
     )
+    if os.getenv("MAX_JOBS_PER_MINUTE"):
+        logger.warning(
+            "MAX_JOBS_PER_MINUTE is no longer applied: a pipeline without a rate limit is "
+            "unlimited. Set rate_limit / define_rate_limit on the pipeline, or rate_limit "
+            "on /run.",
+            extra={"event": "config_ignored", "setting": "MAX_JOBS_PER_MINUTE"},
+        )
+
+    # Lifecycle hooks and /run callbacks fire on every terminal transition from here on
+    # (before recovery, which can settle executions).
+    lifecycle.install()
 
     # Check for interrupted executions and recover
     logger.info("Checking for interrupted executions...", extra={"event": "recovery_check"})
@@ -780,6 +782,12 @@ async def _shutdown() -> None:
     stop_pipeline_scheduler()
     stop_dlq_scheduler()
     stop_content_dedup_scheduler()
+    # Let lifecycle hooks in flight finish (each is bounded by HOOK_TIMEOUT_SECONDS).
+    if not lifecycle.wait_for_hooks(timeout=lifecycle.hook_timeout_seconds() + 5):
+        logger.warning(
+            "Shutting down with lifecycle hooks still running",
+            extra={"event": "hooks_abandoned"},
+        )
     logger.info("Shutdown complete", extra={"event": "service_stopped"})
 
 

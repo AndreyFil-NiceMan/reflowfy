@@ -80,10 +80,11 @@ class _FakeEngine:
 
 def _patch(monkeypatch, engine: _FakeEngine, missing: str = "") -> None:
     columns = {
-        "jobs": ["job_id", "error_traceback", "attempts"],
+        "jobs": ["job_id", "error_traceback", "attempts", "next_attempt_at"],
         "executions": [
             "execution_id", "deduplicated_jobs", "rate_limit", "driver_id",
-            "driver_heartbeat_at", "plan_complete",
+            "driver_heartbeat_at", "plan_complete", "hooks_fired_at", "hook_error",
+            "parent_execution_id", "callback_url",
         ],
     }
     if missing:

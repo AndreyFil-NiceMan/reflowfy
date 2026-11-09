@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import func, insert
+from sqlalchemy import func, insert, or_
 from reflowfy.reflow_manager.models import Job
 
 
@@ -41,14 +41,37 @@ class JobManager:
         return self.db.query(Job).filter(Job.job_id == job_id).first()
 
     def get_pending_jobs(self, execution_id: str, limit: int) -> List[Job]:
-        """Next pending jobs to dispatch, oldest planned first."""
+        """Next pending jobs to dispatch, oldest planned first.
+
+        A job whose ``job_retry`` retry is scheduled for later (``next_attempt_at`` in
+        the future) is pending but not due yet, so it is left out.
+        """
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         return (
             self.db.query(Job)
-            .filter(Job.execution_id == execution_id, Job.state == "pending")
+            .filter(
+                Job.execution_id == execution_id,
+                Job.state == "pending",
+                or_(Job.next_attempt_at.is_(None), Job.next_attempt_at <= now),
+            )
             .order_by(Job.batch_number, Job.created_at)
             .limit(limit)
             .all()
         )
+
+    def count_scheduled_retries(self, execution_id: str) -> int:
+        """Pending jobs waiting for a ``job_retry`` backoff to pass."""
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        count: int = (
+            self.db.query(func.count(Job.job_id))
+            .filter(
+                Job.execution_id == execution_id,
+                Job.state == "pending",
+                Job.next_attempt_at > now,
+            )
+            .scalar()
+        ) or 0
+        return count
 
     def get_jobs(
         self,
@@ -74,19 +97,31 @@ class JobManager:
 
         return query.order_by(Job.created_at).all()
 
-    def mark_job_dispatched(self, job_id: str) -> None:
+    def mark_job_dispatched(self, job_id: str, sent_after: Optional[datetime] = None) -> None:
         """Record that one job's message was sent, right after the send.
 
         Only a pending job becomes dispatched: a fast worker may already have
         claimed it (running) or finished it. dispatched_at is the send time of the
         latest dispatch, which the dispatch lease is measured from.
+
+        ``sent_after``: when the send began. A worker that ran this very message and
+        failed it may already have scheduled a ``job_retry`` retry (pending again, with a
+        ``next_attempt_at`` after that); such a job stays pending — marked dispatched it
+        would wait out the dispatch lease instead of its backoff. A due retry being
+        sent now has its ``next_attempt_at`` cleared.
         """
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         self.db.query(Job).filter(Job.job_id == job_id).update(
             {"dispatched_at": now}, synchronize_session=False
         )
-        self.db.query(Job).filter(Job.job_id == job_id, Job.state == "pending").update(
-            {"state": "dispatched", "updated_at": now}, synchronize_session=False
+        pending = self.db.query(Job).filter(Job.job_id == job_id, Job.state == "pending")
+        if sent_after is not None:
+            pending = pending.filter(
+                or_(Job.next_attempt_at.is_(None), Job.next_attempt_at < sent_after)
+            )
+        pending.update(
+            {"state": "dispatched", "updated_at": now, "next_attempt_at": None},
+            synchronize_session=False,
         )
         self.db.commit()
 
@@ -128,6 +163,7 @@ class JobManager:
             {
                 "state": "pending",
                 "attempts": 0,
+                "next_attempt_at": None,
                 "error_message": None,
                 "error_traceback": None,
                 "completed_at": None,
