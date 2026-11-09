@@ -116,12 +116,12 @@ def test_planning_persists_define_rate_limit_and_drives_with_it(db, monkeypatch)
     monkeypatch.setattr(
         runner, "_drive_execution", lambda eid, name, rate: seen.append(rate) or (0, 0, 0)
     )
-    result = runner.run_pipeline(_RatePipeline.name, {}, "e")
+    runner.execution_manager.create_execution("e", _RatePipeline.name, {})
+    runner.run_pipeline_jobs("e", _RatePipeline.name, {})
 
     assert seen == [45.0]
     db.expire_all()
     assert db.query(Execution).one().rate_limit == 45.0
-    assert result["rate_limit"] == 45.0
 
 
 def test_job_retry_travels_in_every_job_message(db, monkeypatch) -> None:
@@ -131,7 +131,8 @@ def test_job_retry_travels_in_every_job_message(db, monkeypatch) -> None:
     monkeypatch.setattr(pipeline_registry, "get", lambda name: pipeline)
     runner = PipelineRunner(ExecutionManager(db), JobManager(db), SimpleNamespace())
     monkeypatch.setattr(runner, "_drive_execution", lambda *a: (0, 0, 0))
-    runner.run_pipeline(_RatePipeline.name, {}, "e")
+    runner.execution_manager.create_execution("e", _RatePipeline.name, {})
+    runner.run_pipeline_jobs("e", _RatePipeline.name, {})
 
     payload = db.query(Job).one().job_payload
     assert payload["metadata"]["job_retry"]["max_retries"] == 3

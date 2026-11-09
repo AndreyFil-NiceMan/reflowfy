@@ -75,8 +75,8 @@ def test_a_mode_override_selects_the_dispatcher(
     monkeypatch.setenv("EXECUTION_MODE", "local")
     monkeypatch.setenv("KAFKA_BOOTSTRAP_SERVERS", "kafka-1:9092")
 
-    default = app_module._make_manager(db)
-    distributed = app_module._make_manager(db, mode="distributed")
+    default = app_module.make_manager(db)
+    distributed = app_module.make_manager(db, mode="distributed")
 
     assert isinstance(default.dispatcher, LocalDispatcher)
     assert isinstance(distributed.dispatcher, KafkaDispatcher)
@@ -91,19 +91,6 @@ def test_the_request_dependency_builds_a_manager_on_the_request_session(
     manager = app_module.get_reflow_manager(db)
     assert isinstance(manager, ReflowManager)
     assert manager.job_manager.db is db
-
-
-def test_run_pipeline_is_delegated_to_the_runner(
-    db: Session, monkeypatch: pytest.MonkeyPatch  # noqa: F811
-) -> None:
-    manager = ReflowManager(db, execution_mode="local")
-    calls: List[Any] = []
-    monkeypatch.setattr(
-        manager.pipeline_runner, "run_pipeline", lambda *a: calls.append(a) or {"ok": True}
-    )
-
-    assert manager.run_pipeline("p", {"x": 1}, "e", 30.0) == {"ok": True}
-    assert calls == [("p", {"x": 1}, "e", 30.0)]
 
 
 def test_rate_limit_state_serialises() -> None:

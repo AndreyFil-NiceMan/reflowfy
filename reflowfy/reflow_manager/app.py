@@ -26,7 +26,7 @@ from reflowfy.reflow_manager.database import get_db, init_db, SessionLocal  # no
 from reflowfy.reflow_manager.manager import ReflowManager  # noqa: E402
 from reflowfy.reflow_manager.execution import ExecutionManager  # noqa: E402
 from reflowfy.reflow_manager import lifecycle  # noqa: E402
-from reflowfy.reflow_manager.factory import manager_config_from_env  # noqa: E402
+from reflowfy.reflow_manager.factory import make_manager  # noqa: E402
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner  # noqa: E402
 from reflowfy.reflow_manager.schemas import (  # noqa: E402
     UpdateExecutionStateRequest,
@@ -103,28 +103,15 @@ init_tracing(service_name="reflow-manager")
 instrument_fastapi(app)
 
 
-def _get_kafka_config() -> Dict[str, Any]:
-    """Get Kafka/execution configuration from environment variables (including SASL)."""
-    return manager_config_from_env()
-
-
-def _make_manager(db: Session, mode: Optional[str] = None) -> ReflowManager:
-    """Build a ReflowManager from environment config, optionally overriding execution mode."""
-    config = _get_kafka_config()
-    if mode:
-        config["execution_mode"] = mode
-    return ReflowManager(db_session=db, **config)
-
-
 def _pipeline_runner_factory() -> PipelineRunner:
     """Build a PipelineRunner on a fresh session for background schedulers."""
-    return _make_manager(SessionLocal()).pipeline_runner
+    return make_manager(SessionLocal()).pipeline_runner
 
 
 # Dependency to get ReflowManager instance
 def get_reflow_manager(db: Session = Depends(get_db)) -> ReflowManager:
     """Get ReflowManager instance with database session."""
-    return _make_manager(db)
+    return make_manager(db)
 
 
 # ===== Health Check =====
@@ -423,7 +410,7 @@ async def run_pipeline(
                 ),
             )
 
-        manager = _make_manager(db)
+        manager = make_manager(db)
 
         # Reject what can never run now, with a 4xx, instead of accepting it (202) and
         # failing in the background where the caller has to go and look.
@@ -561,7 +548,7 @@ def _dispatch_pipeline_jobs(
     db = SessionLocal()
 
     try:
-        manager = _make_manager(db, mode=mode)
+        manager = make_manager(db, mode=mode)
 
         # Run the pipeline (this updates the existing execution record)
         manager.run_pipeline_jobs(
@@ -709,7 +696,7 @@ async def _recover_interrupted_executions() -> None:
 
     db = SessionLocal()
     try:
-        manager = _make_manager(db)
+        manager = make_manager(db)
 
         # Dispatch leases held by an earlier process on this host died with it (a
         # container restart keeps the hostname). Free them so recovery resumes now
@@ -768,7 +755,7 @@ def _resume_execution_sync(execution_id: str) -> None:
     """Synchronously resume an execution (runs in thread pool)."""
     db = SessionLocal()
     try:
-        manager = _make_manager(db)
+        manager = make_manager(db)
         manager.pipeline_runner.resume_execution(execution_id)
     except Exception:
         logger.exception("Failed to resume execution", extra={"event": "resume_failed"})

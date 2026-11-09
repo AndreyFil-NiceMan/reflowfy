@@ -176,41 +176,6 @@ class ExecutionManager:
         )
         self.db.commit()
 
-    def update_job_counts(
-        self,
-        execution_id: str,
-        jobs_dispatched: Optional[int] = None,
-        jobs_completed: Optional[int] = None,
-        jobs_failed: Optional[int] = None,
-    ) -> Optional[Execution]:
-        """
-        Update job counts for an execution.
-
-        Note: Does NOT commit - caller should commit after all updates.
-
-        Args:
-            execution_id: Execution identifier
-            jobs_dispatched: Increment jobs dispatched
-            jobs_completed: Increment jobs completed
-            jobs_failed: Increment jobs failed
-
-        Returns:
-            Updated Execution object or None if not found
-        """
-        execution = self.get_execution(execution_id)
-        if not execution:
-            return None
-
-        if jobs_dispatched is not None:
-            execution.jobs_dispatched += jobs_dispatched
-        if jobs_completed is not None:
-            execution.jobs_completed += jobs_completed
-        if jobs_failed is not None:
-            execution.jobs_failed += jobs_failed
-
-        # Don't commit here - caller will commit
-        return execution
-
     def pause_execution(self, execution_id: str) -> Optional[Execution]:
         """Pause a pending or running execution. None if missing or already settled
         (pausing a completed execution used to flip it back to non-terminal)."""
@@ -330,13 +295,6 @@ class ExecutionManager:
             Execution.execution_id == execution_id, Execution.driver_id == driver_id
         ).update({"driver_id": None, "driver_heartbeat_at": None}, synchronize_session=False)
         self.db.commit()
-
-    def update_deduplicated_count(self, execution_id: str, count: int) -> None:
-        """Set the deduplicated_jobs count for an execution."""
-        execution = self.get_execution(execution_id)
-        if execution:
-            execution.deduplicated_jobs = count
-            self.db.commit()
 
     def get_interrupted_executions(self) -> List[Execution]:
         """

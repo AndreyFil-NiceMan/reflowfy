@@ -285,7 +285,7 @@ def test_run_unexpected_error_is_500(client, monkeypatch):
     def broken(db, mode=None):
         raise RuntimeError("kafka config exploded")
 
-    monkeypatch.setattr(app_module, "_make_manager", broken)
+    monkeypatch.setattr(app_module, "make_manager", broken)
     response = client.post("/run", json={"pipeline_name": PIPE, "runtime_params": {"env": "dev"}})
     assert response.status_code == 500
     assert "kafka config exploded" in response.json()["detail"]
