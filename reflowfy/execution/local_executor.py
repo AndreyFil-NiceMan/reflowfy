@@ -187,8 +187,9 @@ class LocalExecutor(BaseExecutor):
                 logger.debug("Fetched %d records", len(records), extra={"event": "source_fetched"})
                 for step in applied:
                     logger.debug(
-                        "Applied transformation: %s (%d -> %d records)",
+                        "Applied transformation: %s (%s, %d -> %d records)",
                         step.name,
+                        step.mode,
                         step.records_in,
                         step.records_out,
                         extra={"event": "transform_done"},
@@ -352,8 +353,9 @@ class LocalExecutor(BaseExecutor):
                         continue
                     for step in applied:
                         logger.debug(
-                            "Applied: %s (%d -> %d records)",
+                            "Applied: %s (%s, %d -> %d records)",
                             step.name,
+                            step.mode,
                             step.records_in,
                             step.records_out,
                             extra={"event": "id_transform_done"},

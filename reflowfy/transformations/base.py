@@ -3,7 +3,7 @@
 import asyncio
 import os
 from abc import ABCMeta, abstractmethod
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, ClassVar, Dict, List, Literal, NamedTuple, Optional, Tuple
 
 from reflowfy.core.exceptions import SkipJob, SkipRecord
 from reflowfy.core.query_loader import QueryLoaderMixin
@@ -203,6 +203,33 @@ class _Skipped:
         self.reason = reason
 
 
+OnError = Literal["fail", "skip"]
+"""What a per-record step does with a record whose call raised: fail the job, or skip it."""
+ON_ERROR_CHOICES: Tuple[str, ...] = ("fail", "skip")
+
+
+def check_on_error(owner: str, on_error: object) -> None:
+    """Raise ``ValueError`` unless ``on_error`` is ``"fail"`` or ``"skip"``."""
+    if on_error not in ON_ERROR_CHOICES:
+        raise ValueError(f"{owner}: on_error must be 'fail' or 'skip', got {on_error!r}")
+
+
+class RecordContractError(TypeError):
+    """A per-record step returned something that is not one record or ``None``."""
+
+
+def check_record_result(result: Any) -> None:
+    """A per-record step returns one record (a ``dict``) or ``None``; raise otherwise.
+
+    The error is a contract violation, not a failure of the record's call, so
+    ``on_error="skip"`` does not apply to it.
+    """
+    if result is not None and not isinstance(result, dict):
+        raise RecordContractError(
+            f"returned {type(result).__name__}; a per-record step returns one record or None"
+        )
+
+
 class RecordResults(NamedTuple):
     """What a per-record step produced: the kept records, and why the others went."""
 
@@ -219,7 +246,13 @@ class RecordTransformation(AsyncTransformation):
     flight are cancelled and the job fails naming that record's index.
     ``SkipRecord`` drops that record and records why; ``SkipJob`` from any record
     drops the whole job. ``timeout`` (seconds) bounds
-    each record's call.
+    each record's call. With ``on_error = "skip"`` a record whose call raised (a
+    timeout included) is dropped instead of failing the job, the exception's type
+    name as the skip reason.
+
+    ``apply_record`` returns one record (a ``dict``: a ``Record`` or ``TypedRecord``)
+    or ``None``. Anything else — a list, a tuple, a string — fails the job whatever
+    ``on_error`` says: it is a bug in the step, not a bad record.
 
     The concurrent calls share one ``runtime_params``: read it, don't write it.
     Usually built with ``@record_transformation``; subclass it to share one client
@@ -246,6 +279,15 @@ class RecordTransformation(AsyncTransformation):
     """Records in flight at once; ``None`` means ``TRANSFORM_CONCURRENCY`` (16)."""
     timeout: Optional[float] = None
     """Seconds allowed per record; ``None`` means no limit."""
+    on_error: ClassVar[OnError] = "fail"
+    """``"fail"`` (default): a record whose call raised fails the job. ``"skip"``: it is
+    dropped, ``type(exc).__name__`` as the reason (never the message: it can carry
+    record values, and reasons are counted). ``SkipRecord`` and ``SkipJob`` keep their
+    meaning either way."""
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        check_on_error(f"{cls.__name__}.on_error", cls.on_error)
 
     @abstractmethod
     async def apply_record(self, record: Any, runtime_params: Dict[str, Any]) -> Any:
@@ -261,24 +303,32 @@ class RecordTransformation(AsyncTransformation):
         """The cap this step runs with."""
         return self.concurrency if self.concurrency is not None else default_record_concurrency()
 
+    async def _call_one(self, record: Any, runtime_params: Dict[str, Any]) -> Any:
+        if self.timeout is None:
+            return await self.apply_record(record, runtime_params)
+        try:
+            return await asyncio.wait_for(self.apply_record(record, runtime_params), self.timeout)
+        except asyncio.TimeoutError as exc:
+            # The bare asyncio.TimeoutError says nothing on its own.
+            raise TimeoutError(f"timed out after {self.timeout}s") from exc
+
     async def _apply_one(self, index: int, record: Any, runtime_params: Dict[str, Any]) -> Any:
         try:
-            if self.timeout is None:
-                return await self.apply_record(record, runtime_params)
-            try:
-                return await asyncio.wait_for(
-                    self.apply_record(record, runtime_params), self.timeout
-                )
-            except asyncio.TimeoutError as exc:
-                # The bare asyncio.TimeoutError says nothing on its own.
-                timed_out = TimeoutError(f"timed out after {self.timeout}s")
-                raise RecordFailure(index, record, timed_out) from exc
-        except (SkipJob, RecordFailure):
+            result = await self._call_one(record, runtime_params)
+        except SkipJob:
             raise
         except SkipRecord as exc:
             return _Skipped(str(exc))
         except Exception as exc:
+            if self.on_error == "skip":
+                return _Skipped(type(exc).__name__)
             raise RecordFailure(index, record, exc) from exc
+        # Outside the try: a wrong return type is the step's bug, never skipped.
+        try:
+            check_record_result(result)
+        except RecordContractError as exc:
+            raise RecordFailure(index, record, exc) from None
+        return result
 
     async def apply_async(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
         return (await self.apply_records(records, runtime_params)).records

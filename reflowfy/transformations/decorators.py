@@ -18,33 +18,62 @@ Example:
 
 An ``async def`` works the same way and is awaited on the worker's event loop;
 ``@record_transformation`` runs an ``async def`` on every record concurrently.
+
+Options: parameters after ``(records, runtime_params)`` are given as keyword
+arguments when the step is built, and passed to the function on every call::
+
+    @transformation("multiply")
+    def multiply(records: Records, runtime_params: RuntimeParams, *, factor: int) -> Records:
+        return [{**r, "v": r["v"] * factor} for r in records]
+
+    return [multiply(factor=2)]
+
+They are bound against the function's signature right there, so a typo or a
+missing option fails inside ``define_transformations``, not mid-job.
 """
 
 import inspect
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, cast
 
 if TYPE_CHECKING:
-    from reflowfy.transformations.base import BaseTransformation
+    from typing import Awaitable, Mapping
 
-TransformFn = Callable[[Any, Any], Any]
-"""Shape of a decorated transformation: ``(records, runtime_params) -> records``.
+    from typing_extensions import Concatenate
 
-Deliberately `Any` in every position rather than `(Records, RuntimeParams) ->
-Records`: it checks the arity — the one mistake that reaches production as a
-runtime TypeError — without rejecting an author who annotates `runtime_params`
-with their own params TypedDict.
-"""
+    from reflowfy.transformations.base import BaseTransformation, OnError
+
+    TransformFn = Callable[Concatenate[Any, Any, ...], Any]
+    """Shape of a decorated transformation: ``(records, runtime_params, **options) -> records``.
+
+    Deliberately `Any` in the two leading positions rather than `(Records,
+    RuntimeParams)`: it checks the arity — the one mistake that reaches production
+    as a runtime TypeError — without rejecting an author who annotates
+    `runtime_params` with their own params TypedDict. The `...` admits the
+    keyword-only options that follow.
+    """
+
+    RecordTransformFn = Callable[Concatenate[Any, Any, ...], Awaitable[Optional[Mapping[str, Any]]]]
+    """``async (record, runtime_params, **options) -> Record | None``.
+
+    `Mapping[str, Any]` rather than `Record` (`Dict[str, Any]`) so a function
+    annotated with a TypedDict record (`-> TaxedOrder | None`) is accepted: a
+    TypedDict is a Mapping but not a Dict.
+    """
 
 
 def transformation(
     name: str,
-) -> Callable[[TransformFn], "type[BaseTransformation]"]:
+) -> Callable[["TransformFn"], "type[BaseTransformation]"]:
     """
     Decorator to create a reusable transformation from a function.
 
     The decorated function becomes a callable that returns a BaseTransformation
     instance when called. The function signature should be:
         def my_transform(records: Records, runtime_params: RuntimeParams) -> Records
+
+    Parameters after the first two are options, given as keyword arguments when
+    the step is built (``multiply(factor=2)``) and bound against the signature
+    then: an unknown or missing option raises ``TypeError`` at once.
 
     Args:
         name: Unique name for this transformation
@@ -62,7 +91,7 @@ def transformation(
             return [filter_active()]  # Instantiate to use
     """
 
-    def decorator(func: TransformFn) -> "type[BaseTransformation]":
+    def decorator(func: "TransformFn") -> "type[BaseTransformation]":
         from reflowfy.transformations.base import AsyncTransformation, BaseTransformation
 
         # Plain `type`: the bases are abstract until the methods below fill them in.
@@ -70,16 +99,14 @@ def transformation(
         methods: Dict[str, Any]
         if inspect.iscoroutinefunction(func):
 
-            async def apply_async(
-                self: "BaseTransformation", records: Any, runtime_params: Any
-            ) -> Any:
-                return await func(records, runtime_params)
+            async def apply_async(self: Any, records: Any, runtime_params: Any) -> Any:
+                return await func(records, runtime_params, **self.options)
 
             base, methods = AsyncTransformation, {"apply_async": apply_async}
         else:
 
-            def apply(self: "BaseTransformation", records: Any, runtime_params: Any) -> Any:
-                return func(records, runtime_params)
+            def apply(self: Any, records: Any, runtime_params: Any) -> Any:
+                return func(records, runtime_params, **self.options)
 
             base, methods = BaseTransformation, {"apply": apply}
 
@@ -92,7 +119,8 @@ def record_transformation(
     name: str,
     concurrency: Optional[int] = None,
     timeout: Optional[float] = None,
-) -> Callable[[TransformFn], "type[BaseTransformation]"]:
+    on_error: "OnError" = "fail",
+) -> Callable[["RecordTransformFn"], "type[BaseTransformation]"]:
     """
     Decorator to create a transformation that awaits a coroutine once per record.
 
@@ -101,13 +129,19 @@ def record_transformation(
 
     Up to ``concurrency`` records are in flight at once, and the output keeps the
     input order. Returning ``None`` drops that record. The first record that raises
-    fails the job, naming its index; ``SkipJob`` from any record drops the job.
+    fails the job, naming its index (or, with ``on_error="skip"``, is dropped with
+    the exception's type name as the reason); ``SkipJob`` from any record drops the
+    job. The function returns one record (a ``dict``) or ``None``: anything else
+    fails the job whatever ``on_error`` says. Options work as for ``@transformation``.
 
     Args:
         name: Unique name for this transformation
         concurrency: Records in flight at once. Defaults to the
             ``TRANSFORM_CONCURRENCY`` env var (16).
-        timeout: Seconds allowed per record; ``None`` means no limit.
+        timeout: Seconds allowed per record; ``None`` means no limit. A timeout
+            counts as the call raising (``on_error``).
+        on_error: ``"fail"`` (default) fails the job when a record's call raises;
+            ``"skip"`` drops that record, its exception type as the skip reason.
 
     Example:
         @record_transformation("enrich_user", concurrency=32, timeout=10)
@@ -123,8 +157,11 @@ def record_transformation(
         raise ValueError(f"record_transformation {name!r}: concurrency must be >= 1")
     if timeout is not None and timeout <= 0:
         raise ValueError(f"record_transformation {name!r}: timeout must be > 0")
+    from reflowfy.transformations.base import check_on_error
 
-    def decorator(func: TransformFn) -> "type[BaseTransformation]":
+    check_on_error(f"record_transformation {name!r}", on_error)
+
+    def decorator(func: "RecordTransformFn") -> "type[BaseTransformation]":
         from reflowfy.transformations.base import RecordTransformation
 
         if not inspect.iscoroutinefunction(func):
@@ -134,13 +171,14 @@ def record_transformation(
                 "for a synchronous function."
             )
 
-        async def apply_record(self: "BaseTransformation", record: Any, runtime_params: Any) -> Any:
-            return await func(record, runtime_params)
+        async def apply_record(self: Any, record: Any, runtime_params: Any) -> Any:
+            return await func(record, runtime_params, **self.options)
 
         methods: Dict[str, Any] = {
             "apply_record": apply_record,
             "concurrency": concurrency,
             "timeout": timeout,
+            "on_error": on_error,
         }
         return _make_class(func, name, RecordTransformation, methods)
 
@@ -148,15 +186,26 @@ def record_transformation(
 
 
 def _make_class(
-    func: TransformFn, name: str, base: type, methods: Dict[str, Any]
+    func: Callable[..., Any], name: str, base: type, methods: Dict[str, Any]
 ) -> "type[BaseTransformation]":
     """Create (and so auto-register) the transformation class for ``func``."""
+    signature = inspect.signature(func)
+
+    def __init__(self: Any, **options: Any) -> None:
+        try:
+            # Two placeholders stand for (records, runtime_params).
+            signature.bind(None, None, **options)
+        except TypeError as exc:
+            raise TypeError(f"transformation {name!r} ({func.__name__}): {exc}") from None
+        self.options = options
+
     cls = type(
         func.__name__,
         (base,),
         {
             "name": name,
             **methods,
+            "__init__": __init__,
             # Read by validate_steps for the record type the return annotation promises.
             "_transform_fn": staticmethod(func),
             "__doc__": func.__doc__ or f"Transformation: {name}",

@@ -34,7 +34,7 @@ from reflowfy.cli.utils import console
 from reflowfy.core.exceptions import PipelineError
 from reflowfy.core.execution_context import ExecutionContext
 from reflowfy.execution.job_runner import job_runtime_params, plan_slices, run_job_records
-from reflowfy.execution.transformation_runner import AppliedStep
+from reflowfy.execution.transformation_runner import SKIPPED_MODE, AppliedStep
 from reflowfy.observability.context import log_context
 from reflowfy.observability.logging import get_logger, setup_logging
 from reflowfy.transformations.base import TransformationError, top_skip_reasons
@@ -102,6 +102,7 @@ class BatchReport:
                     "name": s.name,
                     "records_in": s.records_in,
                     "records_out": s.records_out,
+                    "mode": s.mode,
                     "duration_ms": round(s.duration * 1000, 3),
                     "records_skipped": s.records_skipped,
                     "skip_reasons": dict(s.skip_reasons or {}),
@@ -175,6 +176,13 @@ def summarize(value: Any, verbose: int) -> str:
 def render_steps(report: BatchReport, opts: TestOptions, indent: str = "") -> None:
     """One line per transformation: real in/out counts, and timing under -v."""
     for step in report.applied:
+        if step.mode == SKIPPED_MODE:
+            # Shown whatever the verbosity: "why didn't my step run?" is the question.
+            console.print(
+                f"{indent}  [dim]– {step.name}  not applied "
+                f"(should_apply_transformation declined it)[/dim]"
+            )
+            continue
         delta = step.delta
         if delta < 0:
             change = f"[yellow]{delta}[/yellow]"
