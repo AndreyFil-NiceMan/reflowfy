@@ -64,7 +64,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await _shutdown()
 
 
-# Create FastAPI app
 app = FastAPI(
     title="ReflowManager",
     description="Pipeline state management and rate limiting service",
@@ -76,7 +75,6 @@ app = FastAPI(
 # and a 401 still carries its headers.
 install_api_auth(app, service="reflow-manager")
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -117,7 +115,6 @@ def _pipeline_runner_factory() -> PipelineRunner:
     return make_manager(SessionLocal()).pipeline_runner
 
 
-# Dependency to get ReflowManager instance
 def get_reflow_manager(db: Session = Depends(get_db)) -> ReflowManager:
     """Get ReflowManager instance with database session."""
     return make_manager(db)
@@ -638,7 +635,6 @@ async def _startup() -> None:
     # (before recovery, which can settle executions).
     lifecycle.install()
 
-    # Check for interrupted executions and recover
     logger.info("Checking for interrupted executions...", extra={"event": "recovery_check"})
     await _recover_interrupted_executions()
 
@@ -687,7 +683,6 @@ async def _recover_interrupted_executions() -> None:
                 extra={"event": "driver_leases_released", "leases_released": released},
             )
 
-        # Find interrupted executions
         interrupted = manager.execution_manager.get_interrupted_executions()
 
         if not interrupted:

@@ -180,7 +180,6 @@ class ReflowManager:
         # Get total job counts from jobs table
         job_counts = self.job_manager.get_job_counts(execution_id)
 
-        # Get checkpoint batch stats
         checkpoints = self._get_batch_checkpoint_stats(execution_id)
 
         # Find current checkpoint (first non-completed batch)

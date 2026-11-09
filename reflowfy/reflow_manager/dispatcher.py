@@ -115,7 +115,6 @@ class KafkaDispatcher(BaseDispatcher):
             self._started = False
 
         if self._producer is None or not self._started:
-            # Build producer kwargs
             producer_kwargs: Dict[str, Any] = {
                 **connection_kwargs(
                     self.kafka_bootstrap_servers,

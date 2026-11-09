@@ -19,6 +19,7 @@ from reflowfy.core.exceptions import (  # their old home
     StepOutputError as StepOutputError,
     TransformationError as TransformationError,
 )
+from reflowfy.transformations.registry import transformation_registry
 
 
 class TransformationMeta(ABCMeta):
@@ -38,9 +39,6 @@ class TransformationMeta(ABCMeta):
         if name != "BaseTransformation" and bases:
             # Check if this is a concrete transformation with a name
             if "name" in namespace and namespace["name"]:
-                # Import here to avoid circular dependency
-                from reflowfy.transformations.registry import transformation_registry
-
                 transformation_registry.register(cls)
 
         return cls

@@ -27,7 +27,6 @@ engine = create_engine(
     connect_args=sync_connect_args(DATABASE_URL),
 )
 
-# Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 

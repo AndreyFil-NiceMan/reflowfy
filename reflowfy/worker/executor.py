@@ -439,7 +439,6 @@ class WorkerExecutor:
             if isinstance(destination, RecordDestination):
                 stats.destinations = len(destination.destinations)
 
-            # Health check (async)
             if not await destination.health_check():
                 logger.error(
                     "Destination health check failed", extra={"event": "destination_unhealthy"}
@@ -458,7 +457,6 @@ class WorkerExecutor:
                 )
                 return False
 
-            # Send to destination and track time (async)
             logger.debug(
                 "Sending %d records to destination",
                 len(transformed_records),
@@ -471,7 +469,6 @@ class WorkerExecutor:
                 # Logged by the destination as each failed; kept on the job here.
                 stats.destinations_failed_optional = len(destination.failed_optional)
 
-            # Mark as successful
             stats.success = True
             stats.end_time = time.time()
 
@@ -488,7 +485,6 @@ class WorkerExecutor:
                 },
             )
 
-            # Update job status in PostgreSQL (async)
             await self._update_job_in_db(execution_id, job_id, stats)
 
             return True
@@ -502,7 +498,7 @@ class WorkerExecutor:
                 extra={"event": "job_failed", "error_type": type(e).__name__},
             )
 
-            # Mark as failed — capture both summary and full traceback
+            # Both the summary and the full traceback are kept on the job.
             stats.success = False
             stats.error = str(e)
             stats.error_type = type(e).__name__
@@ -512,8 +508,7 @@ class WorkerExecutor:
             if claimed_record_hashes:
                 await self._release_claims(claimed_record_hashes, job_id)
 
-            # Update job status in PostgreSQL (async): failed, or back to pending when
-            # the pipeline's job_retry retries this error.
+            # Failed, or back to pending when the pipeline's job_retry retries this error.
             await self._finish_failed_job(job_payload, execution_id, job_id, stats, e)
 
             return False

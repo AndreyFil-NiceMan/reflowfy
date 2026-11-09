@@ -130,7 +130,6 @@ class DistributedExecutor:
         if execution_id is None:
             execution_id = str(uuid.uuid4())
 
-        # Initialize status
         status = ExecutionStatus(
             execution_id=execution_id,
             pipeline_name=pipeline.name,
@@ -198,7 +197,6 @@ class DistributedExecutor:
                 },
             )
 
-            # Update status
             status.total_jobs = total_jobs
             status.metadata["jobs_dispatched"] = total_jobs
             status.metadata["reflow_manager_url"] = self.reflow_manager_url

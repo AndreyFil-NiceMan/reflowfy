@@ -24,7 +24,6 @@ from reflowfy.reflow_manager.dlq_scheduler import (
 
 logger = logging.getLogger(__name__)
 
-# Create router with /dlq prefix
 router = APIRouter(prefix="/dlq", tags=["DLQ"])
 
 

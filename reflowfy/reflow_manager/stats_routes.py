@@ -312,7 +312,6 @@ async def get_failure_stats(
         pipeline_name: Optional filter by pipeline
         limit: Number of failed executions to return (default 20)
     """
-    # Failed executions query
     query = db.query(Execution).filter(Execution.state == ExecutionState.FAILED)
     if pipeline_name:
         query = query.filter(Execution.pipeline_name == pipeline_name)

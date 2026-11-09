@@ -97,7 +97,6 @@ class DLQScheduler(PeriodicTask):
                     },
                 )
 
-            # Group jobs by pipeline
             jobs_by_pipeline: Dict[str, List[DLQJob]] = defaultdict(list)
             for job in due_jobs:
                 jobs_by_pipeline[job.pipeline_name].append(job)
@@ -183,7 +182,6 @@ class DLQScheduler(PeriodicTask):
         if not self.pipeline_runner_factory:
             raise RuntimeError("Pipeline runner factory not configured")
 
-        # Generate execution ID
         execution_id = f"dlq-{uuid.uuid4().hex[:12]}"
 
         # For DLQ, the job_payload IS the runtime_params. Callers pass a group whose
@@ -222,7 +220,6 @@ class DLQScheduler(PeriodicTask):
         job.error_message = error_msg
 
         if job.retry_count >= job.max_retries:
-            # Move to archive
             self._archive_job(db, job)
             logger.info(
                 "DLQ job %s archived after %d retries",

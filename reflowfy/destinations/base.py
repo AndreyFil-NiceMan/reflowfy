@@ -48,7 +48,6 @@ class BaseDestination(ABC):
     1. Sending transformed data
     2. Health checks
     3. Retry logic with exponential backoff
-    4. Metrics reporting
     """
 
     def __init__(self, config: Dict[str, Any], retry_config: Optional[RetryConfig] = None):
