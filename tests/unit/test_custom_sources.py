@@ -88,11 +88,6 @@ def test_builtins_are_registered() -> None:
         assert SourceFactory.is_registered(name)
 
 
-def test_split_jobs_is_optional() -> None:
-    with pytest.raises(NotImplementedError, match="not used since the v2 job schema"):
-        list(PagesSource(pages=1).split_jobs({}))
-
-
 def test_plan_serialize_and_rebuild_on_the_worker() -> None:
     planned = list(PagesSource(pages=3, page_size=2).split({}))
     payloads = [

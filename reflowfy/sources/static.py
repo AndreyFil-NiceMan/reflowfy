@@ -12,14 +12,14 @@ This source is constructed internally by ``IdBasedPipeline.resolve_source`` when
 
 from typing import Any, Dict, Iterator, List, Optional
 
-from reflowfy.sources.base import BaseSource, SourceJob
+from reflowfy.sources.base import BaseSource
 
 
 class StaticSource(BaseSource):
     """A source backed by an in-memory list of records.
 
-    ``split_jobs`` yields exactly one :class:`SourceJob` containing all the
-    records, so one resolution (e.g. one ID batch) maps to one job.
+    It plans one job holding all the records, so one resolution (e.g. one ID
+    batch) maps to one job.
     """
 
     def __init__(self, records: List[Any]):
@@ -48,13 +48,6 @@ class StaticSource(BaseSource):
         if not self.config["records"]:
             return
         yield self
-
-    def split_jobs(
-        self, runtime_params: Dict[str, Any], batch_size: int = 1000
-    ) -> Iterator[SourceJob]:
-        """Yield a single job containing all records."""
-        records: List[Any] = self.config["records"]
-        yield SourceJob(records=records, metadata={"count": len(records)})
 
     def health_check(self) -> bool:
         """An in-memory source is always healthy."""

@@ -10,7 +10,7 @@ from elastic_transport import TransportError
 
 from reflowfy.core.types import Record, Records, wrap_as_record
 from reflowfy.observability.logging import get_logger
-from reflowfy.sources.base import BaseSource, SourceError, SourceJob
+from reflowfy.sources.base import BaseSource, SourceError
 
 # The manager opens a PIT while planning; workers search it later, as the
 # rate-limited dispatch loop sends their jobs. Each search extends the
@@ -766,87 +766,6 @@ class ElasticSource(BaseSource):
                 if seen % window_size == 0 and len(cursors) < num_windows:
                     cursors.append(h["sort"])
         return cursors
-
-    def split_jobs(
-        self, runtime_params: Dict[str, Any], batch_size: int = 1000
-    ) -> Iterator[SourceJob]:
-        """
-        Split Elasticsearch data into jobs using scroll API.
-
-        Each scroll page becomes one job.
-
-        Args:
-            runtime_params: Runtime parameters for query template
-            batch_size: Documents per job (uses config size if not specified)
-
-        Yields:
-            SourceJob instances
-        """
-        resolved_config = self.resolve_parameters(runtime_params)
-        if resolved_config is None:
-            raise SourceError("elasticsearch", "No valid configuration resolved", None)
-        client = self._get_client()
-
-        size = resolved_config.get("size", batch_size)
-        scroll = resolved_config["scroll"]
-
-        try:
-            # Initialize scroll
-            response = client.search(
-                index=resolved_config["index"],
-                body=resolved_config["base_query"],
-                scroll=scroll,
-                size=size,
-            )
-
-            # Convert response to dict if it's not already (Elasticsearch 8.x compatibility)
-            if hasattr(response, "body"):
-                response = response.body
-            elif not isinstance(response, dict):
-                response = dict(response)  # pyright: ignore[reportCallIssue, reportArgumentType]
-
-            response = cast(Dict[str, Any], response)
-            scroll_id = response["_scroll_id"]
-            hits = response["hits"]["hits"]
-
-            page_num = 0
-
-            while hits:
-                # Extract source documents
-                records = [_hit_record(hit) for hit in hits]
-
-                yield SourceJob(
-                    records=records,
-                    metadata={
-                        "scroll_id": str(
-                            scroll_id
-                        ),  # Convert to string to ensure JSON serializable
-                        "page_num": page_num,
-                        "count": len(records),
-                    },
-                )
-
-                page_num += 1
-
-                # Get next page
-                response = client.scroll(scroll_id=scroll_id, scroll=scroll)
-
-                # Convert response to dict if needed
-                if hasattr(response, "body"):
-                    response = response.body
-                elif not isinstance(response, dict):
-                    # elasticsearch's ObjectApiResponse iterates keys, not pairs
-                    response = dict(cast(Dict[str, Any], response))
-
-                response = cast(Dict[str, Any], response)
-                scroll_id = response["_scroll_id"]
-                hits = response["hits"]["hits"]
-
-            # Clear scroll
-            client.clear_scroll(scroll_id=scroll_id)
-
-        except ApiError as e:
-            raise SourceError("elasticsearch", f"Failed to split jobs: {e}", e)
 
     def health_check(self) -> bool:
         """Check Elasticsearch cluster health."""

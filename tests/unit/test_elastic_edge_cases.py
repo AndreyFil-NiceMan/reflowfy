@@ -215,28 +215,6 @@ def test_scroll_fetch_limit_stops_early(monkeypatch) -> None:
     assert len(_src(es, monkeypatch).fetch({}, limit=5)) == 5
 
 
-def test_split_jobs_one_job_per_scroll_page(monkeypatch) -> None:
-    es = _Es(list(range(10)))
-    jobs = list(_src(es, monkeypatch).split_jobs({}))
-
-    assert [j.metadata["count"] for j in jobs] == [4, 4, 2]
-    assert [j.metadata["page_num"] for j in jobs] == [0, 1, 2]
-    assert all(j.metadata["scroll_id"] == "scroll1" for j in jobs)
-    assert _ids([r for j in jobs for r in j.records]) == list(range(10))
-    assert es.cleared == ["scroll1"]
-
-
-def test_split_jobs_api_error_is_a_source_error(monkeypatch) -> None:
-    es = _Es(list(range(10)))
-
-    def lost(scroll_id: str, scroll: str) -> Dict[str, Any]:
-        raise _not_found("No search context found for id [scroll1]")
-
-    es.scroll = lost  # type: ignore[method-assign]
-    with pytest.raises(SourceError, match="Failed to split jobs"):
-        list(_src(es, monkeypatch).split_jobs({}))
-
-
 # -- health_check ------------------------------------------------------------------
 
 
