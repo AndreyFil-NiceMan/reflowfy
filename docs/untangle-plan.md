@@ -359,8 +359,32 @@ constants.
 1. **Safety net:** record the baseline of unit tests, coverage (≥ 99%), ruff,
    pyright (0) and mypy's error count.
 2. **Bugs above:** ✅ done (see status).
-3. **Surplus** (dead code from F2, F4, F6, F8, F10, plus `LocalExecutor` and `kafka_config`'s unused helpers): shrinks everything that
-   follows.
+3. **Surplus:** ✅ done. Removed, each with no production caller:
+   - `LocalExecutor` and `get_executor`; the API's in-memory `ExecutionTracker`.
+   - `PipelineRunner.run_pipeline`, the `ReflowManager` pass-throughs
+     (`run_pipeline`, `update_job_counts`, `close`, `max_jobs_per_minute`),
+     `ExecutionManager.update_job_counts` / `update_deduplicated_count`,
+     `_set_job_counts`, and `app._make_manager` / `_get_kafka_config` (copies of
+     `factory.make_manager`).
+   - The legacy `split_jobs` in `BaseSource` and the six built-ins, plus
+     `sources/schemas.py`.
+   - `kafka_config.py`, `DestinationFactory`, `destinations/schemas.py`.
+   - `JobDispatcher.dispatch_job` (×3), `JobManager.get_job_states`, `close_db`,
+     `ExecutionStatus.is_complete`, `KafkaJobConsumer.stop()`.
+   - `AbstractPipeline.destination` / `.transformations` (always raised), and the
+     `ImportError` guards around required dependencies.
+
+   Kept on purpose:
+   - Public API: `source_registry`, `destination_registry` (in `reflowfy.__all__`),
+     `SourceJob`, `get_required_parameters`, `resolve_for_id`.
+   - Test entry points with real value: `apply_transformations_iteratively`
+     (sync), `RateLimiter.can_dispatch`, `SourceFactory.list_types` /
+     `is_registered`, `get_log_context`.
+   - `TransformationRegistry`: never read, but it rejects duplicate transformation
+     names at class definition. It goes in F8, with the registry primitive.
+
+   Net effect for the branch so far, bug fixes included: `reflowfy/` +289 / −1,609 lines,
+   `tests/` +451 / −1,533; mypy errors 114 → 105.
 4. **F8 + F7 + F13:** layering, settings and names. These are mostly moves, with
    re-exports kept.
 5. **F3:** `store/`, the enums and a single schema definition.
