@@ -496,7 +496,27 @@ constants.
      the `(str, Enum)` `ExecutionState` logged as `ExecutionState.FAILED` on
      Python 3.11+. `ExecutionStatus` lives beside the client and uses the
      `store.states` strings.
-10. **F9 + F10:** connector specs and shared building blocks.
+10. **F9 + F10:** ✅ done for the parts with a defect or a copy behind them.
+   - The S3 and ID-based API `split()` rebuild each job from the whole config
+     (`from_config({**config, …})`) instead of a hand-written key list. S3's
+     list dropped the extra boto3 client kwargs from every job; a regression
+     test now covers it.
+   - Elasticsearch has one `_body(response)` in place of nine
+     `raw.body if hasattr(raw, "body") else raw` copies.
+   - `RecordDestination.fixed_targets()` (`None` by default, the targets for
+     `fan_out`) replaces `record.py` importing and type-checking its own
+     subclass `FanOut`.
+   - Not done:
+     - A config-spec dataclass per connector.
+     - A pooled-connection base, `core/per_record.py`, a shared HTTP helper and
+       the ES pager rewrite.
+     - Why: each would rewrite the Kafka, API or Elasticsearch connectors'
+       behaviour-defining code (header value rules differ between Kafka bytes
+       and HTTP strings; the API source and destination probe health
+       differently on purpose). That needs the E2E suites as a net per
+       connector, not a cleanup pass.
+     - SQL's `split()` keeps its explicit list: its slices change the query and
+       turn templating off, so they are not a copy of the parent config.
 11. **F11, F12, then comments.**
 12. **Repeat:** audit again for special cases, hidden links, needless links and
     surplus until nothing worth fixing is left. Then run the unit tests and the

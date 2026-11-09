@@ -33,6 +33,12 @@ WINDOW_RANGE = "range"
 logger = get_logger(__name__)
 
 
+def _body(response: Any) -> Dict[str, Any]:
+    """The JSON body of an Elasticsearch response: elasticsearch-py 8 wraps it in an
+    ``ObjectApiResponse`` (``.body``); 7, and test fakes, return the dict itself."""
+    return cast(Dict[str, Any], getattr(response, "body", response))
+
+
 def _pit_keep_alive(config: Dict[str, Any]) -> str:
     """Read the PIT keep_alive, tolerating job payloads serialized before it existed."""
     return str(config.get("pit_keep_alive") or DEFAULT_PIT_KEEP_ALIVE)
@@ -271,7 +277,7 @@ class ElasticSource(BaseSource):
                     raw = client.search(
                         body=page_body, size=min(resolved_config["size"], remaining)
                     )
-                    page = cast(Dict[str, Any], raw.body if hasattr(raw, "body") else raw)
+                    page = _body(raw)
                     hits = page["hits"]["hits"]
                     if not hits:
                         break
@@ -297,7 +303,7 @@ class ElasticSource(BaseSource):
                         page_body["search_after"] = search_after
                     page_body.setdefault("sort", ["_shard_doc"])
                     resp = client.search(body=page_body, size=resolved_config["size"])
-                    resp = resp.body if hasattr(resp, "body") else resp
+                    resp = _body(resp)
                     hits = resp["hits"]["hits"]
                     if not hits:
                         break
@@ -322,7 +328,7 @@ class ElasticSource(BaseSource):
                 scroll=scroll,
                 size=page_size,
             )
-            page = cast(Dict[str, Any], raw.body if hasattr(raw, "body") else raw)
+            page = _body(raw)
             scroll_id = page["_scroll_id"]
             hits = page["hits"]["hits"]
 
@@ -333,7 +339,7 @@ class ElasticSource(BaseSource):
                     records = records[:limit]
                     break
                 raw = client.scroll(scroll_id=scroll_id, scroll=scroll)
-                page = cast(Dict[str, Any], raw.body if hasattr(raw, "body") else raw)
+                page = _body(raw)
                 scroll_id = page["_scroll_id"]
                 hits = page["hits"]["hits"]
 
@@ -367,7 +373,7 @@ class ElasticSource(BaseSource):
         try:
             while True:
                 raw = client.search(index=resolved["index"], body=body)
-                page = cast(Dict[str, Any], raw.body if hasattr(raw, "body") else raw)
+                page = _body(raw)
                 hits = page["hits"]["hits"]
                 if not hits:
                     return records
@@ -418,7 +424,7 @@ class ElasticSource(BaseSource):
             raw = client.search(index=resolved["index"], body=body)
         except ApiError as e:
             raise SourceError("elasticsearch", f"Failed to fetch data: {e}", e)
-        resp = cast(Dict[str, Any], raw.body if hasattr(raw, "body") else raw)
+        resp = _body(raw)
         agg: Any = resp.get("aggregations", {})
         for name in path:
             if not isinstance(agg, dict) or name not in agg:
@@ -528,7 +534,7 @@ class ElasticSource(BaseSource):
         )
         body = {"query": query} if query is not None else None
         resp = client.count(index=resolved["index"], body=body)
-        resp = resp.body if hasattr(resp, "body") else resp
+        resp = _body(resp)
         return int(resp.get("count", 0))
 
     def _fetch_range_window(
@@ -566,7 +572,7 @@ class ElasticSource(BaseSource):
                 if search_after is not None:
                     page_body["search_after"] = search_after
                 raw = client.search(body=page_body, size=page_size)
-                page = cast(Dict[str, Any], raw.body if hasattr(raw, "body") else raw)
+                page = _body(raw)
                 hits = page["hits"]["hits"]
                 if not hits:
                     return out
@@ -756,7 +762,7 @@ class ElasticSource(BaseSource):
             if search_after is not None:
                 page["search_after"] = search_after
             raw = client.search(body=page, size=page_size)
-            page_resp = cast(Dict[str, Any], raw.body if hasattr(raw, "body") else raw)
+            page_resp = _body(raw)
             hits = page_resp["hits"]["hits"]
             if not hits:
                 break

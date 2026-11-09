@@ -188,6 +188,19 @@ def test_split_yields_one_source_per_page_with_its_keys(stubbed) -> None:
     assert all(s.config["page_size"] == 2 and s.config["bucket"] == "bkt" for s in subs)
 
 
+def test_split_keeps_extra_client_options_on_every_job(stubbed) -> None:
+    """split() used to rebuild each job from a hand-written list of keys, dropping the
+    extra boto3 client kwargs (``**kwargs``) the source was built with."""
+    client, stub = stubbed
+    _list(stub, ["a.json"])
+    src = _source(client, verify=False)
+
+    (sub,) = src.split({})
+
+    assert sub.config["verify"] is False
+    assert sub.config["keys"] == ["a.json"]
+
+
 def test_sub_source_fetch_reads_only_its_keys(stubbed) -> None:
     client, stub = stubbed
     _get(stub, "a.json", b'[{"n": 1}, {"n": 2}]')
