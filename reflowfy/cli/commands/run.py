@@ -41,7 +41,5 @@ def register(app: typer.Typer):
             console.print("\n👋 Stopping...")
             return
         if result.returncode != 0:
-            console.print(
-                f"❌ docker compose up failed (exit {result.returncode})", style="red"
-            )
+            console.print(f"❌ docker compose up failed (exit {result.returncode})", style="red")
             raise typer.Exit(code=result.returncode)

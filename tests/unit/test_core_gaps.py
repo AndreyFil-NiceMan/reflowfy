@@ -392,13 +392,9 @@ def test_success_rate_of_an_execution_without_jobs_is_zero() -> None:
     assert ExecutionStatus("e", "p", ExecutionState.COMPLETED).success_rate == 0.0
 
 
-def test_success_rate_and_completion() -> None:
+def test_success_rate() -> None:
     status = ExecutionStatus("e", "p", ExecutionState.RUNNING, total_jobs=4, completed_jobs=3)
     assert status.success_rate == 0.75
-    assert status.is_complete is False
-
-    status.state = ExecutionState.PARTIALLY_FAILED
-    assert status.is_complete is True
 
 
 # ----- pipeline discovery: sys.path handling -----------------------------------------

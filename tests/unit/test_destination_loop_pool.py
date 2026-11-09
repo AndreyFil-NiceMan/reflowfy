@@ -470,6 +470,3 @@ class TestWiring:
         assert seen[0] is not None and seen[0] is seen[1]  # one pool across batches
         await d.close()
         assert loop_pool() is None
-
-        await d.dispatch_job({"job_id": "c"}, "p")  # a single job: its own scope
-        assert seen[2] is not None and loop_pool() is None

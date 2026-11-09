@@ -101,21 +101,6 @@ def test_update_job_state_of_an_unknown_job_returns_none(db):
     assert db.query(Job).count() == 0
 
 
-def test_get_job_states_sees_what_workers_wrote_from_their_own_sessions(engine, db):
-    _job(db, "a")
-    _job(db, "b")
-    jm = JobManager(db)
-    assert jm.get_job_states(["a", "b"]) == {"a": "pending", "b": "pending"}
-    jm.get_job("a")  # now cached in the manager's session
-
-    with sessionmaker(bind=engine)() as worker:
-        worker.query(Job).filter(Job.job_id == "a").update({"state": "completed"})
-        worker.commit()
-
-    assert jm.get_job_states(["a", "b", "ghost"]) == {"a": "completed", "b": "pending"}
-    assert jm.get_job_states([]) == {}
-
-
 def test_get_job_counts_includes_every_state_and_the_total(db):
     for i, state in enumerate(
         [

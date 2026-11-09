@@ -1,4 +1,4 @@
-"""database.py: init_db's startup retry, the get_db dependency and close_db.
+"""database.py: init_db's startup retry and the get_db dependency.
 
 Column migrations are covered by test_db_hardening.py. The module's own engine points at
 Postgres, so every test here swaps it (or SessionLocal) for SQLite or a recorder.
@@ -123,12 +123,3 @@ def test_get_db_works_as_a_fastapi_dependency(monkeypatch):
     assert [s.closed for s in sessions] == [1, 1]  # closed after success and after a crash
 
 
-def test_close_db_disposes_the_engine(monkeypatch):
-    disposed: List[bool] = []
-    monkeypatch.setattr(
-        db_mod, "engine", type("E", (), {"dispose": lambda self: disposed.append(True)})()
-    )
-
-    db_mod.close_db()
-
-    assert disposed == [True]

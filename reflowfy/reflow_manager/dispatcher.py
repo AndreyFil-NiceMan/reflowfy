@@ -34,16 +34,6 @@ class BaseDispatcher(ABC):
         self.rate_limiter = rate_limiter
 
     @abstractmethod
-    async def dispatch_job(
-        self,
-        job_payload: Dict[str, Any],
-        pipeline_name: str,
-        rate_limit: Optional[float] = None,
-    ) -> bool:
-        """Dispatch a single job."""
-        pass
-
-    @abstractmethod
     async def dispatch_jobs_batch(
         self,
         jobs: List[Dict[str, Any]],
@@ -148,39 +138,6 @@ class KafkaDispatcher(BaseDispatcher):
             self._started = True
 
         return self._producer
-
-    async def dispatch_job(
-        self,
-        job_payload: Dict[str, Any],
-        pipeline_name: str,
-        rate_limit: Optional[float] = None,
-    ) -> bool:
-        """Dispatch a single job to Kafka."""
-        # Check and consume tokens
-        if not self.rate_limiter.consume_tokens(pipeline_name, 1, rate_limit):
-            return False
-
-        # Send to Kafka
-        producer = await self._get_producer()
-
-        try:
-            await producer.send_and_wait(
-                topic=self.kafka_topic,
-                value=json.dumps(job_payload).encode("utf-8"),
-            )
-            return True
-
-        except KafkaError as e:
-            logger.error(
-                "Kafka error: %s",
-                e,
-                extra={
-                    "event": "kafka_send_error",
-                    "job_id": job_payload.get("job_id"),
-                    "error_type": type(e).__name__,
-                },
-            )
-            return False
 
     async def dispatch_jobs_batch(
         self,

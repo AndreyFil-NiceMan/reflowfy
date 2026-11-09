@@ -159,38 +159,6 @@ class TestDispatchJobsBatch:
         assert created == []
 
 
-# ---------------------------------------------------------------- single job
-
-
-class TestDispatchJob:
-    async def test_runs_the_job_with_a_fresh_executor(self, monkeypatch):
-        d, created = _dispatcher(monkeypatch)
-        assert await d.dispatch_job({"job_id": "a"}, "p") is True
-        assert await d.dispatch_job({"job_id": "b"}, "p") is True
-        assert [e.ran for e in created] == [["a"], ["b"]]
-        assert [e.closed for e in created] == [1, 1]
-        assert d.rate_limiter.calls == []
-
-    async def test_rate_limited_job_waits_up_to_five_minutes(self, monkeypatch):
-        d, _ = _dispatcher(monkeypatch)
-        assert await d.dispatch_job({"job_id": "a"}, "p", rate_limit=2.0) is True
-        assert d.rate_limiter.calls == [{"pipeline": "p", "rate_limit": 2.0, "max_wait": 300.0}]
-
-    async def test_rate_limit_timeout_skips_the_job(self, monkeypatch):
-        d, created = _dispatcher(monkeypatch, tokens=0)
-        with capture_logs(local_mod.logger.name) as logs:
-            assert await d.dispatch_job({"job_id": "a"}, "p", rate_limit=2.0) is False
-        assert created == []
-        assert "Rate limit timeout, skipping job" in logs
-
-    async def test_job_exception_returns_false_and_closes(self, monkeypatch):
-        d, created = _dispatcher(monkeypatch, fail={"a": RuntimeError("x")})
-        with capture_logs(local_mod.logger.name) as logs:
-            assert await d.dispatch_job({"job_id": "a"}, "p") is False
-        assert created[0].closed == 1
-        assert "Local dispatch failed" in logs
-
-
 # ---------------------------------------------------------------- real executor
 
 
