@@ -231,7 +231,7 @@ class WorkerExecutor:
         # job_id/execution_id/pipeline_name are bound onto every record here by the
         # log_context() the caller entered — no need to pass them per call.
         claimed_record_hashes: List[bytes] = []
-        destination = None
+        destination: Any = None
         heartbeat: Optional["asyncio.Task[None]"] = None
 
         try:
@@ -395,7 +395,10 @@ class WorkerExecutor:
                     if not isinstance(destination, RecordDestination):
                         await destination.close()
                         with pipeline_step("define_destination", _pipeline_name):
-                            destination = pipeline.define_destination(kept, runtime_params)
+                            # User code: off the loop, like the first call (job_runner).
+                            destination = await asyncio.to_thread(
+                                pipeline.define_destination, kept, runtime_params
+                            )
                 transformed_records = kept
                 stats.records_output = len(kept)
 
