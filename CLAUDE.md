@@ -423,6 +423,64 @@ logs the same reason.
 - `"snapshot"` (default): every job reads one PIT opened at planning, so the run sees the index as it was at the start, in exact `docs_per_job` windows. The PIT is shared state: an Elasticsearch restart, or workers stopped longer than `pit_keep_alive` (30m), destroys it and every remaining job fails with `No search context found`.
 - `"range"`: windows are value ranges `(a, b]` of the **first `sort` key** (which must be a real field — `_doc`, `_shard_doc`, `_score` or no sort raise), and each job opens its own 5-minute PIT, pages through its range and closes it. An ES restart fails only the jobs in flight — re-run them with `POST /executions/{id}/retry-failed`. Documents sharing a boundary value all fall in one window (sizes are approximate; an all-equal field degenerates to one big job), and documents indexed or deleted while the run progresses may or may not appear. Use it for long runs. `tests/unit/test_elastic_range_windows.py` checks exactly-once reads on tied values with a fake ES; `tests/e2e/sources/test_elastic_source.py::TestElasticRangeWindows` does it on a real index.
 
+### Custom sources
+
+A `BaseSource` subclass in the user's project runs on workers like a built-in one: every
+concrete subclass registers itself in `SourceFactory` under its class name when the class is
+defined (`BaseSource.__init_subclass__`; abstract ones are skipped), and discovery imports the
+module on every service. A source needs `fetch` and `health_check`, and usually `split`
+(default: one job); `split_jobs` is no longer abstract (unused since the v2 schema, it raises
+`NotImplementedError`). The worker rebuilds each job's slice with the classmethod
+`from_config(config)`: `cls(**config)` by default, `cls(config)` when `__init__` keeps
+`BaseSource`'s `(self, config)` signature, or an override. `SourceFactory.serialize` proves
+that contract at planning, once per `(type, config keys)` shape per process
+(`check_round_trip`): JSON-encodable config, type registered to this very class, rebuild
+succeeds and gives the same config — otherwise `SourceRoundTripError` naming the fix, instead
+of every job failing on the worker. Two classes with one name log `source_type_replaced`.
+Tests: `tests/unit/test_custom_sources.py`; E2E `tests/e2e/test_custom_source.py`
+(`e2e_custom_source`).
+
+### SQL source: bound values, `| ident`
+
+`sql_source` query templates are rendered by `render_sql_template` (`sources/sql.py`), not the
+generic resolver: every `{{ expr }}` **value is a bind parameter** (`:reflowfy_p0`…), never
+spliced into the SQL. `'{{ x }}'` quoted on its own is bound in place of the literal (old
+templates keep working; a space keeps `::timestamp` after it parseable); a list/tuple is an
+expanding bind (`id IN {{ ids }}` or `IN ({{ ids }})`); a value in a comment is dropped; a
+missing parameter fails. **Identifiers need `{{ name | ident }}`** (validated
+`[A-Za-z_][A-Za-z0-9_.]*`): a plain `{{ }}` after `FROM`/`JOIN`/`INTO`/`UPDATE`/`TABLE`/`BY`/`AS`,
+next to a `.`, inside `"…"` or inside a longer `'…'` literal raises `SqlTemplateError`
+pointing at `| ident` — this was a behaviour change (it used to be string substitution, i.e.
+injection). `params={...}` binds hand-written `:name`s; `id_column` is validated as an
+identifier. `split()` wraps the rendered SQL (`WHERE id >= :reflowfy_lo AND id < :reflowfy_hi`)
+and each slice carries the SQL and every value in `config["params"]` with `template=False`, so
+the worker runs the same statement without the runtime params. One trailing `;` is dropped
+before any wrapping (and the wrappers put `)` on a new line, so a trailing `--` comment is
+harmless); `fetch(limit=n)` is `fetchmany(n)`. Tests: `tests/unit/sources/test_sql_binds.py`.
+
+### Secrets and API auth
+
+- **`secret("ENV")`** (`core/secrets.py`; export it from `reflowfy` in the exports PR) is a
+  `str` subclass holding the variable's value but remembering its name. `SourceFactory.serialize`
+  writes `{"$secret": "ENV"}`, `SourceFactory.create` reads the variable from the worker's own
+  environment (`SecretError` naming it if unset; no default, since a default would not travel).
+  The manager plans with it too (`split()` connects), so set it on both. A source config that
+  holds a *literal* credential when serialized logs `literal_secret_serialized` once per
+  pipeline/type/field.
+- **Redaction.** `BaseSource.secret_fields` names a source's credential keys (Sql:
+  `connection_url` — only the URL's password; Elastic: `auth`; S3: `aws_secret_access_key`;
+  API: `auth_token`, `headers`). `redact_row` hides `job_payload`/`runtime_params` in every
+  manager route returning job, execution, schedule or DLQ rows: declared fields, any
+  credential-named key at any depth (`password`, `token`, `api_key`, `Authorization`,
+  `secret`…) and the password of any `scheme://user:pass@host`. The stored rows are unchanged.
+- **`REFLOWFY_API_TOKEN`** (`core/api_auth.py`): set (non-blank) on the API and the manager,
+  every route but `/health` and `/metrics` needs `Authorization: Bearer <token>` (CORS
+  preflight passes; the token is read per request). The API's `DistributedExecutor` sends it
+  to the manager. Rejections log `auth_rejected` with `missing`/`invalid`, never the token.
+  Helm: `auth.apiToken` or `auth.existingSecret` (api + reflow-manager only); compose:
+  `${REFLOWFY_API_TOKEN:-}`. `/docs` is guarded too.
+- Tests: `tests/unit/test_secrets.py`, `tests/unit/test_api_auth_and_redaction.py`.
+
 ### Dispatch loop, leases and redelivery
 
 Phase 1 (planning) is unchanged: jobs are streamed into Postgres in groups of `CHECKPOINT_BATCH_SIZE`, each tagged with a `batch_number` that `/executions/{id}/stats` reports as "checkpoints". **Batches no longer gate dispatch.** Phase 2 (`PipelineRunner._drive_execution`) is one continuous loop per execution:

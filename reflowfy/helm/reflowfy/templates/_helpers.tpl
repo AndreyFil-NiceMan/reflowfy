@@ -272,3 +272,19 @@ service.environment in Kibana. The ES password comes from a Secret, never inline
 {{- end }}
 {{- end }}
 {{- end -}}
+
+{{/*
+REFLOWFY_API_TOKEN for the api and reflow-manager containers (only when a token or an
+existing Secret is configured: unset, both services run without authentication).
+*/}}
+{{- define "reflowfy.auth.env" -}}
+{{- with .Values.auth }}
+{{- if or .apiToken .existingSecret }}
+- name: REFLOWFY_API_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ .existingSecret | default (printf "%s-api-token" $.Release.Name) }}
+      key: {{ .existingSecretKey | default "token" }}
+{{- end }}
+{{- end }}
+{{- end -}}

@@ -7,6 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from reflowfy.core.secrets import redact_row
 from reflowfy.reflow_manager.database import get_db
 from reflowfy.reflow_manager.models import DLQJob
 from reflowfy.reflow_manager.dlq_schemas import (
@@ -91,7 +92,7 @@ async def schedule_dlq_job(
             "param_count": len(request.job_payload or {}),
         },
     )
-    return dlq_job.to_dict()
+    return redact_row(dlq_job.to_dict())
 
 
 @router.get("/jobs", response_model=DLQJobListResponse)
@@ -114,7 +115,7 @@ async def list_dlq_jobs(
     jobs = query.order_by(DLQJob.created_at.desc()).offset(offset).limit(limit).all()
 
     return {
-        "jobs": [job.to_dict() for job in jobs],
+        "jobs": [redact_row(job.to_dict()) for job in jobs],
         "total": total,
     }
 
@@ -133,7 +134,7 @@ async def get_dlq_job(
             detail=f"DLQ job {job_id} not found",
         )
 
-    return job.to_dict()
+    return redact_row(job.to_dict())
 
 
 @router.delete("/jobs/{job_id}")
