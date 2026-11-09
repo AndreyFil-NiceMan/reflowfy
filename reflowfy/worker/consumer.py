@@ -75,6 +75,7 @@ class KafkaJobConsumer:
         self.consumer: Optional[AIOKafkaConsumer] = None
         self.executor = WorkerExecutor(database_url=database_url)
         self._running = False
+        self._stop_requested = False
 
     async def start(self):
         """Start consuming and processing jobs asynchronously."""
@@ -109,6 +110,10 @@ class KafkaJobConsumer:
         # Retry starting consumer with backoff (handle GroupCoordinatorNotAvailableError)
         max_retries = 10
         for attempt in range(max_retries):
+            if self._stop_requested:
+                # Asked to stop while still connecting: no job to drain, exit cleanly.
+                logger.info("Stopped before connecting", extra={"event": "consumer_stopped"})
+                return
             try:
                 await self.consumer.start()
                 logger.info("Kafka consumer connected", extra={"event": "consumer_connected"})
@@ -137,6 +142,9 @@ class KafkaJobConsumer:
                     )
                     raise
 
+        if self._stop_requested:
+            await self.consumer.stop()
+            return
         self._running = True
         # One pool of destination connections for the worker's life: every job,
         # execution and pipeline writing to the same cluster or host reuses them.
@@ -271,7 +279,13 @@ class KafkaJobConsumer:
 
     def request_stop(self) -> None:
         """Ask the loop to exit after the current job (safe from a signal handler)."""
+        self._stop_requested = True
         self._running = False
+
+    @property
+    def stop_requested(self) -> bool:
+        """True once :meth:`request_stop` was called (a second signal then forces exit)."""
+        return self._stop_requested
 
     async def stop(self):
         """Stop consuming."""
