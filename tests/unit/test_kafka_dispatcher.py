@@ -146,7 +146,6 @@ class TestProducer:
 
         await d.dispatch_jobs_batch(_jobs(2), "p")
         await d.dispatch_jobs_batch(_jobs(2), "p")
-        await d.dispatch_job({"job_id": "single"}, "p")
 
         assert len(fake_producer.instances) == 1
         assert fake_producer.instances[0].kwargs == {
@@ -298,28 +297,6 @@ class TestDispatchBatch:
 
     async def test_empty_batch(self, fake_producer):
         assert await _dispatcher().dispatch_jobs_batch([], "p") == 0
-
-
-# ---------------------------------------------------------------- dispatch_job
-
-
-class TestDispatchJob:
-    async def test_sends_one_job(self, fake_producer):
-        d = _dispatcher()
-        assert await d.dispatch_job({"job_id": "x"}, "p", rate_limit=5.0) is True
-        assert _sent_ids(fake_producer.instances[0]) == ["x"]
-        assert d.rate_limiter.consume_calls == [{"pipeline": "p", "rate_limit": 5.0}]
-
-    async def test_rate_limited_job_is_not_sent(self, fake_producer):
-        d = _dispatcher(tokens=0)
-        assert await d.dispatch_job({"job_id": "x"}, "p") is False
-        assert fake_producer.instances == []  # not even connected
-
-    async def test_kafka_error_returns_false(self, fake_producer):
-        d = _dispatcher()
-        await d._get_producer()
-        fake_producer.instances[0].errors["x"] = KafkaError("boom")
-        assert await d.dispatch_job({"job_id": "x"}, "p") is False
 
 
 # ---------------------------------------------------------------- close

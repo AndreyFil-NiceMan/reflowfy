@@ -42,15 +42,6 @@ class ExecutionStatus:
             return 0.0
         return self.completed_jobs / self.total_jobs
 
-    @property
-    def is_complete(self) -> bool:
-        """Check if execution is complete."""
-        return self.state in [
-            ExecutionState.COMPLETED,
-            ExecutionState.FAILED,
-            ExecutionState.PARTIALLY_FAILED,
-        ]
-
     def to_dict(self) -> Dict[str, Any]:
         """Serialize status."""
         return {

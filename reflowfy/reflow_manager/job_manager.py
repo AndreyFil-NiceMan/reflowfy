@@ -280,28 +280,6 @@ class JobManager:
 
         return self.get_job(job_id)
 
-    def get_job_states(self, job_ids: List[str]) -> Dict[str, str]:
-        """
-        Get states for multiple jobs efficiently.
-
-        Note: Expires session cache first to see external updates from workers
-        who update jobs from their own database sessions.
-
-        Args:
-            job_ids: List of job identifiers
-
-        Returns:
-            Dictionary mapping job_id to state
-        """
-        # Expire cached objects to see external updates from workers
-        self.db.expire_all()
-
-        results = self.db.query(Job.job_id, Job.state).filter(
-            Job.job_id.in_(job_ids)
-        ).all()
-
-        return {job_id: state for job_id, state in results}
-
     def get_job_counts(self, execution_id: str) -> Dict[str, int]:
         """
         Get job counts by state for an execution.

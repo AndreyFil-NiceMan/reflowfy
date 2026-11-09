@@ -162,8 +162,3 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
-
-
-def close_db() -> None:
-    """Close database engine."""
-    engine.dispose()
