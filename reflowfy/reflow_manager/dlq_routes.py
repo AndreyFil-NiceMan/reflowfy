@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from reflowfy.core.secrets import redact_row
+from reflowfy.reflow_manager.redaction import redact_row
 from reflowfy.reflow_manager.database import get_db
 from reflowfy.reflow_manager.models import DLQJob
 from reflowfy.reflow_manager.dlq_schemas import (

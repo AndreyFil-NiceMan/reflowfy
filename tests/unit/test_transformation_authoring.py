@@ -31,7 +31,7 @@ from reflowfy import (
     record_transformation,
     transformation,
 )
-from reflowfy.core.record_validation import step_output_type
+from reflowfy.transformations.output_type import step_output_type
 from reflowfy.core.registry import pipeline_registry
 from reflowfy.execution.job_runner import run_job_records
 from reflowfy.execution.transformation_runner import (

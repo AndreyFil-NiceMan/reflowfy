@@ -19,12 +19,9 @@ from typing import Any, Dict, List, NamedTuple, Optional, Tuple, cast
 from reflowfy.core.abstract_pipeline import AbstractPipeline
 from reflowfy.core.async_utils import run_coroutine_sync
 from reflowfy.core.exceptions import SkipJob, SkipRecord
-from reflowfy.core.record_validation import (
-    describe_invalid,
-    find_invalid_records,
-    step_output_type,
-)
+from reflowfy.core.record_validation import describe_invalid, find_invalid_records
 from reflowfy.observability.logging import get_logger
+from reflowfy.transformations.output_type import step_output_type
 from reflowfy.transformations.base import (
     AsyncTransformation,
     RecordFailure,

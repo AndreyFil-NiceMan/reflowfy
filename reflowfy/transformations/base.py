@@ -2,7 +2,7 @@
 
 import asyncio
 from abc import ABCMeta, abstractmethod
-from typing import Any, ClassVar, Dict, List, Literal, NamedTuple, Optional, Tuple
+from typing import Any, ClassVar, Dict, List, Literal, NamedTuple, Optional, Sequence, Tuple
 
 from reflowfy.core.exceptions import SkipJob, SkipRecord
 from reflowfy.core.query_loader import QueryLoaderMixin
@@ -121,6 +121,10 @@ class BaseTransformation(QueryLoaderMixin, metaclass=TransformationMeta):
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(name='{self.name}')"
+
+
+Transformations = Sequence[BaseTransformation]
+"""What ``define_transformations`` returns."""
 
 
 class AsyncTransformation(BaseTransformation):

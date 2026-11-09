@@ -192,7 +192,7 @@ def test_round_trip_check_runs_once_per_config_shape(monkeypatch: pytest.MonkeyP
 def test_same_name_from_another_module_warns(caplog: pytest.LogCaptureFixture) -> None:
     saved = SourceFactory._registry["PagesSource"]
     try:
-        with caplog.at_level(logging.WARNING, logger="reflowfy.factories.source_factory"):
+        with caplog.at_level(logging.WARNING, logger="reflowfy.sources.base"):
 
             class PagesSource(BaseSource):  # noqa: F811  # pyright: ignore[reportRedeclaration]
                 def fetch(self, runtime_params: Dict[str, Any], limit: Optional[int] = None) -> Any:
@@ -211,7 +211,7 @@ def test_reregistering_the_same_class_is_silent(caplog: pytest.LogCaptureFixture
     # same source, not a clash.
     twin = type("PagesSource", (PagesSource,), {"__module__": PagesSource.__module__})
     try:
-        with caplog.at_level(logging.WARNING, logger="reflowfy.factories.source_factory"):
+        with caplog.at_level(logging.WARNING, logger="reflowfy.sources.base"):
             SourceFactory.register("PagesSource", PagesSource)
             SourceFactory.register("PagesSource", twin)
         assert not caplog.records
