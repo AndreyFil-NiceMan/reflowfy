@@ -79,7 +79,7 @@ class BearerTokenMiddleware:
             scope.get("method"),
             scope.get("path"),
             reason,
-            extra={"event": "auth_rejected", "reason": reason, "service": self.service},
+            extra={"event": "auth_rejected", "reason": reason},
         )
         body = json.dumps(
             {"detail": f"{reason} bearer token: send 'Authorization: Bearer <REFLOWFY_API_TOKEN>'"}
@@ -105,5 +105,5 @@ def install_api_auth(app: Any, service: str) -> None:
     logger.info(
         "API token authentication %s",
         f"on ({API_TOKEN_ENV} set; /health and /metrics stay open)" if enabled else "off",
-        extra={"event": "auth_configured", "enabled": enabled, "service": service},
+        extra={"event": "auth_configured", "enabled": enabled},
     )

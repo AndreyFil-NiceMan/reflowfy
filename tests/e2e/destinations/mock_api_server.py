@@ -217,6 +217,54 @@ async def webhook_options():
 
 
 # ============================================================================
+# Behaviour endpoint for the framework-gaps E2E tests
+# ============================================================================
+
+# (run, name) -> every request received, with its arrival time and answer.
+gap_requests: Dict[str, List[Dict[str, Any]]] = {}
+
+
+@app.api_route("/gaps/{run}/{name}", methods=["POST", "PUT"])
+async def gap_endpoint(
+    run: str,
+    name: str,
+    request: Request,
+    status: int = 200,
+    fail_first: int = 0,
+    retry_after: str = "",
+):
+    """Answer ``status`` (always), or a 503 for the first ``fail_first`` requests and
+    200 after; ``retry_after`` adds that header to every non-2xx answer. Every request
+    is logged with its time, so a test can count retries and measure their spacing."""
+    from fastapi.responses import JSONResponse
+
+    key = f"{run}/{name}"
+    log = gap_requests.setdefault(key, [])
+    raw = await request.body()
+    try:
+        body: Any = json.loads(raw) if raw else None
+    except ValueError:
+        body = raw.decode("utf-8", "replace")
+    answer = status
+    if fail_first and len(log) < fail_first:
+        answer = 503
+    log.append({"at": datetime.now(timezone.utc).timestamp(), "status": answer, "body": body})
+    headers = {"Retry-After": retry_after} if retry_after and answer >= 300 else None
+    return JSONResponse({"status": answer}, status_code=answer, headers=headers)
+
+
+@app.head("/gaps/{run}/{name}")
+async def gap_head(run: str, name: str):
+    """Health probe: always healthy, so only the send itself is under test."""
+    return None
+
+
+@app.get("/gaps/{run}/{name}")
+async def gap_log(run: str, name: str):
+    return {"requests": gap_requests.get(f"{run}/{name}", [])}
+
+
+# ============================================================================
 # Main
 # ============================================================================
 
