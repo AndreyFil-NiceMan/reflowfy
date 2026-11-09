@@ -21,7 +21,6 @@ from reflowfy import record_destination
 from reflowfy.destinations.api import api_destination
 from reflowfy.destinations.base import ConnectionPool
 from reflowfy.destinations.kafka import KafkaDestination, kafka_destination
-from reflowfy.execution.local_executor import _send_and_close
 
 # ---------------------------------------------------------------- fakes
 
@@ -463,40 +462,3 @@ class TestConnectionPool:
         await dest.send_with_retry(result.records, {})
         with pytest.raises(RuntimeError, match="stop failed"):
             await dest.close()
-
-
-# ---------------------------------------------------------------- LocalExecutor send
-
-
-class TestLocalExecutorSend:
-    def test_an_async_destination_is_actually_sent_and_closed(self, producers):
-        dest = kafka_destination(bootstrap_servers="k:9092", topic="t")
-        _send_and_close(dest, [{"a": 1}, {"a": 2}], {"execution_id": "e"})
-        (producer,) = producers
-        assert [m["value"] for m in producer.sent] == [{"a": 1}, {"a": 2}]
-        assert producer.stopped == 1
-
-    def test_closed_even_when_the_send_fails(self):
-        events: List[str] = []
-
-        class Failing:
-            async def send_with_retry(self, records: Any, metadata: Any) -> None:
-                events.append("send")
-                raise RuntimeError("down")
-
-            async def close(self) -> None:
-                events.append("close")
-
-        with pytest.raises(RuntimeError, match="down"):
-            _send_and_close(Failing(), [{"a": 1}], {})
-        assert events == ["send", "close"]
-
-    def test_a_destination_without_close(self):
-        sent: List[Any] = []
-
-        class NoClose:
-            def send_with_retry(self, records: Any, metadata: Any) -> None:
-                sent.extend(records)
-
-        _send_and_close(NoClose(), [1, 2], {})
-        assert sent == [1, 2]

@@ -4,7 +4,6 @@ A single source of truth for how one job's records flow from a (narrowed)
 source through transformations to a resolved destination. Used by:
 
 - ``reflowfy/worker/executor.py`` (distributed/local-dispatcher worker),
-- ``reflowfy/execution/local_executor.py`` (API local-mode executor),
 - ``reflowfy/cli/commands/test.py`` (``reflowfy test``).
 
 Each caller owns its own concerns around this core (slice planning via

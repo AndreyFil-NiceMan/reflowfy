@@ -692,16 +692,3 @@ async def test_the_worker_stores_and_counts_skipped_records(
     assert "'odd id' x2" in skipped.getMessage()
     (applied,) = [r for r in caplog.records if getattr(r, "event", None) == "transform_applied"]
     assert (getattr(applied, "mode"), getattr(applied, "concurrency")) == ("per_record", 4)
-
-
-def test_local_mode_logs_why_records_were_skipped(caplog: pytest.LogCaptureFixture):
-    from reflowfy.execution.local_executor import LocalExecutor
-
-    pipeline = _Pipeline([skip_odd()], destination=_Dest())
-    pipeline.source = StaticSource(_records(4))  # type: ignore[attr-defined]
-    pipeline.name = "ut_async_local"
-    with caplog.at_level("INFO"):
-        LocalExecutor().execute(pipeline=pipeline, runtime_params={})
-    assert "ut_rec_skip_record skipped 2 records: {'odd id': 2}" in caplog.text
-    (record,) = [r for r in caplog.records if getattr(r, "event", None) == "records_skipped"]
-    assert getattr(record, "records_skipped") == 2

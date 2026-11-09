@@ -51,14 +51,14 @@ def isolated_registry() -> Iterator[None]:
 
 @pytest.fixture
 def executors(monkeypatch) -> List[Dict[str, Any]]:
-    """Capture get_executor calls instead of building real HTTP clients."""
+    """Capture DistributedExecutor construction instead of building real HTTP clients."""
     calls: List[Dict[str, Any]] = []
 
-    def fake_get_executor(mode: str, **kwargs: Any) -> MagicMock:
-        calls.append({"mode": mode, **kwargs})
-        return MagicMock(name=f"executor-{kwargs.get('execution_mode')}")
+    def fake_executor(**kwargs: Any) -> MagicMock:
+        calls.append(kwargs)
+        return MagicMock(name=f"executor-{kwargs.get('mode')}")
 
-    monkeypatch.setattr(api_app, "get_executor", fake_get_executor)
+    monkeypatch.setattr(api_app, "DistributedExecutor", fake_executor)
     return calls
 
 
@@ -109,16 +109,8 @@ class TestLifespan:
 
         # Both executors forward to the manager; only the dispatch mode differs.
         assert executors == [
-            {
-                "mode": "distributed",
-                "reflow_manager_url": "http://mgr:9001",
-                "execution_mode": "local",
-            },
-            {
-                "mode": "distributed",
-                "reflow_manager_url": "http://mgr:9001",
-                "execution_mode": "distributed",
-            },
+            {"reflow_manager_url": "http://mgr:9001", "mode": "local"},
+            {"reflow_manager_url": "http://mgr:9001", "mode": "distributed"},
         ]
 
     def test_startup_with_no_pipelines_adds_no_routes(
