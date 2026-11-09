@@ -232,7 +232,8 @@ def test_run_accepts_persists_and_schedules_the_dispatch(client, db, background)
     assert response.status_code == 202
     body = response.json()
     assert body["execution_id"] == "run-1" and body["state"] == "pending"
-    assert body["status_url"] == "/executions/run-1"
+    assert body["status_url"] == "/executions/run-1/stats"
+    assert client.get(body["status_url"]).status_code == 200  # a route that exists
     assert "warnings" not in body
 
     execution = _execution_row(db, "run-1")

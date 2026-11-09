@@ -5,6 +5,7 @@ import types
 from typing import Any, Dict, Iterator, List
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -12,7 +13,6 @@ from fastapi.testclient import TestClient
 import reflowfy.api.app as api_app
 from reflowfy import AbstractPipeline, RuntimeParams, __version__, pipeline_registry
 from reflowfy.api.execution import execution_tracker
-from reflowfy.execution.base import ExecutionState, ExecutionStatus
 
 
 def _register(name: str, **attrs: Any) -> None:
@@ -180,26 +180,57 @@ class TestBuiltinEndpoints:
         assert resp.headers["content-type"].startswith("text/plain")
         assert "reflowfy_jobs_processed_total" in resp.text
 
-    def test_execution_status_unknown_is_404(self, client):
+    @staticmethod
+    def _manager(monkeypatch, handler):
+        """Route the status route's manager calls to ``handler`` (an httpx handler)."""
+        real = httpx.AsyncClient
+        monkeypatch.setenv("REFLOW_MANAGER_URL", "http://manager")
+        monkeypatch.setattr(
+            api_app.httpx,
+            "AsyncClient",
+            lambda **kw: real(transport=httpx.MockTransport(handler), **kw),
+        )
+
+    def test_execution_status_unknown_is_404(self, client, monkeypatch):
+        self._manager(monkeypatch, lambda request: httpx.Response(404, json={}))
         resp = client.get("/executions/nope/status")
         assert resp.status_code == 404
         assert resp.json() == {"error": "Execution 'nope' not found"}
 
-    def test_execution_status_known(self, client):
-        execution_tracker.track(
-            ExecutionStatus(
-                execution_id="known",
-                pipeline_name="p",
-                state=ExecutionState.COMPLETED,
-                total_jobs=2,
-                completed_jobs=2,
+    def test_execution_status_is_read_live_from_the_manager(self, client, monkeypatch):
+        """It used to be a snapshot of the 202 response that never changed."""
+        seen: List[str] = []
+
+        def manager(request: httpx.Request) -> httpx.Response:
+            seen.append(str(request.url))
+            return httpx.Response(
+                200,
+                json={
+                    "execution_id": "known",
+                    "pipeline_name": "p",
+                    "state": "completed",
+                    "total_jobs": 4,
+                    "jobs_completed": 3,
+                    "jobs_failed": 1,
+                    "error_message": None,
+                },
             )
-        )
+
+        self._manager(monkeypatch, manager)
         resp = client.get("/executions/known/status")
         assert resp.status_code == 200
         body = resp.json()
+        assert seen == ["http://manager/executions/known/stats"]
         assert body["state"] == "completed"
-        assert body["success_rate"] == 1.0
+        assert (body["completed_jobs"], body["failed_jobs"]) == (3, 1)
+        assert body["success_rate"] == 0.75
+
+    def test_execution_status_when_the_manager_is_down_is_502(self, client, monkeypatch):
+        def down(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("refused")
+
+        self._manager(monkeypatch, down)
+        assert client.get("/executions/x/status").status_code == 502
 
     def test_cors_allows_any_origin(self, client):
         resp = client.options(
