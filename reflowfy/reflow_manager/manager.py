@@ -44,7 +44,6 @@ class ReflowManager:
         db_session: Session,
         kafka_bootstrap_servers: str = "localhost:9092",
         kafka_topic: str = "reflow.jobs",
-        max_jobs_per_minute: Optional[float] = None,
         execution_mode: str = "distributed",  # "distributed" or "local"
         # SASL Authentication
         kafka_security_protocol: Optional[str] = None,
@@ -59,9 +58,6 @@ class ReflowManager:
             db_session: SQLAlchemy database session
             kafka_bootstrap_servers: Kafka broker addresses
             kafka_topic: Topic for job dispatch
-            max_jobs_per_minute: Ignored (kept for compatibility). A pipeline with no
-                rate limit (no /run override, ``define_rate_limit`` or ``rate_limit``)
-                is unlimited; there is no global default any more.
             execution_mode: "distributed" (Kafka) or "local" (In-process)
             kafka_security_protocol: SASL security protocol (e.g., "SASL_PLAINTEXT")
             kafka_sasl_mechanism: SASL mechanism (e.g., "SCRAM-SHA-256")
@@ -71,7 +67,6 @@ class ReflowManager:
         self.db = db_session
         self.kafka_bootstrap_servers = kafka_bootstrap_servers
         self.kafka_topic = kafka_topic
-        self.max_jobs_per_minute = max_jobs_per_minute
         self.execution_mode = execution_mode
 
         # Initialize component managers
@@ -136,17 +131,6 @@ class ReflowManager:
     ) -> Optional[Execution]:
         return self.execution_manager.update_execution_state(execution_id, state, error_message)
 
-    def update_job_counts(
-        self,
-        execution_id: str,
-        jobs_dispatched: Optional[int] = None,
-        jobs_completed: Optional[int] = None,
-        jobs_failed: Optional[int] = None,
-    ) -> Optional[Execution]:
-        return self.execution_manager.update_job_counts(
-            execution_id, jobs_dispatched, jobs_completed, jobs_failed
-        )
-
     def pause_execution(self, execution_id: str) -> Optional[Execution]:
         return self.execution_manager.pause_execution(execution_id)
 
@@ -167,17 +151,6 @@ class ReflowManager:
         return CancelResult(execution=execution, cancelled_jobs=cancelled)
 
     # ===== Pipeline Execution (delegated) =====
-
-    def run_pipeline(
-        self,
-        pipeline_name: str,
-        runtime_params: Dict[str, Any],
-        execution_id: str,
-        rate_limit_override: Optional[float] = None,
-    ) -> Dict[str, Any]:
-        return self.pipeline_runner.run_pipeline(
-            pipeline_name, runtime_params, execution_id, rate_limit_override
-        )
 
     def run_pipeline_jobs(
         self,
@@ -301,9 +274,3 @@ class ReflowManager:
             )
 
         return batches
-
-    # ===== Cleanup =====
-
-    async def close(self) -> None:
-        """Close connections."""
-        await self.dispatcher.close()

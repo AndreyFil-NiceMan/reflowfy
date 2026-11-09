@@ -13,8 +13,7 @@ class TestDispatchFailureMarksExecution:
         exec_manager = MagicMock()
 
         with (
-            patch.object(app, "_get_kafka_config", return_value={}),
-            patch.object(app, "ReflowManager", side_effect=RuntimeError("boom")),
+            patch.object(app, "make_manager", side_effect=RuntimeError("boom")),
             patch.object(app, "ExecutionManager", return_value=exec_manager) as em_cls,
             patch.object(app, "SessionLocal", return_value=fake_db),
         ):

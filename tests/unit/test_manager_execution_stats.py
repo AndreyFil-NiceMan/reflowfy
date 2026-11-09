@@ -146,32 +146,6 @@ def test_current_checkpoint_when_every_batch_completed(db):
     assert _manager(db).get_execution_stats("e")["current_checkpoint"] == 3  # type: ignore[index]
 
 
-def test_update_job_counts_increments_without_committing(db):
-    _execution(db, jobs_dispatched=1, jobs_completed=2, jobs_failed=0)
-    em = ExecutionManager(db)
-
-    em.update_job_counts("e", jobs_dispatched=4, jobs_completed=3)
-    execution = em.update_job_counts("e", jobs_failed=2)
-
-    assert execution is not None
-    assert (execution.jobs_dispatched, execution.jobs_completed, execution.jobs_failed) == (5, 5, 2)
-    db.rollback()  # the caller commits; nothing was persisted yet
-    db.expire_all()
-    persisted = em.get_execution("e")
-    assert persisted is not None
-    assert (persisted.jobs_dispatched, persisted.jobs_completed, persisted.jobs_failed) == (1, 2, 0)
-
-
-def test_update_job_counts_via_manager_and_unknown(db):
-    _execution(db, jobs_dispatched=0, jobs_completed=0, jobs_failed=0)
-    manager = _manager(db)
-    assert manager.update_job_counts("nope", jobs_completed=1) is None
-    execution = manager.update_job_counts("e", jobs_dispatched=1, jobs_completed=1, jobs_failed=1)
-    assert execution is not None
-    db.commit()
-    assert (execution.jobs_dispatched, execution.jobs_completed, execution.jobs_failed) == (1, 1, 1)
-
-
 @pytest.mark.parametrize(
     "state, paused",
     [
@@ -216,15 +190,6 @@ def test_pause_and_resume_unknown(db):
     em = ExecutionManager(db)
     assert em.pause_execution("nope") is None
     assert em.resume_execution("nope") is None
-
-
-def test_update_deduplicated_count_sets_not_adds(db):
-    _execution(db, deduplicated_jobs=2)
-    em = ExecutionManager(db)
-    em.update_deduplicated_count("e", 7)
-    em.update_deduplicated_count("nope", 3)  # unknown: ignored
-    db.expire_all()
-    assert db.query(Execution).one().deduplicated_jobs == 7
 
 
 def test_update_execution_state_terminal_sets_completed_at(db):

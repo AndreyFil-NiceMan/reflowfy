@@ -330,7 +330,7 @@ def test_resume_swallows_and_logs_errors(factory, monkeypatch, caplog):
     def broken(db: Session, mode: Any = None) -> Any:
         raise RuntimeError("cannot build manager")
 
-    monkeypatch.setattr(app_module, "_make_manager", broken)
+    monkeypatch.setattr(app_module, "make_manager", broken)
     app_module._resume_execution_sync("e")  # a recovery thread must not crash
     assert "Failed to resume execution" in caplog.text
 

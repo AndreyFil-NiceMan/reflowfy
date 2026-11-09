@@ -297,80 +297,6 @@ class PipelineRunner:
         self.job_manager = job_manager
         self.dispatcher = dispatcher
 
-    @bind_log_context("execution_id", "pipeline_name")
-    def run_pipeline(
-        self,
-        pipeline_name: str,
-        runtime_params: Dict[str, Any],
-        execution_id: str,
-        rate_limit_override: Optional[float] = None,
-    ) -> Dict[str, Any]:
-        """
-        Execute a pipeline by splitting jobs and dispatching to Kafka.
-
-        This creates a new execution record, then runs the pipeline.
-
-        Args:
-            pipeline_name: Name of the registered pipeline
-            runtime_params: Runtime parameters for the pipeline
-            execution_id: Unique execution identifier
-            rate_limit_override: Optional override for jobs per minute
-
-        Returns:
-            Dictionary with execution details and job counts
-        """
-        from reflowfy.core.registry import pipeline_registry
-
-        # Load pipeline from registry
-        pipeline = pipeline_registry.get(pipeline_name)
-        if not pipeline:
-            raise ValueError(
-                f"Pipeline '{pipeline_name}' not found in registry"
-                f"{pipeline_registry.describe_missing(pipeline_name)}"
-            )
-
-        logger.info("Running pipeline", extra={"event": "execution_start"})
-
-        # Create execution record
-        self.execution_manager.create_execution(
-            execution_id=execution_id,
-            pipeline_name=pipeline_name,
-            runtime_params=runtime_params,
-            rate_limit=rate_limit_override,
-        )
-
-        # Run the job dispatch; always leave execution in a terminal state
-        try:
-            self.run_pipeline_jobs(
-                execution_id=execution_id,
-                pipeline_name=pipeline_name,
-                runtime_params=runtime_params,
-                rate_limit_override=rate_limit_override,
-            )
-        except Exception as exc:
-            try:
-                self.execution_manager.update_execution_state(
-                    execution_id, "failed", error_message=str(exc)
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to mark execution as failed",
-                    extra={"event": "execution_mark_failed_error"},
-                )
-            raise
-
-        # Refresh execution to get final counts
-        execution = self.execution_manager.get_execution(execution_id)
-        assert execution is not None
-
-        return {
-            "execution_id": execution_id,
-            "pipeline_name": pipeline_name,
-            "state": execution.state,
-            "jobs_dispatched": execution.jobs_dispatched,
-            "rate_limit": execution.rate_limit,
-        }
-
     def start_pipeline(
         self,
         pipeline_name: str,
@@ -742,7 +668,7 @@ class PipelineRunner:
                 dedup_check=dedup_check,
                 job_params=own_params,
             )
-            job_payload = self._serialize_for_json(job_payload)
+            job_payload = to_json_safe(job_payload)
 
             job_rows.append(
                 {
@@ -1258,24 +1184,6 @@ class PipelineRunner:
             execution.total_jobs = total
             self.execution_manager.db.commit()
 
-    def _set_job_counts(
-        self,
-        execution_id: str,
-        dispatched: Optional[int] = None,
-        completed: Optional[int] = None,
-        failed: Optional[int] = None,
-    ) -> None:
-        """Set job counts for an execution (uses SET, not +=)."""
-        execution = self.execution_manager.get_execution(execution_id)
-        if execution:
-            if dispatched is not None:
-                execution.jobs_dispatched = dispatched
-            if completed is not None:
-                execution.jobs_completed = completed
-            if failed is not None:
-                execution.jobs_failed = failed
-            self.execution_manager.db.commit()
-
     def _sync_counts_from_db(self, execution_id: str) -> Tuple[int, int, int]:
         """
         Sync job counts from actual job states in database.
@@ -1308,7 +1216,3 @@ class PipelineRunner:
             self.execution_manager.db.commit()
 
         return (dispatched, completed + deduplicated, failed)
-
-    def _serialize_for_json(self, obj: Any) -> Any:
-        """Recursively convert objects to JSON-serializable form."""
-        return to_json_safe(obj)
