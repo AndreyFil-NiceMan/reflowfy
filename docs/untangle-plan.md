@@ -484,7 +484,18 @@ constants.
        loop, and tests pin its module constants.
      - The DLQ's `_dlq_source`/`_dlq_job_ids` stay. They are declared
        `RuntimeParams` keys a replayed run can read.
-9. **F5 + F6:** one serializer and a thin API.
+9. **F5 + F6:** ✅ done.
+   - `public_row(row)` is the one way a route returns a stored row, and a test
+     fails on any other `.to_dict()` in the manager package.
+   - `redact_row` now also masks URL passwords in `error_message` / `hook_error`,
+     and the stats routes mask `error_message`. Those were handed out raw.
+   - The API has one `DistributedExecutor`, and each call names its `mode`.
+     There used to be two instances that differed only in mode, chosen by
+     `_run_body(pipeline, local_executor, distributed_executor, …)`.
+   - `execution/base.py` is deleted: `BaseExecutor` had one implementation, and
+     the `(str, Enum)` `ExecutionState` logged as `ExecutionState.FAILED` on
+     Python 3.11+. `ExecutionStatus` lives beside the client and uses the
+     `store.states` strings.
 10. **F9 + F10:** connector specs and shared building blocks.
 11. **F11, F12, then comments.**
 12. **Repeat:** audit again for special cases, hidden links, needless links and

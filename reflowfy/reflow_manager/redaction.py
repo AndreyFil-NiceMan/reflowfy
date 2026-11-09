@@ -3,9 +3,9 @@
 The stored rows are unchanged: only what the API hands out is redacted.
 """
 
-from typing import Any, Dict, cast
+from typing import Any, Dict, Protocol, cast
 
-from reflowfy.core.secrets import redact_config
+from reflowfy.core.secrets import mask_url_passwords_in_text, redact_config
 from reflowfy.factories.source_factory import SourceFactory
 
 
@@ -30,6 +30,8 @@ def redact_job_payload(payload: Any) -> Any:
 
 #: Fields of an API row (job, execution, schedule, DLQ job) that can hold credentials.
 _ROW_FIELDS = ("job_payload", "runtime_params")
+#: Free-text fields: an error from a driver may quote its connection URL.
+_TEXT_FIELDS = ("error_message", "hook_error", "error")
 
 
 def redact_row(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -43,4 +45,17 @@ def redact_row(row: Dict[str, Any]) -> Dict[str, Any]:
     for field in _ROW_FIELDS:
         if field in redacted:
             redacted[field] = redact_job_payload(redacted[field])
+    for field in _TEXT_FIELDS:
+        if isinstance(redacted.get(field), str):
+            redacted[field] = mask_url_passwords_in_text(redacted[field])
     return redacted
+
+
+class _Row(Protocol):
+    def to_dict(self) -> Dict[str, Any]: ...
+
+
+def public_row(row: _Row) -> Dict[str, Any]:
+    """A stored row (job, execution, schedule, DLQ job) as a route returns it: its
+    ``to_dict()``, redacted. Routes never return ``to_dict()`` directly."""
+    return redact_row(row.to_dict())

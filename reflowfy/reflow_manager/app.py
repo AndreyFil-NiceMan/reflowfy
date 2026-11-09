@@ -20,7 +20,7 @@ from reflowfy import __version__  # noqa: E402
 
 from reflowfy.core.api_auth import install_api_auth  # noqa: E402
 from reflowfy.core.secrets import mask_url_passwords_in_text  # noqa: E402
-from reflowfy.reflow_manager.redaction import redact_row  # noqa: E402
+from reflowfy.reflow_manager.redaction import public_row, redact_row  # noqa: E402
 from reflowfy.observability.context import bind_log_context  # noqa: E402
 from reflowfy.observability.logging import setup_logging  # noqa: E402
 from reflowfy.reflow_manager.database import get_db, init_db, SessionLocal  # noqa: E402
@@ -213,12 +213,12 @@ async def update_execution_state(
     if request.state == "cancelled":
         cancelled = manager.cancel_execution(execution_id)
         assert cancelled is not None  # checked non-terminal above
-        return redact_row(cancelled.execution.to_dict())
+        return public_row(cancelled.execution)
     updated = manager.update_execution_state(
         execution_id=execution_id, state="failed", error_message=request.error_message
     )
     assert updated is not None
-    return redact_row(updated.to_dict())
+    return public_row(updated)
 
 
 @app.post("/executions/{execution_id}/cancel")
@@ -247,7 +247,7 @@ async def cancel_execution(
     return {
         "message": "Execution cancelled",
         "cancelled_jobs": cancelled.cancelled_jobs,
-        "execution": redact_row(cancelled.execution.to_dict()),
+        "execution": public_row(cancelled.execution),
     }
 
 
@@ -270,7 +270,7 @@ async def pause_execution(
             detail=f"Execution '{execution_id}' is not running",
         )
 
-    return {"message": "Execution paused", "execution": redact_row(execution.to_dict())}
+    return {"message": "Execution paused", "execution": public_row(execution)}
 
 
 @app.post("/executions/{execution_id}/resume")
@@ -295,7 +295,7 @@ async def resume_execution(
         )
 
     background_tasks.add_task(_resume_execution_sync, execution_id)
-    return {"message": "Execution resumed", "execution": redact_row(execution.to_dict())}
+    return {"message": "Execution resumed", "execution": public_row(execution)}
 
 
 @app.post("/executions/{execution_id}/retry-failed")
@@ -350,7 +350,7 @@ async def get_jobs(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Execution '{execution_id}' not found",
         )
-    return [redact_row(job.to_dict()) for job in jobs]
+    return [public_row(job) for job in jobs]
 
 
 @app.get("/executions/{execution_id}/errors")

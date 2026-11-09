@@ -1,12 +1,19 @@
-"""Distributed executor with ReflowManager."""
+"""The API's client for the ReflowManager's ``/run``.
+
+The API keeps no execution state of its own: it forwards a run to the manager and
+reports what the manager said. ``mode`` is per call (``local`` makes the manager use
+its in-process dispatcher), so one client serves every route.
+"""
 
 import logging
 import uuid
+from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
+
 import httpx
 
 from reflowfy.core.api_auth import auth_headers
-from reflowfy.execution.base import BaseExecutor, ExecutionStatus, ExecutionState
+from reflowfy.store.states import ExecutionState
 
 logger = logging.getLogger(__name__)
 
@@ -15,18 +22,53 @@ logger = logging.getLogger(__name__)
 DEFAULT_TIMEOUT_SECONDS = 30.0
 
 
-class DistributedExecutor(BaseExecutor):
-    """
-    Distributed executor for /run mode.
+def _empty_metadata() -> Dict[str, Any]:
+    """Typed default factory — a bare `dict` resolves to dict[Unknown, Unknown]."""
+    return {}
 
-    Forwards pipeline execution requests to ReflowManager's /run endpoint.
-    ReflowManager handles:
-    1. Loading the pipeline from registry
-    2. Splitting source data into jobs
-    3. Creating execution and checkpoints
-    4. Dispatching jobs to Kafka with rate limiting
-    5. Workers process asynchronously
+
+@dataclass
+class ExecutionStatus:
+    """What the API reports for one submitted run (the ``status`` of its response).
+
+    ``state`` is ``running`` once the manager accepted it, ``failed`` when it did not;
+    the execution's real progress is the manager's (``/executions/{id}/status``).
     """
+
+    execution_id: str
+    pipeline_name: str
+    state: str
+    total_jobs: int = 0
+    completed_jobs: int = 0
+    failed_jobs: int = 0
+    retry_count: int = 0
+    error_message: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=_empty_metadata)
+
+    @property
+    def success_rate(self) -> float:
+        if self.total_jobs == 0:
+            return 0.0
+        return self.completed_jobs / self.total_jobs
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "execution_id": self.execution_id,
+            "pipeline_name": self.pipeline_name,
+            "state": self.state,
+            "total_jobs": self.total_jobs,
+            "completed_jobs": self.completed_jobs,
+            "failed_jobs": self.failed_jobs,
+            "retry_count": self.retry_count,
+            "success_rate": self.success_rate,
+            "error_message": self.error_message,
+            "metadata": self.metadata,
+        }
+
+
+class DistributedExecutor:
+    """Forwards a run to the ReflowManager's ``/run``, which plans, records and
+    dispatches it (to Kafka, or in-process for ``mode="local"``)."""
 
     def __init__(
         self,
@@ -40,7 +82,8 @@ class DistributedExecutor(BaseExecutor):
         Args:
             reflow_manager_url: ReflowManager service URL
             timeout: HTTP request timeout
-            mode: Execution mode ('local' or 'distributed')
+            mode: Default execution mode ('local' or 'distributed'), when a call
+                does not name one
         """
         self.reflow_manager_url = reflow_manager_url.rstrip("/")
         self.timeout = timeout
@@ -61,6 +104,7 @@ class DistributedExecutor(BaseExecutor):
         execution_id: Optional[str] = None,
         rate_limit_override: Optional[float] = None,
         callback_url: Optional[str] = None,
+        mode: Optional[str] = None,
     ) -> ExecutionStatus:
         """
         Execute pipeline in distributed mode via ReflowManager.
@@ -116,7 +160,7 @@ class DistributedExecutor(BaseExecutor):
                 "runtime_params": runtime_params,
                 "execution_id": execution_id,
                 "rate_limit": rate_limit,
-                "mode": self.mode,
+                "mode": mode or self.mode,
             }
             if callback_url is not None:
                 run_request["callback_url"] = callback_url

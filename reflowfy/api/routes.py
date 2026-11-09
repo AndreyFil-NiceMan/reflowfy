@@ -9,7 +9,7 @@ import pydantic
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 
-from reflowfy.execution.base import ExecutionState
+from reflowfy.store.states import ExecutionState
 
 logger = logging.getLogger(__name__)
 
@@ -35,23 +35,15 @@ def _check_status(status: Any) -> None:
 
 def _run_body(
     pipeline: Any,
-    local_executor: Any,
-    distributed_executor: Any,
-    pipeline_name: str,
+    client: Any,
     runtime_params_dict: Dict[str, Any],
     mode: str,
     rate_limit: float | None,
     callback_url: str | None = None,
 ) -> PipelineRunResponse:
-    """Shared execution logic used by all route variants."""
-    if mode == "local":
-        executor = local_executor
-        mode_label = "local"
-    else:
-        executor = distributed_executor
-        mode_label = "distributed"
-
-    rate_limit_override = rate_limit
+    """Forward one run to the manager and answer with what it said."""
+    pipeline_name = pipeline.name
+    mode_label = "local" if mode == "local" else "distributed"
 
     logger.info(
         "Running pipeline %s (mode=%s, rate_limit=%s, %d params)",
@@ -69,13 +61,12 @@ def _run_body(
     )
 
     try:
-        # Only when given: an executor written before callback_url existed still works.
-        extra: Dict[str, Any] = {} if callback_url is None else {"callback_url": callback_url}
-        status = executor.execute(
+        status = client.execute(
             pipeline=pipeline,
             runtime_params=runtime_params_dict,
-            rate_limit_override=rate_limit_override,
-            **extra,
+            rate_limit_override=rate_limit,
+            callback_url=callback_url,
+            mode=mode_label,
         )
     except Exception as e:
         logger.exception(
@@ -95,7 +86,7 @@ def _run_body(
             "event": "run_finished",
             "execution_id": status.execution_id,
             "pipeline_name": pipeline_name,
-            "state": str(status.state),
+            "state": status.state,
         },
     )
 
@@ -173,13 +164,7 @@ def _is_body_param(p: Any) -> bool:
     return p.choices is None and p.param_type in _BODY_PARAM_TYPES
 
 
-def _create_run_route(
-    app: FastAPI,
-    pipeline: Any,
-    local_executor: Any,
-    distributed_executor: Any,
-    params: Any,
-) -> None:
+def _create_run_route(app: FastAPI, pipeline: Any, client: Any, params: Any) -> None:
     """
     Register the POST /pipelines/{name}/run route for a pipeline.
 
@@ -273,9 +258,7 @@ def _create_run_route(
             runtime_params.update(body.model_dump())
         return _run_body(
             pipeline=pipeline,
-            local_executor=local_executor,
-            distributed_executor=distributed_executor,
-            pipeline_name=pipeline_name,
+            client=client,
             runtime_params_dict=runtime_params,
             mode=mode,
             rate_limit=rate_limit,
@@ -317,12 +300,7 @@ def _rate_limit_description(pipeline: Any) -> str:
     return text
 
 
-def create_pipeline_routes(
-    app: FastAPI,
-    pipeline: Any,
-    local_executor: Any,
-    distributed_executor: Any,
-) -> None:
+def create_pipeline_routes(app: FastAPI, pipeline: Any, client: Any) -> None:
     """
     Create the dynamic POST /pipelines[/{folder}]/{name}/run route for a pipeline.
 
@@ -332,6 +310,4 @@ def create_pipeline_routes(
     """
     # get_all_parameters() is the declared params plus any the pipeline injects
     # (IdBasedPipeline adds the built-in 'ids').
-    _create_run_route(
-        app, pipeline, local_executor, distributed_executor, pipeline.get_all_parameters()
-    )
+    _create_run_route(app, pipeline, client, pipeline.get_all_parameters())
