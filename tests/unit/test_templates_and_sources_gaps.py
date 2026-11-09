@@ -66,7 +66,10 @@ class TestDestinationTemplate:
     def test_registers_a_reusable_kafka_destination_with_overrides(
         self, isolated_component_registries: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.delenv("KAFKA_BOOTSTRAP_SERVERS", raising=False)
+        monkeypatch.delenv("KAFKA_SERVERS", raising=False)
+        # The scaffolded compose pins this to 'ignored:9092' in local mode; the user's
+        # own destination must not pick it up.
+        monkeypatch.setenv("KAFKA_BOOTSTRAP_SERVERS", "ignored:9092")
         module = _import("destination_template.py")
 
         assert destination_registry.get("example_kafka") is module.example_kafka

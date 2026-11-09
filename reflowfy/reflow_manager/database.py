@@ -1,21 +1,19 @@
 """Database connection and session management."""
 
 import logging
-import os
 import re
 import time
 from typing import Generator
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import QueuePool
-from reflowfy.reflow_manager.db_settings import sync_connect_args
+from reflowfy.reflow_manager.db_settings import database_url, sync_connect_args
 from reflowfy.reflow_manager.models import Base
 
 logger = logging.getLogger(__name__)
 
 
-# Database URL from environment
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://reflowfy:reflowfy@localhost:5432/reflowfy")
+DATABASE_URL = database_url()
 
 # Create engine with connection pooling
 engine = create_engine(

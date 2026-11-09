@@ -152,7 +152,7 @@ def {name}(**overrides):
         def define_source(self, runtime_params):
             return {name}(index="my-index")
     """
-    # Example: return elastic_source(url=os.getenv("ELASTIC_URL"), **overrides)
+    # Example: return elastic_source(url=os.getenv("ELASTICSEARCH_URL"), **overrides)
     raise NotImplementedError("Configure your source here")
 ''')
         console.print(f"✅ Created source: {target}", style="green")

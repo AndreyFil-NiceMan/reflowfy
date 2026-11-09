@@ -7,6 +7,7 @@ import sys
 from types import FrameType
 from typing import Optional
 
+from reflowfy.reflow_manager.db_settings import database_url as env_database_url
 from reflowfy.core.kafka_settings import KafkaSettings
 from reflowfy.core.pipeline_discovery import discover_and_load_pipelines
 from reflowfy.observability import metrics
@@ -47,9 +48,7 @@ def main():
 
     # Get configuration from environment
     kafka = KafkaSettings.from_env()
-    database_url = os.getenv(
-        "DATABASE_URL", "postgresql://reflowfy:reflowfy@localhost:5432/reflowfy"
-    )
+    database_url = env_database_url()
 
     # Database host only — never log credentials.
     db_target = database_url.split("@")[-1] if "@" in database_url else database_url
