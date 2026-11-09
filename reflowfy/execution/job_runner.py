@@ -25,6 +25,7 @@ from reflowfy.destinations.fan_out import as_destination
 from reflowfy.destinations.record import RecordDestination
 from reflowfy.execution.transformation_runner import (
     AppliedStep,
+    StepMode,
     apply_transformations_iteratively_async,
 )
 from reflowfy.observability.logging import get_logger
@@ -35,7 +36,7 @@ logger = get_logger("execution.job_runner")
 RECORD_TYPE_STEP = "record_type"
 """Name of the :class:`AppliedStep` that reports the ``record_type`` check."""
 
-ROUTE_MODE = "route"
+ROUTE_MODE = StepMode.ROUTE
 """``AppliedStep.mode`` of a ``@record_destination`` choosing each record's destination.
 
 Not a transformation: reported as a step so its time and skipped records show up
@@ -79,7 +80,7 @@ def check_record_type(pipeline: Any, records: List[Any]) -> Tuple[List[Any], App
         duration=time.time() - start,
         records_in=len(records),
         records_out=len(kept),
-        mode="validate",
+        mode=StepMode.VALIDATE,
         skip_reasons=skip_reasons,
     )
     return kept, step
