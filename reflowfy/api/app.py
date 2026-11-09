@@ -174,24 +174,15 @@ def setup_pipeline_routes(app: FastAPI) -> None:
     # Get ReflowManager URL from environment
     reflow_manager_url = os.getenv("REFLOW_MANAGER_URL", "http://localhost:8001")
 
-    # Create executors - both go through ReflowManager for proper DB tracking
-    # Local mode: ReflowManager uses LocalDispatcher (in-process execution)
-    # Distributed mode: ReflowManager uses KafkaDispatcher (Kafka + workers)
-    local_executor = DistributedExecutor(reflow_manager_url=reflow_manager_url, mode="local")
-    distributed_executor = DistributedExecutor(
-        reflow_manager_url=reflow_manager_url, mode="distributed"
-    )
+    # One client for every route: each run names its mode (local = the manager's
+    # in-process dispatcher, distributed = Kafka + workers).
+    client = DistributedExecutor(reflow_manager_url=reflow_manager_url)
 
     # Create routes for each pipeline. Sorted by folder so Swagger lists the
     # top-level "pipelines" section first, then each subfolder's section.
     for pipeline in sorted(pipelines, key=lambda p: (pipeline_folder(p), p.name)):
         try:
-            create_pipeline_routes(
-                app=app,
-                pipeline=pipeline,
-                local_executor=local_executor,
-                distributed_executor=distributed_executor,
-            )
+            create_pipeline_routes(app=app, pipeline=pipeline, client=client)
         except ValueError as exc:
             # One misconfigured pipeline (e.g. a parameter named like a reserved route
             # parameter) must not take every other pipeline's routes down with it.

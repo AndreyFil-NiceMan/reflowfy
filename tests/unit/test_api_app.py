@@ -100,11 +100,8 @@ class TestLifespan:
                 }
             ]
 
-        # Both executors forward to the manager; only the dispatch mode differs.
-        assert executors == [
-            {"reflow_manager_url": "http://mgr:9001", "mode": "local"},
-            {"reflow_manager_url": "http://mgr:9001", "mode": "distributed"},
-        ]
+        # One client for every route; each run names its own mode.
+        assert executors == [{"reflow_manager_url": "http://mgr:9001"}]
 
     def test_startup_with_no_pipelines_adds_no_routes(
         self, monkeypatch, isolated_registry, executors, no_logging_setup, caplog

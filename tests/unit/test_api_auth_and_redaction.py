@@ -356,3 +356,43 @@ def test_destination_repr_hides_credentials() -> None:
     )
     for destination in (kafka, api):
         assert "pw1" not in repr(destination) and "pw2" not in repr(destination), repr(destination)
+
+
+def test_free_text_fields_lose_url_passwords():
+    from reflowfy.reflow_manager.redaction import redact_row
+
+    row = redact_row(
+        {
+            "error_message": "could not connect to postgresql://app:hunter2@db:5432/x",
+            "hook_error": "callback to https://u:p4ss@hooks.example failed",
+            "state": "failed",
+        }
+    )
+    assert "hunter2" not in row["error_message"] and "p4ss" not in row["hook_error"]
+    assert row["state"] == "failed"
+
+
+def test_routes_return_stored_rows_only_through_public_row():
+    """A row's to_dict() handed out directly skips redaction (the leak public_row
+    exists for). Pipeline metadata (pipeline.to_dict()) holds no stored values."""
+    import ast
+    import pathlib
+
+    import reflowfy.reflow_manager as pkg
+
+    allowed_receivers = {"pipeline", "p", "pipeline_obj", "job_retry", "context", "summary"}
+    offenders = []
+    for path in pathlib.Path(pkg.__file__).parent.glob("*.py"):
+        if path.name == "redaction.py":
+            continue
+        for node in ast.walk(ast.parse(path.read_text())):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "to_dict"
+            ):
+                receiver = node.func.value
+                name = receiver.id if isinstance(receiver, ast.Name) else ast.unparse(receiver)
+                if name not in allowed_receivers:
+                    offenders.append(f"{path.name}:{node.lineno} {name}.to_dict()")
+    assert offenders == []

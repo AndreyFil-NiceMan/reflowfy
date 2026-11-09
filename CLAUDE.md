@@ -112,7 +112,7 @@ HTTP POST /run → API (FastAPI) ──┐
 - **Import direction** (`tests/unit/test_layering.py`): `core` imports no connector or service; `sources`/`destinations`/`transformations` import no service and not each other; `store` imports no connector or service; `execution` and `worker` never import `reflow_manager`. There are no exceptions; a new upward import fails that test.
 - **`reflowfy/cli/`** — `typer` app (`main.py`); each subcommand registers itself from `commands/` (`init`, `new`, `run`, `build`, `check`, `deploy`, `test`).
 - **`reflowfy/sources/`, `destinations/`, `transformations/`** — built-in connectors plus the `@source`, `@destination`, `@transformation` decorators. `factories/` builds connector instances from serialized config.
-- **`reflowfy/execution/`** — the per-job core shared by the worker and `reflowfy test` (`job_runner.py`, `transformation_runner.py`), content dedup, and `DistributedExecutor` (the API's client for the manager's `/run`; its `mode=local` makes the manager use `LocalDispatcher`).
+- **`reflowfy/execution/`** — the per-job core shared by the worker and `reflowfy test` (`job_runner.py`, `transformation_runner.py`), content dedup, and `DistributedExecutor` (the API's one client for the manager's `/run`: every route shares it and each call names its `mode`; `local` makes the manager use `LocalDispatcher`; its result is an `ExecutionStatus` with `store.states` string states).
 - **`reflowfy/helm/`** — packaged Helm charts (api / reflow-manager / worker) used by `reflowfy deploy` for OpenShift/Kubernetes (KEDA-autoscaled workers).
 
 ### Worker job message (v2 schema)
@@ -573,7 +573,7 @@ harmless); `fetch(limit=n)` is `fetchmany(n)`. Tests: `tests/unit/sources/test_s
   pipeline/type/field.
 - **Redaction.** `BaseSource.secret_fields` names a source's credential keys (Sql:
   `connection_url` — only the URL's password; Elastic: `auth`; S3: `aws_secret_access_key`;
-  API: `auth_token`, `headers`). `redact_row` (`reflow_manager/redaction.py`) hides `job_payload`/`runtime_params` in every
+  API: `auth_token`, `headers`). `public_row(row)` (`reflow_manager/redaction.py`: `redact_row(row.to_dict())`) is how every route returns a stored row — `test_routes_return_stored_rows_only_through_public_row` fails on a bare `to_dict()` — and also masks URL passwords in `error_message`/`hook_error`. It hides `job_payload`/`runtime_params` in every
   manager route returning job, execution, schedule or DLQ rows: declared fields, any
   credential-named key at any depth (`password`, `token`, `api_key`, `Authorization`,
   `secret`…) and the password of any `scheme://user:pass@host`. The stored rows are unchanged.

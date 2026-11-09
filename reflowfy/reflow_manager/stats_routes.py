@@ -9,6 +9,7 @@ from sqlalchemy import func, case, desc
 from reflowfy.reflow_manager.database import get_db
 from reflowfy.store.models import Execution, Job, DLQJob, DLQJobArchive
 from reflowfy.store.states import JobState, ExecutionState
+from reflowfy.core.secrets import mask_url_passwords_in_text
 
 router = APIRouter(prefix="/stats", tags=["Stats"])
 
@@ -279,7 +280,7 @@ async def get_pipeline_detail(
                 "jobs_failed": ex.jobs_failed,
                 "created_at": ex.created_at.isoformat() if ex.created_at else None,
                 "completed_at": ex.completed_at.isoformat() if ex.completed_at else None,
-                "error_message": ex.error_message,
+                "error_message": mask_url_passwords_in_text(ex.error_message),
             }
         )
 
@@ -326,7 +327,7 @@ async def get_failure_stats(
             {
                 "execution_id": ex.execution_id,
                 "pipeline_name": ex.pipeline_name,
-                "error_message": ex.error_message,
+                "error_message": mask_url_passwords_in_text(ex.error_message),
                 "total_jobs": ex.total_jobs,
                 "jobs_failed": ex.jobs_failed,
                 "created_at": ex.created_at.isoformat() if ex.created_at else None,

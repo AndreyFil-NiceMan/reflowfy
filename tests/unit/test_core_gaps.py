@@ -26,7 +26,8 @@ from reflowfy.core.id_based_pipeline import IdBasedPipeline
 from reflowfy.core.registry import PipelineRegistry, pipeline_registry
 from reflowfy.core.runtime_params import RuntimeParams
 from reflowfy.core.serialization import to_json_safe
-from reflowfy.execution.base import ExecutionState, ExecutionStatus
+from reflowfy.execution.distributed_executor import ExecutionStatus
+from reflowfy.store.states import ExecutionState
 from reflowfy.transformations.registry import TransformationRegistry, transformation_registry
 
 

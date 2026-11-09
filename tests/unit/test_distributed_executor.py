@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, List
 import httpx
 import pytest
 
-from reflowfy.execution.base import ExecutionState
+from reflowfy.store.states import ExecutionState
 from reflowfy.execution.distributed_executor import DistributedExecutor
 
 PIPELINE = SimpleNamespace(name="orders")
