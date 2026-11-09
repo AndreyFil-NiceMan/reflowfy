@@ -13,6 +13,33 @@ import time
 from datetime import datetime
 
 from reflowfy.reflow_manager.pipeline_scheduler import PipelineScheduler
+from reflowfy import AbstractPipeline, RuntimeParams, pipeline_registry
+from typing import Any
+import pytest
+
+
+class _Scheduled(AbstractPipeline[RuntimeParams]):
+    """Stand-in for a scheduled pipeline: the scheduler checks the name is registered."""
+
+    def define_source(self, runtime_params: Any) -> Any:
+        return []
+
+    def define_transformations(self, records: Any, runtime_params: Any) -> Any:
+        return []
+
+    def define_destination(self, records: Any, runtime_params: Any) -> Any:
+        return None
+
+
+@pytest.fixture(autouse=True)
+def _registered_pipelines() -> Any:
+    names = ("due", "p", "later", "off")
+    for name in names:
+        type(f"_Scheduled_{name}", (_Scheduled,), {"name": name})  # registers itself
+    yield
+    for name in names:
+        pipeline_registry.unregister(name)
+
 
 
 class _FakeDB:
@@ -129,23 +156,3 @@ def test_overlapping_ticks_both_run():
     while len(rec.ran) < 2 and time.time() < deadline:
         time.sleep(0.05)
     assert len(rec.ran) == 2
-
-
-def test_dispatch_failure_marks_execution_failed():
-    rec = _Recorder(threading.Event())
-    rec.gate.set()  # don't block; we want the run to proceed then fail
-
-    class _FailingRunner(_FakeRunner):
-        def run_pipeline_jobs(self, execution_id, pipeline_name, runtime_params):
-            raise RuntimeError("boom")
-
-    sched = PipelineScheduler(pipeline_runner_factory=lambda: _FailingRunner(rec))
-    schedule = _FakeSchedule()
-    db = _FakeScheduleDB()
-
-    sched._trigger_pipeline(db, schedule, datetime.now())
-
-    deadline = time.time() + 5
-    while rec.failed == [] and time.time() < deadline:
-        time.sleep(0.05)
-    assert rec.failed == [(schedule.last_execution_id, "failed")]

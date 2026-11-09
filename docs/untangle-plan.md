@@ -465,10 +465,29 @@ constants.
        reserved key that user code can read.
      - The record-claim release sites. Each exit path (unhealthy destination,
        error, shutdown) needs its own ordering against the job row write.
-8. **F4 + F5 + F6:** one start path, one serializer and a thin API.
-9. **F9 + F10:** connector specs and shared building blocks.
-10. **F11, F12, then comments.**
-11. **Repeat:** audit again for special cases, hidden links, needless links and
+8. **F4:** ✅ done.
+   - `reflow_manager/start.py` holds the two shared pieces:
+     - `check_runnable` is the one "registered and valid?" check, raising
+       `PipelineNotFoundError` / `InvalidParametersError` (both `ValueError`;
+       `/run` maps them to 404/422).
+     - `drive_execution` is the one background body: run the plan, mark the
+       execution `failed` on any error (building the runner included), close the
+       session.
+   - All four start paths use them: `/run`, `lifecycle.run_pipeline`, the cron
+     scheduler and `PipelineRunner.start_pipeline` (DLQ).
+   - The scheduler now validates before it creates an execution (it used to
+     create one that failed in the background). Its failures log the shared
+     `dispatch_failed` (was `schedule_dispatch_error`); the Kibana dashboard and
+     `docs/logging.md` (regenerated from the source, it was stale) follow.
+   - Not done:
+     - Splitting `pipeline_runner.py`. It is down to planning plus the drive
+       loop, and tests pin its module constants.
+     - The DLQ's `_dlq_source`/`_dlq_job_ids` stay. They are declared
+       `RuntimeParams` keys a replayed run can read.
+9. **F5 + F6:** one serializer and a thin API.
+10. **F9 + F10:** connector specs and shared building blocks.
+11. **F11, F12, then comments.**
+12. **Repeat:** audit again for special cases, hidden links, needless links and
     surplus until nothing worth fixing is left. Then run the unit tests and the
     local and distributed E2E suites.
 
