@@ -20,7 +20,7 @@ from reflowfy.observability import (  # noqa: F401  (register families)
 from reflowfy.observability.logging import setup_logging
 from reflowfy.observability.tracing import init_tracing, instrument_fastapi
 from reflowfy.api.routes import create_pipeline_routes, pipeline_folder, pipeline_route_base
-from reflowfy.execution.distributed_executor import get_executor
+from reflowfy.execution.distributed_executor import DistributedExecutor
 
 # Named explicitly: the Dockerfiles start this with `python -m`, where __name__ is "__main__" and a
 # logger named after it sits outside the "reflowfy" logger the JSON/Elasticsearch handlers hang off.
@@ -177,15 +177,9 @@ def setup_pipeline_routes(app: FastAPI) -> None:
     # Create executors - both go through ReflowManager for proper DB tracking
     # Local mode: ReflowManager uses LocalDispatcher (in-process execution)
     # Distributed mode: ReflowManager uses KafkaDispatcher (Kafka + workers)
-    local_executor = get_executor(
-        "distributed",
-        reflow_manager_url=reflow_manager_url,
-        execution_mode="local",
-    )
-    distributed_executor = get_executor(
-        "distributed",
-        reflow_manager_url=reflow_manager_url,
-        execution_mode="distributed",
+    local_executor = DistributedExecutor(reflow_manager_url=reflow_manager_url, mode="local")
+    distributed_executor = DistributedExecutor(
+        reflow_manager_url=reflow_manager_url, mode="distributed"
     )
 
     # Create routes for each pipeline. Sorted by folder so Swagger lists the

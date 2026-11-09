@@ -207,30 +207,3 @@ class DistributedExecutor(BaseExecutor):
         if self._client:
             self._client.close()
             self._client = None
-
-
-def get_executor(mode: str, **kwargs: Any) -> BaseExecutor:
-    """
-    Factory function to get appropriate executor.
-
-    Args:
-        mode: Execution mode ('local' or 'distributed')
-        **kwargs: Executor-specific configuration
-
-    Returns:
-        BaseExecutor instance
-    """
-    if mode == "local":
-        from reflowfy.execution.local_executor import LocalExecutor
-
-        return LocalExecutor(max_records=kwargs.get("max_records", 100))
-
-    elif mode == "distributed":
-        return DistributedExecutor(
-            reflow_manager_url=kwargs.get("reflow_manager_url", "http://localhost:8001"),
-            timeout=kwargs.get("timeout", DEFAULT_TIMEOUT_SECONDS),
-            mode=kwargs.get("execution_mode", "distributed"),
-        )
-
-    else:
-        raise ValueError(f"Unknown execution mode: {mode}")

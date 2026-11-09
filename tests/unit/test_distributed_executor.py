@@ -1,5 +1,5 @@
 """DistributedExecutor: forwarding /run to the ReflowManager over a mocked HTTP
-transport (httpx.MockTransport), and the get_executor factory."""
+transport (httpx.MockTransport)."""
 
 import json
 import uuid
@@ -10,8 +10,7 @@ import httpx
 import pytest
 
 from reflowfy.execution.base import ExecutionState
-from reflowfy.execution.distributed_executor import DistributedExecutor, get_executor
-from reflowfy.execution.local_executor import LocalExecutor
+from reflowfy.execution.distributed_executor import DistributedExecutor
 
 PIPELINE = SimpleNamespace(name="orders")
 
@@ -146,33 +145,14 @@ class TestClient:
         ex.close()
 
 
-class TestGetExecutor:
-    def test_local(self):
-        ex = get_executor("local", max_records=5)
-        assert isinstance(ex, LocalExecutor)
-
-    def test_distributed_with_defaults(self):
-        ex = get_executor("distributed")
-        assert isinstance(ex, DistributedExecutor)
+class TestDefaults:
+    def test_defaults(self):
+        ex = DistributedExecutor()
         assert (ex.reflow_manager_url, ex.timeout, ex.mode) == (
             "http://localhost:8001",
             30.0,
             "distributed",
         )
-
-    def test_distributed_with_options(self):
-        ex = get_executor(
-            "distributed",
-            reflow_manager_url="http://m:9/",
-            timeout=3.0,
-            execution_mode="local",
-        )
-        assert isinstance(ex, DistributedExecutor)
-        assert (ex.reflow_manager_url, ex.timeout, ex.mode) == ("http://m:9", 3.0, "local")
-
-    def test_unknown_mode(self):
-        with pytest.raises(ValueError, match="Unknown execution mode: batch"):
-            get_executor("batch")
 
 
 def test_status_payload_shape_is_stable() -> None:
