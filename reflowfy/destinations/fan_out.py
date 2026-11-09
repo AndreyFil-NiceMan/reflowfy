@@ -54,7 +54,7 @@ class FanOut(RecordDestination):
         if not self._optional <= target_ids:
             raise ValueError("fan_out: every optional= destination must also be passed to fan_out")
 
-    def targets(self) -> List[tuple[BaseDestination, bool]]:
+    def fixed_targets(self) -> List[tuple[BaseDestination, bool]]:
         """(destination, optional) for each destination, in the order given."""
         return [(d, id(d) in self._optional) for d in self._targets]
 

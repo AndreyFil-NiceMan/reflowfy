@@ -67,8 +67,8 @@ class TestFanOut:
 
     def test_a_list_argument_is_unpacked(self):
         a, b = Sink("a"), Sink("b")
-        assert [d for d, _ in fan_out([a, b]).targets()] == [a, b]
-        assert [d for d, _ in fan_out((a,), b).targets()] == [a, b]
+        assert [d for d, _ in fan_out([a, b]).fixed_targets()] == [a, b]
+        assert [d for d, _ in fan_out((a,), b).fixed_targets()] == [a, b]
 
     def test_as_destination_turns_a_list_into_a_fan_out(self):
         a = Sink("a")

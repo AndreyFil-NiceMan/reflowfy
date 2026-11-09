@@ -152,6 +152,12 @@ class RecordDestination(BaseDestination):
         # Connections shared by every routed destination, and the job's request budget.
         self._pool = ConnectionPool(request_limit=self.effective_concurrency())
 
+    def fixed_targets(self) -> Optional[List[Tuple[BaseDestination, bool]]]:
+        """``(destination, optional)`` pairs when every record goes to the same
+        destinations (``fan_out``), so a record destination may return this one;
+        None when the targets depend on the record (the default)."""
+        return None
+
     def destination_for_record(self, record: Any, runtime_params: Any) -> Any:
         """The destination ``record`` goes to. May be ``async def`` in a subclass."""
         raise NotImplementedError(f"{type(self).__name__} must implement destination_for_record")
@@ -315,11 +321,11 @@ class RecordDestination(BaseDestination):
     def _checked(self, produced: Any, index: int, total: int) -> _Targets:
         # A wrong return is a bug in the function, not bad data: it fails the job
         # whatever on_error says.
-        from reflowfy.destinations.fan_out import FanOut
-
         kind = type(produced).__name__
-        if isinstance(produced, FanOut):
-            return produced.targets()
+        if isinstance(produced, RecordDestination):
+            fixed = produced.fixed_targets()
+            if fixed is not None:  # fan_out(...): the same targets for this record
+                return fixed
         if isinstance(produced, (list, tuple)) and produced:
             items = cast(Sequence[Any], produced)
             if all(is_routable(d) for d in items):

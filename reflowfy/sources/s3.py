@@ -222,25 +222,12 @@ class S3Source(BaseSource):
             Prefix=resolved["prefix"],
             PaginationConfig={"PageSize": page_size},
         )
-        c = resolved
         for page in pages:
             keys = [o["Key"] for o in page.get("Contents", []) if self._matches_pattern(o["Key"])]
             if not keys:
                 continue
-            sub = S3Source(
-                bucket=c["bucket"],
-                prefix=c["prefix"],
-                file_pattern=c["file_pattern"],
-                page_size=page_size,
-                read_content=c["read_content"],
-                content_type=c["content_type"],
-                region_name=c["region_name"],
-                endpoint_url=c["endpoint_url"],
-                aws_access_key_id=c["aws_access_key_id"],
-                aws_secret_access_key=c["aws_secret_access_key"],
-            )
-            sub.config["keys"] = keys
-            yield sub
+            # The whole config, so nothing (extra boto3 kwargs included) is lost.
+            yield S3Source.from_config({**resolved, "page_size": page_size, "keys": keys})
 
     def health_check(self) -> bool:
         """Check S3 bucket accessibility."""
