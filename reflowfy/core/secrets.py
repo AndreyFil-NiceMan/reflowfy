@@ -35,7 +35,7 @@ _SENSITIVE_KEY = re.compile(
 _SENSITIVE_EXACT = frozenset({"auth", "basic_auth", "http_auth"})
 
 # ``scheme://user:password@host`` — only the password is hidden.
-_URL_WITH_PASSWORD = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://[^/@\s]*:[^/@\s]*@")
+_URL_WITH_PASSWORD = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://[^/@\s:]*:[^/@\s]*@")
 
 
 class SecretError(KeyError):
