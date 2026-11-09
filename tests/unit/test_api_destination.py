@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from reflowfy.destinations.api import ApiDestination, api_destination
-from reflowfy.destinations.base import DestinationError
+from reflowfy.destinations.base import DestinationError, PermanentDestinationError
 from reflowfy.destinations.schemas import ApiDestinationConfig
 
 
@@ -164,16 +164,17 @@ class TestErrorHandling:
         return api_destination(url="https://api.example.com/ingest", body={"k": "v"})
 
     async def test_http_4xx_raises_destination_error(self, dest):
-        error_response = MagicMock()
-        error_response.status_code = 401
-        error_response.text = "Unauthorized"
-        http_error = httpx.HTTPStatusError("401", request=MagicMock(), response=error_response)
-        error_response.raise_for_status = MagicMock(side_effect=http_error)
+        error_response = httpx.Response(
+            401,
+            request=httpx.Request("POST", "https://api.example.com/ingest"),
+            text="Unauthorized",
+        )
         dest._client = MagicMock()
         dest._client.request = AsyncMock(return_value=error_response)
-        with pytest.raises(DestinationError) as exc_info:
+        with pytest.raises(PermanentDestinationError) as exc_info:
             await dest.send([{"id": 1}])
-        assert "401" in str(exc_info.value)
+        assert "HTTP 401 Unauthorized (text/plain, 12 bytes)" in str(exc_info.value)
+        assert isinstance(exc_info.value, DestinationError)
 
     async def test_network_error_raises_destination_error(self, dest):
         dest._client = MagicMock()
@@ -298,18 +299,20 @@ class TestPerRecord:
         monkeypatch.setenv("TRANSFORM_CONCURRENCY", "1")  # one at a time: the stop is visible
         ok = MagicMock()
         ok.raise_for_status = MagicMock()
-        bad = MagicMock()
-        bad.status_code = 404
-        bad.text = "Not Found"
-        bad.raise_for_status = MagicMock(
-            side_effect=httpx.HTTPStatusError("404", request=MagicMock(), response=bad)
+        bad = httpx.Response(
+            404,
+            request=httpx.Request("PUT", "https://api.example.com/2"),
+            json={"error": "no such user", "id": 2},
         )
         dest = api_destination(url="https://api.example.com/{id}", per_record=True)
         dest._client = MagicMock()
         dest._client.request = AsyncMock(side_effect=[ok, bad, ok])
-        with pytest.raises(DestinationError) as exc_info:
+        with pytest.raises(PermanentDestinationError) as exc_info:
             await dest.send([{"id": 1}, {"id": 2}, {"id": 3}])
-        assert str(exc_info.value) == "Destination 'api' error: record 2 of 3: HTTP 404: Not Found"
+        assert str(exc_info.value).startswith(
+            "Destination 'api' error: record 2 of 3: HTTP 404 Not Found (application/json, 31 bytes)"
+        )
+        assert "no such user" not in str(exc_info.value)  # the body stays out of the message
         assert dest._client.request.await_count == 2
 
     async def test_health_check_probes_url_before_first_placeholder(self):
