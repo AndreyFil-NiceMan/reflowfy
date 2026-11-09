@@ -38,7 +38,7 @@ class GapsParams(RuntimeParams, total=False):
     sink_url: Annotated[NotRequired[str], Param("Sink base URL as the workers see it", default=SINK)]
     total: Annotated[NotRequired[int], Param("Records", default=20)]
     per_job: Annotated[NotRequired[int], Param("Records per job", default=5)]
-    mode: Annotated[NotRequired[str], Param("What to exercise", default="")]
+    scenario: Annotated[NotRequired[str], Param("What to exercise", default="")]
     rpm: Annotated[NotRequired[float], Param("define_rate_limit result", default=0.0)]
     chain: Annotated[NotRequired[bool], Param("Start a child run from the hook", default=False)]
     fail: Annotated[NotRequired[bool], Param("Fail every job", default=False)]
@@ -151,7 +151,7 @@ class DistGapsTransform(AbstractPipeline[GapsParams]):
 
     def define_transformations(self, records: List[Any], runtime_params: GapsParams) -> List[Any]:
         steps: List[Any] = [dist_gaps_label(label="dist"), dist_gaps_declined(), dist_gaps_skip_odd()]
-        if runtime_params.get("mode") == "contract":
+        if runtime_params.get("scenario") == "contract":
             steps.append(dist_gaps_returns_list())
         return steps
 
@@ -191,7 +191,7 @@ class DistGapsDest(AbstractPipeline[GapsParams]):
         return []
 
     def define_destination(self, records: List[Any], runtime_params: GapsParams) -> Any:
-        run, mode = runtime_params["run"], runtime_params.get("mode")
+        run, mode = runtime_params["run"], runtime_params.get("scenario")
         if mode == "fanout":
             optional = _ingest(runtime_params, f"{run}-opt", records, retry=NO_RETRY)
             return fan_out(_ingest(runtime_params, run, records), optional, optional=[optional])
