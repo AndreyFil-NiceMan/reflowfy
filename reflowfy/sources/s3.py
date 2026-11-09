@@ -27,6 +27,9 @@ class S3Source(BaseSource):
     - Runtime parameter resolution (Jinja2)
     """
 
+    # Hidden in API responses; pass it as secret("ENV") to keep it out of job messages.
+    secret_fields = ("aws_secret_access_key",)
+
     def __init__(
         self,
         bucket: str,
