@@ -14,7 +14,7 @@ Two separate jobs:
 
 import os
 import re
-from typing import Any, Collection, Dict, List, Mapping, Tuple, cast
+from typing import Any, Collection, Dict, List, Mapping, Optional, Tuple, cast
 from urllib.parse import urlsplit, urlunsplit
 
 #: Key of the wire form of a secret reference: ``{"$secret": "ENV_NAME"}``.
@@ -36,6 +36,8 @@ _SENSITIVE_EXACT = frozenset({"auth", "basic_auth", "http_auth"})
 
 # ``scheme://user:password@host`` — only the password is hidden.
 _URL_WITH_PASSWORD = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://[^/@\s:]*:[^/@\s]*@")
+#: The same ``user:password@`` part anywhere inside free text (an error message).
+_URL_PASSWORD_IN_TEXT = re.compile(r"([A-Za-z][A-Za-z0-9+.\-]*://[^/@\s:]*:)[^/@\s]*@")
 
 
 class SecretError(KeyError):
@@ -141,6 +143,17 @@ def mask_url_password(value: str) -> str:
     userinfo, _, hostinfo = parts.netloc.rpartition("@")
     user = userinfo.split(":", 1)[0]
     return urlunsplit(parts._replace(netloc=f"{user}:{REDACTED}@{hostinfo}"))
+
+
+def mask_url_passwords_in_text(text: Optional[str]) -> Optional[str]:
+    """Hide the password of every ``scheme://user:password@`` URL inside ``text``.
+
+    For free text such as an error message or traceback, where a driver may quote
+    the connection URL it failed to reach.
+    """
+    if not text:
+        return text
+    return _URL_PASSWORD_IN_TEXT.sub(lambda m: f"{m.group(1)}{REDACTED}@", text)
 
 
 def _redact_secret_value(value: Any) -> Any:

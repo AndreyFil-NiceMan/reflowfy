@@ -10,6 +10,7 @@ from tenacity import (
     wait_exponential,
 )
 
+from reflowfy.core.secrets import redact_config
 from reflowfy.destinations.pool import ConnectionPool, loop_pool
 
 __all__ = [
@@ -192,7 +193,9 @@ class BaseDestination(ABC):
                 await self.send(records, metadata)
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}(config={self.config})"
+        # Shown in logs and tracebacks: credentials (sasl_password, auth_token,
+        # Authorization headers, URL passwords) are hidden.
+        return f"{self.__class__.__name__}(config={redact_config(self.config)})"
 
 
 def check_concurrency(destination_type: str, concurrency: object) -> int:

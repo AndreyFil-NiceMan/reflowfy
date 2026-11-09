@@ -19,7 +19,7 @@ load_dotenv()
 from reflowfy import __version__  # noqa: E402
 
 from reflowfy.core.api_auth import install_api_auth  # noqa: E402
-from reflowfy.core.secrets import redact_row  # noqa: E402
+from reflowfy.core.secrets import mask_url_passwords_in_text, redact_row  # noqa: E402
 from reflowfy.observability.context import bind_log_context  # noqa: E402
 from reflowfy.observability.logging import setup_logging  # noqa: E402
 from reflowfy.reflow_manager.database import get_db, init_db, SessionLocal  # noqa: E402
@@ -380,8 +380,8 @@ async def get_execution_errors(
         {
             "job_id": job.job_id,
             "batch_number": job.batch_number,
-            "error_message": job.error_message,
-            "error_traceback": job.error_traceback,
+            "error_message": mask_url_passwords_in_text(job.error_message),
+            "error_traceback": mask_url_passwords_in_text(job.error_traceback),
             "failed_at": job.completed_at.isoformat() if job.completed_at else None,
         }
         for job in failed_jobs
@@ -608,7 +608,7 @@ async def get_execution_stats(
                 detail=f"Execution '{execution_id}' not found",
             )
 
-        return stats
+        return redact_row(stats)
     except HTTPException:
         raise
     except Exception as e:
