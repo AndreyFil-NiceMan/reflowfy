@@ -150,7 +150,7 @@ def build_job_payload(
         "execution_id": execution_id,
         "job_id": job_id,
         "pipeline_name": pipeline_name,
-        "source": SourceFactory.serialize(sub_source),
+        "source": SourceFactory.serialize(sub_source, pipeline_name=pipeline_name),
         "dedup_check": dedup_check,
         "job_params": job_params or {},
         "metadata": enriched_metadata,

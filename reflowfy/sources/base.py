@@ -1,11 +1,14 @@
 """Base source interface for data fetching and job splitting."""
 
+import inspect
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, ClassVar, Dict, Iterator, List, Optional, Tuple, TypeVar
 
 from reflowfy.core.execution_context import parameter_resolver
 from reflowfy.core.types import Records
+
+_S = TypeVar("_S", bound="BaseSource")
 
 
 @dataclass
@@ -27,17 +30,36 @@ class BaseSource(ABC):
     Base class for all data sources.
 
     Sources are responsible for:
-    1. Fetching data (for local mode)
-    2. Splitting data into jobs (for distributed mode)
+    1. Planning: ``split()`` yields one narrowed source per job (manager side)
+    2. Fetching one job's records: ``fetch()`` (worker side)
     3. Resolving runtime parameters
     4. Health checks
+
+    A subclass is registered with ``SourceFactory`` under its class name as soon as
+    it is defined, so a custom source runs on workers like a built-in one. The
+    worker rebuilds each job's source with :meth:`from_config` from the ``config``
+    the manager serialized; that round trip is checked at planning.
     """
+
+    # Config keys holding credentials: hidden in every API response that returns a
+    # job payload, and a literal value in one is warned about when it is serialized
+    # (use ``secret("ENV")``). Keys named like a credential (``password``, ``token``,
+    # ``api_key``…) and passwords inside URLs are hidden whether listed or not.
+    secret_fields: ClassVar[Tuple[str, ...]] = ()
 
     # Params the planner attached to this one job, merged into its
     # runtime_params before it runs. None = the job just gets the execution's
     # params. Set by the ID-based plan and by reflowfy.job(); never serialized
     # onto the wire, since it travels in the job message's metadata instead.
     job_params: Optional[Dict[str, Any]] = None
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        if inspect.isabstract(cls):
+            return
+        from reflowfy.factories.source_factory import SourceFactory  # import cycle
+
+        SourceFactory.register(cls.__name__, cls)
 
     def __init__(self, config: Dict[str, Any]):
         """
@@ -48,6 +70,20 @@ class BaseSource(ABC):
         """
         self.config = config
         self._resolved_config: Optional[Dict[str, Any]] = None
+
+    @classmethod
+    def from_config(cls: "type[_S]", config: Dict[str, Any]) -> _S:
+        """Rebuild a source from its serialized ``config`` (on the worker).
+
+        Default: ``cls(**config)`` — ``config`` holds exactly the constructor's
+        keyword arguments, as every built-in source does — or ``cls(config)`` for a
+        subclass that keeps ``BaseSource``'s ``__init__(self, config)`` signature.
+        Override it when the constructor takes something else.
+        """
+        params = list(inspect.signature(cls.__init__).parameters.values())[1:]
+        if [p.name for p in params] == ["config"]:
+            return cls(config)  # __init__(self, config)
+        return cls(**config)
 
     @property
     def registry_type(self) -> str:
@@ -100,24 +136,17 @@ class BaseSource(ABC):
         """
         pass
 
-    @abstractmethod
     def split_jobs(
         self, runtime_params: Dict[str, Any], batch_size: int = 1000
     ) -> Iterator[SourceJob]:
+        """Legacy planning that fetched records manager-side. Not used since the v2
+        job schema (``split()`` plans, the worker calls ``fetch()``); a new source
+        does not need it. Some built-ins still implement it.
         """
-        Split source data into jobs for distributed processing.
-
-        This is a generator that yields jobs as they're created.
-        Each job contains a batch of records.
-
-        Args:
-            runtime_params: Runtime parameters for template resolution
-            batch_size: Number of records per job
-
-        Yields:
-            SourceJob instances
-        """
-        pass
+        raise NotImplementedError(
+            f"{type(self).__name__}.split_jobs is not used since the v2 job schema; "
+            "plan with split() and fetch on the worker"
+        )
 
     @abstractmethod
     def health_check(self) -> bool:
