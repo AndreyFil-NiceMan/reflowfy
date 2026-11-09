@@ -3,7 +3,7 @@ Elasticsearch errors on every read path, PIT clean-up failures, composite edge
 cases, a pre-scan that runs out of documents, and response-object shapes."""
 
 import logging
-from typing import Any, Dict, Iterator, List, Mapping
+from typing import Any, Dict, Iterator, List
 from unittest.mock import MagicMock
 
 import pytest
@@ -285,45 +285,3 @@ def test_a_pre_scan_that_runs_out_of_documents_plans_fewer_windows() -> None:
 
     assert [w["search_after"] for w in windows] == [None, [1], [2]]
     assert {w["size"] for w in windows} == {1}
-
-
-# ----- split_jobs response shapes -------------------------------------------------------------
-
-
-class _Body:
-    """An elasticsearch 8.x ObjectApiResponse-like object exposing ``.body``."""
-
-    def __init__(self, body: Dict[str, Any]) -> None:
-        self.body = body
-
-
-class _MappingResponse(Mapping[str, Any]):
-    """A response that is a Mapping but not a dict (iterating it yields keys)."""
-
-    def __init__(self, body: Dict[str, Any]) -> None:
-        self._body = body
-
-    def __getitem__(self, key: str) -> Any:
-        return self._body[key]
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(self._body)
-
-    def __len__(self) -> int:
-        return len(self._body)
-
-
-@pytest.mark.parametrize("wrap", [_Body, _MappingResponse], ids=["body", "mapping"])
-def test_split_jobs_accepts_response_objects(wrap: Any) -> None:
-    src = _src({"query": {"match_all": {}}}, size=1)
-    src._client.search.return_value = wrap({"_scroll_id": "s1", "hits": {"hits": [_hit(1)]}})
-    src._client.scroll.side_effect = [
-        wrap({"_scroll_id": "s2", "hits": {"hits": [_hit(2)]}}),
-        wrap({"_scroll_id": "s3", "hits": {"hits": []}}),
-    ]
-
-    jobs = list(src.split_jobs({}))
-
-    assert [[r["data"]["v"] for r in j.records] for j in jobs] == [[1], [2]]
-    assert [j.metadata["page_num"] for j in jobs] == [0, 1]
-    src._client.clear_scroll.assert_called_once_with(scroll_id="s3")

@@ -136,18 +136,6 @@ class BaseSource(ABC):
         """
         pass
 
-    def split_jobs(
-        self, runtime_params: Dict[str, Any], batch_size: int = 1000
-    ) -> Iterator[SourceJob]:
-        """Legacy planning that fetched records manager-side. Not used since the v2
-        job schema (``split()`` plans, the worker calls ``fetch()``); a new source
-        does not need it. Some built-ins still implement it.
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__}.split_jobs is not used since the v2 job schema; "
-            "plan with split() and fetch on the worker"
-        )
-
     @abstractmethod
     def health_check(self) -> bool:
         """

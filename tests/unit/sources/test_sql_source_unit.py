@@ -1,4 +1,4 @@
-"""SqlSource against a real SQLite file: fetch, split, split_jobs, health_check.
+"""SqlSource against a real SQLite file: fetch, split, health_check.
 
 No server needed — SQLite runs the same ``SELECT ... FROM (<query>) AS sub`` wrapping
 the source builds for Postgres/MySQL, so the planning arithmetic is exercised for real.
@@ -141,49 +141,6 @@ def test_split_respects_template_params(db_url: str) -> None:
     )
     subs = list(src.split({"status": "inactive"}))
     assert _ids([r for s in subs for r in s.fetch({})]) == [2, 4, 6, 8, 10]
-
-
-# -- split_jobs (legacy, fetches records while planning) -----------------------
-
-
-def test_split_jobs_by_id_range_skips_empty_windows(tmp_path: Path) -> None:
-    url = _make_db(tmp_path / "gaps.db", [1, 2, 3, 30])
-    src = sql_source(url, "SELECT * FROM events", id_column="id", batch_size=10)
-
-    jobs = list(src.split_jobs({}))
-
-    assert [_ids(j.records) for j in jobs] == [[1, 2, 3], [30]]
-    assert jobs[0].metadata == {"id_range": {"start": 1, "end": 11}, "page_num": 0, "count": 3}
-    assert jobs[1].metadata["page_num"] == 2  # window [21, 31) after the empty [11, 21)
-
-
-def test_split_jobs_by_offset_pages_until_short_page(db_url: str) -> None:
-    src = sql_source(db_url, "SELECT * FROM events ORDER BY id", batch_size=4)
-
-    jobs = list(src.split_jobs({}))
-
-    assert [j.metadata["offset"] for j in jobs] == [0, 4, 8]
-    assert [j.metadata["count"] for j in jobs] == [4, 4, 2]
-    assert _ids([r for j in jobs for r in j.records]) == list(range(1, 11))
-
-
-def test_split_jobs_by_offset_exact_multiple_ends_on_empty_page(tmp_path: Path) -> None:
-    url = _make_db(tmp_path / "eight.db", list(range(1, 9)))
-    jobs = list(sql_source(url, "SELECT * FROM events ORDER BY id", batch_size=4).split_jobs({}))
-    assert [j.metadata["count"] for j in jobs] == [4, 4]
-
-
-def test_split_jobs_empty_table_yields_nothing(empty_db_url: str) -> None:
-    assert (
-        list(sql_source(empty_db_url, "SELECT * FROM events", id_column="id").split_jobs({})) == []
-    )
-    assert list(sql_source(empty_db_url, "SELECT * FROM events").split_jobs({})) == []
-
-
-def test_split_jobs_bad_sql_is_a_source_error(db_url: str) -> None:
-    src = sql_source(db_url, "SELECT * FROM missing", id_column="id")
-    with pytest.raises(SourceError, match="Failed to split jobs"):
-        list(src.split_jobs({}))
 
 
 # -- health_check ------------------------------------------------------------

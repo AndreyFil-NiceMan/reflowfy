@@ -62,8 +62,7 @@ class TestResolveSource:
         pipeline = _ListSourcePipeline()
         batch_params = {"current_ids": [101, 102], "current_id": 101}
         source = pipeline.resolve_source(batch_params)
-        jobs = list(source.split_jobs(batch_params))
-        assert jobs[0].records == [101, 102]
+        assert source.fetch(batch_params) == [101, 102]
 
     def test_base_source_is_passed_through(self):
         pipeline = _RealSourcePipeline()
@@ -84,5 +83,4 @@ class TestResolveForIdsUsesCoercion:
         pipeline = _ListSourcePipeline()
         resolved = pipeline.resolve_for_ids({}, [101, 102])
         assert isinstance(resolved["source"], StaticSource)
-        jobs = list(resolved["source"].split_jobs(resolved["batch_params"]))
-        assert jobs[0].records == [101, 102]
+        assert resolved["source"].fetch(resolved["batch_params"]) == [101, 102]

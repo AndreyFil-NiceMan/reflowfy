@@ -9,9 +9,6 @@ def test_default_split_yields_self():
         def fetch(self, runtime_params, limit=None):
             return []
 
-        def split_jobs(self, runtime_params, batch_size=1000):
-            yield from ()
-
         def health_check(self):
             return True
 
