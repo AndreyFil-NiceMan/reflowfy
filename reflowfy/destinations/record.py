@@ -23,6 +23,8 @@ right after ``define_destination``):
 3. Connections are shared wider than groups, through one :class:`ConnectionPool` per
    job: one Kafka producer per cluster and credentials (a producer writes to any
    topic), one HTTP client per host. Health checks run once per cluster or host.
+   Inside a worker that pool takes its connections from the worker's own pool
+   (``destinations/pool.py``), so they outlive the job and serve the next ones.
 4. ``send_with_retry`` sends the groups concurrently, each with its own retries, so a
    failed group does not re-send the groups already written. Order is kept within a
    group, not across groups. The first group that fails cancels the rest.
@@ -34,6 +36,12 @@ right after ``define_destination``):
 ``raise SkipRecord("why")`` drops one record with a reason; ``on_error="skip"`` does the
 same for any exception, with its type name as the reason. ``SkipJob`` drops the job.
 Skips are reported like a per-record transformation's, under the destination's name.
+
+The function may also return a list of destinations (the record goes to each: a
+multicast), or ``fan_out(d1, d2, optional=[d2])`` to mark some optional. A record then
+joins several groups; each group is sent and retried on its own. A group that only
+optional records chose may fail without failing the job: the failure is logged and
+counted (``failed_optional``, ``destinations_failed_optional`` in the job's stats).
 """
 
 import asyncio
@@ -48,14 +56,16 @@ from typing import (
     Literal,
     NamedTuple,
     Optional,
+    Sequence,
     Set,
     Tuple,
     Union,
+    cast,
 )
 
 from reflowfy.core.async_utils import for_each_concurrently
 from reflowfy.core.exceptions import PipelineError, SkipJob, SkipRecord
-from reflowfy.destinations.base import BaseDestination, ConnectionPool
+from reflowfy.destinations.base import BaseDestination, ConnectionPool, DestinationError
 from reflowfy.observability.logging import get_logger
 
 logger = get_logger("destinations.record")
@@ -97,6 +107,10 @@ class _Skipped:
         self.reason = reason
 
 
+_Targets = List[Tuple[BaseDestination, bool]]
+"""What one record goes to: (destination, optional) pairs."""
+
+
 class RecordDestination(BaseDestination):
     """Sends each record to the destination :meth:`destination_for_record` returns for it.
 
@@ -127,7 +141,11 @@ class RecordDestination(BaseDestination):
         self.options = options
         self._groups: List[BaseDestination] = []
         self._group_by_key: Dict[str, int] = {}
-        self._group_of_record: Dict[int, int] = {}
+        # A group is required as soon as one record chose it without optional=.
+        self._group_required: List[bool] = []
+        self._groups_of_record: Dict[int, List[int]] = {}
+        self.failed_optional: List[str] = []
+        """Optional destinations that failed this job (type names), in failure order."""
         # Keeps routed records alive, so their id() is not reused within the job.
         self._routed: List[Any] = []
         # Connections shared by every routed destination, and the job's request budget.
@@ -151,11 +169,23 @@ class RecordDestination(BaseDestination):
         return list(self._groups)
 
     def destination_for(self, record: Any) -> BaseDestination:
-        """The destination a routed ``record`` (the same object) goes to."""
+        """The (first) destination a routed ``record`` (the same object) goes to."""
+        return self.destinations_for(record)[0]
+
+    def destinations_for(self, record: Any) -> List[BaseDestination]:
+        """Every destination a routed ``record`` (the same object) goes to."""
         try:
-            return self._groups[self._group_of_record[id(record)]]
+            return [self._groups[index] for index in self._groups_of_record[id(record)]]
         except KeyError:
             raise KeyError(f"record_destination {self.name!r}: record was not routed") from None
+
+    def keep_only(self, record: Any, destinations: Sequence[BaseDestination]) -> None:
+        """Send ``record`` only to these of its destinations (content dedup: the others
+        already have it)."""
+        keep = {id(d) for d in destinations}
+        self._groups_of_record[id(record)] = [
+            index for index in self._groups_of_record[id(record)] if id(self._groups[index]) in keep
+        ]
 
     async def route(self, records: List[Any], runtime_params: Any) -> RouteResult:
         """Choose a destination for every record. Nothing is sent.
@@ -166,7 +196,7 @@ class RecordDestination(BaseDestination):
         from reflowfy.transformations.base import count_skip_reason
 
         total = len(records)
-        results: List[Union[BaseDestination, _Skipped, None]] = [None] * total
+        results: List[Union[_Targets, _Skipped, None]] = [None] * total
 
         if inspect.iscoroutinefunction(self.destination_for_record):
 
@@ -200,7 +230,12 @@ class RecordDestination(BaseDestination):
                 count_skip_reason(skip_reasons, result.reason)
                 continue
             assert result is not None
-            self._group_of_record[id(record)] = self._group_index(result)
+            groups: List[int] = []
+            for destination, optional in result:
+                index = self._group_index(destination, optional)
+                if index not in groups:
+                    groups.append(index)
+            self._groups_of_record[id(record)] = groups
             self._routed.append(record)
             kept.append(record)
 
@@ -278,18 +313,28 @@ class RecordDestination(BaseDestination):
             original_error=exc,
         ) from exc
 
-    def _checked(self, produced: Any, index: int, total: int) -> BaseDestination:
+    def _checked(self, produced: Any, index: int, total: int) -> _Targets:
         # A wrong return is a bug in the function, not bad data: it fails the job
         # whatever on_error says.
-        if not isinstance(produced, BaseDestination) or isinstance(produced, RecordDestination):
-            raise RecordDestinationError(
-                f"record_destination {self.name!r} returned {type(produced).__name__} for "
-                f"record {index + 1} of {total}; expected a destination such as "
-                "kafka_destination(...). Filter records in a transformation, not here."
-            )
-        return produced
+        from reflowfy.destinations.fan_out import FanOut
 
-    def _group_index(self, destination: BaseDestination) -> int:
+        kind = type(produced).__name__
+        if isinstance(produced, FanOut):
+            return produced.targets()
+        if isinstance(produced, (list, tuple)) and produced:
+            items = cast(Sequence[Any], produced)
+            if all(is_routable(d) for d in items):
+                return [(cast(BaseDestination, d), False) for d in items]
+        elif is_routable(produced):
+            return [(cast(BaseDestination, produced), False)]
+        raise RecordDestinationError(
+            f"record_destination {self.name!r} returned {kind} for "
+            f"record {index + 1} of {total}; expected a destination such as "
+            "kafka_destination(...), a non-empty list of them, or fan_out(...). "
+            "Filter records in a transformation, not here."
+        )
+
+    def _group_index(self, destination: BaseDestination, optional: bool = False) -> int:
         key = _group_key(destination)
         index = self._group_by_key.get(key)
         if index is None:
@@ -297,21 +342,73 @@ class RecordDestination(BaseDestination):
             destination.connection_pool = self._pool
             destination.send_concurrency = self.effective_concurrency()
             self._groups.append(destination)
+            self._group_required.append(not optional)
             self._group_by_key[key] = index
+        elif not optional:
+            self._group_required[index] = True
         return index
 
-    def _buckets(self, records: List[Any]) -> List[Tuple[BaseDestination, List[Any]]]:
+    def is_optional(self, destination: BaseDestination) -> bool:
+        """True when only ``optional=`` records chose this routed destination."""
+        return not self._group_required[self._groups.index(destination)]
+
+    def _buckets(self, records: List[Any]) -> List[Tuple[int, List[Any]]]:
         by_group: Dict[int, List[Any]] = {}
         for record in records:
-            by_group.setdefault(self._group_of_record[id(record)], []).append(record)
-        return [(self._groups[index], batch) for index, batch in sorted(by_group.items())]
+            for index in self._groups_of_record[id(record)]:
+                by_group.setdefault(index, []).append(record)
+        return sorted(by_group.items())
+
+    async def _send_groups(
+        self, records: List[Any], metadata: Optional[Dict[str, Any]], retry: bool
+    ) -> None:
+        """Send each group its records, ``concurrency`` groups at a time.
+
+        A required group's failure fails the job and cancels the sends in flight; an
+        optional group's is logged and recorded in :attr:`failed_optional`.
+        """
+
+        async def send_one(_: int, bucket: Tuple[int, List[Any]]) -> None:
+            index, batch = bucket
+            destination = self._groups[index]
+            try:
+                if retry:
+                    await destination.send_with_retry(batch, metadata)
+                else:
+                    await destination.send(batch, metadata)
+            except Exception as exc:
+                if self._group_required[index]:
+                    raise
+                self._optional_failed(destination, exc, len(batch))
+
+        await for_each_concurrently(self._buckets(records), self.effective_concurrency(), send_one)
+
+    def _optional_failed(self, destination: BaseDestination, exc: Exception, records: int) -> None:
+        kind = type(destination).__name__
+        self.failed_optional.append(kind)
+        # A destination error names a position, never a record; anything else: its type.
+        detail = str(exc) if isinstance(exc, DestinationError) else type(exc).__name__
+        logger.warning(
+            "%s: optional destination %s failed, %d records not written there: %s",
+            self.name,
+            kind,
+            records,
+            detail,
+            extra={
+                "event": "destination_optional_failed",
+                "record_destination": self.name,
+                "destination_type": kind,
+                "error_type": type(exc).__name__,
+                "records": records,
+            },
+        )
 
     async def _ensure_routed(self, records: List[Any], metadata: Any) -> List[Any]:
         """``records`` minus any skipped, routing those no caller routed yet.
 
         The job runner routes before the send; this covers a direct ``send`` call.
         """
-        unrouted = [r for r in records if id(r) not in self._group_of_record]
+        unrouted = [r for r in records if id(r) not in self._groups_of_record]
         if not unrouted:
             return records
         result = await self.route(unrouted, metadata if metadata is not None else {})
@@ -323,19 +420,14 @@ class RecordDestination(BaseDestination):
                 skipped,
                 extra={"event": "records_skipped", "record_destination": self.name},
             )
-        return [r for r in records if id(r) in self._group_of_record]
+        return [r for r in records if id(r) in self._groups_of_record]
 
     # ------------------------------------------------------------------ destination API
 
     async def send(self, records: List[Any], metadata: Optional[Dict[str, Any]] = None) -> None:
         """Send each record to its destination, ``concurrency`` destinations at a time."""
         records = await self._ensure_routed(records, metadata)
-
-        async def send_one(_: int, bucket: Tuple[BaseDestination, List[Any]]) -> None:
-            destination, batch = bucket
-            await destination.send(batch, metadata)
-
-        await for_each_concurrently(self._buckets(records), self.effective_concurrency(), send_one)
+        await self._send_groups(records, metadata, retry=False)
 
     async def send_with_retry(
         self, records: List[Any], metadata: Optional[Dict[str, Any]] = None
@@ -346,31 +438,41 @@ class RecordDestination(BaseDestination):
         still in flight; destinations already written are not written again by this call.
         """
         records = await self._ensure_routed(records, metadata)
-
-        async def send_one(_: int, bucket: Tuple[BaseDestination, List[Any]]) -> None:
-            destination, batch = bucket
-            await destination.send_with_retry(batch, metadata)
-
-        await for_each_concurrently(self._buckets(records), self.effective_concurrency(), send_one)
+        await self._send_groups(records, metadata, retry=True)
 
     async def health_check(self) -> bool:
         """Every routed destination is healthy (none routed: healthy).
 
         One check per :meth:`BaseDestination.health_key` — per cluster or host, not
-        per routed destination — run concurrently.
+        per routed destination — run concurrently. An unhealthy optional destination
+        does not fail the job: it is logged, and its send will fail on its own.
         """
         checks: Dict[str, BaseDestination] = {}
+        required: Dict[str, bool] = {}
         for index, destination in enumerate(self._groups):
             key = destination.health_key()
-            checks.setdefault(key if key is not None else f"#{index}", destination)
-        targets = list(checks.values())
-        healthy: List[bool] = [True] * len(targets)
+            key = key if key is not None else f"#{index}"
+            checks.setdefault(key, destination)
+            required[key] = required.get(key, False) or self._group_required[index]
+        keys = list(checks)
+        healthy: List[bool] = [True] * len(keys)
 
-        async def check(index: int, destination: BaseDestination) -> None:
-            healthy[index] = await destination.health_check()
+        async def check(index: int, key: str) -> None:
+            healthy[index] = await checks[key].health_check()
 
-        await for_each_concurrently(targets, self.effective_concurrency(), check)
-        return all(healthy)
+        await for_each_concurrently(keys, self.effective_concurrency(), check)
+        for key, ok in zip(keys, healthy):
+            if not ok and not required[key]:
+                logger.warning(
+                    "%s: optional destination %s is unhealthy; sending to the others",
+                    self.name,
+                    type(checks[key]).__name__,
+                    extra={
+                        "event": "destination_optional_unhealthy",
+                        "record_destination": self.name,
+                    },
+                )
+        return all(ok or not required[key] for key, ok in zip(keys, healthy))
 
     async def close(self) -> None:
         """Close every routed destination; the first error is raised after all were tried."""
@@ -396,6 +498,13 @@ class RecordDestination(BaseDestination):
         types = sorted({type(d).__name__ for d in self._groups})
         routed = f", {len(self._groups)} destinations ({', '.join(types)})" if types else ""
         return f"{type(self).__name__}({self.name!r}{routed})"
+
+
+def is_routable(destination: Any) -> bool:
+    """A destination records can be routed to: not another record destination."""
+    return isinstance(destination, BaseDestination) and not isinstance(
+        destination, RecordDestination
+    )
 
 
 def _group_key(destination: BaseDestination) -> str:
