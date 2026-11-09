@@ -105,7 +105,9 @@ async def test_api_retry_exhaustion_on_5xx(transport) -> None:
     seen = transport(lambda r: httpx.Response(503, text="unavailable"))
     dest = api_destination(url="https://sink.test/in", body={"a": 1}, retry_config=_FAST)
 
-    with pytest.raises(DestinationError, match="HTTP 503: unavailable"):
+    with pytest.raises(
+        DestinationError, match=r"HTTP 503 Service Unavailable \(text/plain, 11 bytes\)$"
+    ):
         await dest.send_with_retry([{"a": 1}])
     assert len(seen) == 3
 
@@ -158,8 +160,10 @@ async def test_api_health_down_when_both_probes_fail(transport) -> None:
         raise httpx.ConnectError("down", request=r)
 
     seen = transport(handler)
-    assert await api_destination(url="https://sink.test/in").health_check() is False
-    assert [r.method for r in seen] == ["HEAD", "OPTIONS"]
+    dest = api_destination(url="https://sink.test/in")
+    dest.health_retry_delay = 0
+    assert await dest.health_check() is False
+    assert [r.method for r in seen] == ["HEAD", "OPTIONS", "HEAD", "OPTIONS"]  # one retry
 
 
 async def test_api_close_is_idempotent(transport) -> None:
