@@ -551,7 +551,19 @@ constants.
        tests pin line by line.
      - python-on-whales vs subprocess, and `kubectl` vs `oc`. Each is a CLI
        behaviour change for users, not a cleanup.
-13. **Comments.**
+13. **Comments:** ✅ done.
+   - 37 comments that only restated the next line are removed (`# Create
+     FastAPI app`, `# Mark as successful`, `# Load pipeline from registry`, …).
+     Section labels in long functions stay.
+   - Three false comments are corrected:
+     - The consumer's "Don't commit - will retry": the next commit advances the
+       partition past the message.
+     - `BaseDestination`'s "Metrics reporting".
+     - `TransformationRegistry`'s "Workers use this registry". Nothing reads it
+       at runtime.
+   - Two "Import here to avoid circular dependency" comments were false (both
+     registries import nothing from reflowfy). The imports are now at module
+     top.
 14. **Repeat:** audit again for special cases, hidden links, needless links and
     surplus until nothing worth fixing is left. Then run the unit tests and the
     local and distributed E2E suites.

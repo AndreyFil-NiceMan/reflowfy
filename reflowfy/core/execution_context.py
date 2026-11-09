@@ -187,7 +187,6 @@ class ParameterResolver:
                 except UndefinedError as e:
                     raise ValueError(f"Missing required parameter: {e}")
 
-        # Return primitives as-is
         return obj
 
     def extract_parameters(self, obj: Any) -> set[str]:

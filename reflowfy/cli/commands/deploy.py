@@ -92,7 +92,6 @@ def register(app: typer.Typer):
             )
             raise typer.Exit(code=1)
 
-        # Determine image tag
         image_tag = tag or getattr(reflowfy, "__version__", "latest")
 
         console.print(Panel(f"🚀 Deploying Reflowfy (tag: {image_tag}) to namespace: [bold cyan]{namespace}[/bold cyan]"))

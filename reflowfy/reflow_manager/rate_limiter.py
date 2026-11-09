@@ -127,7 +127,6 @@ class RateLimiter:
             return True  # unlimited
         state = self._get_or_create_state(pipeline_name, effective_rate)
 
-        # Refill tokens
         self._refill_tokens(state)
 
         return state.tokens >= count

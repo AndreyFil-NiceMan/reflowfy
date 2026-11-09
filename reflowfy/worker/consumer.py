@@ -80,7 +80,6 @@ class KafkaJobConsumer:
 
     async def start(self):
         """Start consuming and processing jobs asynchronously."""
-        # Build consumer kwargs
         consumer_kwargs: dict[str, Any] = {
             "bootstrap_servers": self.bootstrap_servers,
             "group_id": self.group_id,
@@ -276,7 +275,9 @@ class KafkaJobConsumer:
 
         except Exception:
             logger.exception("Job processing error", extra={"event": "message_error"})
-            # Don't commit - will retry
+            # Not committed, but not retried either: the next message's commit()
+            # advances the whole partition past it (see above). Only a restart before
+            # that redelivers it.
 
     def request_stop(self) -> None:
         """Ask the loop to exit after the current job (safe from a signal handler)."""

@@ -62,6 +62,7 @@ from reflowfy.core.job_retry import JobRetryConfig
 from reflowfy.core.planning import ResolvedPlan
 from reflowfy.core.query_loader import QueryLoaderMixin
 from reflowfy.core.runtime_params import P, Param, RuntimeParams
+from reflowfy.core.registry import pipeline_registry
 
 if TYPE_CHECKING:
     from reflowfy.destinations.base import BaseDestination
@@ -146,9 +147,6 @@ class PipelineMeta(ABCMeta):
 
             # Check if this is a concrete pipeline with a name
             if "name" in namespace and namespace["name"]:
-                # Import here to avoid circular dependency
-                from reflowfy.core.registry import pipeline_registry
-
                 pipeline_name = namespace["name"]
 
                 try:

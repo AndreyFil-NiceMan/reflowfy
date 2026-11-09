@@ -61,7 +61,6 @@ def create_app() -> FastAPI:
     # Optional bearer token (REFLOWFY_API_TOKEN); CORS stays outermost.
     install_api_auth(app, service="api")
 
-    # CORS middleware
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -202,20 +201,17 @@ def main():
 
     setup_logging(service_name="api")
 
-    # Create app
     app = create_app()
 
     # Note: User must import their pipeline definitions before starting the server
     # This triggers registration via metaclass
     logger.info("Starting Reflowfy API (version %s)", __version__, extra={"event": "service_start"})
 
-    # Auto-discover and load pipelines
     discover_and_load_pipelines()
 
     # Setup routes after pipelines are registered
     setup_pipeline_routes(app)
 
-    # Get configuration from environment
     host = os.getenv("API_HOST", "0.0.0.0")
     port = int(os.getenv("API_PORT", "8000"))
 

@@ -68,7 +68,6 @@ def main():
     if kafka.sasl_username:
         logger.info("SASL enabled: %s", kafka.describe_auth(), extra={"event": "service_config"})
 
-    # Create consumer
     consumer = KafkaJobConsumer(
         bootstrap_servers=kafka.bootstrap_servers,
         topic=kafka.topic,

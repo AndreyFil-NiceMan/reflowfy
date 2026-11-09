@@ -89,7 +89,6 @@ def _iter_plan(pipeline_name: str, slices: Iterator[Any]) -> Iterator[Any]:
         yield item
 
 
-# Worker job message schema version
 JOB_SCHEMA_VERSION = 2
 
 
@@ -354,7 +353,6 @@ class PipelineRunner:
         """
         from reflowfy.core.registry import pipeline_registry
 
-        # Get execution record
         execution = self.execution_manager.get_execution(execution_id)
         if not execution:
             logger.warning(
@@ -373,7 +371,6 @@ class PipelineRunner:
 
         pipeline_name = execution.pipeline_name
 
-        # Load pipeline from registry
         pipeline = pipeline_registry.get(pipeline_name)
         if not pipeline:
             logger.warning(
@@ -517,7 +514,6 @@ class PipelineRunner:
         from reflowfy.core.execution_context import ExecutionContext
         from reflowfy.core.registry import pipeline_registry
 
-        # Load pipeline from registry
         pipeline = pipeline_registry.get(pipeline_name)
         if not pipeline:
             raise ValueError(
@@ -539,12 +535,10 @@ class PipelineRunner:
 
         logger.info("Job dispatch starting", extra={"event": "plan_start"})
 
-        # Update state to running
         self.execution_manager.update_execution_state(execution_id, ExecutionState.RUNNING)
 
         enriched_params = resolved.params
 
-        # Create execution context
         context = ExecutionContext(
             execution_id=execution_id,
             pipeline_name=pipeline_name,
