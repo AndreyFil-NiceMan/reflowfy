@@ -260,7 +260,9 @@ def render_sql_template(
         values.append(value)
         return f"\x00{len(values) - 1}\x00"
 
-    env = Environment(loader=BaseLoader(), finalize=finalize)
+    # Autoescape on: every value is a bind placeholder or a validated identifier, neither
+    # of which contains a character HTML-escaping would touch, so it changes nothing here.
+    env = Environment(loader=BaseLoader(), finalize=finalize, autoescape=True)
     env.filters["ident"] = _ident_filter
     try:
         rendered = env.from_string(template).render(**runtime_params)
