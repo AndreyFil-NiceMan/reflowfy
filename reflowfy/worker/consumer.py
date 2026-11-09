@@ -11,6 +11,7 @@ from typing import Any, List, Optional, Union
 from aiokafka import AIOKafkaConsumer
 from aiokafka.errors import CommitFailedError, KafkaError
 
+from reflowfy.core.kafka_settings import connection_kwargs
 from reflowfy.destinations.pool import close_loop_pool, open_loop_pool
 from reflowfy.observability import metrics
 from reflowfy.worker.executor import WorkerExecutor
@@ -93,17 +94,17 @@ class KafkaJobConsumer:
             "max_poll_records": 1,
         }
 
-        # Add SASL config if credentials provided
-        if self.sasl_username and self.sasl_password:
-            consumer_kwargs.update(
-                {
-                    "security_protocol": self.security_protocol or "SASL_PLAINTEXT",
-                    "sasl_mechanism": self.sasl_mechanism or "SCRAM-SHA-256",
-                    "sasl_plain_username": self.sasl_username,
-                    "sasl_plain_password": self.sasl_password,
-                    "client_id": self.sasl_username,  # client_id = username
-                }
+        consumer_kwargs.update(
+            connection_kwargs(
+                self.bootstrap_servers,
+                security_protocol=self.security_protocol,
+                sasl_mechanism=self.sasl_mechanism,
+                sasl_username=self.sasl_username,
+                sasl_password=self.sasl_password,
             )
+        )
+        if self.sasl_username and self.sasl_password:
+            consumer_kwargs["client_id"] = self.sasl_username
 
         self.consumer = AIOKafkaConsumer(self.topic, **consumer_kwargs)
 

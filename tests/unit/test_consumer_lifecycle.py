@@ -4,6 +4,7 @@ Covers start (subscription settings, connect retries), the consume loop, the
 commit policy per message kind, draining on request_stop, and teardown.
 """
 
+import ssl
 import json
 import logging
 from contextlib import contextmanager
@@ -160,6 +161,16 @@ class TestStart:
         monkeypatch.setenv("KAFKA_MAX_POLL_INTERVAL_MS", "120000")
         consumer = await _run(_worker(), [])
         assert consumer.kwargs["max_poll_interval_ms"] == 120000
+
+    async def test_tls_settings_reach_the_consumer(self, fake_kafka):
+        """TLS-only used to be dropped (plaintext), and SASL_SSL had no ssl_context."""
+        tls = await _run(_worker(security_protocol="SSL"), [])
+        assert tls.kwargs["security_protocol"] == "SSL"
+        assert isinstance(tls.kwargs["ssl_context"], ssl.SSLContext)
+        sasl_ssl = await _run(
+            _worker(security_protocol="SASL_SSL", sasl_username="u", sasl_password="p"), []
+        )
+        assert isinstance(sasl_ssl.kwargs["ssl_context"], ssl.SSLContext)
 
     async def test_sasl_settings(self, fake_kafka):
         consumer = await _run(_worker(sasl_username="svc", sasl_password="pw"), [])

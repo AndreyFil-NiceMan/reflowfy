@@ -10,6 +10,7 @@ from typing import Callable, Dict, Any, List, Optional, Union
 from aiokafka import AIOKafkaProducer
 from aiokafka.errors import KafkaError, MessageSizeTooLargeError
 
+from reflowfy.core.kafka_settings import connection_kwargs
 from reflowfy.reflow_manager.rate_limiter import RateLimiter
 
 logger = logging.getLogger(__name__)
@@ -116,21 +117,17 @@ class KafkaDispatcher(BaseDispatcher):
         if self._producer is None or not self._started:
             # Build producer kwargs
             producer_kwargs: Dict[str, Any] = {
-                "bootstrap_servers": self.kafka_bootstrap_servers,
+                **connection_kwargs(
+                    self.kafka_bootstrap_servers,
+                    security_protocol=self.security_protocol,
+                    sasl_mechanism=self.sasl_mechanism,
+                    sasl_username=self.sasl_username,
+                    sasl_password=self.sasl_password,
+                ),
                 "compression_type": "gzip",
             }
-
-            # Add SASL config if credentials provided
             if self.sasl_username and self.sasl_password:
-                producer_kwargs.update(
-                    {
-                        "security_protocol": self.security_protocol or "SASL_PLAINTEXT",
-                        "sasl_mechanism": self.sasl_mechanism or "SCRAM-SHA-256",
-                        "sasl_plain_username": self.sasl_username,
-                        "sasl_plain_password": self.sasl_password,
-                        "client_id": self.sasl_username,  # client_id = username
-                    }
-                )
+                producer_kwargs["client_id"] = self.sasl_username
 
             self._producer = AIOKafkaProducer(**producer_kwargs)
             await self._producer.start()
