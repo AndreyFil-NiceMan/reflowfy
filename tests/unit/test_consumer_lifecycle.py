@@ -169,6 +169,19 @@ class TestStart:
         assert consumer.kwargs["sasl_plain_password"] == "pw"
         assert consumer.kwargs["client_id"] == "svc"
 
+    async def test_a_stop_during_the_connect_backoff_exits_cleanly(self, fake_kafka, monkeypatch):
+        fake_kafka.start_failures = [KafkaConnectionError("coordinator")] * 5
+        worker = _worker()
+
+        async def stop_while_waiting(seconds: float) -> None:
+            worker.request_stop()  # SIGTERM arrives during the backoff
+
+        monkeypatch.setattr(consumer_mod.asyncio, "sleep", stop_while_waiting)
+        await worker.start()  # returns; does not keep retrying or raise
+
+        assert len(fake_kafka.start_failures) == 4  # one attempt, then stopped
+        assert worker.stop_requested
+
     async def test_connect_is_retried_with_exponential_backoff(self, fake_kafka, monkeypatch):
         fake_kafka.start_failures = [KafkaConnectionError("coordinator"), KafkaConnectionError("x")]
         slept: List[float] = []

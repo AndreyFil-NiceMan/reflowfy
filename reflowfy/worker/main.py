@@ -100,7 +100,7 @@ def main():
         at once. A job longer than the pod's terminationGracePeriodSeconds is still
         SIGKILLed; the manager's running lease re-runs it.
         """
-        if not consumer._running:  # pyright: ignore[reportPrivateUsage]
+        if consumer.stop_requested:
             logger.warning(
                 "Second shutdown signal, exiting now", extra={"event": "shutdown_forced"}
             )
