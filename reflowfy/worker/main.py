@@ -7,7 +7,7 @@ import sys
 from types import FrameType
 from typing import Optional
 
-from reflowfy.reflow_manager.db_settings import database_url as env_database_url
+from reflowfy.store.db_settings import database_url as env_database_url
 from reflowfy.core.kafka_settings import KafkaSettings
 from reflowfy.core.pipeline_discovery import discover_and_load_pipelines
 from reflowfy.observability import metrics
@@ -16,6 +16,7 @@ from reflowfy.observability.tracing import init_tracing
 from reflowfy.worker.consumer import KafkaJobConsumer
 
 from prometheus_client import start_http_server
+from reflowfy.store.leases import JobLeases
 
 # Named explicitly so `python -m reflowfy.worker.main` logs through the "reflowfy" logger too.
 logger = logging.getLogger("reflowfy.worker.main")
@@ -46,8 +47,8 @@ def main():
     # Auto-discover and load pipelines (module from PIPELINE_MODULE env)
     discover_and_load_pipelines()
 
-    # Get configuration from environment
     kafka = KafkaSettings.from_env()
+    JobLeases.from_env().warn_if_inconsistent(logger)
     database_url = env_database_url()
 
     # Database host only — never log credentials.

@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from reflowfy.reflow_manager.models import Base, RateLimitState
+from reflowfy.store.models import Base, RateLimitState
 from reflowfy.reflow_manager.rate_limiter import RateLimiter
 
 

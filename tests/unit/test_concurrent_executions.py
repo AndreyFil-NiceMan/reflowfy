@@ -21,7 +21,7 @@ from reflowfy.core.runtime_params import RuntimeParams
 from reflowfy.execution.job_runner import chunk, job
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
-from reflowfy.reflow_manager.models import Base, Execution, Job
+from reflowfy.store.models import Base, Execution, Job
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner
 
 

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 import reflowfy.reflow_manager.app as app_module
 from reflowfy.reflow_manager.database import get_db
-from reflowfy.reflow_manager.models import Base, DLQJobArchive, Execution, PipelineSchedule
+from reflowfy.store.models import Base, DLQJobArchive, Execution, PipelineSchedule
 
 T0 = datetime(2026, 3, 1, 8, 0, 0)
 

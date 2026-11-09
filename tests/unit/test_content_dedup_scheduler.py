@@ -16,7 +16,7 @@ from sqlalchemy.pool import StaticPool
 
 import reflowfy.reflow_manager.content_dedup_scheduler as sweep_mod
 from reflowfy.reflow_manager.content_dedup_scheduler import ContentDedupScheduler
-from reflowfy.reflow_manager.models import Base, Execution, Job, ProcessedRecord
+from reflowfy.store.models import Base, Execution, Job, ProcessedRecord
 
 
 def _now() -> datetime:

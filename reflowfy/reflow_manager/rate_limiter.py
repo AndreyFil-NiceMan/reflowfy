@@ -4,7 +4,7 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy.orm import Session
-from reflowfy.reflow_manager.models import RateLimitState
+from reflowfy.store.models import RateLimitState
 
 SECONDS_PER_MINUTE = 60.0
 

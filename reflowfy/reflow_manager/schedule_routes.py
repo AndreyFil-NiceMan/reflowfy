@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from reflowfy.reflow_manager.redaction import redact_row
 from reflowfy.reflow_manager.database import get_db
-from reflowfy.reflow_manager.models import DLQJobArchive, Execution, PipelineSchedule
+from reflowfy.store.models import DLQJobArchive, Execution, PipelineSchedule
 
 router = APIRouter()
 

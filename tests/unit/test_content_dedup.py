@@ -1,13 +1,13 @@
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-from reflowfy.reflow_manager.models import Base
+from reflowfy.store.models import Base
 from reflowfy.execution.content_dedup import (
     claim_record_hashes,
     compute_record_hash,
     record_identity,
     release_record_hashes,
 )
-from reflowfy.reflow_manager.models import ProcessedRecord
+from reflowfy.store.models import ProcessedRecord
 
 
 @pytest.fixture

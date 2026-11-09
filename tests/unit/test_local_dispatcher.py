@@ -12,7 +12,7 @@ import reflowfy.reflow_manager.local_dispatcher as local_mod
 from reflowfy.core.registry import pipeline_registry
 from reflowfy.reflow_manager.dispatcher import TOKEN_WAIT_SECONDS
 from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
-from reflowfy.reflow_manager.models import Base, Execution, Job
+from reflowfy.store.models import Base, Execution, Job
 from reflowfy.worker.executor import WorkerExecutor
 
 

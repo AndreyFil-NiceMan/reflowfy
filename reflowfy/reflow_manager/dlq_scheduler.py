@@ -15,7 +15,7 @@ from collections import defaultdict
 from sqlalchemy.orm import Session
 
 from reflowfy.observability import metrics
-from reflowfy.reflow_manager.models import DLQJob, DLQJobArchive
+from reflowfy.store.models import DLQJob, DLQJobArchive
 from reflowfy.reflow_manager.database import SessionLocal
 
 logger = logging.getLogger(__name__)

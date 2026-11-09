@@ -93,6 +93,7 @@ app.include_router(schedule_router)
 from fastapi import Response  # noqa: E402
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest  # noqa: E402
 from reflowfy.observability.tracing import init_tracing, instrument_fastapi  # noqa: E402
+from reflowfy.store.leases import JobLeases  # noqa: E402
 
 
 @app.get("/metrics")
@@ -640,6 +641,7 @@ async def _startup() -> None:
         kafka.describe_auth(),
         extra={"event": "service_config"},
     )
+    JobLeases.from_env().warn_if_inconsistent(logger)
     if os.getenv("MAX_JOBS_PER_MINUTE"):
         logger.warning(
             "MAX_JOBS_PER_MINUTE is no longer applied: a pipeline without a rate limit is "

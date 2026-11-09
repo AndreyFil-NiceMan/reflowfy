@@ -1,7 +1,6 @@
 """Worker job executor with async support."""
 
 import asyncio
-import os
 import time
 import traceback
 from datetime import datetime, timezone
@@ -30,10 +29,12 @@ from reflowfy.observability.metrics import JobOutcome
 from reflowfy.observability.context import log_context
 from reflowfy.observability.logging import get_logger
 from reflowfy.observability.tracing import extract_and_attach
-from reflowfy.reflow_manager.db_settings import async_connect_args
-from reflowfy.reflow_manager.db_settings import database_url as env_database_url
-from reflowfy.reflow_manager.models import Execution, Job
+from reflowfy.store.db_settings import async_connect_args
+from reflowfy.store.db_settings import database_url as env_database_url
+from reflowfy.store.models import Execution, Job
 from reflowfy.core.record_steps import count_skip_reason, top_skip_reasons
+from reflowfy.store.leases import JobLeases
+from reflowfy.store.states import JobState, ExecutionState
 
 logger = get_logger("worker.executor")
 
@@ -290,7 +291,7 @@ class WorkerExecutor:
             # without the claim each delivery ran the job again and wrote it twice.
             blocking_state = await self._claim_job(job_id)
             if blocking_state is not None:
-                if blocking_state == "cancelled":
+                if blocking_state == JobState.CANCELLED:
                     logger.info(
                         "Execution was cancelled — skipping job", extra={"event": "job_cancelled"}
                     )
@@ -769,7 +770,7 @@ class WorkerExecutor:
         )
 
     async def _heartbeat_job(self, job_id: str) -> None:
-        """Refresh the running job's ``updated_at`` every JOB_HEARTBEAT_SECONDS.
+        """Refresh the running job's ``updated_at`` every ``JobLeases.heartbeat_seconds``.
 
         The manager requeues a ``running`` job whose ``updated_at`` is older than its
         running lease; this keeps a live job from looking dead. A failed beat is
@@ -777,14 +778,14 @@ class WorkerExecutor:
         """
         from sqlalchemy import update
 
-        interval = float(os.getenv("JOB_HEARTBEAT_SECONDS", "30"))
+        interval = JobLeases.from_env().heartbeat_seconds
         while True:
             await asyncio.sleep(interval)
             try:
                 async with self._async_session() as db:
                     await db.execute(
                         update(Job)
-                        .where(Job.job_id == job_id, Job.state == "running")
+                        .where(Job.job_id == job_id, Job.state == JobState.RUNNING)
                         .values(updated_at=datetime.now(timezone.utc).replace(tzinfo=None))
                     )
                     await db.commit()
@@ -818,11 +819,11 @@ class WorkerExecutor:
                     update(Job)
                     .where(
                         Job.job_id == job_id,
-                        Job.state.in_(["pending", "dispatched"]),
+                        Job.state.in_(JobState.UNSTARTED),
                         or_(Job.next_attempt_at.is_(None), Job.next_attempt_at <= now),
                     )
                     .values(
-                        state="running",
+                        state=JobState.RUNNING,
                         attempts=Job.attempts + 1,
                         updated_at=now,
                         next_attempt_at=None,
@@ -914,13 +915,13 @@ class WorkerExecutor:
                 from sqlalchemy import select, update
 
                 if retry_in is not None:
-                    state = "pending"
+                    state = JobState.PENDING
                 elif stats.deduplicated:
-                    state = "deduplicated"
+                    state = JobState.DEDUPLICATED
                 elif stats.success:
-                    state = "completed"
+                    state = JobState.COMPLETED
                 else:
-                    state = "failed"
+                    state = JobState.FAILED
                 now = datetime.now(timezone.utc).replace(tzinfo=None)
 
                 # Update job state
@@ -952,7 +953,7 @@ class WorkerExecutor:
                         Job.execution_id.in_(
                             select(Execution.execution_id).where(
                                 Execution.execution_id == execution_id,
-                                Execution.state.in_(["pending", "running", "paused"]),
+                                Execution.state.in_(ExecutionState.ACTIVE),
                             )
                         )
                     )

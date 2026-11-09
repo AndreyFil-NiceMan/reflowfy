@@ -24,7 +24,7 @@ import reflowfy.worker.executor as executor_mod
 from reflowfy.core.exceptions import SkipJob
 from reflowfy.core.registry import pipeline_registry
 from reflowfy.destinations.base import DestinationError
-from reflowfy.reflow_manager.models import Base, Execution, Job
+from reflowfy.store.models import Base, Execution, Job
 from reflowfy.transformations.base import BaseTransformation
 from reflowfy.worker.executor import JobStats, WorkerExecutor
 

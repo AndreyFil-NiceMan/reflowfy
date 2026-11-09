@@ -411,7 +411,25 @@ constants.
    - One compatibility note: `job_retry` writes exception import paths into job
      messages. New ones say `reflowfy.core.exceptions.X`; old messages still load.
      During a mixed-version rollout, an older worker would not retry those errors.
-5. **F3:** `store/`, the enums and a single schema definition.
+5. **F3:** ✅ done.
+   - `reflowfy/store/` holds `models.py` and `db_settings.py` (moved from
+     `reflow_manager/`), `states.py` and `leases.py`.
+   - `JobState`/`ExecutionState` replace the bare state strings in every
+     `Job.state`/`Execution.state` comparison and in the state writes of the job
+     manager, execution manager, drive loop and worker. `jobs_dispatched(counts)`
+     is the one formula for "dispatched".
+   - `ExecutionManager.store_job_counts` / `set_total_jobs` are the only writers
+     of the execution's count columns (`pipeline_runner` used to set them itself).
+   - `JobLeases` reads the heartbeat and the three lease settings together; the
+     manager and the worker warn at startup (`job_lease_too_short`) when the
+     running lease leaves room for fewer than 3 heartbeats.
+   - `schema.sql` and `dlq_schema.sql` (never loaded) are deleted.
+   - `test_layering.py` now also forbids `store` → connectors/services and
+     `execution`/`worker` → `reflow_manager`.
+   - Not done, moved into F1: the `JobStore` port and the record-claims context
+     manager (the worker's three release sites go away with the `JobRun` that
+     owns the job's exit paths). The count aggregations in the stats/schedule
+     routes stay per route: each groups by something different.
 6. **F2 → F1:** the plan as a value, then one job pipeline. This is the biggest
    change.
 7. **F4 + F5 + F6:** one start path, one serializer and a thin API.

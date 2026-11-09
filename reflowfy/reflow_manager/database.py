@@ -7,8 +7,8 @@ from typing import Generator
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import QueuePool
-from reflowfy.reflow_manager.db_settings import database_url, sync_connect_args
-from reflowfy.reflow_manager.models import Base
+from reflowfy.store.db_settings import database_url, sync_connect_args
+from reflowfy.store.models import Base
 
 logger = logging.getLogger(__name__)
 

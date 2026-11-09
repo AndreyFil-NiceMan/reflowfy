@@ -13,7 +13,7 @@ from reflowfy.reflow_manager.dispatcher import KafkaDispatcher
 from reflowfy.reflow_manager.job_manager import JobManager
 from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
 from reflowfy.reflow_manager.manager import ReflowManager
-from reflowfy.reflow_manager.models import Execution, Job, RateLimitState
+from reflowfy.store.models import Execution, Job, RateLimitState
 from test_manager_startup import (  # type: ignore[import-not-found]  # noqa: F401
     db,
     engine,

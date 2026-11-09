@@ -16,7 +16,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy import delete, select
 
 from reflowfy.core.serialization import to_json_safe
-from reflowfy.reflow_manager.models import ProcessedRecord
+from reflowfy.store.models import ProcessedRecord
 
 # Config keys left out of a destination's identity: rotating a credential must not
 # make already-written content look new. Matched as substrings of the key lowercased

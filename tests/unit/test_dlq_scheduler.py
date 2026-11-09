@@ -21,7 +21,7 @@ from sqlalchemy.pool import StaticPool
 import reflowfy.reflow_manager.dlq_scheduler as dlq_mod
 from reflowfy.observability import metrics
 from reflowfy.reflow_manager.dlq_scheduler import DLQScheduler
-from reflowfy.reflow_manager.models import Base, DLQJob, DLQJobArchive
+from reflowfy.store.models import Base, DLQJob, DLQJobArchive
 
 
 def _now() -> datetime:
