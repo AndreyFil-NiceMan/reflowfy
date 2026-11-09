@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from reflowfy.core.exceptions import pipeline_step
 from reflowfy.core.serialization import to_json_safe
+from reflowfy.core.planning import ResolvedPlan
 from reflowfy.execution.job_runner import plan_slices
 from reflowfy.factories.source_factory import SourceFactory
 from reflowfy.observability import metrics
@@ -542,7 +543,6 @@ class PipelineRunner:
     ) -> None:
         """Phase 1 (plan: save every job) then Phase 2 (dispatch until done)."""
         from reflowfy.core.execution_context import ExecutionContext
-        from reflowfy.core.id_based_pipeline import IdBasedPipeline
         from reflowfy.core.registry import pipeline_registry
 
         # Load pipeline from registry
@@ -562,23 +562,15 @@ class PipelineRunner:
         if enable_duplicate_jobs is None:
             enable_duplicate_jobs = getattr(pipeline, "enable_duplicate_jobs", True)
 
-        # Resolve pipeline with runtime params.
-        # _resolved_params includes defaults + any keys added by define_source.
-        # On a private copy: resolve() stores the plan on the instance, and the registry's
-        # instance is shared by every execution of this pipeline running in this process.
-        if hasattr(pipeline, "fork"):
-            pipeline = pipeline.fork()
-        if hasattr(pipeline, "resolve"):
-            pipeline.resolve(runtime_params)
+        # Defaults applied and validated; define_source may add keys to plan.params.
+        resolved: ResolvedPlan = pipeline.resolve(runtime_params)
 
         logger.info("Job dispatch starting", extra={"event": "plan_start"})
 
         # Update state to running
         self.execution_manager.update_execution_state(execution_id, ExecutionState.RUNNING)
 
-        # Use enriched params (define_source may have added keys) for the context
-        # so workers receive them in job metadata.
-        enriched_params = getattr(pipeline, "_resolved_params", runtime_params)
+        enriched_params = resolved.params
 
         # Create execution context
         context = ExecutionContext(
@@ -612,18 +604,9 @@ class PipelineRunner:
         current_job_ids: List[str] = []
         job_rows: List[Dict[str, Any]] = []
 
-        # Params for jobs the plan didn't narrow itself. IdBasedPipeline.define_jobs
-        # sets job_params per job, but a pipeline that *overrides* define_jobs plans
-        # its own sources and sets nothing — and then every job would carry the whole
-        # `input_ids` list. Drop it for the ID-based path as define_jobs does.
-        default_job_params = enriched_params
-        if isinstance(pipeline, IdBasedPipeline):
-            default_job_params = {k: v for k, v in enriched_params.items() if k != "input_ids"}
-
-        base_source = pipeline.source
-        plan = _iter_plan(pipeline_name, plan_slices(base_source, enriched_params))
+        plan = _iter_plan(pipeline_name, plan_slices(resolved.jobs, enriched_params))
         last_state_check = 0.0
-        for sub_source in plan:
+        for planned in plan:
             # A cancelled (or force-failed) execution must not keep planning: a plan can take
             # minutes to hours, and its jobs would just be cancelled again as they are saved.
             # The check cannot interrupt a source call that blocks (the enumeration before the
@@ -643,16 +626,10 @@ class PipelineRunner:
                     return
             context.batch_number = batch_number
             context_dict = context.to_dict()
-            # A planned source may narrow the params its own job receives — an
-            # IdBasedPipeline gives each job only the IDs that job handles,
-            # instead of every ID in the execution. Everyone else gets the
-            # execution's params unchanged.
-            # Merged, not replaced: reflowfy.job() attaches only the keys that
-            # identify one job (e.g. current_id), and the rest of the
-            # execution's params still have to reach it.
-            own_params = getattr(sub_source, "job_params", None)
-            job_params = {**default_job_params, **own_params} if own_params else default_job_params
-            context_dict["runtime_params"] = dict(job_params)
+            # The execution's params (minus execution-only ones such as input_ids)
+            # with this job's own merged over them.
+            job_params = resolved.job_params(planned)
+            context_dict["runtime_params"] = job_params
             metadata = {**context_dict, "source_metadata": None}
             if job_retry_dict is not None:
                 metadata["job_retry"] = job_retry_dict
@@ -666,10 +643,10 @@ class PipelineRunner:
                 execution_id,
                 job_id,
                 pipeline_name,
-                sub_source,
+                planned.source,
                 metadata,
                 dedup_check=dedup_check,
-                job_params=own_params,
+                job_params=planned.params,
             )
             job_payload = to_json_safe(job_payload)
 

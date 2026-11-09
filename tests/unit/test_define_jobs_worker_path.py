@@ -73,8 +73,8 @@ def _payloads_over_the_wire(job_plan):
     build_job_payload -> to_json_safe) followed by KafkaDispatcher's
     json.dumps and the consumer's json.loads.
     """
-    for index, sub_source in enumerate(plan_slices(job_plan, {})):
-        payload = build_job_payload("e", f"j{index}", "p", sub_source, dict(_METADATA))
+    for index, planned in enumerate(plan_slices(job_plan, {})):
+        payload = build_job_payload("e", f"j{index}", "p", planned.source, dict(_METADATA))
         wire = json.dumps(to_json_safe(payload)).encode("utf-8")
         yield json.loads(wire.decode("utf-8"))
 

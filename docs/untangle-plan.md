@@ -430,7 +430,23 @@ constants.
      manager (the worker's three release sites go away with the `JobRun` that
      owns the job's exit paths). The count aggregations in the stats/schedule
      routes stay per route: each groups by something different.
-6. **F2 → F1:** the plan as a value, then one job pipeline. This is the biggest
+6. **F2:** ✅ done.
+   - `resolve()` returns `ResolvedPlan(params, jobs, execution_only)` and stores
+     nothing; `fork()`, `_source`, `_resolved_params` and the `source` property
+     are gone.
+   - Every job is a `PlannedJob(source, params)`: `plan_slices` yields them,
+     `job()` returns one, and `IdBasedPipeline.plan_batch` builds one per ID
+     batch. Nothing sets `job_params` on a source any more.
+   - `ResolvedPlan.job_params(job)` is the one merge, and
+     `execution_only_params = ("input_ids",)` replaces the manager's
+     `isinstance(IdBasedPipeline)` strip.
+   - `reflowfy test` plans ID batches with `plan_batch` and `chunk` instead of
+     its own copy.
+   - `resolve_source` returns a list as-is (`plan_slices` wraps it), so `core`
+     no longer imports `sources`: `test_layering.py` has no exceptions left.
+   - Removed: `resolve_for_ids`, `resolve_for_id`, `job_runtime_params`,
+     `get_required_parameters`.
+      **F1** (next): the plan as a value, then one job pipeline. This is the biggest
    change.
 7. **F4 + F5 + F6:** one start path, one serializer and a thin API.
 8. **F9 + F10:** connector specs and shared building blocks.
