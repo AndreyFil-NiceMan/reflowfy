@@ -518,6 +518,10 @@ async def test_heartbeat_refreshes_updated_at_only_while_running(tmp_path, monke
         await asyncio.sleep(0.4)
         for beat in beats:
             beat.cancel()
+        # Let them actually stop before the engine is disposed: a beat cancelled
+        # mid-write still holds an aiosqlite connection, and closing the engine under
+        # it hung the loop's teardown until pytest-timeout killed the run.
+        await asyncio.gather(*beats, return_exceptions=True)
     finally:
         await ex.close()
 
