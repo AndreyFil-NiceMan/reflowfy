@@ -4,6 +4,8 @@ import logging
 import uuid
 from typing import Any, Dict, Optional
 import httpx
+
+from reflowfy.core.api_auth import auth_headers
 from reflowfy.execution.base import BaseExecutor, ExecutionStatus, ExecutionState
 
 logger = logging.getLogger(__name__)
@@ -44,7 +46,8 @@ class DistributedExecutor(BaseExecutor):
     def _get_client(self) -> httpx.Client:
         """Get or create HTTP client."""
         if self._client is None:
-            self._client = httpx.Client(timeout=self.timeout)
+            # REFLOWFY_API_TOKEN, when set, guards the manager too.
+            self._client = httpx.Client(timeout=self.timeout, headers=auth_headers())
         return self._client
 
     def execute(

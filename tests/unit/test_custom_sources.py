@@ -12,6 +12,18 @@ from reflowfy.reflow_manager.pipeline_runner import build_job_payload
 from reflowfy.sources.base import BaseSource
 
 
+@pytest.fixture(autouse=True)
+def capture_reflowfy_logs(caplog: pytest.LogCaptureFixture) -> Iterator[None]:
+    """setup_logging() in other tests stops "reflowfy" propagating to caplog's root handler."""
+    logger = logging.getLogger("reflowfy")
+    attach = not logger.propagate
+    if attach:
+        logger.addHandler(caplog.handler)
+    yield
+    if attach:
+        logger.removeHandler(caplog.handler)
+
+
 class PagesSource(BaseSource):
     """A user-written source: kwargs constructor, config == kwargs."""
 
@@ -200,9 +212,16 @@ def test_same_name_from_another_module_warns(caplog: pytest.LogCaptureFixture) -
 
 
 def test_reregistering_the_same_class_is_silent(caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level(logging.WARNING, logger="reflowfy.factories.source_factory"):
+    # A module imported twice redefines the class at the same module + qualname: the
+    # same source, not a clash.
+    twin = type("PagesSource", (PagesSource,), {"__module__": PagesSource.__module__})
+    try:
+        with caplog.at_level(logging.WARNING, logger="reflowfy.factories.source_factory"):
+            SourceFactory.register("PagesSource", PagesSource)
+            SourceFactory.register("PagesSource", twin)
+        assert not caplog.records
+    finally:
         SourceFactory.register("PagesSource", PagesSource)
-    assert not caplog.records
 
 
 def test_unknown_type_points_at_discovery() -> None:

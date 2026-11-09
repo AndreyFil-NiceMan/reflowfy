@@ -18,6 +18,8 @@ load_dotenv()
 
 from reflowfy import __version__  # noqa: E402
 
+from reflowfy.core.api_auth import install_api_auth  # noqa: E402
+from reflowfy.core.secrets import redact_row  # noqa: E402
 from reflowfy.observability.context import bind_log_context  # noqa: E402
 from reflowfy.observability.logging import setup_logging  # noqa: E402
 from reflowfy.reflow_manager.database import get_db, init_db, SessionLocal  # noqa: E402
@@ -65,6 +67,10 @@ app = FastAPI(
     version=__version__,
     lifespan=lifespan,
 )
+
+# Optional bearer token (REFLOWFY_API_TOKEN). Added before CORS so CORS stays outermost
+# and a 401 still carries its headers.
+install_api_auth(app, service="reflow-manager")
 
 # CORS middleware
 app.add_middleware(
@@ -225,12 +231,12 @@ async def update_execution_state(
     if request.state == "cancelled":
         cancelled = manager.cancel_execution(execution_id)
         assert cancelled is not None  # checked non-terminal above
-        return cancelled.execution.to_dict()
+        return redact_row(cancelled.execution.to_dict())
     updated = manager.update_execution_state(
         execution_id=execution_id, state="failed", error_message=request.error_message
     )
     assert updated is not None
-    return updated.to_dict()
+    return redact_row(updated.to_dict())
 
 
 @app.post("/executions/{execution_id}/cancel")
@@ -259,7 +265,7 @@ async def cancel_execution(
     return {
         "message": "Execution cancelled",
         "cancelled_jobs": cancelled.cancelled_jobs,
-        "execution": cancelled.execution.to_dict(),
+        "execution": redact_row(cancelled.execution.to_dict()),
     }
 
 
@@ -282,7 +288,7 @@ async def pause_execution(
             detail=f"Execution '{execution_id}' is not running",
         )
 
-    return {"message": "Execution paused", "execution": execution.to_dict()}
+    return {"message": "Execution paused", "execution": redact_row(execution.to_dict())}
 
 
 @app.post("/executions/{execution_id}/resume")
@@ -307,7 +313,7 @@ async def resume_execution(
         )
 
     background_tasks.add_task(_resume_execution_sync, execution_id)
-    return {"message": "Execution resumed", "execution": execution.to_dict()}
+    return {"message": "Execution resumed", "execution": redact_row(execution.to_dict())}
 
 
 @app.post("/executions/{execution_id}/retry-failed")
@@ -362,7 +368,7 @@ async def get_jobs(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Execution '{execution_id}' not found",
         )
-    return [job.to_dict() for job in jobs]
+    return [redact_row(job.to_dict()) for job in jobs]
 
 
 @app.get("/executions/{execution_id}/errors")

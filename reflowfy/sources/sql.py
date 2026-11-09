@@ -166,6 +166,8 @@ class _BindPlacer:
     def _value_in_code(self, i: int, match: "re.Match[str]") -> Tuple[int, str]:
         sql = self.sql
         index, end = int(match.group(1)), match.end()
+        if isinstance(self.values[index], _Missing):
+            self._placeholder(index)  # raises, naming the missing parameter
         so_far = "".join(self.out)
         if (
             _char_before(so_far) == "."
