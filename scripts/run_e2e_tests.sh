@@ -282,7 +282,8 @@ rm -rf "$WORKSPACE"
 
 # Build package
 log_info "Building package..."
-uv run python -m build || {
+# `build` lives in the dev extra: a bare `uv run` syncs the venv without it.
+uv run --extra dev python -m build || {
     log_error "Failed to build package. Make sure 'build' is installed (uv pip install build)"
     exit 1
 }
