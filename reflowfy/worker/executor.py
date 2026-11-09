@@ -139,6 +139,10 @@ class WorkerExecutor:
     6. Update job status directly in PostgreSQL (async)
     """
 
+    #: Waits between attempts at saving a job's outcome. A brief Postgres outage
+    #: (restart, failover) should not make a finished job run again.
+    _save_retry_delays: Tuple[float, ...] = (1.0, 2.0, 4.0)
+
     def __init__(self, database_url: Optional[str] = None):
         """
         Initialize worker executor.
@@ -460,7 +464,7 @@ class WorkerExecutor:
                 stats.error = "Destination health check failed"
                 stats.end_time = time.time()
                 if claimed_record_hashes:
-                    await release_record_hashes(self._async_session, claimed_record_hashes, job_id)
+                    await self._release_claims(claimed_record_hashes, job_id)
                 await self._finish_failed_job(
                     job_payload,
                     execution_id,
@@ -522,10 +526,7 @@ class WorkerExecutor:
             stats.end_time = time.time()
 
             if claimed_record_hashes:
-                try:
-                    await release_record_hashes(self._async_session, claimed_record_hashes, job_id)
-                except Exception:
-                    pass
+                await self._release_claims(claimed_record_hashes, job_id)
 
             # Update job status in PostgreSQL (async): failed, or back to pending when
             # the pipeline's job_retry retries this error.
@@ -539,10 +540,12 @@ class WorkerExecutor:
             # redelivered message runs again; left held, the redelivery was marked
             # deduplicated and the unwritten rest of the job was silently lost.
             if claimed_record_hashes:
+                # Shielded: a second cancel must not stop the release half way, and
+                # must not replace the shutdown being re-raised below.
                 try:
-                    await release_record_hashes(self._async_session, claimed_record_hashes, job_id)
+                    await asyncio.shield(self._release_claims(claimed_record_hashes, job_id))
                 except BaseException:
-                    pass
+                    pass  # the original shutdown below is what matters
             raise
 
         finally:
@@ -658,7 +661,17 @@ class WorkerExecutor:
             await self._update_job_in_db(execution_id, job_id, stats)
             return
 
-        previous_count, history = await self._previous_retries(job_id)
+        previous = await self._previous_retries(job_id)
+        if previous is None:
+            logger.warning(
+                "Job failed (%s), not retried: its earlier retries could not be read",
+                type(error).__name__,
+                extra={"event": "job_retry_exhausted", "error_type": type(error).__name__},
+            )
+            stats.error_history = [describe_error(error)]
+            await self._update_job_in_db(execution_id, job_id, stats)
+            return
+        previous_count, history = previous
         stats.retry_count = previous_count
         stats.error_history = (history + [describe_error(error)])[-ERROR_HISTORY_MAX:]
         error_type = type(error).__name__
@@ -706,8 +719,29 @@ class WorkerExecutor:
             )
         await self._update_job_in_db(execution_id, job_id, stats)
 
-    async def _previous_retries(self, job_id: str) -> Tuple[int, List[Dict[str, str]]]:
-        """The retry count and error history earlier runs of this job left in its stats."""
+    async def _release_claims(self, record_hashes: Any, job_id: str) -> None:
+        """Give back this job's content-dedup claims; a failure is logged, not raised.
+
+        Left held, the claims make a re-run of this job drop its records as already
+        written until CONTENT_DEDUP_RETENTION_HOURS purges them.
+        """
+        try:
+            await release_record_hashes(self._async_session, record_hashes, job_id)
+        except Exception:
+            logger.warning(
+                "Could not release %d content-dedup claims",
+                len(record_hashes),
+                exc_info=True,
+                extra={"event": "dedup_release_failed"},
+            )
+
+    async def _previous_retries(self, job_id: str) -> Optional[Tuple[int, List[Dict[str, str]]]]:
+        """The retry count and error history earlier runs of this job left in its stats.
+
+        ``None`` when they cannot be read: the caller must not guess. Counting from
+        zero made every failure look like the first, so ``max_retries`` was never
+        reached while the read kept failing.
+        """
         from sqlalchemy import select
 
         try:
@@ -717,11 +751,11 @@ class WorkerExecutor:
                 ).scalar_one_or_none()
         except Exception:
             logger.warning(
-                "Could not read the job's earlier retries; counting from zero",
+                "Could not read the job's earlier retries",
                 exc_info=True,
                 extra={"event": "job_retry_read_error"},
             )
-            return 0, []
+            return None
         if not isinstance(previous, dict):
             return 0, []
         stats_dict = cast(Dict[str, Any], previous)
@@ -837,10 +871,42 @@ class WorkerExecutor:
         """
         if stats.job_retry_enabled and stats.retry_count is None:
             # Not a failure (those set it): keep what earlier runs of this job recorded.
-            count, history = await self._previous_retries(job_id)
-            if count:
-                stats.retry_count = count
-                stats.error_history = history
+            previous = await self._previous_retries(job_id)
+            if previous is not None and previous[0]:
+                stats.retry_count, stats.error_history = previous
+        for attempt, delay in enumerate((*self._save_retry_delays, None), start=1):
+            try:
+                return await self._write_job_row(execution_id, job_id, stats, retry_in)
+            except Exception as e:
+                if delay is None:
+                    # Left `running`: once its heartbeat stops, the lease sweep puts it
+                    # back to pending after JOB_RUNNING_LEASE_SECONDS and it runs again.
+                    logger.error(
+                        "Job outcome not saved after %d attempts: %s",
+                        attempt,
+                        e,
+                        exc_info=True,
+                        extra={"event": "job_outcome_not_saved", "attempts": attempt},
+                    )
+                    return False
+                logger.warning(
+                    "Failed to update database (attempt %d), retrying in %.0fs: %s",
+                    attempt,
+                    delay,
+                    e,
+                    extra={"event": "db_update_error", "attempt": attempt},
+                )
+                await asyncio.sleep(delay)
+        return False  # unreachable: the last attempt returns or logs and returns
+
+    async def _write_job_row(
+        self,
+        execution_id: str,
+        job_id: str,
+        stats: JobStats,
+        retry_in: Optional[float],
+    ) -> bool:
+        """One attempt at the job row write. True if written, False if no row matched."""
         async with self._async_session() as db:
             try:
                 from datetime import timedelta
@@ -905,15 +971,9 @@ class WorkerExecutor:
                 logger.debug("Status updated in database", extra={"event": "job_status_saved"})
                 return True
 
-            except Exception as e:
-                logger.error(
-                    "Failed to update database: %s",
-                    e,
-                    exc_info=True,
-                    extra={"event": "db_update_error"},
-                )
+            except Exception:
                 await db.rollback()
-                return False
+                raise
 
     async def close(self):
         """Close database connections."""
