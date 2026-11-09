@@ -60,13 +60,14 @@ Checked and **not** bugs (the audit overstated them):
   default is deliberate and documented (it works with ES 8's self-signed cert).
   Whether to flip it is a security-posture decision, not a bug.
 
-Left for a decision:
+Decided:
 
-- **DLQ runs block the queue.** The DLQ scheduler drives each execution to the
-  end inside its poll, holding `FOR UPDATE` row locks. This is deliberate: the
-  DLQ's retry and archive logic depends on the run raising synchronously.
-  Moving the run to a thread changes what a DLQ retry means. Committing
-  `processing` first releases the locks, but a crash then strands rows. See F4.
+- **Decided (option A), fixed: DLQ runs blocked the queue.** The DLQ now calls
+  `PipelineRunner.start_pipeline`, which validates and creates the execution
+  synchronously (so bad params still retry/archive) and drives the run on its
+  own thread. A run that fails later ends `failed`, like `/run`. F4 should fold
+  the cron scheduler's `_create_execution`/`_dispatch_async`, `/run` and
+  `lifecycle.run_pipeline` onto the same method.
 - **`LocalExecutor` ID batching.** It is wrong (ignores `ids_batch_size`, calls
   `define_source` twice per ID), but `LocalExecutor` has no production caller:
   the API's local mode goes through the manager. It moves to the surplus step
@@ -357,7 +358,7 @@ constants.
 
 1. **Safety net:** record the baseline of unit tests, coverage (≥ 99%), ruff,
    pyright (0) and mypy's error count.
-2. **Bugs above:** ✅ done (see status). The DLQ decision is still open.
+2. **Bugs above:** ✅ done (see status).
 3. **Surplus** (dead code from F2, F4, F6, F8, F10, plus `LocalExecutor` and `kafka_config`'s unused helpers): shrinks everything that
    follows.
 4. **F8 + F7 + F13:** layering, settings and names. These are mostly moves, with
