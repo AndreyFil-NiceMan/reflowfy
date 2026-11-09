@@ -18,6 +18,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple, cast
 
 from reflowfy.core.async_utils import run_coroutine_sync
 from reflowfy.core.exceptions import RecordValidationError, SkipJob, pipeline_step
+from reflowfy.core.planning import chunk as chunk  # its old home; kept importable
 from reflowfy.core.record_validation import describe_invalid, find_invalid_records
 from reflowfy.core.serialization import to_json_safe
 from reflowfy.destinations.fan_out import as_destination
@@ -27,6 +28,7 @@ from reflowfy.execution.transformation_runner import (
     apply_transformations_iteratively_async,
 )
 from reflowfy.observability.logging import get_logger
+from reflowfy.core.record_steps import count_skip_reason
 
 logger = get_logger("execution.job_runner")
 
@@ -58,7 +60,6 @@ def check_record_type(pipeline: Any, records: List[Any]) -> Tuple[List[Any], App
     (:class:`RecordValidationError`) unless ``on_invalid_record = "skip"``, which
     drops them with reasons such as ``invalid data.amount: missing``.
     """
-    from reflowfy.transformations.base import count_skip_reason
 
     record_type = pipeline.record_type
     start = time.time()
@@ -82,29 +83,6 @@ def check_record_type(pipeline: Any, records: List[Any]) -> Tuple[List[Any], App
         skip_reasons=skip_reasons,
     )
     return kept, step
-
-
-def chunk(records: List[Any], size: int = 1) -> List[List[Any]]:
-    """Split ``records`` into per-job chunks of at most ``size`` items.
-
-    Intended for :meth:`AbstractPipeline.define_jobs`, whose return value is the
-    job plan — one job per element. ``chunk(rows, size=1)`` gives one job per
-    record; the last chunk holds the remainder.
-
-    Args:
-        records: The records to split.
-        size: Maximum number of records per job. Must be >= 1.
-
-    Returns:
-        A list of record chunks, one per job.
-
-    Example:
-        >>> chunk([1, 2, 3], size=2)
-        [[1, 2], [3]]
-    """
-    if size < 1:
-        raise ValueError(f"chunk size must be >= 1, got {size}")
-    return [records[i : i + size] for i in range(0, len(records), size)]
 
 
 def job(records: List[Any], **params: Any) -> Any:

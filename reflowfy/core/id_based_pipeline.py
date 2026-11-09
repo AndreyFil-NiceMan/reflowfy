@@ -75,7 +75,7 @@ from reflowfy.core.runtime_params import P
 
 if TYPE_CHECKING:
     from reflowfy.sources.base import BaseSource
-from reflowfy.execution.job_runner import chunk
+from reflowfy.core.planning import chunk
 
 logger = logging.getLogger(__name__)
 

@@ -21,7 +21,8 @@ from reflowfy.core.query_loader import load_query, load_query_text
 from reflowfy.core.registry import pipeline_registry
 from reflowfy.core.runtime_params import Param, RuntimeParams
 from reflowfy.core.secrets import SecretError, secret
-from reflowfy.execution.job_runner import chunk, job
+from reflowfy.core.planning import chunk
+from reflowfy.execution.job_runner import job
 from reflowfy.observability.logging import get_logger
 from reflowfy.transformations.base import (
     AsyncTransformation,

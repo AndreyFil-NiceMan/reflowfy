@@ -1,12 +1,20 @@
 """Base transformation class with automatic registration."""
 
 import asyncio
-import os
 from abc import ABCMeta, abstractmethod
 from typing import Any, ClassVar, Dict, List, Literal, NamedTuple, Optional, Tuple
 
 from reflowfy.core.exceptions import SkipJob, SkipRecord
 from reflowfy.core.query_loader import QueryLoaderMixin
+from reflowfy.core.record_steps import (  # noqa: F401  (re-exported: their old home)
+    DEFAULT_RECORD_CONCURRENCY as DEFAULT_RECORD_CONCURRENCY,
+    MAX_SKIP_REASON_LENGTH as MAX_SKIP_REASON_LENGTH,
+    MAX_SKIP_REASONS as MAX_SKIP_REASONS,
+    OTHER_SKIP_REASON as OTHER_SKIP_REASON,
+    count_skip_reason as count_skip_reason,
+    default_record_concurrency as default_record_concurrency,
+    top_skip_reasons as top_skip_reasons,
+)
 
 
 class TransformationMeta(ABCMeta):
@@ -145,21 +153,6 @@ class AsyncTransformation(BaseTransformation):
         return run_coroutine_sync(self.apply_async(records, runtime_params))
 
 
-DEFAULT_RECORD_CONCURRENCY = 16
-
-
-def default_record_concurrency() -> int:
-    """``TRANSFORM_CONCURRENCY`` (records in flight per per-record step), default 16."""
-    raw = os.getenv("TRANSFORM_CONCURRENCY", "")
-    try:
-        value = int(raw) if raw.strip() else DEFAULT_RECORD_CONCURRENCY
-    except ValueError:
-        raise ValueError(f"TRANSFORM_CONCURRENCY must be an integer, got {raw!r}") from None
-    if value < 1:
-        raise ValueError(f"TRANSFORM_CONCURRENCY must be >= 1, got {value}")
-    return value
-
-
 class RecordFailure(Exception):
     """One record of a :class:`RecordTransformation` failed.
 
@@ -172,28 +165,6 @@ class RecordFailure(Exception):
         self.record = record
         self.error = error
         super().__init__(f"record {index}: {type(error).__name__}: {error}")
-
-
-MAX_SKIP_REASONS = 20
-"""Distinct ``SkipRecord`` reasons kept per step; the rest are counted as ``OTHER_SKIP_REASON``."""
-MAX_SKIP_REASON_LENGTH = 200
-OTHER_SKIP_REASON = "(other reasons)"
-
-
-def count_skip_reason(reasons: Dict[str, int], reason: str, times: int = 1) -> None:
-    """Add ``times`` skips for ``reason`` to ``reasons``, keeping the dict bounded."""
-    reason = reason[:MAX_SKIP_REASON_LENGTH] or "(no reason)"
-    if reason not in reasons and len(reasons) >= MAX_SKIP_REASONS:
-        reason = OTHER_SKIP_REASON
-    reasons[reason] = reasons.get(reason, 0) + times
-
-
-def top_skip_reasons(reasons: Dict[str, int], limit: int = 3) -> str:
-    """``"user inactive" x3, "no email" x1`` — the most frequent reasons, for one log line."""
-    top = sorted(reasons.items(), key=lambda item: -item[1])[:limit]
-    more = len(reasons) - len(top)
-    text = ", ".join(f"{reason!r} x{times}" for reason, times in top)
-    return f"{text}, +{more} more" if more > 0 else text
 
 
 class _Skipped:
