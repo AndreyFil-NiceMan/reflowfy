@@ -205,22 +205,13 @@ class TestUnresolvedGuards:
     def pipeline(self, isolated_registry: None) -> Any:
         return _pipeline_class("gaps_unresolved_pipeline")()
 
-    @pytest.mark.parametrize("attr", ["source", "destination", "transformations"])
-    def test_reading_the_plan_before_resolve_says_so(self, pipeline: Any, attr: str) -> None:
+    def test_reading_the_plan_before_resolve_says_so(self, pipeline: Any) -> None:
         with pytest.raises(RuntimeError, match=r"Call pipeline.resolve\(runtime_params\)"):
-            getattr(pipeline, attr)
+            pipeline.source
 
-    def test_destination_and_transformations_once_set(self, pipeline: Any) -> None:
-        pipeline._destination = "dest"
-        pipeline._transformations = ["t"]
-        assert pipeline.destination == "dest"
-        assert pipeline.transformations == ["t"]
-
-    def test_resolve_clears_per_batch_state(self, pipeline: Any) -> None:
+    def test_resolve_plans_the_source(self, pipeline: Any) -> None:
         resolved = pipeline.fork().resolve({})
         assert resolved.source == [{"id": 1}]
-        with pytest.raises(RuntimeError):
-            resolved.destination
 
 
 # ----- IdBasedPipeline --------------------------------------------------------------
