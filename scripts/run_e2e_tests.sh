@@ -282,8 +282,11 @@ rm -rf "$WORKSPACE"
 
 # Build package
 log_info "Building package..."
-# `build` lives in the dev extra: a bare `uv run` syncs the venv without it.
-uv run --extra dev python -m build || {
+# `build` lives in the dev extra: a bare `uv run` syncs the venv without it. Install
+# the dependencies from wheels only (--no-build: no package's setup code runs here),
+# then build without syncing again.
+uv sync --extra dev --no-install-project --no-build --inexact && \
+uv run --no-sync --no-build python -m build || {
     log_error "Failed to build package. Make sure 'build' is installed (uv pip install build)"
     exit 1
 }
@@ -448,8 +451,8 @@ if [ "$SKIP_DOCKER" = false ]; then
     # behind a TLS-intercepting proxy (a python image that trusts its CA) or with no
     # access to ghcr.io / Docker Hub. Unset: Dockerfile.base's defaults.
     BASE_BUILD_ARGS=()
-    [ -n "${E2E_PYTHON_IMAGE:-}" ] && BASE_BUILD_ARGS+=(--build-arg "PYTHON_IMAGE=${E2E_PYTHON_IMAGE}")
-    [ -n "${E2E_UV_IMAGE:-}" ] && BASE_BUILD_ARGS+=(--build-arg "UV_IMAGE=${E2E_UV_IMAGE}")
+    [[ -n "${E2E_PYTHON_IMAGE:-}" ]] && BASE_BUILD_ARGS+=(--build-arg "PYTHON_IMAGE=${E2E_PYTHON_IMAGE}")
+    [[ -n "${E2E_UV_IMAGE:-}" ]] && BASE_BUILD_ARGS+=(--build-arg "UV_IMAGE=${E2E_UV_IMAGE}")
     docker build ${BASE_BUILD_ARGS[@]+"${BASE_BUILD_ARGS[@]}"} -f Dockerfile.base -t "${REFLOWFY_BASE_IMAGE}" . || {
         log_error "Base image build failed"
         exit 1
