@@ -7,6 +7,7 @@ from typing import Any, ClassVar, Dict, Iterator, List, Optional, Tuple, TypeVar
 
 from reflowfy.core.execution_context import parameter_resolver
 from reflowfy.core.types import Records
+from reflowfy.core.exceptions import SourceError as SourceError  # its old home
 
 _S = TypeVar("_S", bound="BaseSource")
 
@@ -150,10 +151,3 @@ class BaseSource(ABC):
         return f"{self.__class__.__name__}(config={self.config})"
 
 
-class SourceError(Exception):
-    """Raised when a source operation fails."""
-
-    def __init__(self, source_type: str, message: str, original_error: Exception | None):
-        self.source_type = source_type
-        self.original_error = original_error
-        super().__init__(f"Source '{source_type}' error: {message}")

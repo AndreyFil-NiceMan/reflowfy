@@ -12,6 +12,10 @@ from tenacity import (
 
 from reflowfy.core.secrets import redact_config
 from reflowfy.destinations.pool import ConnectionPool, loop_pool
+from reflowfy.core.exceptions import (  # their old home
+    DestinationError as DestinationError,
+    PermanentDestinationError as PermanentDestinationError,
+)
 
 __all__ = [
     "BaseDestination",
@@ -209,34 +213,8 @@ def check_concurrency(destination_type: str, concurrency: object) -> int:
     return concurrency
 
 
-class DestinationError(Exception):
-    """Raised when a destination operation fails. ``send_with_retry`` retries it.
-
-    ``retry_after``: seconds the server asked to wait before the next attempt
-    (HTTP ``Retry-After``), or None.
-    """
-
-    def __init__(
-        self,
-        destination_type: str,
-        message: str,
-        original_error: Optional[Exception] = None,
-        retry_after: Optional[float] = None,
-    ):
-        self.destination_type = destination_type
-        self.original_error = original_error
-        self.retry_after = retry_after
-        self.reason = message
-        super().__init__(f"Destination '{destination_type}' error: {message}")
 
 
-class PermanentDestinationError(DestinationError):
-    """A destination failure that sending again cannot fix, so it is not retried.
-
-    For example an HTTP 4xx other than 408/425/429: the request itself is wrong
-    (bad URL, rejected payload, missing permission). The job fails at once instead
-    of after every retry.
-    """
 
 
 def is_retryable(error: BaseException) -> bool:
