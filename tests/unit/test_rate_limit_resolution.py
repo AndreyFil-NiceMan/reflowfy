@@ -16,7 +16,7 @@ from reflowfy.core.runtime_params import RuntimeParams
 from reflowfy.reflow_manager.dispatcher import KafkaDispatcher
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
-from reflowfy.reflow_manager.models import Base, Execution, Job, RateLimitState
+from reflowfy.store.models import Base, Execution, Job, RateLimitState
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner, resolve_rate_limit
 from reflowfy.reflow_manager.rate_limiter import RateLimiter, execution_bucket_key
 from reflowfy.sources.static import StaticSource
@@ -116,12 +116,12 @@ def test_planning_persists_define_rate_limit_and_drives_with_it(db, monkeypatch)
     monkeypatch.setattr(
         runner, "_drive_execution", lambda eid, name, rate: seen.append(rate) or (0, 0, 0)
     )
-    result = runner.run_pipeline(_RatePipeline.name, {}, "e")
+    runner.execution_manager.create_execution("e", _RatePipeline.name, {})
+    runner.run_pipeline_jobs("e", _RatePipeline.name, {})
 
     assert seen == [45.0]
     db.expire_all()
     assert db.query(Execution).one().rate_limit == 45.0
-    assert result["rate_limit"] == 45.0
 
 
 def test_job_retry_travels_in_every_job_message(db, monkeypatch) -> None:
@@ -131,7 +131,8 @@ def test_job_retry_travels_in_every_job_message(db, monkeypatch) -> None:
     monkeypatch.setattr(pipeline_registry, "get", lambda name: pipeline)
     runner = PipelineRunner(ExecutionManager(db), JobManager(db), SimpleNamespace())
     monkeypatch.setattr(runner, "_drive_execution", lambda *a: (0, 0, 0))
-    runner.run_pipeline(_RatePipeline.name, {}, "e")
+    runner.execution_manager.create_execution("e", _RatePipeline.name, {})
+    runner.run_pipeline_jobs("e", _RatePipeline.name, {})
 
     payload = db.query(Job).one().job_payload
     assert payload["metadata"]["job_retry"]["max_retries"] == 3

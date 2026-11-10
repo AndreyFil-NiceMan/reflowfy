@@ -9,7 +9,6 @@ The loop is async so a transformation can await (an ``AsyncTransformation``, or
 a ``RecordTransformation`` running its records concurrently) on the worker's
 event loop. Synchronous user code — plain ``apply``, ``define_transformations`` —
 runs in a thread, so it never stalls that loop (and with it the Kafka heartbeat).
-The sync :func:`apply_transformations_iteratively` drives the same loop.
 """
 
 import asyncio
@@ -17,14 +16,10 @@ import time
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple, cast
 
 from reflowfy.core.abstract_pipeline import AbstractPipeline
-from reflowfy.core.async_utils import run_coroutine_sync
 from reflowfy.core.exceptions import SkipJob, SkipRecord
-from reflowfy.core.record_validation import (
-    describe_invalid,
-    find_invalid_records,
-    step_output_type,
-)
+from reflowfy.core.record_validation import describe_invalid, find_invalid_records
 from reflowfy.observability.logging import get_logger
+from reflowfy.transformations.output_type import step_output_type
 from reflowfy.transformations.base import (
     AsyncTransformation,
     RecordFailure,
@@ -38,8 +33,27 @@ logger = get_logger("execution.transformation_runner")
 
 DEFAULT_MAX_STEPS = 1000
 
-SKIPPED_MODE = "skipped"
+class StepMode:
+    """Every value of ``AppliedStep.mode``: how a reported step ran.
+
+    Plain strings, not an Enum: they are logged, printed and written to ``--json``.
+    """
+
+    SYNC = "sync"  # a sync transformation, run in a thread
+    ASYNC = "async"  # a whole-batch async transformation
+    PER_RECORD = "per_record"  # a @record_transformation, records awaited concurrently
+    SKIPPED = "skipped"  # should_apply_transformation declined it: it did not run
+    VALIDATE = "validate"  # the pipeline's record_type check (job_runner.check_record_type)
+    ROUTE = "route"  # a @record_destination choosing each record's destination
+
+
+SKIPPED_MODE = StepMode.SKIPPED
 """``AppliedStep.mode`` of a step ``should_apply_transformation`` declined."""
+
+
+def step_name(transformation: Any) -> str:
+    """A step's name for reports and errors; ``<unknown>`` for an object without one."""
+    return str(getattr(transformation, "name", "<unknown>"))
 
 
 class AppliedStep(NamedTuple):
@@ -55,13 +69,11 @@ class AppliedStep(NamedTuple):
     duration: float
     records_in: int
     records_out: int
-    mode: str = "sync"
-    """How the step ran: ``"sync"`` (in a thread), ``"async"`` or ``"per_record"``.
+    mode: str = StepMode.SYNC
+    """How the step ran: one of :class:`StepMode`.
 
-    ``"skipped"``: the pipeline's ``should_apply_transformation`` declined it, so it
-    did not run (``records_in == records_out``; ``duration`` is the hook's time).
-    ``"validate"`` is not a transformation: it is the pipeline's ``record_type``
-    check on the fetched records (see ``job_runner.check_record_type``)."""
+    ``skipped``: the pipeline's ``should_apply_transformation`` declined it, so it did
+    not run (``records_in == records_out``; ``duration`` is the hook's time)."""
     concurrency: Optional[int] = None
     """Records in flight at once, for a ``"per_record"`` step."""
     skip_reasons: Optional[Dict[str, int]] = None
@@ -143,7 +155,7 @@ def _check_step_output(
         return
     culprit_index = min(invalid)
     raise StepOutputError(
-        transformation_name=getattr(transformation, "name", "<unknown>"),
+        transformation_name=step_name(transformation),
         message=f"returned {describe_invalid(invalid, len(records), output_type)}",
         step_index=step_index,
         culprit_index=culprit_index,
@@ -183,27 +195,13 @@ async def _should_apply(
         raise
     except Exception as exc:
         raise TransformationError(
-            transformation_name=getattr(transformation, "name", "<unknown>"),
+            transformation_name=step_name(transformation),
             message=f"should_apply_transformation raised {type(exc).__name__}: {exc}",
             original_error=exc,
             step_index=step_index,
             records_in=len(records),
             applied_steps=list(applied),
         ) from exc
-
-
-def apply_transformations_iteratively(
-    pipeline: Any,
-    original_records: List[Any],
-    runtime_params: Dict[str, Any],
-    max_steps: int = DEFAULT_MAX_STEPS,
-) -> Tuple[List[Any], List[AppliedStep]]:
-    """Synchronous form of :func:`apply_transformations_iteratively_async`."""
-    return run_coroutine_sync(
-        apply_transformations_iteratively_async(
-            pipeline, original_records, runtime_params, max_steps=max_steps
-        )
-    )
 
 
 async def apply_transformations_iteratively_async(
@@ -267,7 +265,7 @@ async def apply_transformations_iteratively_async(
 
         transformation = current[applied_count]
         records_in = len(transformed)
-        mode = "sync"
+        mode = StepMode.SYNC
         concurrency: Optional[int] = None
         skip_reasons: Optional[Dict[str, int]] = None
         start = time.time()
@@ -276,16 +274,16 @@ async def apply_transformations_iteratively_async(
         ):
             logger.info(
                 "Transformation %s not applied: should_apply_transformation declined it",
-                getattr(transformation, "name", "<unknown>"),
+                step_name(transformation),
                 extra={
                     "event": "transform_declined",
-                    "transformation": getattr(transformation, "name", "<unknown>"),
+                    "transformation": step_name(transformation),
                     "records_in": records_in,
                 },
             )
             applied.append(
                 AppliedStep(
-                    name=transformation.name,
+                    name=step_name(transformation),
                     duration=time.time() - start,
                     records_in=records_in,
                     records_out=records_in,
@@ -296,25 +294,25 @@ async def apply_transformations_iteratively_async(
             continue
         try:
             if isinstance(transformation, RecordTransformation):
-                mode, concurrency = "per_record", transformation.effective_concurrency()
+                mode, concurrency = StepMode.PER_RECORD, transformation.effective_concurrency()
                 logger.debug(
                     "Transformation %s: %d records, %d at a time",
-                    transformation.name,
+                    step_name(transformation),
                     records_in,
                     concurrency,
                     extra={
                         "event": "transform_per_record_start",
-                        "transformation": transformation.name,
+                        "transformation": step_name(transformation),
                         "records_in": records_in,
                         "concurrency": concurrency,
                     },
                 )
             elif isinstance(transformation, AsyncTransformation):
-                mode = "async"
+                mode = StepMode.ASYNC
             if isinstance(transformation, AsyncTransformation):
                 result = await _run_async_step(transformation, transformed, runtime_params)
                 transformed = result.records
-                if mode == "per_record":
+                if mode == StepMode.PER_RECORD:
                     skip_reasons = result.skip_reasons
             else:
                 transformed = await asyncio.to_thread(
@@ -329,7 +327,7 @@ async def apply_transformations_iteratively_async(
         except SkipRecord as exc:
             # Only a per-record step knows which record it is working on.
             raise TransformationError(
-                transformation_name=getattr(transformation, "name", "<unknown>"),
+                transformation_name=step_name(transformation),
                 message=(
                     f"SkipRecord({str(exc)!r}) raised from a {mode} transformation; it only "
                     "works in a per-record one (@record_transformation). Filter the record "
@@ -343,7 +341,7 @@ async def apply_transformations_iteratively_async(
         except RecordFailure as exc:
             # A per-record step knows exactly which record broke; no guessing.
             raise TransformationError(
-                transformation_name=getattr(transformation, "name", "<unknown>"),
+                transformation_name=step_name(transformation),
                 message=str(exc),
                 original_error=exc.error,
                 step_index=applied_count,
@@ -355,7 +353,7 @@ async def apply_transformations_iteratively_async(
         except Exception as exc:
             culprit_index, culprit = find_culprit_record(exc, transformed)
             raise TransformationError(
-                transformation_name=getattr(transformation, "name", "<unknown>"),
+                transformation_name=step_name(transformation),
                 # Name the type: bare str(KeyError) is just "'user_id'", which
                 # tells the reader nothing about what went wrong.
                 message=f"{type(exc).__name__}: {exc}",
@@ -370,7 +368,7 @@ async def apply_transformations_iteratively_async(
             )
         applied.append(
             AppliedStep(
-                name=transformation.name,
+                name=step_name(transformation),
                 duration=time.time() - start,
                 records_in=records_in,
                 records_out=len(transformed),

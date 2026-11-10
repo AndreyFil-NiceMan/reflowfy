@@ -26,7 +26,6 @@ Example:
     ...         return [MyTransformation()]
 """
 
-import copy
 import logging
 import re
 import typing
@@ -55,12 +54,15 @@ from typing import (
 )
 
 import typing_extensions
+from croniter import croniter
 
 from reflowfy.core.exceptions import pipeline_step
 from reflowfy.core.execution_summary import ExecutionSummary
 from reflowfy.core.job_retry import JobRetryConfig
+from reflowfy.core.planning import ResolvedPlan
 from reflowfy.core.query_loader import QueryLoaderMixin
 from reflowfy.core.runtime_params import P, Param, RuntimeParams
+from reflowfy.core.registry import pipeline_registry
 
 if TYPE_CHECKING:
     from reflowfy.destinations.base import BaseDestination
@@ -100,17 +102,12 @@ def _validate_schedules(schedules: List["ScheduledRun"], pipeline_name: str) -> 
             )
         seen_names.add(run.name)
 
-        try:
-            from croniter import croniter as _croniter
-
-            if not _croniter.is_valid(run.cron):
-                raise ValueError(
-                    f"Pipeline '{pipeline_name}' schedule '{run.name}' has invalid cron "
-                    f"expression: '{run.cron}'. "
-                    f"(reflowfy uses 5-field cron: minute hour day month weekday)"
-                )
-        except ImportError:
-            pass  # croniter not installed; validated at runtime by scheduler
+        if not croniter.is_valid(run.cron):
+            raise ValueError(
+                f"Pipeline '{pipeline_name}' schedule '{run.name}' has invalid cron "
+                f"expression: '{run.cron}'. "
+                f"(reflowfy uses 5-field cron: minute hour day month weekday)"
+            )
 
 
 class PipelineMeta(ABCMeta):
@@ -150,9 +147,6 @@ class PipelineMeta(ABCMeta):
 
             # Check if this is a concrete pipeline with a name
             if "name" in namespace and namespace["name"]:
-                # Import here to avoid circular dependency
-                from reflowfy.core.registry import pipeline_registry
-
                 pipeline_name = namespace["name"]
 
                 try:
@@ -839,10 +833,6 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
         """
         return self.define_parameters()
 
-    def get_required_parameters(self) -> Set[str]:
-        """Get names of required parameters."""
-        return {p.name for p in self.get_all_parameters() if p.required}
-
     def validate_parameters(self, runtime_params: P) -> List[str]:
         """
         Validate runtime parameters against defined parameters.
@@ -885,11 +875,18 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
         """
         Return list of all possible transformation names.
 
-        This is used for worker registration.
+        Metadata only (``GET /pipelines``): the hook is called with no records and no
+        params, which a real ``define_transformations`` may not handle, so a failure
+        here means "not listable", not a broken pipeline.
         """
         try:
             return [t.name for t in self.define_transformations([], cast(P, {}))]
-        except Exception:
+        except Exception as exc:
+            logger.debug(
+                "%s: transformation names not listable without records (%s)",
+                self.name,
+                type(exc).__name__,
+            )
             return []
 
     def get_runtime_parameters(self) -> List[str]:
@@ -900,84 +897,30 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
         """
         return [p.name for p in self.get_all_parameters()]
 
-    # =========================================================================
-    # Execution Support - Properties for compatibility with execution engine
-    # =========================================================================
+    # Params the execution receives but no single job does (see ResolvedPlan).
+    execution_only_params: Tuple[str, ...] = ()
 
-    _resolved_params: Optional[Dict[str, Any]] = None
-    _source: Any = None
-    _destination: Any = None
-    _transformations: List[Any] | None = None
+    def resolve(self, runtime_params: P) -> ResolvedPlan:
+        """Validate ``runtime_params``, apply defaults and call ``define_jobs``.
 
-    def fork(self) -> "AbstractPipeline[P]":
-        """A private copy of this pipeline for one execution.
+        Returns the plan as a value and stores nothing on the pipeline, so the one
+        registered instance can plan any number of executions at once.
 
-        The registry holds a single instance per pipeline and :meth:`resolve` stores the
-        plan on the instance (``_source``, ``_resolved_params``). Two executions of the
-        same pipeline resolving that one instance at the same moment — a burst of
-        ``/run`` calls, two schedules firing together — overwrote each other's plan: of
-        16 simultaneous runs every one got the wrong job count, most of them none, and
-        finished ``completed`` having processed nothing. Resolve a fork, never the
-        registered instance.
+        Raises:
+            ValueError: the params are invalid.
         """
-        return copy.copy(self)
-
-    def resolve(self, runtime_params: P) -> "AbstractPipeline[P]":
-        """
-        Resolve the pipeline with specific runtime parameters.
-
-        This method prepares the pipeline for execution by calling all
-        define_* methods and caching the results. Should be called before
-        passing the pipeline to an executor.
-
-        Args:
-            runtime_params: Runtime parameters for this execution
-
-        Returns:
-            self (for chaining)
-        """
-        # Apply defaults and validate
         params = self.apply_defaults(runtime_params)
         errors = self.validate_parameters(params)
         if errors:
             raise ValueError(f"Invalid parameters: {'; '.join(errors)}")
 
-        self._resolved_params = cast(Dict[str, Any], params)
         with pipeline_step("define_jobs", self.name):
-            self._source = self.define_jobs(params)
-        # destination and transformations are resolved per-job/per-batch,
-        # once records are available.
-        self._destination = None
-        self._transformations = None
-
-        return self
-
-    @property
-    def source(self) -> Any:
-        """Get the resolved source. Call resolve() first."""
-        if self._source is None:
-            raise RuntimeError(
-                "Pipeline not resolved. Call pipeline.resolve(runtime_params) before execution."
-            )
-        return self._source
-
-    @property
-    def destination(self) -> Any:
-        """Get the resolved destination. Call resolve() first."""
-        if self._destination is None:
-            raise RuntimeError(
-                "Pipeline not resolved. Call pipeline.resolve(runtime_params) before execution."
-            )
-        return self._destination
-
-    @property
-    def transformations(self) -> List[Any]:
-        """Get the resolved transformations. Call resolve() first."""
-        if self._transformations is None:
-            raise RuntimeError(
-                "Pipeline not resolved. Call pipeline.resolve(runtime_params) before execution."
-            )
-        return self._transformations
+            jobs = self.define_jobs(params)
+        return ResolvedPlan(
+            params=cast(Dict[str, Any], params),
+            jobs=jobs,
+            execution_only=self.execution_only_params,
+        )
 
     @property
     def is_scheduled(self) -> bool:

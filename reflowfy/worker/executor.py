@@ -1,7 +1,6 @@
 """Worker job executor with async support."""
 
 import asyncio
-import os
 import time
 import traceback
 from datetime import datetime, timezone
@@ -23,15 +22,23 @@ from reflowfy.execution.content_dedup import (
 )
 from reflowfy.destinations.base import DestinationError
 from reflowfy.destinations.record import RecordDestination
-from reflowfy.execution.job_runner import run_job_records_async
+from reflowfy.execution.job_runner import (
+    log_job_dropped,
+    log_skipped_records,
+    run_job_records_async,
+)
 from reflowfy.factories.source_factory import SourceFactory
 from reflowfy.observability import metrics
+from reflowfy.observability.metrics import JobOutcome
 from reflowfy.observability.context import log_context
 from reflowfy.observability.logging import get_logger
 from reflowfy.observability.tracing import extract_and_attach
-from reflowfy.reflow_manager.db_settings import async_connect_args
-from reflowfy.reflow_manager.models import Execution, Job
-from reflowfy.transformations.base import count_skip_reason, top_skip_reasons
+from reflowfy.store.db_settings import async_connect_args
+from reflowfy.store.db_settings import database_url as env_database_url
+from reflowfy.store.models import Execution, Job
+from reflowfy.core.record_steps import count_skip_reason
+from reflowfy.store.leases import JobLeases
+from reflowfy.store.states import JobState, ExecutionState
 
 logger = get_logger("worker.executor")
 
@@ -83,6 +90,35 @@ class JobStats:
         # a failure keeps the retry count earlier runs left (else a job that needed
         # retries looks, after the fact, like one that worked first time).
         self.job_retry_enabled = False
+
+    @property
+    def outcome(self) -> JobOutcome:
+        """The ``reflowfy_jobs_processed_total`` status label for this delivery.
+
+        Finer than :attr:`stored_state`: a job dropped with ``SkipJob`` is stored
+        ``completed`` but counted ``skipped``, and a delivery skipped because the job
+        was cancelled or already claimed stores nothing at all.
+        """
+        if self.cancelled:
+            return JobOutcome.CANCELLED
+        if self.retry_scheduled:
+            return JobOutcome.RETRY_SCHEDULED
+        if self.redelivered:
+            return JobOutcome.REDELIVERED
+        if self.deduplicated:
+            return JobOutcome.DEDUPLICATED
+        if self.skip_reason is not None:
+            return JobOutcome.SKIPPED
+        return JobOutcome.COMPLETED if self.success else JobOutcome.FAILED
+
+    @property
+    def stored_state(self) -> str:
+        """The job row's state once this run ends (see :attr:`outcome`)."""
+        if self.retry_scheduled:
+            return JobState.PENDING
+        if self.deduplicated:
+            return JobState.DEDUPLICATED
+        return JobState.COMPLETED if self.success else JobState.FAILED
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -139,6 +175,10 @@ class WorkerExecutor:
     6. Update job status directly in PostgreSQL (async)
     """
 
+    #: Waits between attempts at saving a job's outcome. A brief Postgres outage
+    #: (restart, failover) should not make a finished job run again.
+    _save_retry_delays: Tuple[float, ...] = (1.0, 2.0, 4.0)
+
     def __init__(self, database_url: Optional[str] = None):
         """
         Initialize worker executor.
@@ -146,9 +186,7 @@ class WorkerExecutor:
         Args:
             database_url: PostgreSQL connection URL
         """
-        sync_url = database_url or os.getenv(
-            "DATABASE_URL", "postgresql://reflowfy:reflowfy@localhost:5432/reflowfy"
-        )
+        sync_url = database_url or env_database_url()
 
         # Convert sync URL to async (postgresql:// -> postgresql+asyncpg://)
         if sync_url.startswith("postgresql://"):
@@ -172,49 +210,28 @@ class WorkerExecutor:
             expire_on_commit=False,
         )
 
-    def record_job_metrics(
-        self,
-        pipeline: str,
-        success: bool,
-        deduplicated: bool,
-        error_type: Optional[str],
-        duration: float,
-        records: int,
-        skipped: bool = False,
-        redelivered: bool = False,
-        cancelled: bool = False,
-        records_deduplicated: int = 0,
-        retry_scheduled: bool = False,
-    ) -> None:
-        """Emit Prometheus metrics for one finished job.
+    @staticmethod
+    def record_job_metrics(pipeline: str, stats: JobStats) -> None:
+        """Emit Prometheus metrics for one finished job delivery.
 
         A failure that ``job_retry`` sent back to the queue is ``retry_scheduled``, not
         ``failed``: the job is not over, and ``jobs_failed_total`` counts only final ones.
 
         # ponytail: error_type = exception class name only — never the message (cardinality).
         """
-        if cancelled:
-            status = "cancelled"
-        elif retry_scheduled:
-            status = "retry_scheduled"
-        elif redelivered:
-            status = "redelivered"
-        elif deduplicated:
-            status = "deduplicated"
-        elif skipped:
-            status = "skipped"
-        else:
-            status = "completed" if success else "failed"
-        metrics.jobs_processed_total.labels(pipeline=pipeline, status=status).inc()
+        metrics.count_job(pipeline, stats.outcome)
+        duration = (stats.end_time or time.time()) - stats.start_time
         metrics.job_processing_duration_seconds.labels(pipeline=pipeline).observe(duration)
         # Only count records that actually made it through (success); a job that
         # failed at the destination has records_output set but nothing delivered.
-        if success and records:
-            metrics.records_processed_total.labels(pipeline=pipeline).inc(records)
-        if success and records_deduplicated:
-            metrics.records_deduplicated_total.labels(pipeline=pipeline).inc(records_deduplicated)
-        if not success and error_type and not retry_scheduled:
-            metrics.jobs_failed_total.labels(pipeline=pipeline, error_type=error_type).inc()
+        if stats.success and stats.records_output:
+            metrics.records_processed_total.labels(pipeline=pipeline).inc(stats.records_output)
+        if stats.success and stats.records_deduplicated:
+            metrics.records_deduplicated_total.labels(pipeline=pipeline).inc(
+                stats.records_deduplicated
+            )
+        if not stats.success and stats.error_type and not stats.retry_scheduled:
+            metrics.jobs_failed_total.labels(pipeline=pipeline, error_type=stats.error_type).inc()
 
     async def execute_job(self, job_payload: Dict[str, Any]) -> bool:
         """Execute a job: bind log context, continue the trace, record metrics."""
@@ -250,20 +267,7 @@ class WorkerExecutor:
                         job_payload, stats, execution_id, job_id, pipeline_name
                     )
         finally:
-            duration = (stats.end_time or time.time()) - stats.start_time
-            self.record_job_metrics(
-                pipeline_name,
-                success=stats.success,
-                deduplicated=stats.deduplicated,
-                skipped=stats.skip_reason is not None,
-                redelivered=stats.redelivered,
-                cancelled=stats.cancelled,
-                error_type=stats.error_type,
-                duration=duration,
-                records=stats.records_output,
-                records_deduplicated=stats.records_deduplicated,
-                retry_scheduled=stats.retry_scheduled,
-            )
+            self.record_job_metrics(pipeline_name, stats)
 
     async def _execute_job_inner(
         self,
@@ -271,7 +275,7 @@ class WorkerExecutor:
         stats: "JobStats",
         execution_id: str,
         job_id: str,
-        _pipeline_name: str,
+        pipeline_name: str,
     ) -> bool:
         """Fetch the slice, transform, write to destination, report to Postgres."""
         # job_id/execution_id/pipeline_name are bound onto every record here by the
@@ -286,7 +290,7 @@ class WorkerExecutor:
             # without the claim each delivery ran the job again and wrote it twice.
             blocking_state = await self._claim_job(job_id)
             if blocking_state is not None:
-                if blocking_state == "cancelled":
+                if blocking_state == JobState.CANCELLED:
                     logger.info(
                         "Execution was cancelled — skipping job", extra={"event": "job_cancelled"}
                     )
@@ -316,11 +320,11 @@ class WorkerExecutor:
             source = SourceFactory.create(source_descriptor["type"], source_descriptor["config"])
 
             # Pipeline is required to resolve transforms + destination dynamically.
-            pipeline = pipeline_registry.get(_pipeline_name)
+            pipeline = pipeline_registry.get(pipeline_name)
             if pipeline is None:
                 raise RuntimeError(
-                    f"Pipeline '{_pipeline_name}' not found in worker registry"
-                    f"{pipeline_registry.describe_missing(_pipeline_name)}; "
+                    f"Pipeline '{pipeline_name}' not found in worker registry"
+                    f"{pipeline_registry.describe_missing(pipeline_name)}; "
                     "worker-side sourcing requires the pipeline to be discoverable."
                 )
 
@@ -339,11 +343,7 @@ class WorkerExecutor:
                 # just an empty slice.
                 stats.skip_reason = runtime_params.get("skip_reason")
                 if stats.skip_reason:
-                    logger.info(
-                        "Job dropped by pipeline (%s)",
-                        stats.skip_reason,
-                        extra={"event": "job_dropped", "skip_reason": stats.skip_reason},
-                    )
+                    log_job_dropped(logger, stats.skip_reason)
                 else:
                     logger.info("No records to process", extra={"event": "job_empty"})
                 stats.success = True
@@ -379,21 +379,9 @@ class WorkerExecutor:
                     stats.records_skipped += step.records_skipped
                     for reason, times in (step.skip_reasons or {}).items():
                         count_skip_reason(stats.record_skip_reasons, reason, times)
-                    # Reasons stay in the message: as a field their keys would be
-                    # unbounded mapping names in the log index.
-                    logger.info(
-                        "%s skipped %d records (%s)",
-                        step.name,
-                        step.records_skipped,
-                        top_skip_reasons(step.skip_reasons or {}),
-                        extra={
-                            "event": "records_skipped",
-                            "transformation": step.name,
-                            "records_skipped": step.records_skipped,
-                        },
-                    )
+                    log_skipped_records(logger, step)
                     metrics.records_skipped_total.labels(
-                        pipeline=_pipeline_name, transformation=step.name
+                        pipeline=pipeline_name, transformation=step.name
                     ).inc(step.records_skipped)
 
             stats.records_output = len(transformed_records)
@@ -404,7 +392,7 @@ class WorkerExecutor:
                 job_params: Optional[Dict[str, Any]] = job_payload.get("job_params") or None
                 kept, claimed_record_hashes = await self._claim_records(
                     pipeline,
-                    _pipeline_name,
+                    pipeline_name,
                     job_id,
                     transformed_records,
                     job_params,
@@ -440,7 +428,7 @@ class WorkerExecutor:
                     # alone, and routing again would report its skips twice.
                     if not isinstance(destination, RecordDestination):
                         await destination.close()
-                        with pipeline_step("define_destination", _pipeline_name):
+                        with pipeline_step("define_destination", pipeline_name):
                             # User code: off the loop, like the first call (job_runner).
                             destination = await asyncio.to_thread(
                                 pipeline.define_destination, kept, runtime_params
@@ -451,7 +439,6 @@ class WorkerExecutor:
             if isinstance(destination, RecordDestination):
                 stats.destinations = len(destination.destinations)
 
-            # Health check (async)
             if not await destination.health_check():
                 logger.error(
                     "Destination health check failed", extra={"event": "destination_unhealthy"}
@@ -460,7 +447,7 @@ class WorkerExecutor:
                 stats.error = "Destination health check failed"
                 stats.end_time = time.time()
                 if claimed_record_hashes:
-                    await release_record_hashes(self._async_session, claimed_record_hashes, job_id)
+                    await self._release_claims(claimed_record_hashes, job_id)
                 await self._finish_failed_job(
                     job_payload,
                     execution_id,
@@ -470,7 +457,6 @@ class WorkerExecutor:
                 )
                 return False
 
-            # Send to destination and track time (async)
             logger.debug(
                 "Sending %d records to destination",
                 len(transformed_records),
@@ -483,7 +469,6 @@ class WorkerExecutor:
                 # Logged by the destination as each failed; kept on the job here.
                 stats.destinations_failed_optional = len(destination.failed_optional)
 
-            # Mark as successful
             stats.success = True
             stats.end_time = time.time()
 
@@ -500,7 +485,6 @@ class WorkerExecutor:
                 },
             )
 
-            # Update job status in PostgreSQL (async)
             await self._update_job_in_db(execution_id, job_id, stats)
 
             return True
@@ -514,7 +498,7 @@ class WorkerExecutor:
                 extra={"event": "job_failed", "error_type": type(e).__name__},
             )
 
-            # Mark as failed — capture both summary and full traceback
+            # Both the summary and the full traceback are kept on the job.
             stats.success = False
             stats.error = str(e)
             stats.error_type = type(e).__name__
@@ -522,13 +506,9 @@ class WorkerExecutor:
             stats.end_time = time.time()
 
             if claimed_record_hashes:
-                try:
-                    await release_record_hashes(self._async_session, claimed_record_hashes, job_id)
-                except Exception:
-                    pass
+                await self._release_claims(claimed_record_hashes, job_id)
 
-            # Update job status in PostgreSQL (async): failed, or back to pending when
-            # the pipeline's job_retry retries this error.
+            # Failed, or back to pending when the pipeline's job_retry retries this error.
             await self._finish_failed_job(job_payload, execution_id, job_id, stats, e)
 
             return False
@@ -539,10 +519,12 @@ class WorkerExecutor:
             # redelivered message runs again; left held, the redelivery was marked
             # deduplicated and the unwritten rest of the job was silently lost.
             if claimed_record_hashes:
+                # Shielded: a second cancel must not stop the release half way, and
+                # must not replace the shutdown being re-raised below.
                 try:
-                    await release_record_hashes(self._async_session, claimed_record_hashes, job_id)
+                    await asyncio.shield(self._release_claims(claimed_record_hashes, job_id))
                 except BaseException:
-                    pass
+                    pass  # the original shutdown below is what matters
             raise
 
         finally:
@@ -588,15 +570,15 @@ class WorkerExecutor:
         dedup_key = getattr(pipeline, "dedup_key", None)
         identities: Dict[int, Dict[str, Any]] = {}
 
-        def targets_of(record: Any) -> List[Any]:
-            if isinstance(destination, RecordDestination):
-                return list(destination.destinations_for(record))
-            return [destination]
-
         def identity_of(target: Any) -> Dict[str, Any]:
             if id(target) not in identities:
                 identities[id(target)] = destination_identity(target)
             return identities[id(target)]
+
+        def targets_of(record: Any) -> List[Any]:
+            if isinstance(destination, RecordDestination):
+                return list(destination.destinations_for(record))
+            return [destination]
 
         hashed: List[Tuple[Any, List[Tuple[Any, bytes]]]] = []
         for record in transformed_records:
@@ -658,7 +640,17 @@ class WorkerExecutor:
             await self._update_job_in_db(execution_id, job_id, stats)
             return
 
-        previous_count, history = await self._previous_retries(job_id)
+        previous = await self._previous_retries(job_id)
+        if previous is None:
+            logger.warning(
+                "Job failed (%s), not retried: its earlier retries could not be read",
+                type(error).__name__,
+                extra={"event": "job_retry_exhausted", "error_type": type(error).__name__},
+            )
+            stats.error_history = [describe_error(error)]
+            await self._update_job_in_db(execution_id, job_id, stats)
+            return
+        previous_count, history = previous
         stats.retry_count = previous_count
         stats.error_history = (history + [describe_error(error)])[-ERROR_HISTORY_MAX:]
         error_type = type(error).__name__
@@ -706,8 +698,29 @@ class WorkerExecutor:
             )
         await self._update_job_in_db(execution_id, job_id, stats)
 
-    async def _previous_retries(self, job_id: str) -> Tuple[int, List[Dict[str, str]]]:
-        """The retry count and error history earlier runs of this job left in its stats."""
+    async def _release_claims(self, record_hashes: Any, job_id: str) -> None:
+        """Give back this job's content-dedup claims; a failure is logged, not raised.
+
+        Left held, the claims make a re-run of this job drop its records as already
+        written until CONTENT_DEDUP_RETENTION_HOURS purges them.
+        """
+        try:
+            await release_record_hashes(self._async_session, record_hashes, job_id)
+        except Exception:
+            logger.warning(
+                "Could not release %d content-dedup claims",
+                len(record_hashes),
+                exc_info=True,
+                extra={"event": "dedup_release_failed"},
+            )
+
+    async def _previous_retries(self, job_id: str) -> Optional[Tuple[int, List[Dict[str, str]]]]:
+        """The retry count and error history earlier runs of this job left in its stats.
+
+        ``None`` when they cannot be read: the caller must not guess. Counting from
+        zero made every failure look like the first, so ``max_retries`` was never
+        reached while the read kept failing.
+        """
         from sqlalchemy import select
 
         try:
@@ -717,11 +730,11 @@ class WorkerExecutor:
                 ).scalar_one_or_none()
         except Exception:
             logger.warning(
-                "Could not read the job's earlier retries; counting from zero",
+                "Could not read the job's earlier retries",
                 exc_info=True,
                 extra={"event": "job_retry_read_error"},
             )
-            return 0, []
+            return None
         if not isinstance(previous, dict):
             return 0, []
         stats_dict = cast(Dict[str, Any], previous)
@@ -735,7 +748,7 @@ class WorkerExecutor:
         )
 
     async def _heartbeat_job(self, job_id: str) -> None:
-        """Refresh the running job's ``updated_at`` every JOB_HEARTBEAT_SECONDS.
+        """Refresh the running job's ``updated_at`` every ``JobLeases.heartbeat_seconds``.
 
         The manager requeues a ``running`` job whose ``updated_at`` is older than its
         running lease; this keeps a live job from looking dead. A failed beat is
@@ -743,14 +756,14 @@ class WorkerExecutor:
         """
         from sqlalchemy import update
 
-        interval = float(os.getenv("JOB_HEARTBEAT_SECONDS", "30"))
+        interval = JobLeases.from_env().heartbeat_seconds
         while True:
             await asyncio.sleep(interval)
             try:
                 async with self._async_session() as db:
                     await db.execute(
                         update(Job)
-                        .where(Job.job_id == job_id, Job.state == "running")
+                        .where(Job.job_id == job_id, Job.state == JobState.RUNNING)
                         .values(updated_at=datetime.now(timezone.utc).replace(tzinfo=None))
                     )
                     await db.commit()
@@ -784,11 +797,11 @@ class WorkerExecutor:
                     update(Job)
                     .where(
                         Job.job_id == job_id,
-                        Job.state.in_(["pending", "dispatched"]),
+                        Job.state.in_(JobState.UNSTARTED),
                         or_(Job.next_attempt_at.is_(None), Job.next_attempt_at <= now),
                     )
                     .values(
-                        state="running",
+                        state=JobState.RUNNING,
                         attempts=Job.attempts + 1,
                         updated_at=now,
                         next_attempt_at=None,
@@ -837,24 +850,49 @@ class WorkerExecutor:
         """
         if stats.job_retry_enabled and stats.retry_count is None:
             # Not a failure (those set it): keep what earlier runs of this job recorded.
-            count, history = await self._previous_retries(job_id)
-            if count:
-                stats.retry_count = count
-                stats.error_history = history
+            previous = await self._previous_retries(job_id)
+            if previous is not None and previous[0]:
+                stats.retry_count, stats.error_history = previous
+        for attempt, delay in enumerate((*self._save_retry_delays, None), start=1):
+            try:
+                return await self._write_job_row(execution_id, job_id, stats, retry_in)
+            except Exception as e:
+                if delay is None:
+                    # Left `running`: once its heartbeat stops, the lease sweep puts it
+                    # back to pending after JOB_RUNNING_LEASE_SECONDS and it runs again.
+                    logger.error(
+                        "Job outcome not saved after %d attempts: %s",
+                        attempt,
+                        e,
+                        exc_info=True,
+                        extra={"event": "job_outcome_not_saved", "attempts": attempt},
+                    )
+                    return False
+                logger.warning(
+                    "Failed to update database (attempt %d), retrying in %.0fs: %s",
+                    attempt,
+                    delay,
+                    e,
+                    extra={"event": "db_update_error", "attempt": attempt},
+                )
+                await asyncio.sleep(delay)
+        return False  # unreachable: the last attempt returns or logs and returns
+
+    async def _write_job_row(
+        self,
+        execution_id: str,
+        job_id: str,
+        stats: JobStats,
+        retry_in: Optional[float],
+    ) -> bool:
+        """One attempt at the job row write. True if written, False if no row matched."""
         async with self._async_session() as db:
             try:
                 from datetime import timedelta
 
                 from sqlalchemy import select, update
 
-                if retry_in is not None:
-                    state = "pending"
-                elif stats.deduplicated:
-                    state = "deduplicated"
-                elif stats.success:
-                    state = "completed"
-                else:
-                    state = "failed"
+                state = stats.stored_state
                 now = datetime.now(timezone.utc).replace(tzinfo=None)
 
                 # Update job state
@@ -886,7 +924,7 @@ class WorkerExecutor:
                         Job.execution_id.in_(
                             select(Execution.execution_id).where(
                                 Execution.execution_id == execution_id,
-                                Execution.state.in_(["pending", "running", "paused"]),
+                                Execution.state.in_(ExecutionState.ACTIVE),
                             )
                         )
                     )
@@ -905,15 +943,9 @@ class WorkerExecutor:
                 logger.debug("Status updated in database", extra={"event": "job_status_saved"})
                 return True
 
-            except Exception as e:
-                logger.error(
-                    "Failed to update database: %s",
-                    e,
-                    exc_info=True,
-                    extra={"event": "db_update_error"},
-                )
+            except Exception:
                 await db.rollback()
-                return False
+                raise
 
     async def close(self):
         """Close database connections."""

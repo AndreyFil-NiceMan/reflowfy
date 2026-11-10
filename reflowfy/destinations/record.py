@@ -67,6 +67,7 @@ from reflowfy.core.async_utils import for_each_concurrently
 from reflowfy.core.exceptions import PipelineError, SkipJob, SkipRecord
 from reflowfy.destinations.base import BaseDestination, ConnectionPool, DestinationError
 from reflowfy.observability.logging import get_logger
+from reflowfy.core.record_steps import count_skip_reason, default_record_concurrency
 
 logger = get_logger("destinations.record")
 
@@ -151,13 +152,18 @@ class RecordDestination(BaseDestination):
         # Connections shared by every routed destination, and the job's request budget.
         self._pool = ConnectionPool(request_limit=self.effective_concurrency())
 
+    def fixed_targets(self) -> Optional[List[Tuple[BaseDestination, bool]]]:
+        """``(destination, optional)`` pairs when every record goes to the same
+        destinations (``fan_out``), so a record destination may return this one;
+        None when the targets depend on the record (the default)."""
+        return None
+
     def destination_for_record(self, record: Any, runtime_params: Any) -> Any:
         """The destination ``record`` goes to. May be ``async def`` in a subclass."""
         raise NotImplementedError(f"{type(self).__name__} must implement destination_for_record")
 
     def effective_concurrency(self) -> int:
         """The cap this destination runs with."""
-        from reflowfy.transformations.base import default_record_concurrency
 
         return self.concurrency if self.concurrency is not None else default_record_concurrency()
 
@@ -193,7 +199,6 @@ class RecordDestination(BaseDestination):
         Every record is routed before the caller sends any, so a record that fails
         the job (``on_error="fail"``) fails it with nothing written.
         """
-        from reflowfy.transformations.base import count_skip_reason
 
         total = len(records)
         results: List[Union[_Targets, _Skipped, None]] = [None] * total
@@ -316,11 +321,11 @@ class RecordDestination(BaseDestination):
     def _checked(self, produced: Any, index: int, total: int) -> _Targets:
         # A wrong return is a bug in the function, not bad data: it fails the job
         # whatever on_error says.
-        from reflowfy.destinations.fan_out import FanOut
-
         kind = type(produced).__name__
-        if isinstance(produced, FanOut):
-            return produced.targets()
+        if isinstance(produced, RecordDestination):
+            fixed = produced.fixed_targets()
+            if fixed is not None:  # fan_out(...): the same targets for this record
+                return fixed
         if isinstance(produced, (list, tuple)) and produced:
             items = cast(Sequence[Any], produced)
             if all(is_routable(d) for d in items):

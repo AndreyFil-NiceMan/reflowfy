@@ -60,6 +60,7 @@ class ElasticLogHandler(logging.Handler):
         try:
             line = self.format(record)
         except Exception:
+            self.handleError(record)  # logging's own policy: report to stderr, never raise
             return
         try:
             self._q.put_nowait(line)

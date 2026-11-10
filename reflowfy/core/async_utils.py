@@ -12,8 +12,7 @@ def run_coroutine_sync(coro: Coroutine[Any, Any, T]) -> T:
     """Run ``coro`` to completion from synchronous code and return its result.
 
     With no event loop running in this thread it is plain ``asyncio.run``. With one
-    running (``LocalExecutor.execute`` is called from a FastAPI handler, and sync
-    callers inside async tests), the coroutine runs on a fresh loop in a helper
+    running (sync callers inside async tests), the coroutine runs on a fresh loop in a helper
     thread: blocking the running loop on itself would deadlock. The caller's
     contextvars travel along, so ``log_context`` fields stay bound.
 

@@ -17,7 +17,7 @@ from reflowfy.core.secrets import (
     literal_secret_fields,
     redact_config,
 )
-from reflowfy.sources.base import BaseSource
+from reflowfy.sources.base import BaseSource, register_source_type, source_types
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,8 @@ class SourceFactory:
         ... })
     """
 
-    _registry: Dict[str, Type[BaseSource]] = {}
+    # The registry BaseSource subclasses fill as they are defined (shared, not copied).
+    _registry: Dict[str, Type[BaseSource]] = source_types
     # (type, config keys) shapes already proven to round-trip in this process.
     _checked: Set[Tuple[str, FrozenSet[str]]] = set()
     # (pipeline, type, field) already warned about holding a literal secret.
@@ -48,31 +49,12 @@ class SourceFactory:
 
     @classmethod
     def register(cls, type_name: str, source_class: Type[BaseSource]) -> None:
-        """
-        Register a source type.
+        """Register a source type under ``type_name`` (a class's own name, normally).
 
-        Args:
-            type_name: Class name used as the registry key (e.g., "ElasticSource")
-            source_class: The source class to register
+        Concrete ``BaseSource`` subclasses register themselves when they are defined;
+        this is for registering one under another name.
         """
-        previous = cls._registry.get(type_name)
-        if previous is not None and previous is not source_class:
-            same_place = (previous.__module__, previous.__qualname__) == (
-                source_class.__module__,
-                source_class.__qualname__,
-            )
-            if not same_place:  # a module re-imported redefines the same class
-                logger.warning(
-                    "Source type %r registered twice (%s.%s replaces %s.%s): jobs of "
-                    "either rebuild as the later one; give one a different class name",
-                    type_name,
-                    source_class.__module__,
-                    source_class.__qualname__,
-                    previous.__module__,
-                    previous.__qualname__,
-                    extra={"event": "source_type_replaced", "source_type": type_name},
-                )
-        cls._registry[type_name] = source_class
+        register_source_type(type_name, source_class)
 
     @classmethod
     def create(cls, type_name: str, config: Dict[str, Any]) -> BaseSource:
@@ -210,19 +192,16 @@ class SourceFactory:
 
 def _register_builtin_sources() -> None:
     """Import the built-in sources: each registers itself when its class is defined."""
+    import reflowfy.sources.api  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    import reflowfy.sources.elastic  # noqa: F401  # pyright: ignore[reportUnusedImport]
     import reflowfy.sources.mock  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    import reflowfy.sources.sql  # noqa: F401  # pyright: ignore[reportUnusedImport]
     import reflowfy.sources.static  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
-    for module in (
-        "reflowfy.sources.elastic",
-        "reflowfy.sources.sql",
-        "reflowfy.sources.s3",
-        "reflowfy.sources.api",
-    ):
-        try:
-            __import__(module)
-        except ImportError:
-            pass  # optional dependency (boto3, elasticsearch) not installed
+    try:
+        import reflowfy.sources.s3  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    except ImportError:
+        pass  # boto3 is the optional [s3] extra
 
 
 # Auto-register on import

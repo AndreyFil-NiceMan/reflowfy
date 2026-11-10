@@ -8,7 +8,7 @@ Two scopes use the same :class:`ConnectionPool`:
   producer, and every one that calls the same host with the same client settings one
   HTTP client. Different credentials or settings are a different ``_connection_key()``
   and never share. In local mode the manager's dispatcher opens one per execution (the
-  loop that drives it), and ``LocalExecutor`` / ``reflowfy test`` one per job send: a
+  loop that drives it), and ``reflowfy test`` one per job send: a
   Kafka producer belongs to the loop that started it, so a pool never outlives its loop.
 - **A job's pool**, which a ``@record_destination`` gives its routed destinations. It
   carries the job's request budget and takes its connections from the loop's pool when

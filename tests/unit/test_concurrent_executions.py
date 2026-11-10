@@ -3,7 +3,7 @@
 Found on a cluster: 16 simultaneous `/run`s of one pipeline all got the wrong plan — most
 of them zero jobs — and finished `completed` having processed nothing. The registry holds
 one instance per pipeline; resolve() stored the plan (``_source``, ``_resolved_params``)
-on that shared instance, so the last execution to resolve won.
+on that shared instance, so the last execution to resolve won. It now returns the plan.
 
 The tests force the bad interleaving (both executions resolved before either reads its
 plan) instead of hoping a race shows up.
@@ -21,7 +21,7 @@ from reflowfy.core.runtime_params import RuntimeParams
 from reflowfy.execution.job_runner import chunk, job
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
-from reflowfy.reflow_manager.models import Base, Execution, Job
+from reflowfy.store.models import Base, Execution, Job
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner
 
 
@@ -41,16 +41,15 @@ class _Counting(AbstractPipeline[RuntimeParams]):
         raise AssertionError("not reached")
 
 
-def test_fork_gives_each_execution_its_own_plan():
+def test_each_resolve_returns_its_own_plan():
     registered = _Counting()
-    a, b = registered.fork(), registered.fork()
 
-    a.resolve({"n": 3})
-    b.resolve({"n": 7})
+    a = registered.resolve({"n": 3})
+    b = registered.resolve({"n": 7})
 
-    assert [len(list(p.source)) for p in (a, b)] == [3, 7]
-    assert a._resolved_params["n"] == 3 and b._resolved_params["n"] == 7
-    assert getattr(registered, "_source", None) is None  # the shared instance is never written
+    assert [len(list(p.jobs)) for p in (a, b)] == [3, 7]
+    assert a.params["n"] == 3 and b.params["n"] == 7
+    assert not hasattr(registered, "_source")  # the shared instance is never written
 
 
 @pytest.mark.parametrize("executions", [2, 8])

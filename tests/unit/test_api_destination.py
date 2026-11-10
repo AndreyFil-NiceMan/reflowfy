@@ -8,7 +8,6 @@ import pytest
 
 from reflowfy.destinations.api import ApiDestination, api_destination
 from reflowfy.destinations.base import DestinationError, PermanentDestinationError
-from reflowfy.destinations.schemas import ApiDestinationConfig
 
 
 class TestApiDestinationFactory:
@@ -41,22 +40,6 @@ class TestApiDestinationFactory:
     def test_batch_requests_kwarg_rejected(self):
         with pytest.raises(TypeError):
             api_destination(url="https://api.example.com", batch_requests=True)
-
-
-class TestApiDestinationConfig:
-    def test_valid_config(self):
-        cfg = ApiDestinationConfig(url="https://api.example.com/webhook")
-        assert cfg.url == "https://api.example.com/webhook"
-        assert cfg.method == "POST"
-        assert cfg.body is None
-
-    def test_invalid_url_raises(self):
-        with pytest.raises(Exception):
-            ApiDestinationConfig(url="not-a-url")
-
-    def test_body_accepts_dict_and_list(self):
-        assert ApiDestinationConfig(url="https://x.com", body={"a": 1}).body == {"a": 1}
-        assert ApiDestinationConfig(url="https://x.com", body=[1, 2]).body == [1, 2]
 
 
 class TestSendVerbatim:
@@ -444,27 +427,4 @@ class TestPerRecord:
         with pytest.raises(ValueError, match="per_record"):
             api_destination(url="https://api.example.com", body_field="payload")
 
-    def test_config_round_trips_through_factory(self):
-        from reflowfy.factories.destination_factory import DestinationFactory
 
-        dest = api_destination(
-            url="https://api.example.com/{id}",
-            per_record=True,
-            body_field="p",
-            params={"v": "{v}"},
-            params_field="q",
-        )
-        rebuilt = DestinationFactory.create("api", dest.config)
-        assert rebuilt.config == dest.config
-
-    def test_schema_accepts_per_record_fields(self):
-        cfg = ApiDestinationConfig(
-            url="https://x.com/{id}",
-            per_record=True,
-            body_field="p",
-            params={"v": "{v}", "n": 1},
-            params_field="q",
-        )
-        assert cfg.per_record is True
-        assert cfg.body_field == "p"
-        assert cfg.params_field == "q"

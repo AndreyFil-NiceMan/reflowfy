@@ -12,11 +12,10 @@ from fastapi.testclient import TestClient
 from typing_extensions import Annotated, NotRequired, Required
 
 from reflowfy import AbstractPipeline, Param, RuntimeParams, pipeline_registry
-from reflowfy.api.execution import execution_tracker
 from reflowfy.api.routes import _create_run_route, create_pipeline_routes, pipeline_folder
 from reflowfy.core.abstract_pipeline import PipelineParameter
-from reflowfy.execution.base import ExecutionState, ExecutionStatus
-from reflowfy.execution.distributed_executor import DistributedExecutor
+from reflowfy.execution.distributed_executor import DistributedExecutor, ExecutionStatus
+from reflowfy.store.states import ExecutionState
 
 
 class RouteParams(RuntimeParams, total=False):
@@ -75,16 +74,10 @@ def make_pipeline() -> Iterator[Any]:
         pipeline_registry.unregister(name)
 
 
-@pytest.fixture(autouse=True)
-def _clean_tracker() -> Iterator[None]:
-    yield
-    execution_tracker.clear()
-
-
 def _executor(state: ExecutionState = ExecutionState.RUNNING, error: str = "") -> MagicMock:
     executor = MagicMock()
 
-    def execute(pipeline, runtime_params, rate_limit_override=None):  # type: ignore[no-untyped-def]
+    def execute(pipeline, runtime_params, **kwargs):  # type: ignore[no-untyped-def]
         return ExecutionStatus(
             execution_id="exec-1",
             pipeline_name=pipeline.name,
@@ -97,9 +90,9 @@ def _executor(state: ExecutionState = ExecutionState.RUNNING, error: str = "") -
     return executor
 
 
-def _app(pipeline: Any, local: Any = None, distributed: Any = None) -> FastAPI:
+def _app(pipeline: Any, client: Any = None) -> FastAPI:
     app = FastAPI()
-    create_pipeline_routes(app, pipeline, local or _executor(), distributed or _executor())
+    create_pipeline_routes(app, pipeline, client or _executor())
     return app
 
 
@@ -159,7 +152,7 @@ class TestRunRouteSchema:
         pipeline.name = "routes_reserved"
         params = [PipelineParameter(name=reserved, param_type=str)]
         with pytest.raises(ValueError, match=f"'{reserved}'"):
-            _create_run_route(FastAPI(), pipeline, None, None, params)
+            _create_run_route(FastAPI(), pipeline, None, params)
 
     def test_no_per_pipeline_status_route(self, make_pipeline):
         pipeline = make_pipeline("routes_status", ScalarParams)
@@ -174,10 +167,10 @@ class TestRunRouteSchema:
 
 
 class TestRunRouteRequests:
-    def test_local_mode_uses_local_executor_with_merged_params(self, make_pipeline):
-        local, distributed = _executor(), _executor()
+    def test_local_mode_is_forwarded_with_merged_params(self, make_pipeline):
+        manager = _executor()
         pipeline = make_pipeline("routes_run_local", RouteParams)
-        client = TestClient(_app(pipeline, local, distributed))
+        client = TestClient(_app(pipeline, manager))
 
         resp = client.post(
             "/pipelines/routes_run_local/run?mode=local&env=prod",
@@ -191,8 +184,8 @@ class TestRunRouteRequests:
         assert body["pipeline_name"] == "routes_run_local"
         assert body["rate_limit"] is None
         assert body["status"]["total_jobs"] == 4
-        distributed.execute.assert_not_called()
-        kwargs = local.execute.call_args.kwargs
+        kwargs = manager.execute.call_args.kwargs
+        assert kwargs["mode"] == "local"
         assert kwargs["pipeline"] is pipeline
         assert kwargs["rate_limit_override"] is None
         assert kwargs["runtime_params"] == {
@@ -201,20 +194,19 @@ class TestRunRouteRequests:
             "tags": ["a", "b"],
             "options": None,
         }
-        assert execution_tracker.get_status("exec-1") is not None
 
     def test_default_mode_is_distributed_and_rate_limit_is_forwarded(self, make_pipeline):
-        local, distributed = _executor(), _executor()
+        manager = _executor()
         pipeline = make_pipeline("routes_run_dist", ScalarParams)
-        client = TestClient(_app(pipeline, local, distributed))
+        client = TestClient(_app(pipeline, manager))
 
         resp = client.post("/pipelines/routes_run_dist/run?rate_limit=120&verbose=true")
 
         assert resp.status_code == 200, resp.text
         assert resp.json()["mode"] == "distributed"
         assert resp.json()["rate_limit"] == 120
-        local.execute.assert_not_called()
-        kwargs = distributed.execute.call_args.kwargs
+        kwargs = manager.execute.call_args.kwargs
+        assert kwargs["mode"] == "distributed"
         assert kwargs["rate_limit_override"] == 120
         assert kwargs["runtime_params"] == {"env": "dev", "verbose": True}
 
@@ -229,21 +221,20 @@ class TestRunRouteRequests:
         ],
     )
     def test_invalid_requests_are_rejected_before_execution(self, make_pipeline, query, body):
-        local, distributed = _executor(), _executor()
+        manager = _executor()
         pipeline = make_pipeline("routes_invalid", RouteParams)
-        client = TestClient(_app(pipeline, local, distributed))
+        client = TestClient(_app(pipeline, manager))
 
         resp = client.post(f"/pipelines/routes_invalid/run?{query}", json=body)
 
         assert resp.status_code == 422
-        local.execute.assert_not_called()
-        distributed.execute.assert_not_called()
+        manager.execute.assert_not_called()
 
     def test_executor_exception_is_a_500_with_the_message(self, make_pipeline):
         broken = MagicMock()
         broken.execute.side_effect = RuntimeError("manager exploded")
         pipeline = make_pipeline("routes_raises", ScalarParams)
-        client = TestClient(_app(pipeline, distributed=broken))
+        client = TestClient(_app(pipeline, broken))
 
         resp = client.post("/pipelines/routes_raises/run")
 
@@ -253,7 +244,7 @@ class TestRunRouteRequests:
     def test_failed_execution_is_a_422_naming_the_execution(self, make_pipeline):
         failing = _executor(ExecutionState.FAILED, error="source unreachable")
         pipeline = make_pipeline("routes_failed", ScalarParams)
-        client = TestClient(_app(pipeline, distributed=failing))
+        client = TestClient(_app(pipeline, failing))
 
         resp = client.post("/pipelines/routes_failed/run")
 
@@ -262,8 +253,6 @@ class TestRunRouteRequests:
             "error": "source unreachable",
             "execution_id": "exec-1",
         }
-        # Tracked even though it failed, so /executions/{id}/status can find it.
-        assert execution_tracker.get_status("exec-1").state == ExecutionState.FAILED
 
     def test_optional_body_params_do_not_require_a_body(self, make_pipeline):
         pipeline = make_pipeline("routes_optional_body", OptionalBodyParams)
@@ -277,8 +266,8 @@ class TestRunRouteRequests:
 # ---------------------------------------------------------------------------
 
 
-def _distributed(handler: Any, mode: str = "distributed") -> DistributedExecutor:
-    executor = DistributedExecutor(reflow_manager_url="http://manager:8001/", mode=mode)
+def _distributed(handler: Any) -> DistributedExecutor:
+    executor = DistributedExecutor(reflow_manager_url="http://manager:8001/")
     executor._client = httpx.Client(transport=httpx.MockTransport(handler))
     return executor
 
@@ -292,7 +281,7 @@ class TestForwardingToManager:
             return httpx.Response(200, json={"jobs_dispatched": 7})
 
         pipeline = make_pipeline("routes_forward", RouteParams)
-        app = _app(pipeline, local=_distributed(handler, mode="local"))
+        app = _app(pipeline, _distributed(handler))
         resp = TestClient(app).post(
             "/pipelines/routes_forward/run?mode=local&env=dev&rate_limit=30",
             json={"tags": ["x"], "options": {"k": 1}},
@@ -323,7 +312,7 @@ class TestForwardingToManager:
             return httpx.Response(200, json={"jobs_dispatched": 1})
 
         pipeline = make_pipeline("routes_callback", RouteParams)
-        app = _app(pipeline, distributed=_distributed(handler))
+        app = _app(pipeline, _distributed(handler))
         resp = TestClient(app).post(
             "/pipelines/routes_callback/run?env=dev&callback_url=https://hooks.example/done",
             json={"tags": ["x"], "options": {}},
@@ -342,7 +331,7 @@ class TestForwardingToManager:
             return httpx.Response(200, json={"jobs_dispatched": 1})
 
         pipeline = make_pipeline("routes_no_callback", RouteParams)
-        app = _app(pipeline, distributed=_distributed(handler))
+        app = _app(pipeline, _distributed(handler))
         resp = TestClient(app).post(
             "/pipelines/routes_no_callback/run?env=dev", json={"tags": [], "options": {}}
         )
@@ -361,7 +350,7 @@ class TestForwardingToManager:
             return httpx.Response(400, json={"detail": "unknown pipeline"})
 
         pipeline = make_pipeline("routes_manager_400", ScalarParams)
-        resp = TestClient(_app(pipeline, distributed=_distributed(handler))).post(
+        resp = TestClient(_app(pipeline, _distributed(handler))).post(
             "/pipelines/routes_manager_400/run"
         )
         assert resp.status_code == 422
@@ -372,7 +361,7 @@ class TestForwardingToManager:
             raise httpx.ConnectError("connection refused", request=request)
 
         pipeline = make_pipeline("routes_manager_down", ScalarParams)
-        resp = TestClient(_app(pipeline, distributed=_distributed(handler))).post(
+        resp = TestClient(_app(pipeline, _distributed(handler))).post(
             "/pipelines/routes_manager_down/run"
         )
         assert resp.status_code >= 400
@@ -383,7 +372,7 @@ class TestForwardingToManager:
             raise httpx.ConnectError("connection refused", request=request)
 
         pipeline = make_pipeline("routes_manager_down_5xx", ScalarParams)
-        resp = TestClient(_app(pipeline, distributed=_distributed(handler))).post(
+        resp = TestClient(_app(pipeline, _distributed(handler))).post(
             "/pipelines/routes_manager_down_5xx/run"
         )
         assert resp.status_code in (502, 503)
@@ -437,7 +426,7 @@ class TestPipelineFolders:
             "folders_both", RuntimeParams, __module__="pipelines.bob1_pipeline.pipeline1"
         )
         executor = _executor()
-        client = TestClient(_app(pipeline, local=executor, distributed=executor))
+        client = TestClient(_app(pipeline, executor))
 
         response = client.post("/pipelines/bob1_pipeline/folders_both/run?mode=local")
         assert response.status_code == 200, response.text

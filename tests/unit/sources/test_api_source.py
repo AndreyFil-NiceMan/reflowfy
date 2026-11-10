@@ -95,32 +95,6 @@ class TestIDBasedAPISource:
         assert record is None
 
     @patch("httpx.Client")
-    def test_split_jobs_batching(self, mock_client_class):
-        """Test job splitting with batching."""
-        mock_client = MagicMock()
-        mock_client_class.return_value = mock_client
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"id": 1, "name": "Test"}
-        mock_client.request.return_value = mock_response
-
-        source = IDBasedAPISource(
-            base_url="https://api.example.com",
-            endpoint_template="/users/{id}",
-            ids=[1, 2, 3, 4, 5],
-            batch_size=2,
-        )
-
-        jobs = list(source.split_jobs({}))
-
-        # 5 IDs with batch_size=2 = 3 batches
-        assert len(jobs) == 3
-        assert jobs[0].metadata["id_count"] == 2
-        assert jobs[1].metadata["id_count"] == 2
-        assert jobs[2].metadata["id_count"] == 1
-
-    @patch("httpx.Client")
     def test_health_check_disabled_skips_requests(self, mock_client_class):
         """Health check can be disabled via config."""
         source = IDBasedAPISource(

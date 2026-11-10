@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from reflowfy.reflow_manager.models import Base, Execution, Job, ProcessedRecord
+from reflowfy.store.models import Base, Execution, Job, ProcessedRecord
 from reflowfy.reflow_manager.content_dedup_scheduler import purge_expired_content, purge_expired_executions
 
 

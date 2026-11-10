@@ -13,8 +13,6 @@ from reflowfy.core.registry import pipeline_registry
 from reflowfy.destinations.decorators import destination_registry
 from reflowfy.destinations.kafka import KafkaDestination
 from reflowfy.factories.source_factory import SourceFactory
-from reflowfy.sources.api import id_based_api_source
-from reflowfy.sources.base import SourceError
 from reflowfy.sources.decorators import source_registry
 from reflowfy.sources.elastic import ElasticSource
 from reflowfy.sources.static import StaticSource
@@ -68,7 +66,10 @@ class TestDestinationTemplate:
     def test_registers_a_reusable_kafka_destination_with_overrides(
         self, isolated_component_registries: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.delenv("KAFKA_BOOTSTRAP_SERVERS", raising=False)
+        monkeypatch.delenv("KAFKA_SERVERS", raising=False)
+        # The scaffolded compose pins this to 'ignored:9092' in local mode; the user's
+        # own destination must not pick it up.
+        monkeypatch.setenv("KAFKA_BOOTSTRAP_SERVERS", "ignored:9092")
         module = _import("destination_template.py")
 
         assert destination_registry.get("example_kafka") is module.example_kafka
@@ -129,16 +130,6 @@ def test_a_source_lists_the_parameters_its_templates_use() -> None:
     src = StaticSource([])
     src.config = {"index": "logs-{{ env }}", "query": {"gte": "{{ since }}"}}
     assert sorted(src.get_runtime_parameters()) == ["env", "since"]
-
-
-def test_split_jobs_without_a_resolved_config_is_a_source_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    src = id_based_api_source(base_url="http://api", endpoint_template="/u/{id}", ids=[1])
-    monkeypatch.setattr(src, "resolve_parameters", lambda params: None)
-
-    with pytest.raises(SourceError, match="No valid configuration resolved"):
-        next(src.split_jobs({}))
 
 
 def test_source_factory_lists_the_builtin_types() -> None:

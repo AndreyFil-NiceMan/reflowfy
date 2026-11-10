@@ -7,6 +7,8 @@ import sys
 from types import FrameType
 from typing import Optional
 
+from reflowfy.store.db_settings import database_url as env_database_url
+from reflowfy.core.kafka_settings import KafkaSettings
 from reflowfy.core.pipeline_discovery import discover_and_load_pipelines
 from reflowfy.observability import metrics
 from reflowfy.observability.logging import setup_logging
@@ -14,6 +16,7 @@ from reflowfy.observability.tracing import init_tracing
 from reflowfy.worker.consumer import KafkaJobConsumer
 
 from prometheus_client import start_http_server
+from reflowfy.store.leases import JobLeases
 
 # Named explicitly so `python -m reflowfy.worker.main` logs through the "reflowfy" logger too.
 logger = logging.getLogger("reflowfy.worker.main")
@@ -44,52 +47,36 @@ def main():
     # Auto-discover and load pipelines (module from PIPELINE_MODULE env)
     discover_and_load_pipelines()
 
-    # Get configuration from environment
-    kafka_bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-    kafka_topic = os.getenv("KAFKA_TOPIC", "reflow.jobs")
-    kafka_group_id = os.getenv("KAFKA_GROUP_ID", "reflowfy-workers")
-    database_url = os.getenv(
-        "DATABASE_URL", "postgresql://reflowfy:reflowfy@localhost:5432/reflowfy"
-    )
-
-    # SASL Authentication config
-    security_protocol = os.getenv("KAFKA_SECURITY_PROTOCOL")
-    sasl_mechanism = os.getenv("KAFKA_SASL_MECHANISM")
-    sasl_username = os.getenv("KAFKA_SASL_USERNAME")
-    sasl_password = os.getenv("KAFKA_SASL_PASSWORD")
+    kafka = KafkaSettings.from_env()
+    JobLeases.from_env().warn_if_inconsistent(logger)
+    database_url = env_database_url()
 
     # Database host only — never log credentials.
     db_target = database_url.split("@")[-1] if "@" in database_url else database_url
     logger.info(
         "Kafka brokers=%s topic=%s consumer_group=%s database=%s",
-        kafka_bootstrap_servers,
-        kafka_topic,
-        kafka_group_id,
+        kafka.bootstrap_servers,
+        kafka.topic,
+        kafka.group_id,
         db_target,
         extra={
             "event": "service_config",
-            "kafka_topic": kafka_topic,
-            "kafka_group_id": kafka_group_id,
+            "kafka_topic": kafka.topic,
+            "kafka_group_id": kafka.group_id,
         },
     )
-    if sasl_username:
-        logger.info(
-            "SASL enabled: %s / %s",
-            security_protocol or "SASL_PLAINTEXT",
-            sasl_mechanism or "SCRAM-SHA-256",
-            extra={"event": "service_config"},
-        )
+    if kafka.sasl_username:
+        logger.info("SASL enabled: %s", kafka.describe_auth(), extra={"event": "service_config"})
 
-    # Create consumer
     consumer = KafkaJobConsumer(
-        bootstrap_servers=kafka_bootstrap_servers,
-        topic=kafka_topic,
-        group_id=kafka_group_id,
+        bootstrap_servers=kafka.bootstrap_servers,
+        topic=kafka.topic,
+        group_id=kafka.group_id,
         database_url=database_url,
-        security_protocol=security_protocol,
-        sasl_mechanism=sasl_mechanism,
-        sasl_username=sasl_username,
-        sasl_password=sasl_password,
+        security_protocol=kafka.security_protocol,
+        sasl_mechanism=kafka.sasl_mechanism,
+        sasl_username=kafka.sasl_username,
+        sasl_password=kafka.sasl_password,
     )
 
     def handle_shutdown(signum: int, frame: Optional[FrameType]) -> None:
@@ -100,7 +87,7 @@ def main():
         at once. A job longer than the pod's terminationGracePeriodSeconds is still
         SIGKILLed; the manager's running lease re-runs it.
         """
-        if not consumer._running:  # pyright: ignore[reportPrivateUsage]
+        if consumer.stop_requested:
             logger.warning(
                 "Second shutdown signal, exiting now", extra={"event": "shutdown_forced"}
             )

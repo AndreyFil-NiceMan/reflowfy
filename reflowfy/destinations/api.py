@@ -23,6 +23,8 @@ from reflowfy.destinations.base import (
 )
 from reflowfy.http_auth import build_auth_headers
 from reflowfy.observability.logging import get_logger
+from reflowfy.core.record_steps import default_record_concurrency
+from reflowfy.core.health import log_unhealthy
 
 logger = get_logger(__name__)
 
@@ -195,7 +197,6 @@ class ApiDestination(BaseDestination):
 
     def _concurrency(self) -> int:
         """Requests in flight per job: the record destination's limit, else the default."""
-        from reflowfy.transformations.base import default_record_concurrency
 
         return self.send_concurrency or default_record_concurrency()
 
@@ -477,10 +478,11 @@ class ApiDestination(BaseDestination):
                 response = await client.head(url, timeout=5.0)
                 return response.status_code < 500
             except Exception:
+                # Some servers refuse HEAD outright; OPTIONS is the second probe.
                 response = await client.request("OPTIONS", url, timeout=5.0)
                 return response.status_code < 500
-        except Exception:
-            return False
+        except Exception as exc:
+            return log_unhealthy(logger, "API destination", exc)
 
     def health_key(self) -> Optional[str]:
         """One probe per host (and client settings) per job."""

@@ -8,7 +8,11 @@ from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, cast
 import boto3
 from botocore.exceptions import ClientError
 from reflowfy.core.types import Records, wrap_as_record
-from reflowfy.sources.base import BaseSource, SourceJob, SourceError
+from reflowfy.sources.base import BaseSource, SourceError
+from reflowfy.core.health import log_unhealthy
+from reflowfy.observability.logging import get_logger
+
+logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     # boto3.client() is typed by overloads on a literal service name, so the
@@ -211,89 +215,6 @@ class S3Source(BaseSource):
         except ClientError as e:
             raise SourceError("s3", f"Failed to fetch data: {e}", e)
 
-    def split_jobs(
-        self, runtime_params: Dict[str, Any], batch_size: int = 1000
-    ) -> Iterator[SourceJob]:
-        """
-        Split S3 objects into jobs using pagination.
-
-        Each page of objects becomes one job.
-
-        Args:
-            runtime_params: Runtime parameters for template resolution
-            batch_size: Objects per job (uses config page_size if not specified)
-
-        Yields:
-            SourceJob instances
-        """
-        resolved_config = self.resolve_parameters(runtime_params)
-        if resolved_config is None:
-            raise SourceError("s3", "No valid configuration resolved", None)
-        client = self._get_client()
-
-        bucket = resolved_config["bucket"]
-        prefix = resolved_config["prefix"]
-        page_size = resolved_config.get("page_size", batch_size)
-        read_content = resolved_config["read_content"]
-
-        try:
-            paginator = client.get_paginator("list_objects_v2")
-            page_iterator = paginator.paginate(
-                Bucket=bucket, Prefix=prefix, PaginationConfig={"PageSize": page_size}
-            )
-
-            page_num = 0
-
-            for page in page_iterator:
-                contents = page.get("Contents", [])
-                if not contents:
-                    continue
-
-                # Filter by pattern
-                filtered_objects = [obj for obj in contents if self._matches_pattern(obj["Key"])]
-
-                if not filtered_objects:
-                    continue
-
-                # Build records
-                records: Records = []
-                for obj in filtered_objects:
-                    if read_content:
-                        content = self._read_object_content(obj["Key"])
-                        if isinstance(content, list):
-                            records.extend(
-                                wrap_as_record(item) for item in cast(List[Any], content)
-                            )
-                        else:
-                            records.append(wrap_as_record(content))
-                    else:
-                        records.append(
-                            wrap_as_record(
-                                {
-                                    "key": obj["Key"],
-                                    "size": obj["Size"],
-                                    "last_modified": obj["LastModified"].isoformat(),
-                                    "etag": obj["ETag"],
-                                }
-                            )
-                        )
-
-                yield SourceJob(
-                    records=records,
-                    metadata={
-                        "page_num": page_num,
-                        "bucket": bucket,
-                        "prefix": prefix,
-                        "object_count": len(filtered_objects),
-                        "record_count": len(records),
-                    },
-                )
-
-                page_num += 1
-
-        except ClientError as e:
-            raise SourceError("s3", f"Failed to split jobs: {e}", e)
-
     def split(self, runtime_params: Dict[str, Any]) -> Iterator["S3Source"]:
         """List object keys (metadata-only) and yield page_size key batches."""
         resolved = self.resolve_parameters(runtime_params) or self.config
@@ -305,25 +226,12 @@ class S3Source(BaseSource):
             Prefix=resolved["prefix"],
             PaginationConfig={"PageSize": page_size},
         )
-        c = resolved
         for page in pages:
             keys = [o["Key"] for o in page.get("Contents", []) if self._matches_pattern(o["Key"])]
             if not keys:
                 continue
-            sub = S3Source(
-                bucket=c["bucket"],
-                prefix=c["prefix"],
-                file_pattern=c["file_pattern"],
-                page_size=page_size,
-                read_content=c["read_content"],
-                content_type=c["content_type"],
-                region_name=c["region_name"],
-                endpoint_url=c["endpoint_url"],
-                aws_access_key_id=c["aws_access_key_id"],
-                aws_secret_access_key=c["aws_secret_access_key"],
-            )
-            sub.config["keys"] = keys
-            yield sub
+            # The whole config, so nothing (extra boto3 kwargs included) is lost.
+            yield S3Source.from_config({**resolved, "page_size": page_size, "keys": keys})
 
     def health_check(self) -> bool:
         """Check S3 bucket accessibility."""
@@ -331,8 +239,8 @@ class S3Source(BaseSource):
             client = self._get_client()
             client.head_bucket(Bucket=self.config["bucket"])
             return True
-        except Exception:
-            return False
+        except Exception as exc:
+            return log_unhealthy(logger, "S3 source", exc)
 
 
 def s3_source(

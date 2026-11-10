@@ -6,7 +6,6 @@ Background scheduler that polls for due DLQ jobs and processes them.
 import json
 import logging
 import os
-import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
@@ -15,8 +14,9 @@ from collections import defaultdict
 from sqlalchemy.orm import Session
 
 from reflowfy.observability import metrics
-from reflowfy.reflow_manager.models import DLQJob, DLQJobArchive
+from reflowfy.store.models import DLQJob, DLQJobArchive
 from reflowfy.reflow_manager.database import SessionLocal
+from reflowfy.reflow_manager.periodic import PeriodicTask
 
 logger = logging.getLogger(__name__)
 
@@ -26,13 +26,15 @@ DLQ_DEFAULT_DELAY_MINUTES = int(os.getenv("DLQ_DEFAULT_DELAY_MINUTES", "60"))  #
 DLQ_MAX_RETRIES = int(os.getenv("DLQ_MAX_RETRIES", "5"))
 
 
-class DLQScheduler:
+class DLQScheduler(PeriodicTask):
     """
     Background scheduler for processing DLQ jobs.
 
     Polls the database at regular intervals for jobs whose scheduled_at
     time has passed, groups them by pipeline, and creates executions.
     """
+
+    label = "DLQ Scheduler"
 
     def __init__(
         self,
@@ -46,57 +48,16 @@ class DLQScheduler:
             poll_interval: Seconds between polling cycles
             pipeline_runner_factory: Callable that returns a PipelineRunner instance
         """
+        super().__init__()
         self.poll_interval = poll_interval
         self.pipeline_runner_factory = pipeline_runner_factory
-        self._running = False
-        self._thread: Optional[threading.Thread] = None
-        self._stop_event = threading.Event()
 
-    def start(self):
-        """Start the background polling thread."""
-        if self._running:
-            logger.warning(
-                "DLQ Scheduler already running", extra={"event": "scheduler_already_running"}
-            )
-            return
+    @property
+    def interval_seconds(self) -> float:
+        return self.poll_interval
 
-        self._running = True
-        self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run_loop, daemon=True)
-        self._thread.start()
-        logger.info(
-            "DLQ Scheduler started (polling every %ss)",
-            self.poll_interval,
-            extra={"event": "scheduler_start"},
-        )
-
-    def stop(self):
-        """Stop the scheduler gracefully."""
-        if not self._running:
-            return
-
-        logger.info("Stopping DLQ Scheduler", extra={"event": "scheduler_stopping"})
-        self._running = False
-        self._stop_event.set()
-
-        if self._thread:
-            self._thread.join(timeout=10)
-            self._thread = None
-
-        logger.info("DLQ Scheduler stopped", extra={"event": "scheduler_stopped"})
-
-    def _run_loop(self):
-        """Main polling loop."""
-        while self._running:
-            try:
-                self._poll_and_process()
-            except Exception:
-                logger.error(
-                    "DLQ Scheduler error", exc_info=True, extra={"event": "scheduler_error"}
-                )
-
-            # Wait for poll interval or stop event
-            self._stop_event.wait(timeout=self.poll_interval)
+    def tick(self) -> None:
+        self._poll_and_process()
 
     def _poll_and_process(self):
         """Poll for due jobs and process them."""
@@ -136,7 +97,6 @@ class DLQScheduler:
                     },
                 )
 
-            # Group jobs by pipeline
             jobs_by_pipeline: Dict[str, List[DLQJob]] = defaultdict(list)
             for job in due_jobs:
                 jobs_by_pipeline[job.pipeline_name].append(job)
@@ -222,7 +182,6 @@ class DLQScheduler:
         if not self.pipeline_runner_factory:
             raise RuntimeError("Pipeline runner factory not configured")
 
-        # Generate execution ID
         execution_id = f"dlq-{uuid.uuid4().hex[:12]}"
 
         # For DLQ, the job_payload IS the runtime_params. Callers pass a group whose
@@ -236,13 +195,22 @@ class DLQScheduler:
             "_dlq_job_ids": [job.id for job in jobs],
         }
 
-        # Get pipeline runner and run
-        runner = self.pipeline_runner_factory()
-        runner.run_pipeline(
-            pipeline_name=pipeline_name,
-            runtime_params=runtime_params,
-            execution_id=execution_id,
-        )
+        # Validated and created here, so a missing pipeline or bad params still
+        # takes the retry/archive path below. The run itself goes on a thread of
+        # its own: driven inline it held this poll's row locks and stalled every
+        # other due job for as long as it ran. A run that fails later ends its
+        # execution `failed`; the DLQ job has done its work (started it).
+        factory = self.pipeline_runner_factory
+        runner = factory()
+        try:
+            runner.start_pipeline(
+                pipeline_name=pipeline_name,
+                runtime_params=runtime_params,
+                execution_id=execution_id,
+                background_runner=factory,
+            )
+        finally:
+            runner.execution_manager.db.close()
 
         return execution_id
 
@@ -252,7 +220,6 @@ class DLQScheduler:
         job.error_message = error_msg
 
         if job.retry_count >= job.max_retries:
-            # Move to archive
             self._archive_job(db, job)
             logger.info(
                 "DLQ job %s archived after %d retries",

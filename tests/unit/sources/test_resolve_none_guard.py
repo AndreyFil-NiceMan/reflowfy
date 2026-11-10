@@ -26,8 +26,3 @@ def test_fetch_raises_source_error_when_config_unresolved(source):
             source.fetch({})
 
 
-@pytest.mark.parametrize("source", _sources())
-def test_split_jobs_raises_source_error_when_config_unresolved(source):
-    with patch.object(source, "resolve_parameters", return_value=None):
-        with pytest.raises(SourceError):
-            list(source.split_jobs({}))

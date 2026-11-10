@@ -12,12 +12,14 @@ import ssl
 from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Tuple, Union, cast
 from aiokafka import AIOKafkaProducer
 from aiokafka.errors import KafkaError
+from reflowfy.core.kafka_settings import connection_kwargs
 from reflowfy.core.record_templates import fill
 from reflowfy.destinations.base import (
     BaseDestination,
     DestinationError,
     RetryConfig,
 )
+from reflowfy.core.health import log_unhealthy
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +174,7 @@ class KafkaDestination(BaseDestination):
 
         # An SSLContext is not config: it is not JSON, and its repr (an address)
         # would make destination_identity, and so the dedup hash, differ per process.
-        self._ssl_context = config.pop("ssl_context", None)
+        self._ssl_context = cast(Optional[ssl.SSLContext], config.pop("ssl_context", None))
 
         super().__init__(config, retry_config)
         self._headers_fn = headers_fn
@@ -182,28 +184,14 @@ class KafkaDestination(BaseDestination):
 
     def _build_connection_kwargs(self) -> Dict[str, Any]:
         """Build shared connection kwargs for producer/consumer/admin."""
-        kwargs: Dict[str, Any] = {
-            "bootstrap_servers": self.config["bootstrap_servers"],
-        }
-        username = self.config.get("sasl_username")
-        password = self.config.get("sasl_password")
-        security_protocol = self.config.get("security_protocol")
-        if username and password:
-            kwargs.update(
-                {
-                    "security_protocol": security_protocol or "SASL_PLAINTEXT",
-                    "sasl_mechanism": self.config.get("sasl_mechanism") or "SCRAM-SHA-256",
-                    "sasl_plain_username": username,
-                    "sasl_plain_password": password,
-                }
-            )
-        elif security_protocol:
-            # TLS without SASL: dropping it would silently connect in plaintext.
-            kwargs["security_protocol"] = security_protocol
-        if kwargs.get("security_protocol") in ("SSL", "SASL_SSL"):
-            # aiokafka refuses SSL without an explicit context; default to system CAs.
-            kwargs["ssl_context"] = self._ssl_context or ssl.create_default_context()
-        return kwargs
+        return connection_kwargs(
+            self.config["bootstrap_servers"],
+            security_protocol=self.config.get("security_protocol"),
+            sasl_mechanism=self.config.get("sasl_mechanism"),
+            sasl_username=self.config.get("sasl_username"),
+            sasl_password=self.config.get("sasl_password"),
+            ssl_context=self._ssl_context,
+        )
 
     def _producer_kwargs(self) -> Dict[str, Any]:
         """Everything AIOKafkaProducer is built with: connection, compression, producer_config."""
@@ -531,8 +519,8 @@ class KafkaDestination(BaseDestination):
     async def _probe(self) -> bool:
         try:
             await self._get_producer()
-        except Exception:
-            return False
+        except Exception as exc:
+            return log_unhealthy(logger, "Kafka destination", exc)
 
         if not self.config.get("lag_health_check_enabled"):
             return True

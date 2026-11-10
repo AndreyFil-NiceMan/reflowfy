@@ -3,14 +3,15 @@
 import logging
 import os
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator, Dict, cast
 
+import httpx
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from reflowfy import __version__
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
-from reflowfy.core.api_auth import install_api_auth
+from reflowfy.core.api_auth import auth_headers, install_api_auth
 from reflowfy.core.registry import pipeline_registry
 from reflowfy.core.pipeline_discovery import discover_and_load_pipelines
 from reflowfy.observability import (  # noqa: F401  (register families)
@@ -19,8 +20,7 @@ from reflowfy.observability import (  # noqa: F401  (register families)
 from reflowfy.observability.logging import setup_logging
 from reflowfy.observability.tracing import init_tracing, instrument_fastapi
 from reflowfy.api.routes import create_pipeline_routes, pipeline_folder, pipeline_route_base
-from reflowfy.api.execution import execution_tracker
-from reflowfy.execution.distributed_executor import get_executor
+from reflowfy.execution.distributed_executor import DistributedExecutor
 
 # Named explicitly: the Dockerfiles start this with `python -m`, where __name__ is "__main__" and a
 # logger named after it sits outside the "reflowfy" logger the JSON/Elasticsearch handlers hang off.
@@ -61,7 +61,6 @@ def create_app() -> FastAPI:
     # Optional bearer token (REFLOWFY_API_TOKEN); CORS stays outermost.
     install_api_auth(app, service="api")
 
-    # CORS middleware
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -101,18 +100,51 @@ def create_app() -> FastAPI:
             ]
         }
 
-    # Get execution status
     @app.get("/executions/{execution_id}/status")
-    async def get_execution_status(execution_id: str):
-        status = execution_tracker.get_status(execution_id)
+    async def get_execution_status(execution_id: str) -> Any:
+        """The execution's live state, read from the manager (which owns it).
 
-        if status is None:
+        It used to come from an in-memory record of the 202 response that nothing
+        updated: an execution read ``pending`` forever, and was unknown to any other
+        API replica or after a restart. The response keeps that shape.
+        """
+        manager_url = os.getenv("REFLOW_MANAGER_URL", "http://localhost:8001")
+        try:
+            async with httpx.AsyncClient(timeout=10.0, headers=auth_headers()) as client:
+                response = await client.get(f"{manager_url}/executions/{execution_id}/stats")
+        except httpx.HTTPError as e:
+            logger.warning(
+                "Could not reach the manager for execution status: %s",
+                type(e).__name__,
+                extra={"event": "status_manager_unreachable", "execution_id": execution_id},
+            )
+            return JSONResponse(
+                status_code=502, content={"error": "Execution status is unavailable"}
+            )
+        if response.status_code == 404:
             return JSONResponse(
                 status_code=404,
                 content={"error": f"Execution '{execution_id}' not found"},
             )
-
-        return status.to_dict()
+        if response.status_code >= 400:
+            return JSONResponse(
+                status_code=502, content={"error": "Execution status is unavailable"}
+            )
+        stats: Dict[str, Any] = response.json()
+        total = stats.get("total_jobs") or 0
+        completed = stats.get("jobs_completed", 0)
+        return {
+            "execution_id": stats.get("execution_id", execution_id),
+            "pipeline_name": stats.get("pipeline_name"),
+            "state": stats.get("state"),
+            "total_jobs": total,
+            "completed_jobs": completed,
+            "failed_jobs": stats.get("jobs_failed", 0),
+            "retry_count": stats.get("jobs_retry_scheduled", 0),
+            "success_rate": completed / total if total else 0.0,
+            "error_message": stats.get("error_message"),
+            "metadata": cast(Dict[str, Any], {}),
+        }
 
     return app
 
@@ -141,30 +173,15 @@ def setup_pipeline_routes(app: FastAPI) -> None:
     # Get ReflowManager URL from environment
     reflow_manager_url = os.getenv("REFLOW_MANAGER_URL", "http://localhost:8001")
 
-    # Create executors - both go through ReflowManager for proper DB tracking
-    # Local mode: ReflowManager uses LocalDispatcher (in-process execution)
-    # Distributed mode: ReflowManager uses KafkaDispatcher (Kafka + workers)
-    local_executor = get_executor(
-        "distributed",
-        reflow_manager_url=reflow_manager_url,
-        execution_mode="local",
-    )
-    distributed_executor = get_executor(
-        "distributed",
-        reflow_manager_url=reflow_manager_url,
-        execution_mode="distributed",
-    )
+    # One client for every route: each run names its mode (local = the manager's
+    # in-process dispatcher, distributed = Kafka + workers).
+    client = DistributedExecutor(reflow_manager_url=reflow_manager_url)
 
     # Create routes for each pipeline. Sorted by folder so Swagger lists the
     # top-level "pipelines" section first, then each subfolder's section.
     for pipeline in sorted(pipelines, key=lambda p: (pipeline_folder(p), p.name)):
         try:
-            create_pipeline_routes(
-                app=app,
-                pipeline=pipeline,
-                local_executor=local_executor,
-                distributed_executor=distributed_executor,
-            )
+            create_pipeline_routes(app=app, pipeline=pipeline, client=client)
         except ValueError as exc:
             # One misconfigured pipeline (e.g. a parameter named like a reserved route
             # parameter) must not take every other pipeline's routes down with it.
@@ -184,20 +201,17 @@ def main():
 
     setup_logging(service_name="api")
 
-    # Create app
     app = create_app()
 
     # Note: User must import their pipeline definitions before starting the server
     # This triggers registration via metaclass
     logger.info("Starting Reflowfy API (version %s)", __version__, extra={"event": "service_start"})
 
-    # Auto-discover and load pipelines
     discover_and_load_pipelines()
 
     # Setup routes after pipelines are registered
     setup_pipeline_routes(app)
 
-    # Get configuration from environment
     host = os.getenv("API_HOST", "0.0.0.0")
     port = int(os.getenv("API_PORT", "8000"))
 

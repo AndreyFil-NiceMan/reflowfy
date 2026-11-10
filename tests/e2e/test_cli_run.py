@@ -6,6 +6,7 @@ using mocked subprocess calls.
 """
 
 import os
+import subprocess
 import pytest
 import tempfile
 import shutil
@@ -38,7 +39,7 @@ class TestRunCommand:
     @patch("reflowfy.cli.commands.run.subprocess")
     def test_run_calls_docker_compose_up(self, mock_subprocess, temp_workspace):
         """Run without flags should call 'docker compose up'."""
-        mock_subprocess.run.return_value = None
+        mock_subprocess.run.return_value = subprocess.CompletedProcess([], 0)
 
         result = runner.invoke(app, ["run"])
 
@@ -48,7 +49,7 @@ class TestRunCommand:
     @patch("reflowfy.cli.commands.run.subprocess")
     def test_run_with_build_flag(self, mock_subprocess, temp_workspace):
         """Run with --build should build first then start."""
-        mock_subprocess.run.return_value = None
+        mock_subprocess.run.return_value = subprocess.CompletedProcess([], 0)
         # CalledProcessError would need check=True to raise, mock returns None
         mock_subprocess.CalledProcessError = Exception
 
@@ -68,7 +69,7 @@ class TestRunCommand:
     @patch("reflowfy.cli.commands.run.subprocess")
     def test_run_with_detach_flag(self, mock_subprocess, temp_workspace):
         """Run with --detach should append -d flag."""
-        mock_subprocess.run.return_value = None
+        mock_subprocess.run.return_value = subprocess.CompletedProcess([], 0)
 
         result = runner.invoke(app, ["run", "--detach"])
 
@@ -78,7 +79,7 @@ class TestRunCommand:
     @patch("reflowfy.cli.commands.run.subprocess")
     def test_run_with_build_and_detach(self, mock_subprocess, temp_workspace):
         """Run with --build --detach should build then start in detached mode."""
-        mock_subprocess.run.return_value = None
+        mock_subprocess.run.return_value = subprocess.CompletedProcess([], 0)
         mock_subprocess.CalledProcessError = Exception
 
         result = runner.invoke(app, ["run", "--build", "--detach"])

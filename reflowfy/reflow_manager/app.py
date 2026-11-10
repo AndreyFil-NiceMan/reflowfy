@@ -5,7 +5,7 @@ import os
 import socket
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Depends, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -19,14 +19,16 @@ load_dotenv()
 from reflowfy import __version__  # noqa: E402
 
 from reflowfy.core.api_auth import install_api_auth  # noqa: E402
-from reflowfy.core.secrets import redact_row  # noqa: E402
+from reflowfy.core.secrets import mask_url_passwords_in_text  # noqa: E402
+from reflowfy.reflow_manager.redaction import public_row, redact_row  # noqa: E402
 from reflowfy.observability.context import bind_log_context  # noqa: E402
 from reflowfy.observability.logging import setup_logging  # noqa: E402
 from reflowfy.reflow_manager.database import get_db, init_db, SessionLocal  # noqa: E402
 from reflowfy.reflow_manager.manager import ReflowManager  # noqa: E402
 from reflowfy.reflow_manager.execution import ExecutionManager  # noqa: E402
 from reflowfy.reflow_manager import lifecycle  # noqa: E402
-from reflowfy.reflow_manager.factory import manager_config_from_env  # noqa: E402
+from reflowfy.core.kafka_settings import KafkaSettings  # noqa: E402
+from reflowfy.reflow_manager.factory import make_manager  # noqa: E402
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner  # noqa: E402
 from reflowfy.reflow_manager.schemas import (  # noqa: E402
     UpdateExecutionStateRequest,
@@ -62,7 +64,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await _shutdown()
 
 
-# Create FastAPI app
 app = FastAPI(
     title="ReflowManager",
     description="Pipeline state management and rate limiting service",
@@ -74,7 +75,6 @@ app = FastAPI(
 # and a 401 still carries its headers.
 install_api_auth(app, service="reflow-manager")
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -91,6 +91,14 @@ app.include_router(schedule_router)
 from fastapi import Response  # noqa: E402
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest  # noqa: E402
 from reflowfy.observability.tracing import init_tracing, instrument_fastapi  # noqa: E402
+from reflowfy.store.leases import JobLeases  # noqa: E402
+from reflowfy.store.states import ExecutionState  # noqa: E402
+from reflowfy.reflow_manager.start import (  # noqa: E402
+    InvalidParametersError,
+    PipelineNotFoundError,
+    check_runnable,
+    drive_execution,
+)
 
 
 @app.get("/metrics")
@@ -103,33 +111,21 @@ init_tracing(service_name="reflow-manager")
 instrument_fastapi(app)
 
 
-def _get_kafka_config() -> Dict[str, Any]:
-    """Get Kafka/execution configuration from environment variables (including SASL)."""
-    return manager_config_from_env()
-
-
-def _make_manager(db: Session, mode: Optional[str] = None) -> ReflowManager:
-    """Build a ReflowManager from environment config, optionally overriding execution mode."""
-    config = _get_kafka_config()
-    if mode:
-        config["execution_mode"] = mode
-    return ReflowManager(db_session=db, **config)
-
-
 def _pipeline_runner_factory() -> PipelineRunner:
     """Build a PipelineRunner on a fresh session for background schedulers."""
-    return _make_manager(SessionLocal()).pipeline_runner
+    return make_manager(SessionLocal()).pipeline_runner
 
 
-# Dependency to get ReflowManager instance
 def get_reflow_manager(db: Session = Depends(get_db)) -> ReflowManager:
     """Get ReflowManager instance with database session."""
-    return _make_manager(db)
+    return make_manager(db)
 
 
 # ===== Health Check =====
 
 _db_ready: bool = False  # set to True after successful init_db()
+# Background components that failed to start: /health reports "degraded" and names them.
+_failed_components: List[str] = []
 
 
 @app.get("/health")
@@ -140,6 +136,15 @@ async def health_check() -> Any:
             status_code=503,
             content={"status": "starting", "service": "reflow-manager", "version": __version__},
         )
+    if _failed_components:
+        # 200, not 503: the API itself works and a restart would not fix a bad schedule
+        # row, but a scheduler that is not running must not look healthy.
+        return {
+            "status": "degraded",
+            "service": "reflow-manager",
+            "version": __version__,
+            "failed_components": list(_failed_components),
+        }
     return {
         "status": "healthy",
         "service": "reflow-manager",
@@ -219,15 +224,15 @@ async def update_execution_state(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Execution '{execution_id}' is already {execution.state}",
         )
-    if request.state == "cancelled":
+    if request.state == ExecutionState.CANCELLED:
         cancelled = manager.cancel_execution(execution_id)
         assert cancelled is not None  # checked non-terminal above
-        return redact_row(cancelled.execution.to_dict())
+        return public_row(cancelled.execution)
     updated = manager.update_execution_state(
         execution_id=execution_id, state="failed", error_message=request.error_message
     )
     assert updated is not None
-    return redact_row(updated.to_dict())
+    return public_row(updated)
 
 
 @app.post("/executions/{execution_id}/cancel")
@@ -256,7 +261,7 @@ async def cancel_execution(
     return {
         "message": "Execution cancelled",
         "cancelled_jobs": cancelled.cancelled_jobs,
-        "execution": redact_row(cancelled.execution.to_dict()),
+        "execution": public_row(cancelled.execution),
     }
 
 
@@ -279,7 +284,7 @@ async def pause_execution(
             detail=f"Execution '{execution_id}' is not running",
         )
 
-    return {"message": "Execution paused", "execution": redact_row(execution.to_dict())}
+    return {"message": "Execution paused", "execution": public_row(execution)}
 
 
 @app.post("/executions/{execution_id}/resume")
@@ -304,7 +309,7 @@ async def resume_execution(
         )
 
     background_tasks.add_task(_resume_execution_sync, execution_id)
-    return {"message": "Execution resumed", "execution": redact_row(execution.to_dict())}
+    return {"message": "Execution resumed", "execution": public_row(execution)}
 
 
 @app.post("/executions/{execution_id}/retry-failed")
@@ -327,7 +332,7 @@ async def retry_failed_jobs(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Execution '{execution_id}' not found",
         )
-    if execution.state == "paused":
+    if execution.state == ExecutionState.PAUSED:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Execution '{execution_id}' is paused; resume it first",
@@ -335,7 +340,7 @@ async def retry_failed_jobs(
 
     requeued = manager.job_manager.requeue_failed(execution_id, error_contains)
     if requeued:
-        was_running = execution.state == "running"
+        was_running = execution.state == ExecutionState.RUNNING
         manager.execution_manager.reopen_execution(execution_id)
         if not was_running:
             # A running execution already has a loop that will pick the jobs up.
@@ -359,7 +364,7 @@ async def get_jobs(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Execution '{execution_id}' not found",
         )
-    return [redact_row(job.to_dict()) for job in jobs]
+    return [public_row(job) for job in jobs]
 
 
 @app.get("/executions/{execution_id}/errors")
@@ -380,8 +385,8 @@ async def get_execution_errors(
         {
             "job_id": job.job_id,
             "batch_number": job.batch_number,
-            "error_message": job.error_message,
-            "error_traceback": job.error_traceback,
+            "error_message": mask_url_passwords_in_text(job.error_message),
+            "error_traceback": mask_url_passwords_in_text(job.error_traceback),
             "failed_at": job.completed_at.isoformat() if job.completed_at else None,
         }
         for job in failed_jobs
@@ -406,34 +411,22 @@ async def run_pipeline(
     Use GET /executions/{execution_id} to check progress.
     """
     import uuid
-    from reflowfy.core.registry import pipeline_registry
 
     try:
         # Generate execution ID if not provided
         execution_id = request.execution_id or str(uuid.uuid4())
 
-        # Validate pipeline exists before accepting
-        pipeline = pipeline_registry.get(request.pipeline_name)
-        if not pipeline:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=(
-                    f"Pipeline '{request.pipeline_name}' not found in registry"
-                    f"{pipeline_registry.describe_missing(request.pipeline_name)}"
-                ),
-            )
-
-        manager = _make_manager(db)
-
         # Reject what can never run now, with a 4xx, instead of accepting it (202) and
         # failing in the background where the caller has to go and look.
         runtime_params = request.runtime_params or {}
-        errors = pipeline.validate_parameters(pipeline.apply_defaults(runtime_params))
-        if errors:
-            raise HTTPException(
-                status_code=422,  # Unprocessable Content
-                detail=f"Invalid parameters: {'; '.join(errors)}",
-            )
+        try:
+            pipeline = check_runnable(request.pipeline_name, runtime_params)
+        except PipelineNotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+        except InvalidParametersError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))  # Unprocessable Content
+
+        manager = make_manager(db)
         if manager.get_execution(execution_id):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -503,7 +496,7 @@ async def run_pipeline(
             "pipeline_name": request.pipeline_name,
             "state": "pending",  # Will become "running" once background task starts
             "message": "Pipeline execution accepted. Jobs are being dispatched in background.",
-            "status_url": f"/executions/{execution_id}",
+            "status_url": f"/executions/{execution_id}/stats",
         }
         if unknown:
             accepted["warnings"] = [f"parameters not declared by the pipeline (ignored): {unknown}"]
@@ -556,38 +549,17 @@ def _dispatch_pipeline_jobs(
     mode: Optional[str] = None,
     enable_duplicate_jobs: Optional[bool] = None,
 ) -> None:
-    """Background task to dispatch pipeline jobs."""
-    # Create a new database session for background task
-    db = SessionLocal()
-
-    try:
-        manager = _make_manager(db, mode=mode)
-
-        # Run the pipeline (this updates the existing execution record)
-        manager.run_pipeline_jobs(
-            execution_id=execution_id,
-            pipeline_name=pipeline_name,
-            runtime_params=runtime_params,
-            rate_limit_override=rate_limit_override,
-            enable_duplicate_jobs=enable_duplicate_jobs,
-        )
-
-    except Exception as e:
-        logger.exception("Background job dispatch failed", extra={"event": "dispatch_failed"})
-
-        # Update execution state to failed. Use a fresh ExecutionManager so this
-        # works even when ReflowManager construction above failed (manager unbound).
-        try:
-            ExecutionManager(db).update_execution_state(
-                execution_id, "failed", error_message=str(e)
-            )
-        except Exception:
-            logger.exception(
-                "Failed to mark execution as failed", extra={"event": "execution_mark_failed_error"}
-            )
-
-    finally:
-        db.close()
+    """Background task: plan and drive the execution ``/run`` just created."""
+    drive_execution(
+        SessionLocal(),
+        lambda db: make_manager(db, mode=mode),
+        execution_id,
+        pipeline_name,
+        runtime_params,
+        log=logger,
+        rate_limit_override=rate_limit_override,
+        enable_duplicate_jobs=enable_duplicate_jobs,
+    )
 
 
 # ===== Statistics =====
@@ -608,7 +580,7 @@ async def get_execution_stats(
                 detail=f"Execution '{execution_id}' not found",
             )
 
-        return stats
+        return redact_row(stats)
     except HTTPException:
         raise
     except Exception as e:
@@ -643,12 +615,15 @@ async def _startup() -> None:
 
     discover_and_load_pipelines()
 
+    kafka = KafkaSettings.from_env()
     logger.info(
-        "Kafka=%s topic=%s",
-        os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
-        os.getenv("KAFKA_TOPIC", "reflow.jobs"),
+        "Kafka=%s topic=%s auth=%s",
+        kafka.bootstrap_servers,
+        kafka.topic,
+        kafka.describe_auth(),
         extra={"event": "service_config"},
     )
+    JobLeases.from_env().warn_if_inconsistent(logger)
     if os.getenv("MAX_JOBS_PER_MINUTE"):
         logger.warning(
             "MAX_JOBS_PER_MINUTE is no longer applied: a pipeline without a rate limit is "
@@ -661,46 +636,33 @@ async def _startup() -> None:
     # (before recovery, which can settle executions).
     lifecycle.install()
 
-    # Check for interrupted executions and recover
     logger.info("Checking for interrupted executions...", extra={"event": "recovery_check"})
     await _recover_interrupted_executions()
 
-    # Initialize DLQ scheduler
-    try:
-        init_dlq_scheduler(_pipeline_runner_factory)
-        logger.info("DLQ Scheduler initialized", extra={"event": "scheduler_ready"})
-    except Exception:
-        logger.exception(
-            "Failed to initialize DLQ scheduler", extra={"event": "scheduler_init_failed"}
-        )
+    _failed_components.clear()
+    _start_component("DLQ Scheduler", lambda: init_dlq_scheduler(_pipeline_runner_factory))
+    _start_component("Pipeline Scheduler", _start_pipeline_scheduler)
+    _start_component("Content Dedup Sweeper", init_content_dedup_scheduler)
 
-    # Initialize Pipeline Scheduler (cron-based)
-    try:
-        scheduler = init_pipeline_scheduler(_pipeline_runner_factory)
 
-        sync_db = SessionLocal()
-        try:
-            scheduler.sync_schedules_from_registry(sync_db)
-            sync_db.commit()
-            logger.info(
-                "Pipeline Scheduler initialized and schedules synced",
-                extra={"event": "scheduler_ready"},
-            )
-        finally:
-            sync_db.close()
-    except Exception:
-        logger.exception(
-            "Failed to initialize Pipeline Scheduler", extra={"event": "scheduler_init_failed"}
-        )
-
-    # Initialize Content Dedup Sweeper
+def _start_component(name: str, start: Callable[[], Any]) -> None:
+    """Start one background component; a failure is logged and shows on /health."""
     try:
-        init_content_dedup_scheduler()
-        logger.info("Content Dedup Sweeper initialized", extra={"event": "scheduler_ready"})
+        start()
+        logger.info("%s initialized", name, extra={"event": "scheduler_ready"})
     except Exception:
-        logger.exception(
-            "Failed to initialize Content Dedup Sweeper", extra={"event": "scheduler_init_failed"}
-        )
+        _failed_components.append(name)
+        logger.exception("Failed to initialize %s", name, extra={"event": "scheduler_init_failed"})
+
+
+def _start_pipeline_scheduler() -> None:
+    scheduler = init_pipeline_scheduler(_pipeline_runner_factory)
+    sync_db = SessionLocal()
+    try:
+        scheduler.sync_schedules_from_registry(sync_db)
+        sync_db.commit()
+    finally:
+        sync_db.close()
 
 
 async def _recover_interrupted_executions() -> None:
@@ -709,7 +671,7 @@ async def _recover_interrupted_executions() -> None:
 
     db = SessionLocal()
     try:
-        manager = _make_manager(db)
+        manager = make_manager(db)
 
         # Dispatch leases held by an earlier process on this host died with it (a
         # container restart keeps the hostname). Free them so recovery resumes now
@@ -722,7 +684,6 @@ async def _recover_interrupted_executions() -> None:
                 extra={"event": "driver_leases_released", "leases_released": released},
             )
 
-        # Find interrupted executions
         interrupted = manager.execution_manager.get_interrupted_executions()
 
         if not interrupted:
@@ -768,7 +729,7 @@ def _resume_execution_sync(execution_id: str) -> None:
     """Synchronously resume an execution (runs in thread pool)."""
     db = SessionLocal()
     try:
-        manager = _make_manager(db)
+        manager = make_manager(db)
         manager.pipeline_runner.resume_execution(execution_id)
     except Exception:
         logger.exception("Failed to resume execution", extra={"event": "resume_failed"})

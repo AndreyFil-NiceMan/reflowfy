@@ -7,10 +7,15 @@ when a step raises — which step it was and which record caused it.
 import pytest
 
 from reflowfy.execution.transformation_runner import (
-    apply_transformations_iteratively,
     find_culprit_record,
 )
 from reflowfy.transformations.base import BaseTransformation, TransformationError
+from reflowfy.core.async_utils import run_coroutine_sync
+from reflowfy.execution.transformation_runner import apply_transformations_iteratively_async
+
+
+def apply_transformations_iteratively(*args, **kwargs):
+    return run_coroutine_sync(apply_transformations_iteratively_async(*args, **kwargs))
 
 
 class FakePipeline:

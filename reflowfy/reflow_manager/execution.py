@@ -2,10 +2,11 @@
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Dict, Any, List, Optional
+from typing import Callable, Dict, Any, List, Mapping, Optional, Tuple
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
-from reflowfy.reflow_manager.models import Execution
+from reflowfy.store.models import Execution
+from reflowfy.store.states import ExecutionState, JobState, jobs_dispatched
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,7 @@ class ExecutionManager:
         execution = Execution(
             execution_id=execution_id,
             pipeline_name=pipeline_name,
-            state="pending",
+            state=ExecutionState.PENDING,
             runtime_params=runtime_params or {},
             rate_limit=rate_limit,
             plan_complete=False,
@@ -76,6 +77,30 @@ class ExecutionManager:
 
         return execution
 
+    def set_total_jobs(self, execution_id: str, total: int) -> None:
+        execution = self.get_execution(execution_id)
+        if execution:
+            execution.total_jobs = total
+            self.db.commit()
+
+    def store_job_counts(
+        self, execution_id: str, counts: Mapping[str, int]
+    ) -> Tuple[int, int, int]:
+        """Write a count per job state onto the execution row; returns (dispatched,
+        finished, failed), deduplicated jobs counting as finished."""
+        dispatched = jobs_dispatched(counts)
+        failed = counts.get(JobState.FAILED, 0)
+        deduplicated = counts.get(JobState.DEDUPLICATED, 0)
+        finished = counts.get(JobState.COMPLETED, 0) + deduplicated
+        execution = self.get_execution(execution_id)
+        if execution:
+            execution.jobs_dispatched = dispatched
+            execution.jobs_completed = finished
+            execution.jobs_failed = failed
+            execution.deduplicated_jobs = deduplicated
+            self.db.commit()
+        return dispatched, finished, failed
+
     def get_execution(self, execution_id: str, for_update: bool = False) -> Optional[Execution]:
         """
         Get execution by ID.
@@ -87,9 +112,7 @@ class ExecutionManager:
         Returns:
             Execution object or None if not found
         """
-        query = self.db.query(Execution).filter(
-            Execution.execution_id == execution_id
-        )
+        query = self.db.query(Execution).filter(Execution.execution_id == execution_id)
         if for_update:
             query = query.with_for_update()
         return query.first()
@@ -176,60 +199,25 @@ class ExecutionManager:
         )
         self.db.commit()
 
-    def update_job_counts(
-        self,
-        execution_id: str,
-        jobs_dispatched: Optional[int] = None,
-        jobs_completed: Optional[int] = None,
-        jobs_failed: Optional[int] = None,
-    ) -> Optional[Execution]:
-        """
-        Update job counts for an execution.
-
-        Note: Does NOT commit - caller should commit after all updates.
-
-        Args:
-            execution_id: Execution identifier
-            jobs_dispatched: Increment jobs dispatched
-            jobs_completed: Increment jobs completed
-            jobs_failed: Increment jobs failed
-
-        Returns:
-            Updated Execution object or None if not found
-        """
-        execution = self.get_execution(execution_id)
-        if not execution:
-            return None
-
-        if jobs_dispatched is not None:
-            execution.jobs_dispatched += jobs_dispatched
-        if jobs_completed is not None:
-            execution.jobs_completed += jobs_completed
-        if jobs_failed is not None:
-            execution.jobs_failed += jobs_failed
-
-        # Don't commit here - caller will commit
-        return execution
-
     def pause_execution(self, execution_id: str) -> Optional[Execution]:
         """Pause a pending or running execution. None if missing or already settled
         (pausing a completed execution used to flip it back to non-terminal)."""
         execution = self.get_execution(execution_id)
-        if not execution or execution.state not in ("pending", "running"):
+        if not execution or execution.state not in (ExecutionState.PENDING, ExecutionState.RUNNING):
             return None
-        return self.update_execution_state(execution_id, "paused")
+        return self.update_execution_state(execution_id, ExecutionState.PAUSED)
 
     def resume_execution(self, execution_id: str) -> Optional[Execution]:
         """Resume a paused execution."""
         execution = self.get_execution(execution_id)
-        if not execution or execution.state != "paused":
+        if not execution or execution.state != ExecutionState.PAUSED:
             return None
 
-        return self.update_execution_state(execution_id, "running")
+        return self.update_execution_state(execution_id, ExecutionState.RUNNING)
 
     # States an execution can be in, and the ones it never leaves on its own.
-    STATES = ("pending", "running", "paused", "completed", "failed", "cancelled")
-    TERMINAL_STATES = ("completed", "failed", "cancelled")
+    STATES = ExecutionState.ALL
+    TERMINAL_STATES = ExecutionState.TERMINAL
 
     def cancel_execution(self, execution_id: str, notify: bool = True) -> Optional[Execution]:
         """Mark a pending, running or paused execution ``cancelled``.
@@ -244,7 +232,7 @@ class ExecutionManager:
         if not execution or execution.state in self.TERMINAL_STATES:
             return None
         return self.update_execution_state(
-            execution_id, "cancelled", error_message="Cancelled", notify=notify
+            execution_id, ExecutionState.CANCELLED, error_message="Cancelled", notify=notify
         )
 
     def mark_plan_complete(self, execution_id: str) -> None:
@@ -259,7 +247,7 @@ class ExecutionManager:
         execution = self.get_execution(execution_id)
         if not execution:
             return None
-        execution.state = "running"
+        execution.state = ExecutionState.RUNNING
         execution.completed_at = None
         execution.error_message = None
         # Its next end fires the hooks again (they reported the run before the retry).
@@ -331,13 +319,6 @@ class ExecutionManager:
         ).update({"driver_id": None, "driver_heartbeat_at": None}, synchronize_session=False)
         self.db.commit()
 
-    def update_deduplicated_count(self, execution_id: str, count: int) -> None:
-        """Set the deduplicated_jobs count for an execution."""
-        execution = self.get_execution(execution_id)
-        if execution:
-            execution.deduplicated_jobs = count
-            self.db.commit()
-
     def get_interrupted_executions(self) -> List[Execution]:
         """
         Find executions that were running when the service crashed.
@@ -354,10 +335,12 @@ class ExecutionManager:
             self.db.query(Execution)
             .filter(
                 or_(
-                    Execution.state == "running",
-                    and_(Execution.state == "pending", Execution.plan_complete.is_(False)),
+                    Execution.state == ExecutionState.RUNNING,
+                    and_(
+                        Execution.state == ExecutionState.PENDING,
+                        Execution.plan_complete.is_(False),
+                    ),
                 )
             )
             .all()
         )
-

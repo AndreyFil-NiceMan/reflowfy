@@ -76,7 +76,7 @@ def test_chunked_plan_becomes_one_job_per_chunk(records: List[int], size: int):
     slices = list(plan_slices(chunk(records, size=size), {}))
 
     assert len(slices) == ceil(len(records) / size)
-    assert [r for s in slices for r in s.fetch({})] == records
+    assert [r for s in slices for r in s.source.fetch({})] == records
 
 
 # --- SqlSource ID-range windows on SQLite ----------------------------------------

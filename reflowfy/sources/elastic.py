@@ -10,7 +10,8 @@ from elastic_transport import TransportError
 
 from reflowfy.core.types import Record, Records, wrap_as_record
 from reflowfy.observability.logging import get_logger
-from reflowfy.sources.base import BaseSource, SourceError, SourceJob
+from reflowfy.sources.base import BaseSource, SourceError
+from reflowfy.core.health import log_unhealthy
 
 # The manager opens a PIT while planning; workers search it later, as the
 # rate-limited dispatch loop sends their jobs. Each search extends the
@@ -31,6 +32,12 @@ WINDOW_SNAPSHOT = "snapshot"
 WINDOW_RANGE = "range"
 
 logger = get_logger(__name__)
+
+
+def _body(response: Any) -> Dict[str, Any]:
+    """The JSON body of an Elasticsearch response: elasticsearch-py 8 wraps it in an
+    ``ObjectApiResponse`` (``.body``); 7, and test fakes, return the dict itself."""
+    return cast(Dict[str, Any], getattr(response, "body", response))
 
 
 def _pit_keep_alive(config: Dict[str, Any]) -> str:
@@ -271,7 +278,7 @@ class ElasticSource(BaseSource):
                     raw = client.search(
                         body=page_body, size=min(resolved_config["size"], remaining)
                     )
-                    page = cast(Dict[str, Any], raw.body if hasattr(raw, "body") else raw)
+                    page = _body(raw)
                     hits = page["hits"]["hits"]
                     if not hits:
                         break
@@ -297,7 +304,7 @@ class ElasticSource(BaseSource):
                         page_body["search_after"] = search_after
                     page_body.setdefault("sort", ["_shard_doc"])
                     resp = client.search(body=page_body, size=resolved_config["size"])
-                    resp = resp.body if hasattr(resp, "body") else resp
+                    resp = _body(resp)
                     hits = resp["hits"]["hits"]
                     if not hits:
                         break
@@ -322,7 +329,7 @@ class ElasticSource(BaseSource):
                 scroll=scroll,
                 size=page_size,
             )
-            page = cast(Dict[str, Any], raw.body if hasattr(raw, "body") else raw)
+            page = _body(raw)
             scroll_id = page["_scroll_id"]
             hits = page["hits"]["hits"]
 
@@ -333,7 +340,7 @@ class ElasticSource(BaseSource):
                     records = records[:limit]
                     break
                 raw = client.scroll(scroll_id=scroll_id, scroll=scroll)
-                page = cast(Dict[str, Any], raw.body if hasattr(raw, "body") else raw)
+                page = _body(raw)
                 scroll_id = page["_scroll_id"]
                 hits = page["hits"]["hits"]
 
@@ -367,7 +374,7 @@ class ElasticSource(BaseSource):
         try:
             while True:
                 raw = client.search(index=resolved["index"], body=body)
-                page = cast(Dict[str, Any], raw.body if hasattr(raw, "body") else raw)
+                page = _body(raw)
                 hits = page["hits"]["hits"]
                 if not hits:
                     return records
@@ -418,7 +425,7 @@ class ElasticSource(BaseSource):
             raw = client.search(index=resolved["index"], body=body)
         except ApiError as e:
             raise SourceError("elasticsearch", f"Failed to fetch data: {e}", e)
-        resp = cast(Dict[str, Any], raw.body if hasattr(raw, "body") else raw)
+        resp = _body(raw)
         agg: Any = resp.get("aggregations", {})
         for name in path:
             if not isinstance(agg, dict) or name not in agg:
@@ -528,7 +535,7 @@ class ElasticSource(BaseSource):
         )
         body = {"query": query} if query is not None else None
         resp = client.count(index=resolved["index"], body=body)
-        resp = resp.body if hasattr(resp, "body") else resp
+        resp = _body(resp)
         return int(resp.get("count", 0))
 
     def _fetch_range_window(
@@ -566,7 +573,7 @@ class ElasticSource(BaseSource):
                 if search_after is not None:
                     page_body["search_after"] = search_after
                 raw = client.search(body=page_body, size=page_size)
-                page = cast(Dict[str, Any], raw.body if hasattr(raw, "body") else raw)
+                page = _body(raw)
                 hits = page["hits"]["hits"]
                 if not hits:
                     return out
@@ -756,7 +763,7 @@ class ElasticSource(BaseSource):
             if search_after is not None:
                 page["search_after"] = search_after
             raw = client.search(body=page, size=page_size)
-            page_resp = cast(Dict[str, Any], raw.body if hasattr(raw, "body") else raw)
+            page_resp = _body(raw)
             hits = page_resp["hits"]["hits"]
             if not hits:
                 break
@@ -767,95 +774,14 @@ class ElasticSource(BaseSource):
                     cursors.append(h["sort"])
         return cursors
 
-    def split_jobs(
-        self, runtime_params: Dict[str, Any], batch_size: int = 1000
-    ) -> Iterator[SourceJob]:
-        """
-        Split Elasticsearch data into jobs using scroll API.
-
-        Each scroll page becomes one job.
-
-        Args:
-            runtime_params: Runtime parameters for query template
-            batch_size: Documents per job (uses config size if not specified)
-
-        Yields:
-            SourceJob instances
-        """
-        resolved_config = self.resolve_parameters(runtime_params)
-        if resolved_config is None:
-            raise SourceError("elasticsearch", "No valid configuration resolved", None)
-        client = self._get_client()
-
-        size = resolved_config.get("size", batch_size)
-        scroll = resolved_config["scroll"]
-
-        try:
-            # Initialize scroll
-            response = client.search(
-                index=resolved_config["index"],
-                body=resolved_config["base_query"],
-                scroll=scroll,
-                size=size,
-            )
-
-            # Convert response to dict if it's not already (Elasticsearch 8.x compatibility)
-            if hasattr(response, "body"):
-                response = response.body
-            elif not isinstance(response, dict):
-                response = dict(response)  # pyright: ignore[reportCallIssue, reportArgumentType]
-
-            response = cast(Dict[str, Any], response)
-            scroll_id = response["_scroll_id"]
-            hits = response["hits"]["hits"]
-
-            page_num = 0
-
-            while hits:
-                # Extract source documents
-                records = [_hit_record(hit) for hit in hits]
-
-                yield SourceJob(
-                    records=records,
-                    metadata={
-                        "scroll_id": str(
-                            scroll_id
-                        ),  # Convert to string to ensure JSON serializable
-                        "page_num": page_num,
-                        "count": len(records),
-                    },
-                )
-
-                page_num += 1
-
-                # Get next page
-                response = client.scroll(scroll_id=scroll_id, scroll=scroll)
-
-                # Convert response to dict if needed
-                if hasattr(response, "body"):
-                    response = response.body
-                elif not isinstance(response, dict):
-                    # elasticsearch's ObjectApiResponse iterates keys, not pairs
-                    response = dict(cast(Dict[str, Any], response))
-
-                response = cast(Dict[str, Any], response)
-                scroll_id = response["_scroll_id"]
-                hits = response["hits"]["hits"]
-
-            # Clear scroll
-            client.clear_scroll(scroll_id=scroll_id)
-
-        except ApiError as e:
-            raise SourceError("elasticsearch", f"Failed to split jobs: {e}", e)
-
     def health_check(self) -> bool:
         """Check Elasticsearch cluster health."""
         try:
             client = self._get_client()
             health = client.cluster.health()
             return health["status"] in ["green", "yellow"]
-        except Exception:
-            return False
+        except Exception as exc:
+            return log_unhealthy(logger, "Elasticsearch source", exc)
 
 
 def elastic_source(

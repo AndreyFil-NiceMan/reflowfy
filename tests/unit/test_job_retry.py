@@ -169,10 +169,27 @@ def test_round_trip_through_the_job_message() -> None:
         never_retry=(KeyError,),
     )
     data = config.to_dict()
-    assert data["retry_on"][0] == "reflowfy.sources.base.SourceError"
+    assert data["retry_on"][0] == "reflowfy.core.exceptions.SourceError"
     assert data["never_retry"] == ["builtins.KeyError"]
     payload = {"metadata": {"job_retry": data}}
     assert JobRetryConfig.from_payload(payload) == config
+
+
+def test_messages_written_before_the_errors_moved_to_core_still_load() -> None:
+    """Jobs already queued name the classes by their old modules, which re-export them."""
+    data = JobRetryConfig().to_dict()
+    data["retry_on"] = [
+        "reflowfy.sources.base.SourceError",
+        "reflowfy.destinations.base.DestinationError",
+    ]
+    data["never_retry"] = [
+        "reflowfy.destinations.base.PermanentDestinationError",
+        "reflowfy.transformations.base.StepOutputError",
+    ]
+    config = JobRetryConfig.from_payload({"metadata": {"job_retry": data}})
+    assert config is not None
+    assert config.retry_on == (SourceError, DestinationError)
+    assert config.never_retry == (PermanentDestinationError, StepOutputError)
 
 
 def test_an_exception_class_the_worker_cannot_import_is_left_out() -> None:

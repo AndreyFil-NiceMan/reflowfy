@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from reflowfy.core.secrets import redact_row
+from reflowfy.reflow_manager.redaction import public_row
 from reflowfy.reflow_manager.database import get_db
-from reflowfy.reflow_manager.models import DLQJobArchive, Execution, PipelineSchedule
+from reflowfy.store.models import DLQJobArchive, Execution, PipelineSchedule
 
 router = APIRouter()
 
@@ -17,7 +17,7 @@ router = APIRouter()
 def list_schedules(db: Session = Depends(get_db)):
     """List all pipeline schedule entries."""
     rows = db.query(PipelineSchedule).order_by(PipelineSchedule.pipeline_name).all()
-    return {"schedules": [redact_row(r.to_dict()) for r in rows], "total": len(rows)}
+    return {"schedules": [public_row(r) for r in rows], "total": len(rows)}
 
 
 @router.get("/schedules/{pipeline_name}")
@@ -34,7 +34,7 @@ def get_schedule(pipeline_name: str, db: Session = Depends(get_db)):
 
     schedules: List[Dict[str, Any]] = []
     for row in rows:
-        data = redact_row(row.to_dict())
+        data = public_row(row)
         if row.last_execution_id:
             exec_row = (
                 db.query(Execution).filter(Execution.execution_id == row.last_execution_id).first()
@@ -119,7 +119,7 @@ def list_archived_jobs(
     total = query.count()
     jobs = query.order_by(DLQJobArchive.archived_at.desc()).offset(offset).limit(limit).all()
     return {
-        "jobs": [redact_row(j.to_dict()) for j in jobs],
+        "jobs": [public_row(j) for j in jobs],
         "total": total,
         "limit": limit,
         "offset": offset,
@@ -132,4 +132,4 @@ def get_archived_job(job_id: int, db: Session = Depends(get_db)):
     job = db.query(DLQJobArchive).filter(DLQJobArchive.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail=f"Archived job {job_id} not found")
-    return redact_row(job.to_dict())
+    return public_row(job)

@@ -22,17 +22,22 @@ def build_auth_headers(
     - ``basic``   -> ``Authorization: Basic base64(<token>)`` where ``token``
       is ``"username:password"``.
 
-    Unknown/``None`` ``auth_type`` or a falsy ``auth_token`` leaves the headers
-    unchanged. The input dict is never mutated.
+    ``auth_type`` is case-insensitive. ``None`` or a falsy ``auth_token`` leaves the
+    headers unchanged; any other name raises ``ValueError`` (it used to send the
+    requests with no auth at all, which surfaced only as a 401 later). The input dict
+    is never mutated.
     """
     result = dict(headers)
-    if not auth_token:
+    if not auth_token or auth_type is None:
         return result
-    if auth_type == "bearer":
+    kind = auth_type.lower()
+    if kind == "bearer":
         result["Authorization"] = f"Bearer {auth_token}"
-    elif auth_type == "apikey":
+    elif kind == "apikey":
         result["X-API-Key"] = auth_token
-    elif auth_type == "basic":
+    elif kind == "basic":
         encoded = base64.b64encode(auth_token.encode("utf-8")).decode("ascii")
         result["Authorization"] = f"Basic {encoded}"
+    else:
+        raise ValueError(f"unknown auth_type {auth_type!r}: use 'bearer', 'apikey' or 'basic'")
     return result

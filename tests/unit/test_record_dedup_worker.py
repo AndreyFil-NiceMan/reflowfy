@@ -15,7 +15,7 @@ from reflowfy.core.abstract_pipeline import AbstractPipeline
 from reflowfy.core.runtime_params import RuntimeParams
 from reflowfy.transformations.base import BaseTransformation
 from reflowfy.worker.executor import JobStats, WorkerExecutor
-from reflowfy.reflow_manager.models import Base
+from reflowfy.store.models import Base
 from test_worker_executor_paths import (  # type: ignore[import-not-found]
     FakeDest,
     FakePipeline,

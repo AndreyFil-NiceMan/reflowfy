@@ -22,6 +22,13 @@ import importlib
 import socket
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Type, cast
+from reflowfy.core.exceptions import (
+    DestinationError,
+    PermanentDestinationError,
+    RecordValidationError,
+    SourceError,
+    StepOutputError,
+)
 
 ExceptionTypes = Tuple[Type[BaseException], ...]
 
@@ -36,9 +43,6 @@ def default_retry_on() -> ExceptionTypes:
     A source or destination that failed, a timeout, a refused or reset connection.
     """
     import httpx
-
-    from reflowfy.destinations.base import DestinationError
-    from reflowfy.sources.base import SourceError
 
     return (
         SourceError,
@@ -57,10 +61,6 @@ def default_never_retry() -> ExceptionTypes:
     ``never_retry`` wins over ``retry_on``: a ``PermanentDestinationError`` (an HTTP 4xx)
     is a ``DestinationError`` but is not retried. ``TemplateError`` is a ``ValueError``.
     """
-    from reflowfy.core.exceptions import RecordValidationError
-    from reflowfy.destinations.base import PermanentDestinationError
-    from reflowfy.transformations.base import StepOutputError
-
     return (
         RecordValidationError,
         StepOutputError,
@@ -161,7 +161,8 @@ class JobRetryConfig:
                 value = (value,)  # a single class is accepted
                 object.__setattr__(self, name, value)
             if not isinstance(value, tuple) or not all(
-                isinstance(t, type) and issubclass(t, BaseException) for t in value  # pyright: ignore[reportUnknownVariableType]
+                isinstance(t, type) and issubclass(t, BaseException)
+                for t in value  # pyright: ignore[reportUnknownVariableType]
             ):
                 raise TypeError(f"JobRetryConfig.{name} must be a tuple of exception classes")
 

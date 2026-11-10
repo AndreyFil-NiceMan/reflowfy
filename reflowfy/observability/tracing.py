@@ -1,5 +1,6 @@
 """OpenTelemetry tracing: init, and W3C context propagation across Kafka."""
 
+import logging
 import os
 from typing import Any, Dict, Optional
 
@@ -31,8 +32,12 @@ def init_tracing(service_name: str = "reflowfy") -> None:
         from opentelemetry.instrumentation.logging import LoggingInstrumentor
 
         LoggingInstrumentor().instrument(set_logging_format=False)
+    except ImportError:
+        pass  # optional package: trace ids are not added to log records
     except Exception:
-        pass
+        logging.getLogger(__name__).warning(
+            "Log trace correlation not enabled", exc_info=True, extra={"event": "tracing_error"}
+        )
     _initialized = True
 
 
@@ -44,8 +49,12 @@ def instrument_fastapi(app: Any) -> None:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
         FastAPIInstrumentor.instrument_app(app)
+    except ImportError:
+        pass  # optional package: requests are not traced
     except Exception:
-        pass
+        logging.getLogger(__name__).warning(
+            "FastAPI tracing not enabled", exc_info=True, extra={"event": "tracing_error"}
+        )
 
 
 def inject_trace_context(carrier: Dict[str, Any]) -> None:

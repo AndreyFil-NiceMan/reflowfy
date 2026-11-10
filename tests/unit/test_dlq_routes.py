@@ -1,13 +1,15 @@
 """`/dlq/*` routes (dlq_routes.py) against a real SQLite database.
 
 The DLQ is a "run this pipeline later with these params" queue: scheduling stores a row,
-dispatching hands its payload to `PipelineRunner.run_pipeline` (faked here) as runtime params.
+dispatching hands its payload to `PipelineRunner.start_pipeline` (faked here) as runtime params.
 """
 
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
 import logging
+from types import SimpleNamespace
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -21,7 +23,7 @@ from reflowfy.reflow_manager.dlq_scheduler import (
     DLQ_MAX_RETRIES,
     DLQScheduler,
 )
-from reflowfy.reflow_manager.models import Base, DLQJob
+from reflowfy.store.models import Base, DLQJob
 
 
 def _now() -> datetime:
@@ -77,13 +79,22 @@ def client(engine):
 
 
 class _Runner:
-    """Stands in for PipelineRunner: records each run_pipeline call."""
+    """Stands in for PipelineRunner: records each start_pipeline call."""
+
+    execution_manager = SimpleNamespace(db=SimpleNamespace(close=lambda: None))
+
 
     def __init__(self, fail: bool = False) -> None:
         self.calls: List[Dict[str, Any]] = []
         self.fail = fail
 
-    def run_pipeline(self, pipeline_name: str, runtime_params: Dict[str, Any], execution_id: str):
+    def start_pipeline(
+        self,
+        pipeline_name: str,
+        runtime_params: Dict[str, Any],
+        execution_id: str,
+        background_runner: Any = None,
+    ):
         self.calls.append(
             {"pipeline_name": pipeline_name, "params": runtime_params, "execution_id": execution_id}
         )

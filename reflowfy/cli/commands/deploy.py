@@ -4,12 +4,12 @@ import os
 import subprocess
 import typer
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import List, Optional
 from urllib.parse import urlparse
 
 import reflowfy
 from reflowfy.cli.utils import console, get_helm_chart_path
+from reflowfy.cli.project import RELEASE, image_repository, require_registry
 
 
 _SECRET_KEY_MARKERS = ("password", "secret", "token")
@@ -76,11 +76,7 @@ def register(app: typer.Typer):
         kafka_topic = kafka_topic or "reflow.jobs"
         kafka_group_id = kafka_group_id or "reflowfy-workers"
 
-        if not registry:
-            console.print("❌ Registry is required. Set --registry or REGISTRY in .env", style="red")
-            if not Path(".env").exists():
-                 console.print("⚠️  No .env file found in current directory.", style="yellow")
-            raise typer.Exit(code=1)
+        registry = require_registry(registry)
 
         if not kafka:
             console.print("❌ Kafka is required. Set --kafka or KAFKA_BOOTSTRAP_SERVERS in .env", style="red")
@@ -96,7 +92,6 @@ def register(app: typer.Typer):
             )
             raise typer.Exit(code=1)
 
-        # Determine image tag
         image_tag = tag or getattr(reflowfy, "__version__", "latest")
 
         console.print(Panel(f"🚀 Deploying Reflowfy (tag: {image_tag}) to namespace: [bold cyan]{namespace}[/bold cyan]"))
@@ -110,11 +105,11 @@ def register(app: typer.Typer):
 
         # Construct Helm command
         cmd = [
-            "helm", "upgrade", "--install", "reflowfy", str(chart_path),
+            "helm", "upgrade", "--install", RELEASE, str(chart_path),
             "--namespace", namespace,
-            "--set", f"api.image.repository={registry}/{project}/reflowfy-api",
-            "--set", f"reflowManager.image.repository={registry}/{project}/reflowfy-reflow-manager",
-            "--set", f"worker.image.repository={registry}/{project}/reflowfy-worker",
+            "--set", f"api.image.repository={image_repository(registry, project, 'api')}",
+            "--set", f"reflowManager.image.repository={image_repository(registry, project, 'reflow-manager')}",
+            "--set", f"worker.image.repository={image_repository(registry, project, 'worker')}",
             "--set", f"api.image.tag={image_tag}",
             "--set", f"reflowManager.image.tag={image_tag}",
             "--set", f"worker.image.tag={image_tag}",
@@ -255,15 +250,26 @@ def register(app: typer.Typer):
         # OpenShift Routes
         console.print("\n🌐 Creating OpenShift Routes...", style="blue")
         try:
-            subprocess.run(
-                ["oc", "expose", "svc/reflowfy-api", "--name=reflowfy-api", "-n", namespace],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-            subprocess.run(
-                ["oc", "expose", "svc/reflowfy-reflow-manager", "--name=reflowfy-manager", "-n", namespace],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-            console.print("✅ Routes created/verified", style="green")
+            routes_ok = True
+            for service, route in (
+                ("reflowfy-api", "reflowfy-api"),
+                ("reflowfy-reflow-manager", "reflowfy-manager"),
+            ):
+                result = subprocess.run(
+                    ["oc", "expose", f"svc/{service}", f"--name={route}", "-n", namespace],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                # A route left by an earlier deploy is fine; anything else is not.
+                if result.returncode != 0 and "AlreadyExists" not in (result.stderr or ""):
+                    routes_ok = False
+                    console.print(
+                        f"⚠️ Could not create route {route}: {(result.stderr or '').strip()}",
+                        style="yellow",
+                    )
+            if routes_ok:
+                console.print("✅ Routes created/verified", style="green")
         except FileNotFoundError:
             console.print("⚠️ 'oc' command not found. Skipping route creation.", style="yellow")
 
