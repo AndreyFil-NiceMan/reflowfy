@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy.exc import OperationalError
 
 import reflowfy.reflow_manager.database as database
-from reflowfy.reflow_manager.db_settings import async_connect_args, sync_connect_args
+from reflowfy.store.db_settings import async_connect_args, sync_connect_args
 
 PG = "postgresql://u:p@db:5432/reflowfy"
 PG_ASYNC = "postgresql+asyncpg://u:p@db:5432/reflowfy"

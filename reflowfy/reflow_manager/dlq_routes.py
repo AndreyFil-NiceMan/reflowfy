@@ -7,9 +7,9 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from reflowfy.core.secrets import redact_row
+from reflowfy.reflow_manager.redaction import public_row
 from reflowfy.reflow_manager.database import get_db
-from reflowfy.reflow_manager.models import DLQJob
+from reflowfy.store.models import DLQJob
 from reflowfy.reflow_manager.dlq_schemas import (
     ScheduleDLQJobRequest,
     DLQJobResponse,
@@ -24,7 +24,6 @@ from reflowfy.reflow_manager.dlq_scheduler import (
 
 logger = logging.getLogger(__name__)
 
-# Create router with /dlq prefix
 router = APIRouter(prefix="/dlq", tags=["DLQ"])
 
 
@@ -92,7 +91,7 @@ async def schedule_dlq_job(
             "param_count": len(request.job_payload or {}),
         },
     )
-    return redact_row(dlq_job.to_dict())
+    return public_row(dlq_job)
 
 
 @router.get("/jobs", response_model=DLQJobListResponse)
@@ -115,7 +114,7 @@ async def list_dlq_jobs(
     jobs = query.order_by(DLQJob.created_at.desc()).offset(offset).limit(limit).all()
 
     return {
-        "jobs": [redact_row(job.to_dict()) for job in jobs],
+        "jobs": [public_row(job) for job in jobs],
         "total": total,
     }
 
@@ -134,7 +133,7 @@ async def get_dlq_job(
             detail=f"DLQ job {job_id} not found",
         )
 
-    return redact_row(job.to_dict())
+    return public_row(job)
 
 
 @router.delete("/jobs/{job_id}")
@@ -177,8 +176,8 @@ async def cancel_dlq_job(
     return {"message": f"DLQ job {job_id} cancelled"}
 
 
-# Plain def, not async: run_pipeline blocks until the run is planned and driven, so
-# FastAPI runs these in its threadpool instead of on the event loop.
+# Plain def, not async: starting a run does blocking database work, so FastAPI runs
+# these in its threadpool instead of on the event loop.
 @router.post("/jobs/{job_id}/dispatch", response_model=DispatchDLQResponse)
 def dispatch_dlq_job(
     job_id: int,

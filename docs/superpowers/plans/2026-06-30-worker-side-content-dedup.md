@@ -28,7 +28,7 @@
 - `tests/unit/test_content_dedup.py` — unit tests for the hash + claim/release + sweep.
 
 **Modify:**
-- `reflowfy/reflow_manager/models.py` — add `ProcessedContent` model.
+- `reflowfy/store/models.py` — add `ProcessedContent` model.
 - `reflowfy/worker/executor.py` — dedup branch in `execute_job`; `deduplicated` state in `_update_job_in_db`; `JobStats.deduplicated`.
 - `reflowfy/reflow_manager/pipeline_runner.py` — drop manager-side dedup, always UUID, pass `dedup_check`; count `deduplicated` in `_sync_counts_from_db`, final-state, `_wait_for_batch_completion`; update `build_job_payload`.
 - `reflowfy/reflow_manager/job_manager.py` — `get_job_counts` returns `deduplicated`.
@@ -222,14 +222,14 @@ git commit -m "test(e2e): worker-side content dedup behavior (failing, pre-impl)
 ## Task 3: `ProcessedContent` model + table
 
 **Files:**
-- Modify: `reflowfy/reflow_manager/models.py`
+- Modify: `reflowfy/store/models.py`
 - Test: `tests/unit/test_content_dedup.py`
 
 - [ ] **Step 1: Write the failing unit test**
 
 ```python
 # tests/unit/test_content_dedup.py
-from reflowfy.reflow_manager.models import ProcessedContent
+from reflowfy.store.models import ProcessedContent
 
 
 def test_processed_content_table_shape():
@@ -245,7 +245,7 @@ Expected: FAIL with `ImportError: cannot import name 'ProcessedContent'`.
 
 - [ ] **Step 3: Add the model**
 
-Append to `reflowfy/reflow_manager/models.py` (uses the existing `Base`, `Mapped`, `mapped_column`, `String`, `DateTime`, `datetime`, `timezone` already imported in that module):
+Append to `reflowfy/store/models.py` (uses the existing `Base`, `Mapped`, `mapped_column`, `String`, `DateTime`, `datetime`, `timezone` already imported in that module):
 
 ```python
 class ProcessedContent(Base):
@@ -279,7 +279,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add reflowfy/reflow_manager/models.py tests/unit/test_content_dedup.py
+git add reflowfy/store/models.py tests/unit/test_content_dedup.py
 git commit -m "feat(manager): ProcessedContent model for worker-side dedup ledger"
 ```
 
@@ -339,7 +339,7 @@ from typing import Any, List
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy import delete
 
-from reflowfy.reflow_manager.models import ProcessedContent
+from reflowfy.store.models import ProcessedContent
 
 
 def compute_content_hash(
@@ -386,7 +386,7 @@ Uses an in-memory async SQLite engine to exercise the SQLAlchemy logic without P
 ```python
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-from reflowfy.reflow_manager.models import Base
+from reflowfy.store.models import Base
 from reflowfy.execution.content_dedup import claim_content_hash, release_content_hash
 
 
@@ -861,7 +861,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from reflowfy.reflow_manager.models import Base, ProcessedContent
+from reflowfy.store.models import Base, ProcessedContent
 from reflowfy.reflow_manager.content_dedup_scheduler import purge_expired_content
 
 
@@ -916,7 +916,7 @@ from typing import Optional
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
-from reflowfy.reflow_manager.models import ProcessedContent
+from reflowfy.store.models import ProcessedContent
 from reflowfy.reflow_manager.database import SessionLocal
 
 CONTENT_DEDUP_RETENTION_HOURS = int(os.getenv("CONTENT_DEDUP_RETENTION_HOURS", "24"))

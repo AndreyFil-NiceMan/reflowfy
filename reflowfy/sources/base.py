@@ -1,12 +1,16 @@
 """Base source interface for data fetching and job splitting."""
 
 import inspect
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, ClassVar, Dict, Iterator, List, Optional, Tuple, TypeVar
+from typing import Any, ClassVar, Dict, Iterator, List, Optional, Tuple, Type, TypeVar
 
 from reflowfy.core.execution_context import parameter_resolver
 from reflowfy.core.types import Records
+from reflowfy.core.exceptions import SourceError as SourceError  # its old home
+
+logger = logging.getLogger(__name__)
 
 _S = TypeVar("_S", bound="BaseSource")
 
@@ -57,9 +61,7 @@ class BaseSource(ABC):
         super().__init_subclass__(**kwargs)
         if inspect.isabstract(cls):
             return
-        from reflowfy.factories.source_factory import SourceFactory  # import cycle
-
-        SourceFactory.register(cls.__name__, cls)
+        register_source_type(cls.__name__, cls)
 
     def __init__(self, config: Dict[str, Any]):
         """
@@ -136,18 +138,6 @@ class BaseSource(ABC):
         """
         pass
 
-    def split_jobs(
-        self, runtime_params: Dict[str, Any], batch_size: int = 1000
-    ) -> Iterator[SourceJob]:
-        """Legacy planning that fetched records manager-side. Not used since the v2
-        job schema (``split()`` plans, the worker calls ``fetch()``); a new source
-        does not need it. Some built-ins still implement it.
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__}.split_jobs is not used since the v2 job schema; "
-            "plan with split() and fetch on the worker"
-        )
-
     @abstractmethod
     def health_check(self) -> bool:
         """
@@ -162,10 +152,27 @@ class BaseSource(ABC):
         return f"{self.__class__.__name__}(config={self.config})"
 
 
-class SourceError(Exception):
-    """Raised when a source operation fails."""
+source_types: Dict[str, Type[BaseSource]] = {}
+"""Every concrete source class by name; how a worker rebuilds a job's ``source.type``."""
 
-    def __init__(self, source_type: str, message: str, original_error: Exception | None):
-        self.source_type = source_type
-        self.original_error = original_error
-        super().__init__(f"Source '{source_type}' error: {message}")
+
+def register_source_type(type_name: str, source_class: Type[BaseSource]) -> None:
+    """Register ``source_class`` under ``type_name``; a different class of that name replaces it."""
+    previous = source_types.get(type_name)
+    if previous is not None and previous is not source_class:
+        same_place = (previous.__module__, previous.__qualname__) == (
+            source_class.__module__,
+            source_class.__qualname__,
+        )
+        if not same_place:  # a module re-imported redefines the same class
+            logger.warning(
+                "Source type %r registered twice (%s.%s replaces %s.%s): jobs of "
+                "either rebuild as the later one; give one a different class name",
+                type_name,
+                source_class.__module__,
+                source_class.__qualname__,
+                previous.__module__,
+                previous.__qualname__,
+                extra={"event": "source_type_replaced", "source_type": type_name},
+            )
+    source_types[type_name] = source_class

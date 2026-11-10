@@ -4,7 +4,7 @@ import logging
 from typing import Dict, Any, List, Optional
 
 
-from reflowfy.destinations.pool import close_loop_pool, loop_pool_scope, open_loop_pool
+from reflowfy.destinations.pool import close_loop_pool, open_loop_pool
 from reflowfy.reflow_manager.dispatcher import (
     TOKEN_WAIT_SECONDS,
     BaseDispatcher,
@@ -40,38 +40,6 @@ class LocalDispatcher(BaseDispatcher):
         from reflowfy.worker.executor import WorkerExecutor
 
         return WorkerExecutor()
-
-    async def dispatch_job(
-        self,
-        job_payload: Dict[str, Any],
-        pipeline_name: str,
-        rate_limit: Optional[float] = None,
-    ) -> bool:
-        """Dispatch single job locally with rate limiting."""
-        # Rate limit: acquire a token before executing
-        if rate_limit is not None:
-            acquired = self.rate_limiter.acquire_token(pipeline_name, rate_limit, max_wait=300.0)
-            if not acquired:
-                logger.warning(
-                    "Rate limit timeout, skipping job",
-                    extra={"event": "rate_limit_timeout", "job_id": job_payload.get("job_id")},
-                )
-                return False
-
-        executor = self._create_executor()
-        try:
-            async with loop_pool_scope():
-                await executor.execute_job(job_payload)
-            return True
-        except Exception:
-            logger.error(
-                "Local dispatch failed",
-                exc_info=True,
-                extra={"event": "local_dispatch_error", "job_id": job_payload.get("job_id")},
-            )
-            return False
-        finally:
-            await executor.close()
 
     async def dispatch_jobs_batch(
         self,

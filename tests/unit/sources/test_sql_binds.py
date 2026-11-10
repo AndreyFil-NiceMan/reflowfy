@@ -237,19 +237,6 @@ class TestSplit:
         with pytest.raises(SqlTemplateError, match="id_column"):
             list(src.split({}))
 
-    def test_legacy_split_jobs_with_binds_and_semicolon(self, db_url: str) -> None:
-        by_id = sql_source(
-            db_url, "SELECT * FROM events WHERE amount > {{ m }};", id_column="id", batch_size=5
-        )
-        by_offset = sql_source(
-            db_url, "SELECT * FROM events WHERE amount > {{ m }} ORDER BY id;", batch_size=3
-        )
-        assert [_ids(j.records) for j in by_id.split_jobs({"m": 50})] == [[6, 7, 8, 9, 10]]
-        assert [_ids(j.records) for j in by_offset.split_jobs({"m": 50})] == [
-            [6, 7, 8],
-            [9, 10],
-        ]
-
 
 def test_quoted_identifiers_without_values_pass_through() -> None:
     sql, binds = render_sql_template('SELECT "Col" FROM x WHERE a = {{ a }}', {"a": 1})

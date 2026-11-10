@@ -21,7 +21,7 @@ from reflowfy.destinations.decorators import destination_registry, record_destin
 from reflowfy.destinations.kafka import kafka_destination
 from reflowfy.destinations.record import RecordDestination, RecordDestinationError
 from reflowfy.execution.job_runner import ROUTE_MODE, run_job_records_async
-from reflowfy.reflow_manager.models import Base
+from reflowfy.store.models import Base
 from reflowfy.sources.static import StaticSource
 from reflowfy.worker.executor import JobStats, WorkerExecutor
 from test_worker_executor_paths import (  # type: ignore[import-not-found]

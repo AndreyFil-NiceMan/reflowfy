@@ -13,7 +13,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from reflowfy.reflow_manager.job_manager import JobManager
-from reflowfy.reflow_manager.models import Base, Execution, Job
+from reflowfy.store.models import Base, Execution, Job
 
 T0 = datetime(2026, 10, 20, 12, 0, 0)
 
@@ -99,21 +99,6 @@ def test_update_job_state_to_a_non_terminal_state_sets_no_completion_time(db):
 def test_update_job_state_of_an_unknown_job_returns_none(db):
     assert JobManager(db).update_job_state("ghost", "completed") is None
     assert db.query(Job).count() == 0
-
-
-def test_get_job_states_sees_what_workers_wrote_from_their_own_sessions(engine, db):
-    _job(db, "a")
-    _job(db, "b")
-    jm = JobManager(db)
-    assert jm.get_job_states(["a", "b"]) == {"a": "pending", "b": "pending"}
-    jm.get_job("a")  # now cached in the manager's session
-
-    with sessionmaker(bind=engine)() as worker:
-        worker.query(Job).filter(Job.job_id == "a").update({"state": "completed"})
-        worker.commit()
-
-    assert jm.get_job_states(["a", "b", "ghost"]) == {"a": "completed", "b": "pending"}
-    assert jm.get_job_states([]) == {}
 
 
 def test_get_job_counts_includes_every_state_and_the_total(db):

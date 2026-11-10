@@ -8,8 +8,8 @@ from reflowfy.core.http_errors import describe_response, log_response_body
 from reflowfy.core.types import Records, wrap_as_record
 from reflowfy.http_auth import build_auth_headers
 from reflowfy.observability.logging import get_logger
-from reflowfy.sources.base import BaseSource, SourceError, SourceJob
-from reflowfy.sources.schemas import IDBasedAPISourceConfig
+from reflowfy.sources.base import BaseSource, SourceError
+from reflowfy.core.health import log_unhealthy
 
 logger = get_logger(__name__)
 
@@ -240,57 +240,6 @@ class IDBasedAPISource(BaseSource):
                 records.append(wrap_as_record(record))
         return records
 
-    def split_jobs(
-        self, runtime_params: Dict[str, Any], batch_size: int = 50
-    ) -> Iterator[SourceJob]:
-        """Split IDs into SourceJobs (per-ID or batch mode)."""
-        _raw = self.resolve_parameters(runtime_params)
-        if _raw is None:
-            raise SourceError("id_based_api", "No valid configuration resolved", None)
-        try:
-            resolved_config = IDBasedAPISourceConfig(**_raw)
-        except Exception as exc:
-            raise SourceError("id_based_api", f"Invalid configuration: {exc}", exc)
-
-        ids = self._get_all_ids(runtime_params)
-        batch_size = resolved_config.batch_size
-        batch_num = 0
-
-        if not self._is_per_id_mode():
-            records = self._fetch_batch(ids)
-            for i in range(0, len(records), batch_size):
-                chunk = records[i : i + batch_size]
-                if chunk:
-                    yield SourceJob(
-                        records=chunk,
-                        metadata={
-                            "batch_num": batch_num,
-                            "record_count": len(chunk),
-                            "ids_count": len(ids),
-                        },
-                    )
-                batch_num += 1
-            return
-
-        for i in range(0, len(ids), batch_size):
-            id_batch = ids[i : i + batch_size]
-            batch_records: Records = []
-            for id_value in id_batch:
-                record = self._fetch_by_id(id_value)
-                if record:
-                    batch_records.append(wrap_as_record(record))
-            if batch_records:
-                yield SourceJob(
-                    records=batch_records,
-                    metadata={
-                        "batch_num": batch_num,
-                        "id_count": len(id_batch),
-                        "record_count": len(batch_records),
-                        "ids": id_batch,
-                    },
-                )
-            batch_num += 1
-
     def split(self, runtime_params: Dict[str, Any]) -> Iterator["IDBasedAPISource"]:
         """Per-ID mode: group ids into batch_size chunks, one source each.
 
@@ -303,23 +252,8 @@ class IDBasedAPISource(BaseSource):
 
         ids = self._get_all_ids(runtime_params)
         size = self.config["batch_size"]
-        c = self.config
         for i in range(0, len(ids), size):
-            yield IDBasedAPISource(
-                base_url=c["base_url"],
-                endpoint_template=c["endpoint_template"],
-                ids=ids[i : i + size],
-                method=c["method"],
-                headers=c["headers"],
-                auth_type=c["auth_type"],
-                auth_token=c["auth_token"],
-                batch_size=size,
-                timeout=c["timeout"],
-                response_key=c["response_key"],
-                body=c["body"],
-                params=c["params"],
-                health_check_enabled=c["health_check_enabled"],
-            )
+            yield IDBasedAPISource.from_config({**self.config, "ids": ids[i : i + size]})
 
     def health_check(self) -> bool:
         """Check if the API is accessible."""
@@ -329,8 +263,8 @@ class IDBasedAPISource(BaseSource):
             client = self._get_client()
             response = client.request("HEAD", "/", timeout=5.0)
             return response.status_code < 500
-        except Exception:
-            return False
+        except Exception as exc:
+            return log_unhealthy(logger, "API source", exc)
 
 
 # Factory functions

@@ -14,7 +14,7 @@ Two separate jobs:
 
 import os
 import re
-from typing import Any, Collection, Dict, List, Mapping, Tuple, cast
+from typing import Any, Collection, Dict, List, Mapping, Optional, Tuple, cast
 from urllib.parse import urlsplit, urlunsplit
 
 #: Key of the wire form of a secret reference: ``{"$secret": "ENV_NAME"}``.
@@ -36,6 +36,8 @@ _SENSITIVE_EXACT = frozenset({"auth", "basic_auth", "http_auth"})
 
 # ``scheme://user:password@host`` — only the password is hidden.
 _URL_WITH_PASSWORD = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://[^/@\s:]*:[^/@\s]*@")
+#: The same ``user:password@`` part anywhere inside free text (an error message).
+_URL_PASSWORD_IN_TEXT = re.compile(r"([A-Za-z][A-Za-z0-9+.\-]*://[^/@\s:]*:)[^/@\s]*@")
 
 
 class SecretError(KeyError):
@@ -143,6 +145,17 @@ def mask_url_password(value: str) -> str:
     return urlunsplit(parts._replace(netloc=f"{user}:{REDACTED}@{hostinfo}"))
 
 
+def mask_url_passwords_in_text(text: Optional[str]) -> Optional[str]:
+    """Hide the password of every ``scheme://user:password@`` URL inside ``text``.
+
+    For free text such as an error message or traceback, where a driver may quote
+    the connection URL it failed to reach.
+    """
+    if not text:
+        return text
+    return _URL_PASSWORD_IN_TEXT.sub(lambda m: f"{m.group(1)}{REDACTED}@", text)
+
+
 def _redact_secret_value(value: Any) -> Any:
     """Redact a value that is known to hold a credential."""
     if value is None or value == "" or _is_marker(value) or isinstance(value, SecretRef):
@@ -207,42 +220,3 @@ def literal_secret_fields(config: Mapping[str, Any], secret_fields: Collection[s
         for key, value in config.items()
         if _redact({key: value}, secret_fields) != {key: encode_secret_refs(value)}
     ]
-
-
-def redact_job_payload(payload: Any) -> Any:
-    """Copy of a job payload with credentials hidden.
-
-    A v2 job message's ``source`` descriptor is redacted with its source class's
-    ``secret_fields``; everything else (``metadata.runtime_params``, or the runtime
-    params a DLQ job stores as its payload) by key name and URL passwords.
-    """
-    if not isinstance(payload, dict):
-        return redact_config(payload)
-    from reflowfy.factories.source_factory import SourceFactory  # import cycle
-
-    data = cast(Dict[str, Any], payload)
-    redacted: Dict[str, Any] = redact_config({k: v for k, v in data.items() if k != "source"})
-    source = data.get("source")
-    if isinstance(source, dict):
-        redacted["source"] = SourceFactory.redact(cast(Dict[str, Any], source))
-    elif "source" in data:
-        redacted["source"] = redact_config(source)
-    return {k: redacted[k] for k in data}  # keep the key order
-
-
-#: Fields of an API row (job, execution, schedule, DLQ job) that can hold credentials.
-_ROW_FIELDS = ("job_payload", "runtime_params")
-
-
-def redact_row(row: Dict[str, Any]) -> Dict[str, Any]:
-    """Copy of an API row dict with its ``job_payload`` / ``runtime_params`` redacted.
-
-    Every API response that returns job, execution, schedule or DLQ rows goes through
-    this, so a credential stored in a job message or passed as a run parameter is not
-    handed out to whoever can read the API.
-    """
-    redacted = dict(row)
-    for field in _ROW_FIELDS:
-        if field in redacted:
-            redacted[field] = redact_job_payload(redacted[field])
-    return redacted

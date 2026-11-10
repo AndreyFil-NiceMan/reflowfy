@@ -11,6 +11,13 @@ client, so a dead peer is dropped in about ``idle + interval * count`` seconds.
 import os
 from typing import Dict
 
+DEFAULT_DATABASE_URL = "postgresql://reflowfy:reflowfy@localhost:5432/reflowfy"
+
+
+def database_url() -> str:
+    """``DATABASE_URL``, or the local default every service and the worker share."""
+    return os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
+
 
 def _seconds(name: str, default: int) -> int:
     return int(os.getenv(name, str(default)))

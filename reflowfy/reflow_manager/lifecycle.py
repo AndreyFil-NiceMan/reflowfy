@@ -41,8 +41,10 @@ from reflowfy.reflow_manager.execution import (
     remove_terminal_listener,
 )
 from reflowfy.reflow_manager.job_manager import JobManager
-from reflowfy.reflow_manager.models import Execution, Job
+from reflowfy.store.models import Execution, Job
 from reflowfy.reflow_manager.rate_limiter import RateLimiter, execution_bucket_key
+from reflowfy.store.states import JobState
+from reflowfy.reflow_manager.start import check_runnable, drive_execution
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +120,7 @@ def build_summary(db: Session, execution: Execution) -> ExecutionSummary:
         for (message,) in db.query(Job.error_message)
         .filter(
             Job.execution_id == execution_id,
-            Job.state == "failed",
+            Job.state == JobState.FAILED,
             Job.error_message.isnot(None),
         )
         .order_by(Job.completed_at)
@@ -411,37 +413,17 @@ def _drive_child(
     mode: Optional[str],
 ) -> None:
     """Plan and dispatch a chained execution to its end (its own thread)."""
-    from reflowfy.reflow_manager.factory import make_manager
+    from reflowfy.reflow_manager import factory
 
-    db = _open_session(bind)
-    try:
-        make_manager(db, mode=mode).run_pipeline_jobs(
-            execution_id=execution_id,
-            pipeline_name=pipeline_name,
-            runtime_params=params,
-            rate_limit_override=rate_limit,
-        )
-    except Exception as exc:
-        logger.exception(
-            "Chained execution failed",
-            extra={
-                "event": "dispatch_failed",
-                "execution_id": execution_id,
-                "pipeline_name": pipeline_name,
-            },
-        )
-        try:
-            db.rollback()
-            ExecutionManager(db).update_execution_state(
-                execution_id, "failed", error_message=str(exc)
-            )
-        except Exception:
-            logger.exception(
-                "Failed to mark execution as failed",
-                extra={"event": "execution_mark_failed_error", "execution_id": execution_id},
-            )
-    finally:
-        db.close()
+    drive_execution(
+        _open_session(bind),
+        lambda db: factory.make_manager(db, mode=mode),
+        execution_id,
+        pipeline_name,
+        params,
+        log=logger,
+        rate_limit_override=rate_limit,
+    )
 
 
 def run_pipeline(
@@ -470,18 +452,8 @@ def run_pipeline(
     Raises:
         ValueError: the pipeline is not registered, or the params are invalid.
     """
-    from reflowfy.core.registry import pipeline_registry
-
-    pipeline = pipeline_registry.get(pipeline_name)
-    if pipeline is None:
-        raise ValueError(
-            f"Pipeline '{pipeline_name}' not found in registry"
-            f"{pipeline_registry.describe_missing(pipeline_name)}"
-        )
     runtime_params: Dict[str, Any] = dict(params or {})
-    errors = pipeline.validate_parameters(pipeline.apply_defaults(runtime_params))
-    if errors:
-        raise ValueError(f"Invalid parameters: {'; '.join(errors)}")
+    check_runnable(pipeline_name, runtime_params)
 
     context = _hook_context.get()
     bind = context[0] if context is not None else None

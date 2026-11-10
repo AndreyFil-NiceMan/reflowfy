@@ -18,7 +18,7 @@ from reflowfy.core.secrets import REDACTED
 from reflowfy.execution.distributed_executor import DistributedExecutor
 from reflowfy.reflow_manager.database import get_db
 from reflowfy.reflow_manager.manager import ReflowManager
-from reflowfy.reflow_manager.models import (
+from reflowfy.store.models import (
     Base,
     DLQJob,
     DLQJobArchive,
@@ -268,6 +268,27 @@ def test_execution_responses_are_redacted(
     _assert_clean(client.post("/executions/e/cancel").json())
 
 
+def test_execution_stats_are_redacted(client: TestClient, factory: sessionmaker[Session]) -> None:
+    _seed(factory)
+    body = client.get("/executions/e/stats")
+    assert body.status_code == 200, body.text
+    _assert_clean(body.json())
+    assert body.json()["runtime_params"] == {"db_password": REDACTED, "day": "2026-01-01"}
+
+
+def test_job_errors_hide_url_passwords(client: TestClient, factory: sessionmaker[Session]) -> None:
+    _seed(factory)
+    with factory() as db:
+        job = db.get(Job, "j1")
+        assert job is not None
+        job.error_message = "could not connect to postgresql://u:pw2@h/db"
+        job.error_traceback = "Traceback ...\nOperationalError: postgresql://u:pw2@h/db"
+        db.commit()
+    (error,) = client.get("/executions/e/errors").json()
+    _assert_clean(error)
+    assert error["error_message"] == f"could not connect to postgresql://u:{REDACTED}@h/db"
+
+
 def test_state_override_is_redacted(client: TestClient, factory: sessionmaker[Session]) -> None:
     _seed(factory)
     body = client.patch("/executions/e/state", json={"state": "failed", "error_message": "x"})
@@ -317,3 +338,61 @@ def test_helm_and_compose_wire_the_token() -> None:
     assert "apiToken: ''" in (root / "helm/reflowfy/values.yaml").read_text()
     compose = (root / "templates/docker-compose.yml").read_text()
     assert compose.count("REFLOWFY_API_TOKEN: ${REFLOWFY_API_TOKEN:-}") == 2
+
+
+def test_destination_repr_hides_credentials() -> None:
+    from reflowfy.destinations.api import api_destination
+    from reflowfy.destinations.kafka import kafka_destination
+
+    kafka = kafka_destination(
+        topic="t",
+        bootstrap_servers="k:9092",
+        security_protocol="SASL_SSL",
+        sasl_username="u",
+        sasl_password="pw1",
+    )
+    api = api_destination(
+        url="https://u:pw2@h/x", auth_token="pw1", headers={"Authorization": "Bearer pw1"}
+    )
+    for destination in (kafka, api):
+        assert "pw1" not in repr(destination) and "pw2" not in repr(destination), repr(destination)
+
+
+def test_free_text_fields_lose_url_passwords():
+    from reflowfy.reflow_manager.redaction import redact_row
+
+    row = redact_row(
+        {
+            "error_message": "could not connect to postgresql://app:hunter2@db:5432/x",
+            "hook_error": "callback to https://u:p4ss@hooks.example failed",
+            "state": "failed",
+        }
+    )
+    assert "hunter2" not in row["error_message"] and "p4ss" not in row["hook_error"]
+    assert row["state"] == "failed"
+
+
+def test_routes_return_stored_rows_only_through_public_row():
+    """A row's to_dict() handed out directly skips redaction (the leak public_row
+    exists for). Pipeline metadata (pipeline.to_dict()) holds no stored values."""
+    import ast
+    import pathlib
+
+    import reflowfy.reflow_manager as pkg
+
+    allowed_receivers = {"pipeline", "p", "pipeline_obj", "job_retry", "context", "summary"}
+    offenders = []
+    for path in pathlib.Path(pkg.__file__).parent.glob("*.py"):
+        if path.name == "redaction.py":
+            continue
+        for node in ast.walk(ast.parse(path.read_text())):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "to_dict"
+            ):
+                receiver = node.func.value
+                name = receiver.id if isinstance(receiver, ast.Name) else ast.unparse(receiver)
+                if name not in allowed_receivers:
+                    offenders.append(f"{path.name}:{node.lineno} {name}.to_dict()")
+    assert offenders == []

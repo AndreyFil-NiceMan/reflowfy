@@ -34,11 +34,18 @@ from reflowfy.cli.utils import console
 from reflowfy.core.exceptions import PipelineError
 from reflowfy.core.execution_context import ExecutionContext
 from reflowfy.destinations.pool import loop_pool_scope
-from reflowfy.execution.job_runner import job_runtime_params, plan_slices, run_job_records
+from reflowfy.core.planning import chunk
+from reflowfy.execution.job_runner import (
+    log_job_dropped,
+    log_skipped_records,
+    plan_slices,
+    run_job_records,
+)
+from reflowfy.sources.static import StaticSource
 from reflowfy.execution.transformation_runner import SKIPPED_MODE, AppliedStep
 from reflowfy.observability.context import log_context
 from reflowfy.observability.logging import get_logger, setup_logging
-from reflowfy.transformations.base import TransformationError, top_skip_reasons
+from reflowfy.transformations.base import TransformationError
 
 logger = get_logger("cli.test")
 
@@ -381,17 +388,17 @@ def run_batch(
     """
     report = BatchReport(label=label, source_repr=repr(source))
     try:
-        for sub in plan_slices(source, flat_params):
+        for planned in plan_slices(source, flat_params):
             remaining = opts.limit - report.fetched
             if remaining <= 0:
                 break
-            job_params = job_runtime_params(sub, flat_params)
+            job_params = {**flat_params, **planned.params}
             with log_context(
                 execution_id=job_params.get("execution_id"),
                 pipeline_name=job_params.get("pipeline_name"),
             ):
                 records, transformed, applied, destination = run_job_records(
-                    sub, pipeline, job_params, limit=remaining
+                    planned.source, pipeline, job_params, limit=remaining
                 )
                 log_skips(job_params, applied, report)
             report.fetched += len(records)
@@ -423,26 +430,9 @@ def log_skips(job_params: Dict[str, Any], applied: List[AppliedStep], report: Ba
     skip_reason = job_params.get("skip_reason")
     if skip_reason:
         report.jobs_dropped.append(str(skip_reason))
-        logger.info(
-            "Job dropped by pipeline (%s)",
-            skip_reason,
-            extra={"event": "job_dropped", "skip_reason": skip_reason},
-        )
+        log_job_dropped(logger, str(skip_reason))
     for step in applied:
-        if step.records_skipped:
-            # Reasons stay in the message, as in the worker: as a field their keys
-            # would be unbounded mapping names in the log index.
-            logger.info(
-                "%s skipped %d records (%s)",
-                step.name,
-                step.records_skipped,
-                top_skip_reasons(step.skip_reasons or {}),
-                extra={
-                    "event": "records_skipped",
-                    "transformation": step.name,
-                    "records_skipped": step.records_skipped,
-                },
-            )
+        log_skipped_records(logger, step)
 
 
 def report_batch(report: BatchReport, opts: TestOptions, indent: str = "") -> None:
@@ -853,7 +843,7 @@ def run_id_batches(
         raise typer.Exit(1)
 
     batch_size: int = pipeline.ids_batch_size
-    id_batches: List[List[Any]] = [ids[i : i + batch_size] for i in range(0, len(ids), batch_size)]
+    id_batches = chunk(ids, batch_size)
     console.print(
         f"\n[bold]🔑 IdBasedPipeline: {len(ids)} ID(s) in {len(id_batches)} batch(es) "
         f"(ids_batch_size={batch_size})[/bold]"
@@ -866,13 +856,9 @@ def run_id_batches(
         label = f"Batch {number}/{len(id_batches)}: {id_batch}"
         console.print(f"\n[bold cyan]━━━ {label} ━━━[/bold cyan]")
 
-        # Fresh per-batch copy so define_source enrichments don't accumulate.
-        flat = dict(flat_base)
-        flat["current_ids"] = list(id_batch)
-        flat["current_id"] = id_batch[0] if id_batch else None
-
         try:
-            source = pipeline.resolve_source(flat)
+            # The manager's own batch planner, so the preview cannot drift from it.
+            planned = pipeline.plan_batch(flat_base, id_batch)
         except Exception as exc:  # noqa: BLE001 — reported, not swallowed
             report = BatchReport(label=label, error=exc)
             reports.append(report)
@@ -881,6 +867,10 @@ def run_id_batches(
                 break
             continue
 
+        source = planned.source
+        if isinstance(source, list):
+            source = StaticSource(cast(List[Any], source))
+        flat = {**flat_base, **planned.params}
         console.print(f"  [bold]🔌 Source:[/bold] {summarize(source, opts.verbose)}")
         render_params(flat, opts, indent="  ")
 

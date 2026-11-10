@@ -2,6 +2,8 @@
 
 import base64
 
+import pytest
+
 from reflowfy.http_auth import build_auth_headers
 
 
@@ -26,9 +28,13 @@ def test_none_auth_type_leaves_headers_unchanged():
     assert out == {"X": "1"}
 
 
-def test_unknown_auth_type_leaves_headers_unchanged():
-    out = build_auth_headers({}, "weird", "tok")
-    assert out == {}
+def test_unknown_auth_type_is_an_error_not_an_unauthenticated_request():
+    with pytest.raises(ValueError, match="unknown auth_type 'weird'"):
+        build_auth_headers({}, "weird", "tok")
+
+
+def test_auth_type_is_case_insensitive():
+    assert build_auth_headers({}, "Bearer", "tok") == {"Authorization": "Bearer tok"}
 
 
 def test_missing_token_leaves_headers_unchanged():

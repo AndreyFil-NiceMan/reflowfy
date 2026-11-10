@@ -13,9 +13,7 @@ from reflowfy.destinations.api import api_destination
 from reflowfy.destinations.base import DestinationError
 from reflowfy.destinations.kafka import kafka_destination
 from reflowfy.destinations.base import ConnectionPool
-from reflowfy.destinations.schemas import ApiDestinationConfig
 from reflowfy.execution.content_dedup import destination_identity
-from reflowfy.factories.destination_factory import DestinationFactory
 
 
 class InFlight:
@@ -99,17 +97,6 @@ def test_kafka_concurrency_was_removed():
 def test_api_concurrency_was_removed():
     with pytest.raises(TypeError, match="concurrency"):
         api_destination(url="https://x.com", per_record=True, concurrency=4)  # type: ignore[call-arg]
-
-
-def test_api_schema_has_no_concurrency():
-    assert "concurrency" not in ApiDestinationConfig.model_fields
-
-
-def test_config_round_trips_through_factory():
-    kafka = kafka_destination(bootstrap_servers="k:9092", topic="t", value_field="d", key="{k}")
-    api = api_destination(url="https://x.com/{id}", per_record=True, headers={"X": "{x}"})
-    assert DestinationFactory.create("kafka", kafka.config).config == kafka.config
-    assert DestinationFactory.create("api", api.config).config == api.config
 
 
 # ---------------------------------------------------------------- api per-record

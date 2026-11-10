@@ -4,6 +4,7 @@ Covers start (subscription settings, connect retries), the consume loop, the
 commit policy per message kind, draining on request_stop, and teardown.
 """
 
+import ssl
 import json
 import logging
 from contextlib import contextmanager
@@ -161,6 +162,16 @@ class TestStart:
         consumer = await _run(_worker(), [])
         assert consumer.kwargs["max_poll_interval_ms"] == 120000
 
+    async def test_tls_settings_reach_the_consumer(self, fake_kafka):
+        """TLS-only used to be dropped (plaintext), and SASL_SSL had no ssl_context."""
+        tls = await _run(_worker(security_protocol="SSL"), [])
+        assert tls.kwargs["security_protocol"] == "SSL"
+        assert isinstance(tls.kwargs["ssl_context"], ssl.SSLContext)
+        sasl_ssl = await _run(
+            _worker(security_protocol="SASL_SSL", sasl_username="u", sasl_password="p"), []
+        )
+        assert isinstance(sasl_ssl.kwargs["ssl_context"], ssl.SSLContext)
+
     async def test_sasl_settings(self, fake_kafka):
         consumer = await _run(_worker(sasl_username="svc", sasl_password="pw"), [])
         assert consumer.kwargs["security_protocol"] == "SASL_PLAINTEXT"
@@ -168,6 +179,19 @@ class TestStart:
         assert consumer.kwargs["sasl_plain_username"] == "svc"
         assert consumer.kwargs["sasl_plain_password"] == "pw"
         assert consumer.kwargs["client_id"] == "svc"
+
+    async def test_a_stop_during_the_connect_backoff_exits_cleanly(self, fake_kafka, monkeypatch):
+        fake_kafka.start_failures = [KafkaConnectionError("coordinator")] * 5
+        worker = _worker()
+
+        async def stop_while_waiting(seconds: float) -> None:
+            worker.request_stop()  # SIGTERM arrives during the backoff
+
+        monkeypatch.setattr(consumer_mod.asyncio, "sleep", stop_while_waiting)
+        await worker.start()  # returns; does not keep retrying or raise
+
+        assert len(fake_kafka.start_failures) == 4  # one attempt, then stopped
+        assert worker.stop_requested
 
     async def test_connect_is_retried_with_exponential_backoff(self, fake_kafka, monkeypatch):
         fake_kafka.start_failures = [KafkaConnectionError("coordinator"), KafkaConnectionError("x")]
@@ -367,8 +391,8 @@ class TestDrain:
         assert len(consumer.queue) == 1  # j2 stays in Kafka for another worker
         worker.executor.close.assert_awaited_once()  # type: ignore[attr-defined]
 
-    async def test_stop_coroutine_requests_a_drain(self):
+    async def test_request_stop_asks_for_a_drain(self):
         worker = _worker()
         worker._running = True
-        await worker.stop()
-        assert worker._running is False
+        worker.request_stop()
+        assert worker._running is False and worker.stop_requested

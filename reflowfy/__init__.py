@@ -16,12 +16,13 @@ from reflowfy.core.exceptions import PipelineError, RecordValidationError, SkipJ
 from reflowfy.core.execution_summary import ExecutionSummary
 from reflowfy.core.id_based_pipeline import IdBasedPipeline
 from reflowfy.core.job_retry import JobRetryConfig
-from reflowfy.core.types import Record, Records, Transformations, TypedRecord
+from reflowfy.core.types import Record, Records, TypedRecord
 from reflowfy.core.query_loader import load_query, load_query_text
 from reflowfy.core.registry import pipeline_registry
 from reflowfy.core.runtime_params import Param, RuntimeParams
 from reflowfy.core.secrets import SecretError, secret
-from reflowfy.execution.job_runner import chunk, job
+from reflowfy.core.planning import chunk
+from reflowfy.execution.job_runner import job
 from reflowfy.observability.logging import get_logger
 from reflowfy.transformations.base import (
     AsyncTransformation,
@@ -29,6 +30,7 @@ from reflowfy.transformations.base import (
     RecordTransformation,
     StepOutputError,
     TransformationError,
+    Transformations,
 )
 from reflowfy.sources.base import BaseSource
 from reflowfy.destinations.base import BaseDestination

@@ -1,7 +1,7 @@
 """DLQScheduler: the "run this pipeline later with these params" queue.
 
 Polling picks up due pending jobs only, groups them per pipeline and runs each group
-through ``run_pipeline``. A failed run reschedules its jobs with exponential backoff and
+through ``PipelineRunner.start_pipeline``. A run that cannot be started reschedules its jobs with exponential backoff and
 archives them once ``max_retries`` is reached. The on-demand ``process_*_immediately``
 paths behind ``/dlq/.../dispatch`` share that failure handling. All on SQLite.
 """
@@ -9,6 +9,7 @@ paths behind ``/dlq/.../dispatch`` share that failure handling. All on SQLite.
 import logging
 import threading
 import time
+from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
 
@@ -20,7 +21,7 @@ from sqlalchemy.pool import StaticPool
 import reflowfy.reflow_manager.dlq_scheduler as dlq_mod
 from reflowfy.observability import metrics
 from reflowfy.reflow_manager.dlq_scheduler import DLQScheduler
-from reflowfy.reflow_manager.models import Base, DLQJob, DLQJobArchive
+from reflowfy.store.models import Base, DLQJob, DLQJobArchive
 
 
 def _now() -> datetime:
@@ -83,12 +84,18 @@ def _job(db: Session, job_id: int) -> Optional[DLQJob]:
 
 
 class _Runner:
+    execution_manager = SimpleNamespace(db=SimpleNamespace(close=lambda: None))
+
     def __init__(self, calls: List[Dict[str, Any]], error: Optional[Exception] = None) -> None:
         self.calls = calls
         self.error = error
 
-    def run_pipeline(
-        self, pipeline_name: str, runtime_params: Dict[str, Any], execution_id: str
+    def start_pipeline(
+        self,
+        pipeline_name: str,
+        runtime_params: Dict[str, Any],
+        execution_id: str,
+        background_runner: Any = None,
     ) -> Dict[str, Any]:
         self.calls.append(
             {"pipeline": pipeline_name, "params": runtime_params, "execution_id": execution_id}
@@ -335,8 +342,8 @@ def test_process_pipeline_immediately_a_failed_group_does_not_cost_the_others(db
     calls: List[Dict[str, Any]] = []
 
     class _FailsOnTwo(_Runner):
-        def run_pipeline(self, pipeline_name, runtime_params, execution_id):
-            super().run_pipeline(pipeline_name, runtime_params, execution_id)
+        def start_pipeline(self, pipeline_name, runtime_params, execution_id, background_runner):
+            super().start_pipeline(pipeline_name, runtime_params, execution_id)
             if runtime_params["k"] == 2:
                 raise RuntimeError("k=2 exploded")
             return {"execution_id": execution_id}

@@ -8,7 +8,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 
 from sqlalchemy.exc import DBAPIError
@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from reflowfy.core.exceptions import pipeline_step
 from reflowfy.core.serialization import to_json_safe
+from reflowfy.core.planning import ResolvedPlan
 from reflowfy.execution.job_runner import plan_slices
 from reflowfy.factories.source_factory import SourceFactory
 from reflowfy.observability import metrics
@@ -25,8 +26,10 @@ from reflowfy.reflow_manager.dispatcher import JobDispatcher
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
 from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
-from reflowfy.reflow_manager.models import Job
+from reflowfy.store.models import Job
 from reflowfy.reflow_manager.rate_limiter import execution_bucket_key
+from reflowfy.store.leases import JobLeases
+from reflowfy.store.states import JobState, ExecutionState
 
 logger = logging.getLogger(__name__)
 
@@ -42,16 +45,14 @@ CHECKPOINT_POLL_INTERVAL = 2.0  # seconds between drive-loop polls when nothing 
 # see lag and scale, bounded so a stalled worker pool can't absorb the whole plan.
 MAX_IN_FLIGHT_JOBS = int(os.getenv("MAX_IN_FLIGHT_JOBS", "1000"))
 
-# Job leases. A job a worker claimed (running) with no result after the running
-# lease lost its worker (killed, OOM) and goes back to pending — or fails after
-# JOB_MAX_ATTEMPTS claims. A job dispatched but never claimed after the dispatch
-# lease lost its message and is sent again. The worker-side claim makes the
-# duplicate message harmless.
-# The worker refreshes a running job's updated_at every JOB_HEARTBEAT_SECONDS (30),
-# so the running lease only has to exceed a few missed beats, not the longest job.
-JOB_RUNNING_LEASE_SECONDS = float(os.getenv("JOB_RUNNING_LEASE_SECONDS", "300"))
-JOB_DISPATCH_LEASE_SECONDS = float(os.getenv("JOB_DISPATCH_LEASE_SECONDS", "3600"))
-JOB_MAX_ATTEMPTS = int(os.getenv("JOB_MAX_ATTEMPTS", "3"))
+# Job leases (store/leases.py). A job a worker claimed (running) with no heartbeat
+# for the running lease lost its worker and goes back to pending, or fails after
+# max_attempts claims; one dispatched but never claimed is sent again. The
+# worker-side claim makes the duplicate message harmless.
+JOB_LEASES = JobLeases.from_env()
+JOB_RUNNING_LEASE_SECONDS = JOB_LEASES.running_lease_seconds
+JOB_DISPATCH_LEASE_SECONDS = JOB_LEASES.dispatch_lease_seconds
+JOB_MAX_ATTEMPTS = JOB_LEASES.max_attempts
 LEASE_CHECK_INTERVAL = 60.0  # seconds between lease sweeps
 
 # The dispatcher hands control back to the drive loop this often, so lease sweeps
@@ -88,7 +89,6 @@ def _iter_plan(pipeline_name: str, slices: Iterator[Any]) -> Iterator[Any]:
         yield item
 
 
-# Worker job message schema version
 JOB_SCHEMA_VERSION = 2
 
 
@@ -297,79 +297,42 @@ class PipelineRunner:
         self.job_manager = job_manager
         self.dispatcher = dispatcher
 
-    @bind_log_context("execution_id", "pipeline_name")
-    def run_pipeline(
+    def start_pipeline(
         self,
         pipeline_name: str,
         runtime_params: Dict[str, Any],
         execution_id: str,
-        rate_limit_override: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        background_runner: Callable[[], "PipelineRunner"],
+    ) -> None:
+        """Create an execution now, then plan and drive it on a thread of its own.
+
+        Raises ``ValueError`` here, before anything is created, when the pipeline is
+        not registered or the params are invalid. Anything that goes wrong later
+        (planning, dispatch) marks the execution ``failed``, as for ``/run``.
+
+        ``background_runner`` builds the runner the thread uses: it needs its own
+        database session, since this one belongs to the caller's thread.
         """
-        Execute a pipeline by splitting jobs and dispatching to Kafka.
+        from reflowfy.reflow_manager.start import check_runnable, drive_execution
 
-        This creates a new execution record, then runs the pipeline.
-
-        Args:
-            pipeline_name: Name of the registered pipeline
-            runtime_params: Runtime parameters for the pipeline
-            execution_id: Unique execution identifier
-            rate_limit_override: Optional override for jobs per minute
-
-        Returns:
-            Dictionary with execution details and job counts
-        """
-        from reflowfy.core.registry import pipeline_registry
-
-        # Load pipeline from registry
-        pipeline = pipeline_registry.get(pipeline_name)
-        if not pipeline:
-            raise ValueError(
-                f"Pipeline '{pipeline_name}' not found in registry"
-                f"{pipeline_registry.describe_missing(pipeline_name)}"
-            )
-
-        logger.info("Running pipeline", extra={"event": "execution_start"})
-
-        # Create execution record
+        check_runnable(pipeline_name, runtime_params)
         self.execution_manager.create_execution(
             execution_id=execution_id,
             pipeline_name=pipeline_name,
             runtime_params=runtime_params,
-            rate_limit=rate_limit_override,
         )
 
-        # Run the job dispatch; always leave execution in a terminal state
-        try:
-            self.run_pipeline_jobs(
-                execution_id=execution_id,
-                pipeline_name=pipeline_name,
-                runtime_params=runtime_params,
-                rate_limit_override=rate_limit_override,
+        def drive() -> None:
+            runner = background_runner()
+            drive_execution(
+                runner.execution_manager.db,
+                lambda _db: runner,
+                execution_id,
+                pipeline_name,
+                runtime_params,
             )
-        except Exception as exc:
-            try:
-                self.execution_manager.update_execution_state(
-                    execution_id, "failed", error_message=str(exc)
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to mark execution as failed",
-                    extra={"event": "execution_mark_failed_error"},
-                )
-            raise
 
-        # Refresh execution to get final counts
-        execution = self.execution_manager.get_execution(execution_id)
-        assert execution is not None
-
-        return {
-            "execution_id": execution_id,
-            "pipeline_name": pipeline_name,
-            "state": execution.state,
-            "jobs_dispatched": execution.jobs_dispatched,
-            "rate_limit": execution.rate_limit,
-        }
+        threading.Thread(target=drive, name=f"run-{execution_id[:12]}", daemon=True).start()
 
     @bind_log_context("execution_id")
     def resume_execution(
@@ -390,7 +353,6 @@ class PipelineRunner:
         """
         from reflowfy.core.registry import pipeline_registry
 
-        # Get execution record
         execution = self.execution_manager.get_execution(execution_id)
         if not execution:
             logger.warning(
@@ -409,7 +371,6 @@ class PipelineRunner:
 
         pipeline_name = execution.pipeline_name
 
-        # Load pipeline from registry
         pipeline = pipeline_registry.get(pipeline_name)
         if not pipeline:
             logger.warning(
@@ -459,9 +420,9 @@ class PipelineRunner:
                 self.job_manager.db.query(Job)
                 .filter(
                     Job.execution_id == execution_id,
-                    Job.state.in_(["dispatched", "running"]),
+                    Job.state.in_(JobState.IN_FLIGHT),
                 )
-                .update({"state": "pending"}, synchronize_session=False)
+                .update({"state": JobState.PENDING}, synchronize_session=False)
             )
             self.job_manager.db.commit()
             if orphaned:
@@ -551,10 +512,8 @@ class PipelineRunner:
     ) -> None:
         """Phase 1 (plan: save every job) then Phase 2 (dispatch until done)."""
         from reflowfy.core.execution_context import ExecutionContext
-        from reflowfy.core.id_based_pipeline import IdBasedPipeline
         from reflowfy.core.registry import pipeline_registry
 
-        # Load pipeline from registry
         pipeline = pipeline_registry.get(pipeline_name)
         if not pipeline:
             raise ValueError(
@@ -571,25 +530,15 @@ class PipelineRunner:
         if enable_duplicate_jobs is None:
             enable_duplicate_jobs = getattr(pipeline, "enable_duplicate_jobs", True)
 
-        # Resolve pipeline with runtime params.
-        # _resolved_params includes defaults + any keys added by define_source.
-        # On a private copy: resolve() stores the plan on the instance, and the registry's
-        # instance is shared by every execution of this pipeline running in this process.
-        if hasattr(pipeline, "fork"):
-            pipeline = pipeline.fork()
-        if hasattr(pipeline, "resolve"):
-            pipeline.resolve(runtime_params)
+        # Defaults applied and validated; define_source may add keys to plan.params.
+        resolved: ResolvedPlan = pipeline.resolve(runtime_params)
 
         logger.info("Job dispatch starting", extra={"event": "plan_start"})
 
-        # Update state to running
-        self.execution_manager.update_execution_state(execution_id, "running")
+        self.execution_manager.update_execution_state(execution_id, ExecutionState.RUNNING)
 
-        # Use enriched params (define_source may have added keys) for the context
-        # so workers receive them in job metadata.
-        enriched_params = getattr(pipeline, "_resolved_params", runtime_params)
+        enriched_params = resolved.params
 
-        # Create execution context
         context = ExecutionContext(
             execution_id=execution_id,
             pipeline_name=pipeline_name,
@@ -621,25 +570,19 @@ class PipelineRunner:
         current_job_ids: List[str] = []
         job_rows: List[Dict[str, Any]] = []
 
-        # Params for jobs the plan didn't narrow itself. IdBasedPipeline.define_jobs
-        # sets job_params per job, but a pipeline that *overrides* define_jobs plans
-        # its own sources and sets nothing — and then every job would carry the whole
-        # `input_ids` list. Drop it for the ID-based path as define_jobs does.
-        default_job_params = enriched_params
-        if isinstance(pipeline, IdBasedPipeline):
-            default_job_params = {k: v for k, v in enriched_params.items() if k != "input_ids"}
-
-        base_source = pipeline.source
-        plan = _iter_plan(pipeline_name, plan_slices(base_source, enriched_params))
+        plan = _iter_plan(pipeline_name, plan_slices(resolved.jobs, enriched_params))
         last_state_check = 0.0
-        for sub_source in plan:
+        for planned in plan:
             # A cancelled (or force-failed) execution must not keep planning: a plan can take
             # minutes to hours, and its jobs would just be cancelled again as they are saved.
             # The check cannot interrupt a source call that blocks (the enumeration before the
             # first slice); it takes effect as soon as that returns.
             if time.time() - last_state_check >= 1.0:
                 last_state_check = time.time()
-                if self._execution_state(execution_id) in ("cancelled", "failed"):
+                if self._execution_state(execution_id) in (
+                    ExecutionState.CANCELLED,
+                    ExecutionState.FAILED,
+                ):
                     cancelled_jobs = self.job_manager.cancel_unstarted_jobs(execution_id)
                     logger.info(
                         "Execution was stopped while planning (%d jobs cancelled); planning aborted",
@@ -649,16 +592,10 @@ class PipelineRunner:
                     return
             context.batch_number = batch_number
             context_dict = context.to_dict()
-            # A planned source may narrow the params its own job receives — an
-            # IdBasedPipeline gives each job only the IDs that job handles,
-            # instead of every ID in the execution. Everyone else gets the
-            # execution's params unchanged.
-            # Merged, not replaced: reflowfy.job() attaches only the keys that
-            # identify one job (e.g. current_id), and the rest of the
-            # execution's params still have to reach it.
-            own_params = getattr(sub_source, "job_params", None)
-            job_params = {**default_job_params, **own_params} if own_params else default_job_params
-            context_dict["runtime_params"] = dict(job_params)
+            # The execution's params (minus execution-only ones such as input_ids)
+            # with this job's own merged over them.
+            job_params = resolved.job_params(planned)
+            context_dict["runtime_params"] = job_params
             metadata = {**context_dict, "source_metadata": None}
             if job_retry_dict is not None:
                 metadata["job_retry"] = job_retry_dict
@@ -672,12 +609,12 @@ class PipelineRunner:
                 execution_id,
                 job_id,
                 pipeline_name,
-                sub_source,
+                planned.source,
                 metadata,
                 dedup_check=dedup_check,
-                job_params=own_params,
+                job_params=planned.params,
             )
-            job_payload = self._serialize_for_json(job_payload)
+            job_payload = to_json_safe(job_payload)
 
             job_rows.append(
                 {
@@ -855,7 +792,7 @@ class PipelineRunner:
                     try:
                         self.job_manager.db.rollback()
                     except Exception:
-                        pass
+                        pass  # the connection is gone; the next query reconnects
                     await asyncio.sleep(db_backoff)
                     continue
                 db_backoff = 0.0
@@ -1012,10 +949,10 @@ class PipelineRunner:
             self.job_manager.mark_job_dispatched(payload["job_id"], sent_after=sent_after)
 
         def on_unsendable(payload: Dict[str, Any], reason: str) -> None:
-            self.job_manager.update_job_state(payload["job_id"], "failed", error_message=reason)
-            metrics.jobs_processed_total.labels(
-                pipeline=payload.get("pipeline_name", "unknown"), status="failed"
-            ).inc()
+            self.job_manager.update_job_state(
+                payload["job_id"], JobState.FAILED, error_message=reason
+            )
+            metrics.count_job(payload.get("pipeline_name", "unknown"), metrics.JobOutcome.FAILED)
 
         sent: int = await self.dispatcher.dispatch_jobs_batch(
             jobs=[job.job_payload for job in jobs],
@@ -1051,9 +988,7 @@ class PipelineRunner:
                 },
             )
         if result["failed"]:
-            metrics.jobs_processed_total.labels(pipeline=pipeline_name, status="lease_expired").inc(
-                result["failed"]
-            )
+            metrics.count_job(pipeline_name, metrics.JobOutcome.LEASE_EXPIRED, result["failed"])
 
     @bind_log_context("execution_id")
     def _recover_plan(self, execution_id: str) -> bool:
@@ -1076,7 +1011,10 @@ class PipelineRunner:
         while True:
             self.execution_manager.db.expire_all()
             execution = self.execution_manager.get_execution(execution_id)
-            if execution is None or execution.state not in ("pending", "running"):
+            if execution is None or execution.state not in (
+                ExecutionState.PENDING,
+                ExecutionState.RUNNING,
+            ):
                 return False
             if execution.plan_complete:
                 return True
@@ -1155,9 +1093,9 @@ class PipelineRunner:
             total_finished = completed + failed
 
         if total_finished == expected_total:
-            final_state = "completed" if failed == 0 else "failed"
+            final_state = ExecutionState.COMPLETED if failed == 0 else ExecutionState.FAILED
         else:
-            final_state = "failed"
+            final_state = ExecutionState.FAILED
             logger.warning(
                 "Only %d of %d jobs finished",
                 total_finished,
@@ -1187,63 +1125,11 @@ class PipelineRunner:
         return dispatched, completed, failed
 
     def _set_total_jobs(self, execution_id: str, total: int) -> None:
-        """Set total_jobs for an execution (uses SET, not +=)."""
-        execution = self.execution_manager.get_execution(execution_id)
-        if execution:
-            execution.total_jobs = total
-            self.execution_manager.db.commit()
-
-    def _set_job_counts(
-        self,
-        execution_id: str,
-        dispatched: Optional[int] = None,
-        completed: Optional[int] = None,
-        failed: Optional[int] = None,
-    ) -> None:
-        """Set job counts for an execution (uses SET, not +=)."""
-        execution = self.execution_manager.get_execution(execution_id)
-        if execution:
-            if dispatched is not None:
-                execution.jobs_dispatched = dispatched
-            if completed is not None:
-                execution.jobs_completed = completed
-            if failed is not None:
-                execution.jobs_failed = failed
-            self.execution_manager.db.commit()
+        self.execution_manager.set_total_jobs(execution_id, total)
 
     def _sync_counts_from_db(self, execution_id: str) -> Tuple[int, int, int]:
-        """
-        Sync job counts from actual job states in database.
-
-        Returns:
-            Tuple of (dispatched, completed, failed)
-        """
-
-        # Get counts directly from jobs table (now the source of truth)
-        job_counts = self.job_manager.get_job_counts(execution_id)
-
-        completed = job_counts.get("completed", 0)
-        failed = job_counts.get("failed", 0)
-        deduplicated = job_counts.get("deduplicated", 0)
-        dispatched = (
-            job_counts.get("dispatched", 0)
-            + job_counts.get("running", 0)
-            + completed
-            + failed
-            + deduplicated
+        """Copy the jobs table's counts onto the execution row; returns (dispatched,
+        finished, failed), deduplicated jobs counting as finished."""
+        return self.execution_manager.store_job_counts(
+            execution_id, self.job_manager.get_job_counts(execution_id)
         )
-
-        # Update execution with real counts
-        execution = self.execution_manager.get_execution(execution_id)
-        if execution:
-            execution.jobs_dispatched = dispatched
-            execution.jobs_completed = completed + deduplicated
-            execution.jobs_failed = failed
-            execution.deduplicated_jobs = deduplicated
-            self.execution_manager.db.commit()
-
-        return (dispatched, completed + deduplicated, failed)
-
-    def _serialize_for_json(self, obj: Any) -> Any:
-        """Recursively convert objects to JSON-serializable form."""
-        return to_json_safe(obj)

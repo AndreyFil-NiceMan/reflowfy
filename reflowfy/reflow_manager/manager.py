@@ -13,13 +13,14 @@ import logging
 from typing import Any, Dict, List, NamedTuple, Optional
 from sqlalchemy.orm import Session
 
-from reflowfy.reflow_manager.models import Execution
+from reflowfy.store.models import Execution
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
 from reflowfy.reflow_manager.rate_limiter import RateLimiter
 from reflowfy.reflow_manager.dispatcher import KafkaDispatcher
 from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner
+from reflowfy.store.states import JobState, jobs_dispatched
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,6 @@ class ReflowManager:
         db_session: Session,
         kafka_bootstrap_servers: str = "localhost:9092",
         kafka_topic: str = "reflow.jobs",
-        max_jobs_per_minute: Optional[float] = None,
         execution_mode: str = "distributed",  # "distributed" or "local"
         # SASL Authentication
         kafka_security_protocol: Optional[str] = None,
@@ -59,9 +59,6 @@ class ReflowManager:
             db_session: SQLAlchemy database session
             kafka_bootstrap_servers: Kafka broker addresses
             kafka_topic: Topic for job dispatch
-            max_jobs_per_minute: Ignored (kept for compatibility). A pipeline with no
-                rate limit (no /run override, ``define_rate_limit`` or ``rate_limit``)
-                is unlimited; there is no global default any more.
             execution_mode: "distributed" (Kafka) or "local" (In-process)
             kafka_security_protocol: SASL security protocol (e.g., "SASL_PLAINTEXT")
             kafka_sasl_mechanism: SASL mechanism (e.g., "SCRAM-SHA-256")
@@ -71,7 +68,6 @@ class ReflowManager:
         self.db = db_session
         self.kafka_bootstrap_servers = kafka_bootstrap_servers
         self.kafka_topic = kafka_topic
-        self.max_jobs_per_minute = max_jobs_per_minute
         self.execution_mode = execution_mode
 
         # Initialize component managers
@@ -136,17 +132,6 @@ class ReflowManager:
     ) -> Optional[Execution]:
         return self.execution_manager.update_execution_state(execution_id, state, error_message)
 
-    def update_job_counts(
-        self,
-        execution_id: str,
-        jobs_dispatched: Optional[int] = None,
-        jobs_completed: Optional[int] = None,
-        jobs_failed: Optional[int] = None,
-    ) -> Optional[Execution]:
-        return self.execution_manager.update_job_counts(
-            execution_id, jobs_dispatched, jobs_completed, jobs_failed
-        )
-
     def pause_execution(self, execution_id: str) -> Optional[Execution]:
         return self.execution_manager.pause_execution(execution_id)
 
@@ -167,17 +152,6 @@ class ReflowManager:
         return CancelResult(execution=execution, cancelled_jobs=cancelled)
 
     # ===== Pipeline Execution (delegated) =====
-
-    def run_pipeline(
-        self,
-        pipeline_name: str,
-        runtime_params: Dict[str, Any],
-        execution_id: str,
-        rate_limit_override: Optional[float] = None,
-    ) -> Dict[str, Any]:
-        return self.pipeline_runner.run_pipeline(
-            pipeline_name, runtime_params, execution_id, rate_limit_override
-        )
 
     def run_pipeline_jobs(
         self,
@@ -206,7 +180,6 @@ class ReflowManager:
         # Get total job counts from jobs table
         job_counts = self.job_manager.get_job_counts(execution_id)
 
-        # Get checkpoint batch stats
         checkpoints = self._get_batch_checkpoint_stats(execution_id)
 
         # Find current checkpoint (first non-completed batch)
@@ -225,11 +198,7 @@ class ReflowManager:
             "pipeline_name": execution.pipeline_name,
             "state": execution.state,
             "total_jobs": execution.total_jobs,
-            "jobs_dispatched": job_counts.get("dispatched", 0)
-            + job_counts.get("running", 0)
-            + job_counts.get("completed", 0)
-            + job_counts.get("failed", 0)
-            + job_counts.get("deduplicated", 0),
+            "jobs_dispatched": jobs_dispatched(job_counts),
             "jobs_pending": job_counts.get("pending", 0),
             # Pending, waiting for a job_retry backoff to pass (included in jobs_pending).
             "jobs_retry_scheduled": self.job_manager.count_scheduled_retries(execution_id),
@@ -259,7 +228,7 @@ class ReflowManager:
 
     def _get_batch_checkpoint_stats(self, execution_id: str) -> List[Dict[str, Any]]:
         """Get stats grouped by batch_number using unified Job table."""
-        from reflowfy.reflow_manager.models import Job
+        from reflowfy.store.models import Job
         from sqlalchemy import func, case
 
         # Query unified Job table directly
@@ -267,9 +236,9 @@ class ReflowManager:
             self.db.query(
                 Job.batch_number,
                 func.count(Job.job_id).label("total_jobs"),
-                func.sum(case((Job.state == "pending", 1), else_=0)).label("pending"),
-                func.sum(case((Job.state == "completed", 1), else_=0)).label("completed"),
-                func.sum(case((Job.state == "failed", 1), else_=0)).label("failed"),
+                func.sum(case((Job.state == JobState.PENDING, 1), else_=0)).label("pending"),
+                func.sum(case((Job.state == JobState.COMPLETED, 1), else_=0)).label("completed"),
+                func.sum(case((Job.state == JobState.FAILED, 1), else_=0)).label("failed"),
             )
             .filter(Job.execution_id == execution_id, Job.batch_number.isnot(None))
             .group_by(Job.batch_number)
@@ -301,9 +270,3 @@ class ReflowManager:
             )
 
         return batches
-
-    # ===== Cleanup =====
-
-    async def close(self) -> None:
-        """Close connections."""
-        await self.dispatcher.close()

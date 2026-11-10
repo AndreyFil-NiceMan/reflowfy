@@ -31,16 +31,20 @@ from reflowfy import (
     record_transformation,
     transformation,
 )
-from reflowfy.core.record_validation import step_output_type
+from reflowfy.transformations.output_type import step_output_type
 from reflowfy.core.registry import pipeline_registry
 from reflowfy.execution.job_runner import run_job_records
 from reflowfy.execution.transformation_runner import (
     SKIPPED_MODE,
     AppliedStep,
-    apply_transformations_iteratively,
     apply_transformations_iteratively_async,
 )
 from reflowfy.sources.static import StaticSource
+from reflowfy.core.async_utils import run_coroutine_sync
+
+
+def apply_transformations_iteratively(*args, **kwargs):
+    return run_coroutine_sync(apply_transformations_iteratively_async(*args, **kwargs))
 
 
 class _Pipeline:

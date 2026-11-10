@@ -1,21 +1,19 @@
 """Database connection and session management."""
 
 import logging
-import os
 import re
 import time
 from typing import Generator
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import QueuePool
-from reflowfy.reflow_manager.db_settings import sync_connect_args
-from reflowfy.reflow_manager.models import Base
+from reflowfy.store.db_settings import database_url, sync_connect_args
+from reflowfy.store.models import Base
 
 logger = logging.getLogger(__name__)
 
 
-# Database URL from environment
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://reflowfy:reflowfy@localhost:5432/reflowfy")
+DATABASE_URL = database_url()
 
 # Create engine with connection pooling
 engine = create_engine(
@@ -29,7 +27,6 @@ engine = create_engine(
     connect_args=sync_connect_args(DATABASE_URL),
 )
 
-# Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -162,8 +159,3 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
-
-
-def close_db() -> None:
-    """Close database engine."""
-    engine.dispose()

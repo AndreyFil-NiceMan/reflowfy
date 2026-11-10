@@ -37,7 +37,7 @@ from reflowfy.observability import metrics
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
 from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
-from reflowfy.reflow_manager.models import Base, Execution, Job
+from reflowfy.store.models import Base, Execution, Job
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner, _PlanLease
 
 # ----- helpers --------------------------------------------------------------------
@@ -802,81 +802,7 @@ def test_finalize_falls_back_to_in_memory_counts_when_the_sync_fails(
     assert _exec(db).state == expected_state
 
 
-# ----- run_pipeline / run_pipeline_jobs ------------------------------------------
-
-
-def test_run_pipeline_with_an_unknown_name_creates_nothing(db, monkeypatch):
-    monkeypatch.setattr(pipeline_registry, "get", lambda name: None)
-
-    with pytest.raises(ValueError, match="Pipeline 'nope' not found in registry"):
-        _runner(db).run_pipeline("nope", {}, "e")
-
-    assert db.query(Execution).count() == 0
-
-
-def test_run_pipeline_persists_the_override_and_reports_the_final_state(db, registry, monkeypatch):
-    runner = _runner(db)
-    seen: Dict[str, Any] = {}
-
-    def fake_jobs(execution_id, pipeline_name, runtime_params, rate_limit_override=None):
-        seen.update(params=runtime_params, rate=rate_limit_override)
-        execution = runner.execution_manager.get_execution(execution_id)
-        execution.jobs_dispatched = 4
-        runner.execution_manager.update_execution_state(execution_id, "completed")
-
-    monkeypatch.setattr(runner, "run_pipeline_jobs", fake_jobs)
-
-    result = runner.run_pipeline("p", {"x": 1}, "e", rate_limit_override=42.0)
-
-    assert result == {
-        "execution_id": "e",
-        "pipeline_name": "p",
-        "state": "completed",
-        "jobs_dispatched": 4,
-        "rate_limit": 42.0,
-    }
-    assert seen == {"params": {"x": 1}, "rate": 42.0}
-    execution = _exec(db)
-    assert execution.rate_limit == 42.0
-    assert execution.runtime_params == {"x": 1}
-
-
-def test_run_pipeline_marks_the_execution_failed_and_re_raises(db, registry, monkeypatch):
-    runner = _runner(db)
-
-    def boom(**_kwargs):
-        raise RuntimeError("source unreachable")
-
-    monkeypatch.setattr(runner, "run_pipeline_jobs", boom)
-
-    with pytest.raises(RuntimeError, match="source unreachable"):
-        runner.run_pipeline("p", {}, "e")
-
-    execution = _exec(db)
-    assert execution.state == "failed"
-    assert execution.error_message == "source unreachable"
-
-
-def test_run_pipeline_re_raises_the_original_error_when_marking_failed_fails(
-    db, registry, monkeypatch, caplog
-):
-    runner = _runner(db)
-
-    def boom(**_kwargs):
-        raise RuntimeError("source unreachable")
-
-    def db_down(*_args, **_kwargs):
-        raise _db_error()
-
-    monkeypatch.setattr(runner, "run_pipeline_jobs", boom)
-    monkeypatch.setattr(runner.execution_manager, "update_execution_state", db_down)
-
-    with caplog.at_level(logging.ERROR, logger=runner_mod.__name__):
-        with pytest.raises(RuntimeError, match="source unreachable"):
-            runner.run_pipeline("p", {}, "e")
-
-    assert _exec(db).state == "pending"
-    assert any("Failed to mark execution as failed" in r.getMessage() for r in caplog.records)
+# ----- run_pipeline_jobs ------------------------------------------
 
 
 def test_run_pipeline_jobs_for_an_unregistered_pipeline_raises_and_releases_the_lease(

@@ -470,13 +470,3 @@ class TestWiring:
         assert seen[0] is not None and seen[0] is seen[1]  # one pool across batches
         await d.close()
         assert loop_pool() is None
-
-        await d.dispatch_job({"job_id": "c"}, "p")  # a single job: its own scope
-        assert seen[2] is not None and loop_pool() is None
-
-    async def test_local_executor_send_scopes_the_pool_to_its_loop(self, producers):  # noqa: F811
-        from reflowfy.execution.local_executor import _send_and_close  # pyright: ignore
-
-        dest = kafka_destination(bootstrap_servers="k:9092", topic="t")
-        await asyncio.to_thread(_send_and_close, dest, [{"a": 1}], {})
-        assert len(producers) == 1 and producers[0].stopped == 1

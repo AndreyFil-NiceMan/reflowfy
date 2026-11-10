@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, Iterator, List, Optional
 from reflowfy.core.types import Records, wrap_as_record
-from reflowfy.sources.base import BaseSource, SourceJob
+from reflowfy.sources.base import BaseSource
 
 
 class MockSource(BaseSource):
@@ -47,33 +47,6 @@ class MockSource(BaseSource):
             data = data[:limit]
 
         return [wrap_as_record(item) for item in data]
-
-    def split_jobs(
-        self, runtime_params: Dict[str, Any], batch_size: int = 1000
-    ) -> Iterator[SourceJob]:
-        """
-        Split mock data into jobs.
-
-        Args:
-            runtime_params: Runtime parameters
-            batch_size: Records per job
-
-        Yields:
-            SourceJob instances
-        """
-        data = self.config["data"]
-        batch_size = self.config.get("batch_size", batch_size)
-
-        for i in range(0, len(data), batch_size):
-            batch = [wrap_as_record(item) for item in data[i : i + batch_size]]
-
-            yield SourceJob(
-                records=batch,
-                metadata={
-                    "batch_num": i // batch_size,
-                    "count": len(batch),
-                },
-            )
 
     def split(self, runtime_params: Dict[str, Any]) -> Iterator["MockSource"]:
         """Slice the in-memory data into batch_size-sized MockSources."""

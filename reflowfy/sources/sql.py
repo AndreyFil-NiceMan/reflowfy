@@ -20,7 +20,11 @@ from sqlalchemy.sql.elements import BindParameter, TextClause
 
 from reflowfy.core.execution_context import parameter_resolver
 from reflowfy.core.types import Records, wrap_as_record
-from reflowfy.sources.base import BaseSource, SourceJob, SourceError
+from reflowfy.sources.base import BaseSource, SourceError
+from reflowfy.core.health import log_unhealthy
+from reflowfy.observability.logging import get_logger
+
+logger = get_logger(__name__)
 
 #: Prefix of the bind parameters a template's ``{{ }}`` values become. Starts with a
 #: letter: Oracle rejects bind names that start with an underscore.
@@ -466,111 +470,6 @@ class SqlSource(BaseSource):
             yield sub
             cur = nxt
 
-    def split_jobs(
-        self, runtime_params: Dict[str, Any], batch_size: int = 1000
-    ) -> Iterator[SourceJob]:
-        """
-        Split SQL data into jobs (legacy: fetches records while planning).
-
-        Strategy depends on configuration:
-        - If id_column specified: ID range splitting
-        - Otherwise: Offset-based pagination
-
-        Args:
-            runtime_params: Runtime parameters for query template
-            batch_size: Records per job
-
-        Yields:
-            SourceJob instances
-        """
-        resolved_config = self.resolve_parameters(runtime_params)
-        engine = self._get_engine()
-        batch_size = resolved_config.get("batch_size", batch_size)
-
-        try:
-            if resolved_config.get("id_column"):
-                yield from self._split_by_id_range(engine, resolved_config, batch_size)
-            else:
-                yield from self._split_by_offset(engine, resolved_config, batch_size)
-        except SQLAlchemyError as e:
-            raise SourceError("sql", f"Failed to split jobs: {e}", e)
-
-    def _split_by_id_range(
-        self, engine: Engine, config: Dict[str, Any], batch_size: int
-    ) -> Iterator[SourceJob]:
-        """Split jobs by ID range."""
-        id_column = config["id_column"]
-        base_query = config["query"]
-        binds: Dict[str, Any] = config["params"]
-
-        with engine.connect() as conn:
-            min_max = (
-                f"SELECT MIN({id_column}) as min_id, MAX({id_column}) as max_id "
-                f"FROM ({base_query}\n) as subquery"
-            )
-            row = conn.execute(_statement(min_max, binds), binds).fetchone()
-            if not row or row[0] is None:
-                return  # No data
-
-            min_id, max_id = row[0], row[1]
-            current_id = min_id
-            page_num = 0
-            range_query = (
-                f"SELECT * FROM ({base_query}\n) as subquery "
-                f"WHERE {id_column} >= :{BIND_PREFIX}lo AND {id_column} < :{BIND_PREFIX}hi"
-            )
-
-            while current_id <= max_id:
-                next_id = current_id + batch_size
-                window = {**binds, f"{BIND_PREFIX}lo": current_id, f"{BIND_PREFIX}hi": next_id}
-                records = _rows(conn.execute(_statement(range_query, window), window))
-
-                if records:
-                    yield SourceJob(
-                        records=records,
-                        metadata={
-                            "id_range": {"start": current_id, "end": next_id},
-                            "page_num": page_num,
-                            "count": len(records),
-                        },
-                    )
-
-                current_id = next_id
-                page_num += 1
-
-    def _split_by_offset(
-        self, engine: Engine, config: Dict[str, Any], batch_size: int
-    ) -> Iterator[SourceJob]:
-        """Split jobs using LIMIT/OFFSET pagination."""
-        base_query = config["query"]
-        binds: Dict[str, Any] = config["params"]
-        paginated_query = f"{base_query}\nLIMIT :{BIND_PREFIX}limit OFFSET :{BIND_PREFIX}offset"
-        offset = 0
-        page_num = 0
-
-        with engine.connect() as conn:
-            while True:
-                page = {**binds, f"{BIND_PREFIX}limit": batch_size, f"{BIND_PREFIX}offset": offset}
-                records = _rows(conn.execute(_statement(paginated_query, page), page))
-
-                if not records:
-                    break
-
-                yield SourceJob(
-                    records=records,
-                    metadata={
-                        "offset": offset,
-                        "page_num": page_num,
-                        "count": len(records),
-                    },
-                )
-
-                if len(records) < batch_size:
-                    break  # Last page
-
-                offset += batch_size
-                page_num += 1
-
     def health_check(self) -> bool:
         """Check database connectivity."""
         try:
@@ -578,8 +477,8 @@ class SqlSource(BaseSource):
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
             return True
-        except Exception:
-            return False
+        except Exception as exc:
+            return log_unhealthy(logger, "SQL source", exc)
 
 
 def sql_source(

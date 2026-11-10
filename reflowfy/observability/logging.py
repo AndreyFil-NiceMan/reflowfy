@@ -49,6 +49,7 @@ def _kubernetes_fields() -> Dict[str, Any]:
 
 
 def _service_version() -> str:
+    # Logging is configured while the reflowfy package may itself still be importing.
     try:
         from reflowfy import __version__
 

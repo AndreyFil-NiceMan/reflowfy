@@ -120,16 +120,6 @@ def test_skipped_job_is_its_own_metric_status():
         )
 
     before_skipped, before_completed = count("skipped"), count("completed")
-    # record_job_metrics touches no instance state, so no DB connection is needed.
-    WorkerExecutor.record_job_metrics(
-        None,
-        pipeline="skip-metrics",
-        success=stats.success,
-        deduplicated=stats.deduplicated,
-        skipped=stats.skip_reason is not None,
-        error_type=None,
-        duration=0.1,
-        records=0,
-    )
+    WorkerExecutor.record_job_metrics("skip-metrics", stats)
     assert count("skipped") == before_skipped + 1
     assert count("completed") == before_completed
