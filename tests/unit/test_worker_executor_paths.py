@@ -708,3 +708,23 @@ async def test_a_failed_claim_release_is_logged(monkeypatch):
     with capture_logs() as logs:
         await worker._release_claims([b"h1", b"h2"], "j")
     assert "Could not release 2 content-dedup claims" in logs
+
+
+async def test_a_worker_that_lost_its_job_sends_nothing(register, stub_worker, monkeypatch):
+    """Lease expired and the job was taken (claimed again, cancelled) while the worker
+    stalled: it must not send the job a second time, nor write the job row."""
+    dest = FakeDest()
+    register(FakePipeline("p-superseded", dest))
+    before = processed("p-superseded", "superseded")
+
+    async def taken(job_id: str, stats: JobStats) -> bool:
+        stats.claim_lost = True
+        return False
+
+    monkeypatch.setattr(stub_worker, "_still_owns", taken)
+
+    assert await stub_worker.execute_job(_payload("p-superseded")) is True
+
+    assert dest.sent == [] and dest.closed
+    assert stub_worker.updates == []
+    assert processed("p-superseded", "superseded") == before + 1

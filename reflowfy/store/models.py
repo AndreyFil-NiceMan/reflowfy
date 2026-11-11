@@ -150,6 +150,11 @@ class Job(Base):
     state: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     # Times a worker has claimed (started) this job; caps lease re-dispatch.
     attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    # Which delivery owns the running job: a token the worker's claim writes. The
+    # heartbeat and every later write by that worker require it, so a worker whose
+    # lease expired (and whose job another worker claimed, or a cancel took) cannot
+    # overwrite the row. None until the first claim.
+    claimed_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     # A job_retry retry scheduled by the worker: the job is pending but not dispatched
     # before this time. None for every other job.
     next_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

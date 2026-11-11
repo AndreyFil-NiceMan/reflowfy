@@ -92,7 +92,7 @@ from fastapi import Response  # noqa: E402
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest  # noqa: E402
 from reflowfy.observability.tracing import init_tracing, instrument_fastapi  # noqa: E402
 from reflowfy.store.leases import JobLeases  # noqa: E402
-from reflowfy.store.states import ExecutionState  # noqa: E402
+from reflowfy.store.states import ExecutionState, JobState  # noqa: E402
 from reflowfy.reflow_manager.start import (  # noqa: E402
     InvalidParametersError,
     PipelineNotFoundError,
@@ -224,15 +224,28 @@ async def update_execution_state(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Execution '{execution_id}' is already {execution.state}",
         )
+    # The check above can be overtaken (the drive loop settling it meanwhile): the
+    # transition is a compare-and-set and answers 409 when it loses.
     if request.state == ExecutionState.CANCELLED:
         cancelled = manager.cancel_execution(execution_id)
-        assert cancelled is not None  # checked non-terminal above
+        if cancelled is None:
+            raise _already_finished(execution_id)
         return public_row(cancelled.execution)
     updated = manager.update_execution_state(
-        execution_id=execution_id, state="failed", error_message=request.error_message
+        execution_id=execution_id,
+        state=ExecutionState.FAILED,
+        error_message=request.error_message,
     )
-    assert updated is not None
+    if updated is None:
+        raise _already_finished(execution_id)
     return public_row(updated)
+
+
+def _already_finished(execution_id: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=f"Execution '{execution_id}' has already finished",
+    )
 
 
 @app.post("/executions/{execution_id}/cancel")
@@ -339,12 +352,13 @@ async def retry_failed_jobs(
         )
 
     requeued = manager.job_manager.requeue_failed(execution_id, error_contains)
-    if requeued:
-        was_running = execution.state == ExecutionState.RUNNING
-        manager.execution_manager.reopen_execution(execution_id)
-        if not was_running:
-            # A running execution already has a loop that will pick the jobs up.
-            background_tasks.add_task(_resume_execution_sync, execution_id)
+    # Requeue first, then reopen (compare-and-set, terminal -> running). An execution
+    # that is still open keeps its loop, which sees the requeued jobs (it cannot settle
+    # while one is pending); one its loop settled meanwhile is reopened here and gets a
+    # new loop. Deciding from the state read above left it `running` with no loop when
+    # the loop ended in between.
+    if requeued and manager.execution_manager.reopen_execution(execution_id) is not None:
+        background_tasks.add_task(_resume_execution_sync, execution_id)
     return {"execution_id": execution_id, "requeued": requeued}
 
 
@@ -373,7 +387,7 @@ async def get_execution_errors(
     manager: ReflowManager = Depends(get_reflow_manager),
 ) -> List[Dict[str, Any]]:
     """Get all failed jobs with their error messages and tracebacks."""
-    failed_jobs = manager.job_manager.get_jobs(execution_id, state="failed")
+    failed_jobs = manager.job_manager.get_jobs(execution_id, state=JobState.FAILED)
     if not failed_jobs:
         execution = manager.get_execution(execution_id)
         if not execution:
