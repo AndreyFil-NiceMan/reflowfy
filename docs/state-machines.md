@@ -7,6 +7,12 @@ them, the guard that makes each transition safe (or the lack of one), and the ga
 
 Surveyed 2026-11-11 against `claude/reflowfy-implicit-state-machines-rst3ad`.
 
+**Status.** F1 and F2 are fixed, and F3's state check: execution transitions are now
+compare-and-set against `ExecutionState.FROM`, and a worker's writes to a job are fenced
+by the token its claim writes to `jobs.claimed_by` (regression tests:
+`tests/unit/test_state_transitions.py`). The tables below show the guards as they are
+now; each finding says what was fixed and what is still open.
+
 **How to read the guards.** A transition is *guarded* when the write itself checks the
 from-state (`UPDATE … WHERE state IN (…)`, a compare-and-set). It is *checked* when the
 code reads the state first and writes afterwards in a separate statement: that leaves a
@@ -17,12 +23,12 @@ checked.
 
 | # | Machine | State lives in | Named states? | Transition guard |
 |---|---------|----------------|---------------|------------------|
-| 1 | Execution | `executions.state` | `store/states.py` `ExecutionState` | **read-then-write** (no CAS) |
+| 1 | Execution | `executions.state` | `store/states.py` `ExecutionState` | CAS against `ExecutionState.FROM` (was read-then-write, F1) |
 | 1a | ↳ planning | `executions.plan_complete` | bool | write-once |
 | 1b | ↳ driver lease | `executions.driver_id` + `driver_heartbeat_at` | owner kind in a string prefix | CAS on owner/staleness |
 | 1c | ↳ hooks | `executions.hooks_fired_at`, `hook_error` | nullable timestamp | CAS (`IS NULL`) |
 | 1d | ↳ rate bucket | `rate_limit_state` row existence | none | `SELECT … FOR UPDATE` |
-| 2 | Job | `jobs.state` (+ `attempts`, `next_attempt_at`, `dispatched_at`, `updated_at`, `stats.retry_count`) | `JobState` | claim is CAS; **final write is not** |
+| 2 | Job | `jobs.state` (+ `claimed_by`, `attempts`, `next_attempt_at`, `dispatched_at`, `updated_at`, `stats.retry_count`) | `JobState` | claim is CAS; the worker's later writes are fenced by `claimed_by` (were not, F2) |
 | 3 | Worker delivery outcome | `JobStats` flags | `JobOutcome` (derived) | priority-ordered flags |
 | 4 | Content-dedup claim | `processed_records` row | none | `INSERT … ON CONFLICT` |
 | 5 | DLQ job | `dlq_jobs.status` + move to `dlq_jobs_archive` | bare strings | `FOR UPDATE SKIP LOCKED` (poll); none (cancel) |
@@ -73,14 +79,14 @@ stateDiagram-v2
 | Transition | Writer | From-state check |
 |---|---|---|
 | → `pending` | `ExecutionManager.create_execution` (`execution.py:40`) | insert |
-| `pending → running` | `PipelineRunner._plan_and_dispatch` (`pipeline_runner.py:538`) | **none** |
-| `pending\|running → paused` | `ExecutionManager.pause_execution` (`execution.py:202`) | read, then unconditional write |
-| `paused → running` | `ExecutionManager.resume_execution` (`execution.py:210`) | read, then unconditional write |
-| non-terminal → `cancelled` | `ExecutionManager.cancel_execution` (`execution.py:222`), from `/cancel` and `PATCH …/state` | read, then unconditional write |
-| non-terminal → `failed` | `PATCH …/state` (`app.py:232`) | route reads first |
-| `running → completed\|failed` | `PipelineRunner._finalize_execution_state` (`pipeline_runner.py:1060`) | **none** (caller saw `running` one step earlier) |
+| `pending → running` | `PipelineRunner._plan_and_dispatch` | CAS from `pending` only (`from_states=`); lost to a cancel → `plan_aborted`, to a pause → plans, stays `paused` |
+| `pending\|running → paused` | `ExecutionManager.pause_execution` | CAS |
+| `paused → running` | `ExecutionManager.resume_execution` | CAS |
+| non-terminal → `cancelled` | `ExecutionManager.cancel_execution`, from `/cancel` and `PATCH …/state` | CAS (409 when it loses) |
+| non-terminal → `failed` | `PATCH …/state` | CAS (409 when it loses) |
+| `running → completed\|failed` | `PipelineRunner._finalize_execution_state` | CAS, and only while no job is unfinished (else the loop goes on) |
 | `* → failed` | `start.drive_execution` (`start.py:84`), `_recover_plan` (`pipeline_runner.py:1027`), `resume_execution` when the pipeline is missing (`pipeline_runner.py:379`) | none / `_recover_plan` checks first |
-| terminal → `running` | `ExecutionManager.reopen_execution` (`execution.py:245`) from `/retry-failed` | **none** (any state, including `pending`) |
+| terminal → `running` | `ExecutionManager.reopen_execution` from `/retry-failed` | CAS from terminal; the route starts a loop only when it won |
 
 Every terminal transition goes through `update_execution_state`, which calls the
 terminal listeners (lifecycle hooks, 1c). That single funnel is good. What it lacks is a
@@ -173,14 +179,14 @@ stateDiagram-v2
 | → `pending` | `JobManager.create_jobs` | insert |
 | `pending → dispatched` | `JobManager.mark_job_dispatched` (`job_manager.py:101`) | CAS: `state = pending` and `next_attempt_at` before the send began |
 | `pending\|dispatched → running` | `WorkerExecutor._claim_job` (`executor.py:777`) | CAS: `state IN UNSTARTED` and backoff passed; **fails open** on a DB error |
-| `running → completed\|failed\|deduplicated` | `WorkerExecutor._write_job_row` (`executor.py:881`) | **`WHERE job_id = …` only** |
+| `running → completed\|failed\|deduplicated` | `WorkerExecutor._write_job_row` | `state = running AND claimed_by = <token>`; a loss is `superseded` |
 | `running → pending` (retry) | `_write_job_row` with `retry_in` | execution `ACTIVE`; not the job's own state |
 | `running → pending\|failed`, `dispatched → pending` | `JobManager.reclaim_expired_leases` (`job_manager.py:179`) | CAS on state and timestamp |
 | `dispatched\|running → pending` | `PipelineRunner.resume_execution`, local mode (`pipeline_runner.py:417`) | none (the process that ran them is gone) |
 | `pending\|dispatched → cancelled` | `JobManager.cancel_unstarted_jobs` | CAS |
 | `pending → failed` | `on_unsendable` → `JobManager.update_job_state` (`job_manager.py:246`) | **none** (generic setter) |
 | `failed → pending` | `JobManager.requeue_failed` | CAS |
-| heartbeat (`updated_at`) | `WorkerExecutor._heartbeat_job` | `state = running`, **not the owner** |
+| heartbeat (`updated_at`) | `WorkerExecutor._heartbeat_job` | `state = running AND claimed_by = <token>` |
 
 The lease sweep runs only inside a live drive loop, so the jobs of a paused execution are
 not swept until it is resumed.
@@ -318,7 +324,12 @@ point), and turns it into `failed` on any HTTP error.
 Ranked by impact. F1 and F2 were reproduced with throwaway tests against SQLite
 (not committed). The rest are from reading the code.
 
-### F1. Execution transitions are read-then-write, so concurrent ones overwrite each other — reproduced
+### F1. Execution transitions are read-then-write, so concurrent ones overwrite each other — reproduced, fixed
+
+**Fixed:** `update_execution_state` is a compare-and-set against `ExecutionState.FROM`;
+the planner moves `pending → running` only; finalize also requires no unfinished job;
+`reopen_execution` is CAS from terminal and `/retry-failed` starts a loop only when it
+reopened; `PATCH …/state` answers 409 when the CAS loses. What follows is the bug as found.
 
 There is no compare-and-set on `executions.state`. The guarded-looking methods read the
 row, then write unconditionally; two writers (`_plan_and_dispatch`,
@@ -353,7 +364,14 @@ Suggested fix: a transition table next to `ExecutionState` (`ALLOWED = {RUNNING:
 returns whether it won. Notify the terminal listeners only when it won.
 `_plan_and_dispatch` would then move `pending → running` and abort when the CAS loses.
 
-### F2. The worker's final job write is not fenced — reproduced
+### F2. The worker's final job write is not fenced — reproduced, fixed
+
+**Fixed:** the claim writes a token to `jobs.claimed_by`; the heartbeat, the outcome and
+the retry write require it, and the worker checks ownership right before the send. A
+delivery that lost the job sends nothing more, writes nothing, logs `job_claim_lost` and
+counts as `jobs_processed_total{status="superseded"}`. Still open: a worker that loses
+the job *during* the send has written its records (dedup claims stay keyed by `job_id`).
+What follows is the bug as found.
 
 `_write_job_row` updates `WHERE job_id = …` with no check of the job's state or of
 which delivery owns it, and the heartbeat refreshes any `running` row. A job has no owner
@@ -377,7 +395,10 @@ Suggested fix: make the claim return a fencing token (the new `attempts` value, 
 heartbeat, the final write and the retry write. A write that matches no row means
 another delivery owns the job: log it and count it as `redelivered`.
 
-### F3. Lifecycle hooks are at-most-once, not exactly-once
+### F3. Lifecycle hooks are at-most-once, not exactly-once — partly fixed
+
+**Fixed:** `claim_hooks` requires a terminal state in the same statement. **Still open:**
+no sweep re-fires hooks lost to a crash; CLAUDE.md now says "at most once".
 
 `claim_hooks` sets `hooks_fired_at` before the hook runs, and the hook runs on a thread
 started after the terminal commit. A manager that dies between the commit and the
@@ -409,9 +430,9 @@ execution already started.
 ### F5. States as bare strings outside `store/states.py`
 
 `ExecutionState`/`JobState` exist, but these still compare or write literals:
-`pipeline_runner.py` (`!= "running"` at 725, 848, 944; `"failed"` at 382, 1030),
-`app.py` (`"failed"`/`"cancelled"` at 206 and 232, `"pending"` at 497, a job `state="failed"` at 376),
+`app.py` (`"failed"`/`"cancelled"` in the PATCH route's 422 check, `"pending"` in the `/run` answer),
 `job_manager.get_job_counts` (a hand-written dict of every job state), all DLQ statuses,
+(the ones in `pipeline_runner.py` and the routes' writes now use the constants)
 and the schedule `enabled` strings. A `DLQStatus` class beside the other two, and the
 counts dict built from `JobState.ALL`, would make a new state a one-place change.
 

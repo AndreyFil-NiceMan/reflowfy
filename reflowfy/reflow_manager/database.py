@@ -93,6 +93,8 @@ def _apply_column_migrations() -> None:
         # Planning finished: False while the manager saves the jobs, True once all are saved
         "ALTER TABLE executions ADD COLUMN IF NOT EXISTS plan_complete BOOLEAN NOT NULL "
         "DEFAULT FALSE",
+        # The delivery that owns a running job (fences a worker whose lease expired)
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS claimed_by VARCHAR(64)",
         # job_retry: a retried job is pending but not dispatched before this time
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMP",
         # Lifecycle hooks: fired exactly once (claimed by setting hooks_fired_at), errors kept

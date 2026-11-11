@@ -16,6 +16,9 @@ class JobOutcome(str, Enum):
     SKIPPED = "skipped"  # SkipJob from the pipeline
     DEDUPLICATED = "deduplicated"  # every record already written by another job
     REDELIVERED = "redelivered"  # a second delivery of a job already claimed
+    # It ran, but lost the job before saving its outcome: its lease expired and another
+    # delivery claimed it, or the job was cancelled or failed by the lease sweep.
+    SUPERSEDED = "superseded"
     CANCELLED = "cancelled"  # its execution was cancelled before it ran
     RETRY_SCHEDULED = "retry_scheduled"  # failed; job_retry runs it again later
     LEASE_EXPIRED = "lease_expired"  # its worker vanished too often (manager side)

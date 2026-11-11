@@ -3,6 +3,7 @@
 import asyncio
 import time
 import traceback
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
@@ -90,6 +91,13 @@ class JobStats:
         # a failure keeps the retry count earlier runs left (else a job that needed
         # retries looks, after the fact, like one that worked first time).
         self.job_retry_enabled = False
+        # The token this delivery's claim wrote to jobs.claimed_by (None: the job has no
+        # row, or the claim failed open). Not stored: it fences this delivery's writes.
+        self.claim_token: Optional[str] = None
+        # The job was taken from this delivery before it saved its outcome (lease
+        # expired and another delivery claimed it, or it was cancelled / failed by the
+        # lease sweep): the row is not ours to write.
+        self.claim_lost = False
 
     @property
     def outcome(self) -> JobOutcome:
@@ -101,6 +109,8 @@ class JobStats:
         """
         if self.cancelled:
             return JobOutcome.CANCELLED
+        if self.claim_lost:
+            return JobOutcome.SUPERSEDED
         if self.retry_scheduled:
             return JobOutcome.RETRY_SCHEDULED
         if self.redelivered:
@@ -230,7 +240,12 @@ class WorkerExecutor:
             metrics.records_deduplicated_total.labels(pipeline=pipeline).inc(
                 stats.records_deduplicated
             )
-        if not stats.success and stats.error_type and not stats.retry_scheduled:
+        if (
+            not stats.success
+            and stats.error_type
+            and not stats.retry_scheduled
+            and not stats.claim_lost
+        ):
             metrics.jobs_failed_total.labels(pipeline=pipeline, error_type=stats.error_type).inc()
 
     async def execute_job(self, job_payload: Dict[str, Any]) -> bool:
@@ -288,7 +303,7 @@ class WorkerExecutor:
             # Claim the job before doing any work. Kafka redelivers after a rebalance or
             # a crash before commit, and the manager re-sends jobs whose lease expired;
             # without the claim each delivery ran the job again and wrote it twice.
-            blocking_state = await self._claim_job(job_id)
+            blocking_state = await self._claim_job(job_id, stats)
             if blocking_state is not None:
                 if blocking_state == JobState.CANCELLED:
                     logger.info(
@@ -309,7 +324,7 @@ class WorkerExecutor:
             # Prove liveness while the job runs, so the manager's running lease can be
             # short (a dead worker is noticed in minutes) without re-running a job that
             # is merely long.
-            heartbeat = asyncio.create_task(self._heartbeat_job(job_id))
+            heartbeat = asyncio.create_task(self._heartbeat_job(job_id, stats.claim_token))
 
             metadata = job_payload.get("metadata", {})
             source_descriptor: Dict[str, Any] = job_payload.get("source") or {}
@@ -438,6 +453,14 @@ class WorkerExecutor:
 
             if isinstance(destination, RecordDestination):
                 stats.destinations = len(destination.destinations)
+
+            # Last check before anything is written: a worker that stalled past its lease
+            # (and whose job was requeued and claimed again, or cancelled) must not send
+            # the job a second time. Its dedup claims are left alone: they are held by
+            # job_id, which the delivery that owns the job now shares.
+            if not await self._still_owns(job_id, stats):
+                stats.end_time = time.time()
+                return True
 
             if not await destination.health_check():
                 logger.error(
@@ -680,6 +703,8 @@ class WorkerExecutor:
             stats.retry_count = previous_count
             stats.retry_scheduled = False
             stats.retry_in_seconds = None
+            if stats.claim_lost:
+                return  # not ours to write any more (logged by _write_job_row)
         else:
             reason = (
                 f"{previous_count} retr{'y' if previous_count == 1 else 'ies'} used"
@@ -747,12 +772,14 @@ class WorkerExecutor:
             else [],
         )
 
-    async def _heartbeat_job(self, job_id: str) -> None:
+    async def _heartbeat_job(self, job_id: str, claim_token: Optional[str] = None) -> None:
         """Refresh the running job's ``updated_at`` every ``JobLeases.heartbeat_seconds``.
 
         The manager requeues a ``running`` job whose ``updated_at`` is older than its
         running lease; this keeps a live job from looking dead. A failed beat is
-        logged and retried — never raised into the job.
+        logged and retried — never raised into the job. Only this delivery's claim
+        (``claim_token``) is refreshed: a stalled worker must not keep alive the lease of
+        the delivery that took its job over.
         """
         from sqlalchemy import update
 
@@ -763,7 +790,7 @@ class WorkerExecutor:
                 async with self._async_session() as db:
                     await db.execute(
                         update(Job)
-                        .where(Job.job_id == job_id, Job.state == JobState.RUNNING)
+                        .where(*self._owned(job_id, claim_token))
                         .values(updated_at=datetime.now(timezone.utc).replace(tzinfo=None))
                     )
                     await db.commit()
@@ -774,8 +801,62 @@ class WorkerExecutor:
                     extra={"event": "heartbeat_error"},
                 )
 
-    async def _claim_job(self, job_id: str) -> Optional[str]:
-        """Claim a job for this delivery: pending/dispatched -> running, attempts + 1.
+    @staticmethod
+    def _owned(job_id: str, claim_token: Optional[str]) -> Tuple[Any, ...]:
+        """WHERE clauses matching the job only while this delivery owns it."""
+        clauses: Tuple[Any, ...] = (Job.job_id == job_id, Job.state == JobState.RUNNING)
+        if claim_token is not None:
+            clauses += (Job.claimed_by == claim_token,)
+        return clauses
+
+    async def _still_owns(self, job_id: str, stats: "JobStats") -> bool:
+        """Whether this delivery still owns the job; marks ``stats.claim_lost`` if not.
+
+        True without a claim token (no row, or the claim failed open) and on a database
+        error: as for the claim itself, the job goes ahead rather than not at all.
+        """
+        if stats.claim_token is None:
+            return True
+        from sqlalchemy import select
+
+        try:
+            async with self._async_session() as db:
+                owned = (
+                    await db.execute(
+                        select(Job.job_id).where(*self._owned(job_id, stats.claim_token))
+                    )
+                ).first()
+                state = None
+                if owned is None:
+                    state = (
+                        await db.execute(select(Job.state).where(Job.job_id == job_id))
+                    ).scalar_one_or_none()
+        except Exception:
+            logger.warning(
+                "Could not check the job's claim (database error); going ahead",
+                exc_info=True,
+                extra={"event": "job_claim_check_error"},
+            )
+            return True
+        if owned is None:
+            self._claim_lost(stats, state)
+            return False
+        return True
+
+    @staticmethod
+    def _claim_lost(stats: "JobStats", state: Optional[str]) -> None:
+        stats.claim_lost = True
+        logger.warning(
+            "Job was taken from this worker (now %s) before it finished — its lease "
+            "expired; the outcome is left to the delivery that owns it",
+            state,
+            extra={"event": "job_claim_lost", "state": state},
+        )
+
+    async def _claim_job(self, job_id: str, stats: Optional["JobStats"] = None) -> Optional[str]:
+        """Claim a job for this delivery: pending/dispatched -> running, attempts + 1,
+        and a fresh ``claimed_by`` token (kept on ``stats.claim_token``) that fences this
+        delivery's later writes.
 
         Returns None when this delivery should run the job — it claimed it, or the
         job has no row (an untracked message). Otherwise returns the state that
@@ -789,6 +870,7 @@ class WorkerExecutor:
         from sqlalchemy import or_
 
         now = datetime.now(timezone.utc).replace(tzinfo=None)
+        token = uuid.uuid4().hex
         try:
             async with self._async_session() as db:
                 # A pending job whose job_retry backoff has not passed is not claimed: an
@@ -805,10 +887,13 @@ class WorkerExecutor:
                         attempts=Job.attempts + 1,
                         updated_at=now,
                         next_attempt_at=None,
+                        claimed_by=token,
                     )
                 )
                 if (getattr(result, "rowcount", 0) or 0) == 1:
                     await db.commit()
+                    if stats is not None:
+                        stats.claim_token = token
                     return None
                 state = (
                     await db.execute(select(Job.state).where(Job.job_id == job_id))
@@ -848,6 +933,8 @@ class WorkerExecutor:
         Returns:
             True if the row was written.
         """
+        if stats.claim_lost:
+            return False
         if stats.job_retry_enabled and stats.retry_count is None:
             # Not a failure (those set it): keep what earlier runs of this job recorded.
             previous = await self._previous_retries(job_id)
@@ -915,8 +1002,10 @@ class WorkerExecutor:
                 if stats.error_traceback:
                     update_data["error_traceback"] = stats.error_traceback
 
-                # Update the job using async execute
-                stmt = update(Job).where(Job.job_id == job_id)
+                # Only while this delivery owns the job (see _claim_job): it used to be
+                # by job_id alone, so a worker whose lease expired overwrote a job that
+                # was cancelled, failed by the sweep, or running on another worker.
+                stmt = update(Job).where(*self._owned(job_id, stats.claim_token))
                 if retry_in is not None:
                     # A job of an execution that was cancelled or force-failed meanwhile
                     # is not put back in the queue (nothing would ever take it).
@@ -933,10 +1022,20 @@ class WorkerExecutor:
                 rowcount = getattr(result, "rowcount", None)
                 if rowcount == 0:
                     await db.rollback()
-                    if retry_in is None:
+                    current: Any = (
+                        await db.execute(
+                            select(Job.state, Job.claimed_by).where(Job.job_id == job_id)
+                        )
+                    ).first()
+                    if current is None:
                         logger.warning(
                             "Job not found in database", extra={"event": "job_row_missing"}
                         )
+                    elif current[0] != JobState.RUNNING or (
+                        stats.claim_token is not None and current[1] != stats.claim_token
+                    ):
+                        self._claim_lost(stats, current[0])
+                    # else: a retry refused because the execution ended (retry_in).
                     return False
 
                 await db.commit()

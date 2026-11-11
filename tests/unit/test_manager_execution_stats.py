@@ -197,16 +197,18 @@ def test_update_execution_state_terminal_sets_completed_at(db):
     em = ExecutionManager(db)
     assert em.update_execution_state("nope", "failed") is None
 
-    running = em.update_execution_state("e", "running", error_message=None)
-    assert running is not None and running.completed_at is None
+    # running -> running is not a transition (ExecutionState.FROM): refused, untouched.
+    assert em.update_execution_state("e", "running", error_message=None) is None
+    assert db.query(Execution).one().completed_at is None
 
     failed = em.update_execution_state("e", "failed", error_message="boom")
     assert failed is not None
     assert failed.completed_at is not None and failed.error_message == "boom"
 
-    # a later update without a message keeps the old one
-    again = em.update_execution_state("e", "failed")
-    assert again is not None and again.error_message == "boom"
+    # failed -> failed is refused too: the first outcome and its message stay
+    assert em.update_execution_state("e", "failed", error_message="later") is None
+    db.expire_all()
+    assert db.query(Execution).one().error_message == "boom"
 
 
 def test_reopen_execution_clears_the_outcome(db):

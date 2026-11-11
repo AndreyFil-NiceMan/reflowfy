@@ -379,7 +379,7 @@ class PipelineRunner:
             )
             self.execution_manager.update_execution_state(
                 execution_id,
-                "failed",
+                ExecutionState.FAILED,
                 error_message=(
                     f"Pipeline '{pipeline_name}' not found in registry during recovery"
                     f"{pipeline_registry.describe_missing(pipeline_name)}"
@@ -535,7 +535,29 @@ class PipelineRunner:
 
         logger.info("Job dispatch starting", extra={"event": "plan_start"})
 
-        self.execution_manager.update_execution_state(execution_id, ExecutionState.RUNNING)
+        # pending -> running, compare-and-set: a /cancel (or PATCH failed) that landed
+        # while the execution was still pending used to be overwritten here, and the
+        # cancelled run went ahead in full. A pause is kept: planning goes on, nothing is
+        # dispatched until /resume (the drive loop only sends while running).
+        if (
+            self.execution_manager.update_execution_state(
+                execution_id, ExecutionState.RUNNING, from_states=(ExecutionState.PENDING,)
+            )
+            is None
+        ):
+            state = self._execution_state(execution_id)
+            if state != ExecutionState.PAUSED:
+                logger.info(
+                    "Execution is %s before planning started; not planning it",
+                    state,
+                    extra={"event": "plan_aborted", "state": state, "jobs_cancelled": 0},
+                )
+                return
+            logger.info(
+                "Execution was paused before planning started; planning it, dispatch waits "
+                "for /resume",
+                extra={"event": "plan_paused"},
+            )
 
         enriched_params = resolved.params
 
@@ -722,7 +744,7 @@ class PipelineRunner:
                     execution_id, driver_id, DRIVER_LEASE_SECONDS
                 ):
                     return True
-                if self._execution_state(execution_id) != "running":
+                if self._execution_state(execution_id) != ExecutionState.RUNNING:
                     return False
             except DBAPIError:
                 logger.warning(
@@ -845,7 +867,7 @@ class PipelineRunner:
             )
             return self._sync_counts_from_db(execution_id)
         state = self._execution_state(execution_id)
-        if state != "running":
+        if state != ExecutionState.RUNNING:
             # Paused (or settled elsewhere): stop sending. In-flight jobs still finish;
             # POST /executions/{id}/resume starts a new loop.
             logger.info(
@@ -941,7 +963,7 @@ class PipelineRunner:
                 # Heartbeat here too: a chunk can outlast many drive-loop passes.
                 stop = (
                     not self.execution_manager.heartbeat_driver(execution_id, driver_id)
-                    or self._execution_state(execution_id) != "running"
+                    or self._execution_state(execution_id) != ExecutionState.RUNNING
                 )
             return stop
 
@@ -1027,7 +1049,7 @@ class PipelineRunner:
                 saved = self.job_manager.get_job_counts(execution_id)["total"]
                 self.execution_manager.update_execution_state(
                     execution_id,
-                    "failed",
+                    ExecutionState.FAILED,
                     error_message=(
                         f"The manager stopped while planning this execution ({saved} of its "
                         "jobs had been saved, none dispatched). A plan cannot be continued; "
@@ -1062,9 +1084,12 @@ class PipelineRunner:
         execution_id: str,
         expected_total: int,
         fallback_counts: Tuple[int, int, int],
-    ) -> Tuple[int, int, int]:
+    ) -> Optional[Tuple[int, int, int]]:
         """
         Sync final counts from the DB and set the terminal execution state.
+
+        None when the execution is still running with unfinished jobs (``/retry-failed``
+        requeued some after they were counted): the drive loop goes on.
 
         Args:
             execution_id: Execution identifier
@@ -1072,7 +1097,7 @@ class PipelineRunner:
             fallback_counts: (dispatched, completed, failed) to use if the DB sync fails
 
         Returns:
-            The (dispatched, completed, failed) counts used for the final state.
+            The (dispatched, completed, failed) counts, or None (see above).
         """
         try:
             dispatched, completed, failed = self._sync_counts_from_db(execution_id)
@@ -1107,7 +1132,17 @@ class PipelineRunner:
                 },
             )
 
-        self.execution_manager.update_execution_state(execution_id, final_state)
+        # Compare-and-set, and only while no job is unfinished: a /cancel or a force-fail
+        # since the caller saw `running`, or jobs /retry-failed requeued since it counted
+        # them, win over this. It used to overwrite them.
+        settled = self.execution_manager.update_execution_state(
+            execution_id, final_state, unless_jobs_unfinished=True
+        )
+        if settled is None:
+            # Logged by update_execution_state (execution_transition_refused).
+            if self._execution_state(execution_id) == ExecutionState.RUNNING:
+                return None  # jobs were requeued meanwhile: keep driving
+            return dispatched, completed, failed
         logger.info(
             "Execution %s: %d completed, %d failed of %d jobs",
             final_state,
