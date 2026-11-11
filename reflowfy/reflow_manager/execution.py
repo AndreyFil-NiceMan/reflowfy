@@ -3,9 +3,9 @@
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, Any, List, Mapping, Optional, Tuple
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, exists, or_
 from sqlalchemy.orm import Session
-from reflowfy.store.models import Execution
+from reflowfy.store.models import Execution, Job
 from reflowfy.store.states import ExecutionState, JobState, jobs_dispatched
 
 logger = logging.getLogger(__name__)
@@ -123,34 +123,78 @@ class ExecutionManager:
         state: str,
         error_message: Optional[str] = None,
         notify: bool = True,
+        unless_jobs_unfinished: bool = False,
+        from_states: Optional[Tuple[str, ...]] = None,
     ) -> Optional[Execution]:
-        """
-        Update execution state.
+        """Move an execution to ``state`` if it may get there from where it is now.
+
+        One compare-and-set — ``UPDATE … WHERE state IN ExecutionState.FROM[state]`` — so
+        of two concurrent transitions only a legal one lands. It used to read, then write
+        unconditionally: a ``/cancel`` that landed before the planner's ``running`` was
+        overwritten (the cancelled run went ahead in full), a pause racing the end of a run
+        turned ``completed`` back into ``paused``, and the drive loop's final state could
+        overwrite a cancel.
 
         Args:
             execution_id: Execution identifier
-            state: New state (pending, running, paused, completed, failed)
+            state: New state (one of ``ExecutionState.ALL``)
             error_message: Optional error message if failed
             notify: Tell the terminal listeners (lifecycle hooks) when the state is
                 terminal. False when the caller finishes the transition first (cancel
                 also cancels the jobs) and calls :meth:`notify_terminal` itself.
+            unless_jobs_unfinished: Refuse while any job is pending, dispatched or
+                running — the drive loop's end, so jobs requeued by ``/retry-failed``
+                after it counted them keep the execution open.
+            from_states: Narrow the states it may come from (within
+                ``ExecutionState.FROM[state]``): the planner moves ``pending -> running``
+                only, so a pause that landed first is not taken for a /resume.
 
         Returns:
-            Updated Execution object or None if not found
+            The updated Execution, or None if it does not exist or the transition was
+            refused (the execution is in a state ``state`` cannot be entered from).
         """
-        execution = self.get_execution(execution_id)
-        if not execution:
-            return None
-
-        execution.state = state
+        allowed = ExecutionState.FROM.get(state)
+        if allowed is None:
+            raise ValueError(f"Unknown execution state {state!r}")
+        if from_states is not None:
+            allowed = tuple(s for s in allowed if s in from_states)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        values: Dict[Any, Any] = {"state": state, "updated_at": now}
         if error_message:
-            execution.error_message = error_message
-
+            values["error_message"] = error_message
         if state in self.TERMINAL_STATES:
-            execution.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            values["completed_at"] = now
 
+        query = self.db.query(Execution).filter(
+            Execution.execution_id == execution_id, Execution.state.in_(allowed)
+        )
+        if unless_jobs_unfinished:
+            query = query.filter(
+                ~exists().where(
+                    Job.execution_id == execution_id,
+                    Job.state.in_(JobState.UNSTARTED + (JobState.RUNNING,)),
+                )
+            )
+        won = query.update(values, synchronize_session=False)
         self.db.commit()
+
+        execution = self.get_execution(execution_id)
+        if execution is None:
+            return None
         self.db.refresh(execution)
+        if not won:
+            logger.info(
+                "Execution is %s; not moving it to %s",
+                execution.state,
+                state,
+                extra={
+                    "event": "execution_transition_refused",
+                    "execution_id": execution_id,
+                    "state": execution.state,
+                    "requested_state": state,
+                },
+            )
+            return None
 
         if notify and state in self.TERMINAL_STATES:
             self.notify_terminal(execution_id, state)
@@ -186,7 +230,14 @@ class ExecutionManager:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         claimed = (
             self.db.query(Execution)
-            .filter(Execution.execution_id == execution_id, Execution.hooks_fired_at.is_(None))
+            .filter(
+                Execution.execution_id == execution_id,
+                Execution.hooks_fired_at.is_(None),
+                # Checked in the same statement: a /retry-failed reopening the execution
+                # between the caller's check and this claim must not take the claim the
+                # retried run's real end needs.
+                Execution.state.in_(ExecutionState.TERMINAL),
+            )
             .update({"hooks_fired_at": now}, synchronize_session=False)
         )
         self.db.commit()
@@ -200,19 +251,15 @@ class ExecutionManager:
         self.db.commit()
 
     def pause_execution(self, execution_id: str) -> Optional[Execution]:
-        """Pause a pending or running execution. None if missing or already settled
-        (pausing a completed execution used to flip it back to non-terminal)."""
-        execution = self.get_execution(execution_id)
-        if not execution or execution.state not in (ExecutionState.PENDING, ExecutionState.RUNNING):
-            return None
+        """Pause a pending or running execution. None if missing or in any other state."""
         return self.update_execution_state(execution_id, ExecutionState.PAUSED)
 
     def resume_execution(self, execution_id: str) -> Optional[Execution]:
-        """Resume a paused execution."""
-        execution = self.get_execution(execution_id)
-        if not execution or execution.state != ExecutionState.PAUSED:
+        """Resume a paused execution. None if missing or not paused."""
+        if (execution := self.get_execution(execution_id)) is None:
             return None
-
+        if execution.state != ExecutionState.PAUSED:
+            return None
         return self.update_execution_state(execution_id, ExecutionState.RUNNING)
 
     # States an execution can be in, and the ones it never leaves on its own.
@@ -228,9 +275,6 @@ class ExecutionManager:
         cancels the jobs passes ``notify=False`` and calls :meth:`notify_terminal` after,
         so the hooks' summary counts them.
         """
-        execution = self.get_execution(execution_id)
-        if not execution or execution.state in self.TERMINAL_STATES:
-            return None
         return self.update_execution_state(
             execution_id, ExecutionState.CANCELLED, error_message="Cancelled", notify=notify
         )
@@ -243,18 +287,42 @@ class ExecutionManager:
         self.db.commit()
 
     def reopen_execution(self, execution_id: str) -> Optional[Execution]:
-        """Move a settled execution back to running so its dispatch loop can resume it."""
-        execution = self.get_execution(execution_id)
-        if not execution:
-            return None
-        execution.state = ExecutionState.RUNNING
-        execution.completed_at = None
-        execution.error_message = None
-        # Its next end fires the hooks again (they reported the run before the retry).
-        execution.hooks_fired_at = None
-        execution.hook_error = None
+        """Move a settled (terminal) execution back to running so a dispatch loop can
+        resume it. None if it does not exist or is not terminal — a pending or running
+        execution already has a planner or a loop that will pick its requeued jobs up.
+
+        Compare-and-set, so a ``/retry-failed`` racing the drive loop's end either finds
+        the execution still open (its loop sees the requeued jobs) or reopens it after
+        the loop settled it (the caller then starts a loop) — never ``running`` with
+        no loop.
+        """
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        reopened = (
+            self.db.query(Execution)
+            .filter(
+                Execution.execution_id == execution_id,
+                Execution.state.in_(ExecutionState.TERMINAL),
+            )
+            .update(
+                {
+                    "state": ExecutionState.RUNNING,
+                    "completed_at": None,
+                    "error_message": None,
+                    # Its next end fires the hooks again (they reported the run before
+                    # the retry).
+                    "hooks_fired_at": None,
+                    "hook_error": None,
+                    "updated_at": now,
+                },
+                synchronize_session=False,
+            )
+        )
         self.db.commit()
-        self.db.refresh(execution)
+        if not reopened:
+            return None
+        execution = self.get_execution(execution_id)
+        if execution is not None:
+            self.db.refresh(execution)
         return execution
 
     def claim_driver(self, execution_id: str, driver_id: str, lease_seconds: float) -> bool:

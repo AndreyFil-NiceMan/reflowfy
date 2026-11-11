@@ -773,8 +773,7 @@ def test_finalize_sets_the_terminal_state_from_the_jobs(db, jobs, expected_state
 
 def test_finalize_fails_an_execution_with_jobs_missing(db, caplog):
     _execution(db)
-    _add_jobs(db, 2, state="completed")
-    _add_jobs(db, 1)  # never ran
+    _add_jobs(db, 2, state="completed")  # the third planned job has no row
 
     with caplog.at_level(logging.WARNING, logger=runner_mod.__name__):
         assert _runner(db)._finalize_execution_state("e", 3, (0, 0, 0)) == (2, 2, 0)
