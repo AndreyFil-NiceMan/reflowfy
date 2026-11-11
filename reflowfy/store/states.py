@@ -51,6 +51,20 @@ class ExecutionState:
     TERMINAL: Tuple[str, ...] = (COMPLETED, FAILED, CANCELLED)
     ACTIVE: Tuple[str, ...] = (PENDING, RUNNING, PAUSED)
 
+    # The states each state may be entered from. ``ExecutionManager.update_execution_state``
+    # writes ``UPDATE … WHERE state IN FROM[to]`` (compare-and-set), so of two concurrent
+    # transitions only one that is still legal lands: a cancel is never overwritten by the
+    # planner's ``running``, a finished run is never paused. Leaving a terminal state is
+    # ``reopen_execution`` (``/retry-failed``) only, and ``pending`` is only created.
+    FROM: Mapping[str, Tuple[str, ...]] = {
+        PENDING: (),
+        RUNNING: (PENDING, PAUSED),
+        PAUSED: (PENDING, RUNNING),
+        COMPLETED: (PENDING, RUNNING),
+        FAILED: (PENDING, RUNNING, PAUSED),
+        CANCELLED: (PENDING, RUNNING, PAUSED),
+    }
+
 
 def jobs_dispatched(counts: Mapping[str, int]) -> int:
     """Jobs that have left the manager: sent, running or finished (from a count per
