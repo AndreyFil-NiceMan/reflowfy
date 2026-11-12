@@ -1,12 +1,23 @@
 # Reflowfy base image
 
 The three Reflowfy service images (`api`, `reflow-manager`, `worker`) all build
-`FROM` a shared **base image** that bakes in `reflowfy` + all of its
-dependencies. This means dependencies are installed **once** (in the base),
-instead of three times across the service builds.
+`FROM` a shared **base image** that bakes `reflowfy` + all of its
+dependencies into a virtualenv at `/opt/venv`, and ships `uv`. Dependencies are
+installed **once** (in the base), instead of three times across the service builds.
 
-- The service Dockerfiles only add the **user's** project dependencies
-  (`requirements.txt` and/or `pyproject.toml`/uv) and copy the pipeline code.
+- The service Dockerfiles only add the **user's** project dependencies, exactly as
+  pinned in the project's `uv.lock`:
+  `uv sync --locked --no-dev --no-install-project --no-install-package reflowfy --inexact`
+  into the same `/opt/venv`. `--locked` fails the build when `uv.lock` is stale;
+  `--no-install-package reflowfy` / `--inexact` keep the base image's reflowfy and
+  its packages. The project's `pyproject.toml` still lists `reflowfy`, so `uv lock`
+  checks your dependencies against reflowfy's own requirements.
+- The dependency layer is built before `COPY src/`, so editing a pipeline does not
+  reinstall anything; a BuildKit cache mount keeps uv's download cache across builds.
+- Images run as the non-root user `10001` (group `0`, the OpenShift convention), so the
+  charts' `runAsNonRoot: true` works on plain Kubernetes as well as OpenShift.
+- uv comes from `ghcr.io/astral-sh/uv` (build arg `UV_IMAGE`, pinned to the same
+  version as CI).
 - The base image is **published by the maintainer** on each release and
   distributed as a `tar.gz` attached to the GitHub Release.
 

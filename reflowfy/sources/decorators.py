@@ -6,7 +6,7 @@ Example:
     @source("production_elastic")
     def production_elastic(**overrides):
         return elastic_source(
-            url=os.getenv("ELASTIC_URL", "http://elasticsearch:9200"),
+            url=os.getenv("ELASTICSEARCH_URL", "http://elasticsearch:9200"),
             index=overrides.get("index", "logs-*"),
             scroll="2m",
             size=1000,

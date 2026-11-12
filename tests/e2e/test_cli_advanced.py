@@ -286,6 +286,7 @@ class TestCliDeployAdvanced:
 # 'reflowfy build' — advanced coverage
 # ---------------------------------------------------------------------------
 
+@pytest.mark.usefixtures("uv_project")
 class TestCliBuildAdvanced:
     """Tests for edge cases in the 'reflowfy build' Docker image command."""
 

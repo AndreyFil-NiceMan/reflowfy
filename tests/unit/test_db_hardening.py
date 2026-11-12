@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy.exc import OperationalError
 
 import reflowfy.reflow_manager.database as database
-from reflowfy.reflow_manager.db_settings import async_connect_args, sync_connect_args
+from reflowfy.store.db_settings import async_connect_args, sync_connect_args
 
 PG = "postgresql://u:p@db:5432/reflowfy"
 PG_ASYNC = "postgresql+asyncpg://u:p@db:5432/reflowfy"
@@ -80,10 +80,11 @@ class _FakeEngine:
 
 def _patch(monkeypatch, engine: _FakeEngine, missing: str = "") -> None:
     columns = {
-        "jobs": ["job_id", "error_traceback", "attempts"],
+        "jobs": ["job_id", "error_traceback", "attempts", "next_attempt_at", "claimed_by"],
         "executions": [
             "execution_id", "deduplicated_jobs", "rate_limit", "driver_id",
-            "driver_heartbeat_at", "plan_complete",
+            "driver_heartbeat_at", "plan_complete", "hooks_fired_at", "hook_error",
+            "parent_execution_id", "callback_url",
         ],
     }
     if missing:

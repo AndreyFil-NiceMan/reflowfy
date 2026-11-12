@@ -21,13 +21,10 @@ class _Described(AbstractPipeline[RuntimeParams]):
 
 def test_description_in_swagger():
     app = FastAPI()
-    create_pipeline_routes(app, _Described(), None, None)
+    create_pipeline_routes(app, _Described(), None)
     paths = app.openapi()["paths"]
     run = paths["/pipelines/described_openapi/run"]["post"]
     assert run["description"].startswith("Moves widgets from A to B.")
-    assert paths["/pipelines/described_openapi/status"]["get"]["description"] == (
-        "Moves widgets from A to B."
-    )
 
 
 def test_no_description_is_fine():
@@ -36,7 +33,7 @@ def test_no_description_is_fine():
         description = ""
 
     app = FastAPI()
-    create_pipeline_routes(app, _Plain(), None, None)
+    create_pipeline_routes(app, _Plain(), None)
     run = app.openapi()["paths"]["/pipelines/plain_openapi/run"]["post"]
     assert run["description"].startswith("Execute plain_openapi")
     assert AbstractPipeline.description == ""
@@ -48,7 +45,7 @@ def test_rate_limit_default_in_swagger():
         rate_limit = 3000
 
     app = FastAPI()
-    create_pipeline_routes(app, _Limited(), None, None)
+    create_pipeline_routes(app, _Limited(), None)
     params = app.openapi()["paths"]["/pipelines/limited_openapi/run"]["post"]["parameters"]
     rl = next(p for p in params if p["name"] == "rate_limit")
     assert "Pipeline default: 3000" in rl["description"]

@@ -5,7 +5,7 @@ import logging
 import sys
 import textwrap
 import types
-from typing import Any, Dict, Iterator, List, Literal, Optional
+from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple
 from unittest.mock import AsyncMock
 
 import pytest
@@ -141,6 +141,7 @@ def _pipeline(
     params_type: Any = RuntimeParams,
     source_error: Optional[BaseException] = None,
     batch_size: int = 10,
+    declined: Tuple[str, ...] = (),
 ) -> AbstractPipeline[Any]:
     dest = destination if destination is not None else _destination()
 
@@ -155,12 +156,18 @@ def _pipeline(
     def define_destination(self, records, runtime_params):  # type: ignore[no-untyped-def]
         return dest
 
-    ns = {
+    ns: Dict[str, Any] = {
         "name": name,
         "define_source": define_source,
         "define_transformations": define_transformations,
         "define_destination": define_destination,
     }
+    if declined:
+
+        def should_apply_transformation(self, transformation, runtime_params, records):  # type: ignore[no-untyped-def]
+            return transformation.name not in declined
+
+        ns["should_apply_transformation"] = should_apply_transformation
     types.new_class(f"_{name}", (AbstractPipeline[params_type],), {}, lambda n: n.update(ns))
     pipeline = pipeline_registry.get(name)
     assert pipeline is not None
@@ -443,6 +450,26 @@ class TestRun:
         assert rec.__dict__["records_skipped"] == 2
         assert rec.__dict__["pipeline_name"] == "cli_skip_log"
         assert rec.__dict__["execution_id"]
+
+    def test_a_declined_step_is_shown(self):
+        _pipeline("cli_declined", transforms=[Upper(), DropAll()], declined=("drop_all",))
+        result = invoke("cli_declined", "--no-input", "--dry-run")
+        assert result.exit_code == 0, result.output
+        assert "drop_all  not applied (should_apply_transformation declined it)" in result.output
+        assert "this step emptied the batch" not in result.output
+
+    def test_a_declined_step_in_json(self):
+        _pipeline("cli_declined_json", transforms=[Upper(), DropAll()], declined=("drop_all",))
+        result = invoke("cli_declined_json", "--no-input", "--dry-run", "--json")
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["records_out"] == 3
+        [batch] = payload["batches"]
+        assert [(s["name"], s["mode"]) for s in batch["steps"]] == [
+            ("upper_names", "sync"),
+            ("drop_all", "skipped"),
+        ]
+        assert batch["steps"][1]["records_in"] == batch["steps"][1]["records_out"] == 3
 
     def test_skip_job_is_logged_and_reported(self, skip_logs):
         dest = _destination()

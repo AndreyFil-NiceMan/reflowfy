@@ -3,7 +3,7 @@ E2E Tests: DX Improvement Plan (docs/DX_IMPROVEMENT_PLAN.md)
 
 Covers:
   P1.1 - Worker error propagation (error_message + error_traceback on failed jobs)
-  P1.2 - Checkpoint/Job terminology (/jobs + deprecation header on /checkpoints)
+  P1.2 - Jobs of an execution (/jobs)
   P1.3 - Cron validation at class-definition time
   P1.4 - Deduplication audit trail (deduplicated_jobs in stats)
   P2.3 - Async/sync bridging (nest_asyncio graceful fallback)
@@ -123,7 +123,7 @@ class TestWorkerErrorPropagation:
 # ---------------------------------------------------------------------------
 
 class TestJobsEndpoint:
-    """P1.2: /jobs alias works; /checkpoints returns Deprecation header."""
+    """P1.2: /jobs lists an execution's jobs."""
 
     @pytest.mark.dx
     def test_jobs_endpoint_returns_200(self, client):
@@ -141,27 +141,6 @@ class TestJobsEndpoint:
         assert r.status_code == 200
         for job in r.json():
             assert job["state"] == "completed"
-
-    @pytest.mark.dx
-    def test_checkpoints_endpoint_has_deprecation_header(self, client):
-        eid = _run(client, "crash_recovery_test")
-        _wait(client, eid)
-        r = client.get(f"/executions/{eid}/checkpoints")
-        assert r.status_code == 200
-        assert "deprecation" in {h.lower() for h in r.headers.keys()}, (
-            "Expected Deprecation header on /checkpoints response"
-        )
-
-    @pytest.mark.dx
-    def test_jobs_and_checkpoints_return_same_data(self, client):
-        eid = _run(client, "crash_recovery_test")
-        _wait(client, eid)
-        jobs = client.get(f"/executions/{eid}/jobs").json()
-        checkpoints = client.get(f"/executions/{eid}/checkpoints").json()
-        assert len(jobs) == len(checkpoints)
-        job_ids_from_jobs = {j["job_id"] for j in jobs}
-        job_ids_from_checkpoints = {j["job_id"] for j in checkpoints}
-        assert job_ids_from_jobs == job_ids_from_checkpoints
 
 
 # ---------------------------------------------------------------------------

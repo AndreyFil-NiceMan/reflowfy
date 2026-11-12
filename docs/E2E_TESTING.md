@@ -60,15 +60,16 @@ pip install dist/*.whl
 # 2. Create workspace
 mkdir -p e2e_workspace && cd e2e_workspace
 
-# 3. Initialize project
-reflowfy init . --name e2e_pipeline
+# 3. Initialize project (unpin reflowfy — the version under test may not be on PyPI — then lock)
+reflowfy init . --name e2e_pipeline --no-lock
+sed -i 's|"reflowfy>=[^"]*"|"reflowfy"|' pyproject.toml && uv lock
 
-# 4. Copy wheel and patch Dockerfiles
-cp ../dist/*.whl .
+# 4. Build a local base image from the wheel (the service images build FROM it)
+cp ../dist/*.whl ../Dockerfile.base .
 WHEEL=$(basename ../dist/*.whl)
-for f in Dockerfile.api Dockerfile.reflow-manager Dockerfile.worker; do
-  sed -i "s|RUN pip install --no-cache-dir reflowfy|COPY $WHEEL /tmp/$WHEEL\nRUN pip install --no-cache-dir /tmp/$WHEEL|" $f
-done
+sed -i "s|^RUN \(.*\)uv pip install \"reflowfy.*|COPY $WHEEL /tmp/$WHEEL\nRUN \1uv pip install /tmp/$WHEEL|" Dockerfile.base
+docker build -f Dockerfile.base -t reflowfy-base:local .
+export REFLOWFY_BASE_IMAGE=reflowfy-base:local
 
 # 5. Copy E2E config and pipelines
 cp ../docker-compose.e2e.yml docker-compose.yml

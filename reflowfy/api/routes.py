@@ -1,15 +1,15 @@
 """Dynamic route generation for pipelines."""
 
 import logging
-from typing import Any, Dict, Literal, Optional
+import os
+from typing import Any, Dict, List, Literal, Optional
 from inspect import Parameter, Signature
 
 import pydantic
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 
-from reflowfy.api.execution import execution_tracker
-from reflowfy.execution.base import ExecutionState
+from reflowfy.store.states import ExecutionState
 
 logger = logging.getLogger(__name__)
 
@@ -35,22 +35,15 @@ def _check_status(status: Any) -> None:
 
 def _run_body(
     pipeline: Any,
-    local_executor: Any,
-    distributed_executor: Any,
-    pipeline_name: str,
+    client: Any,
     runtime_params_dict: Dict[str, Any],
     mode: str,
     rate_limit: float | None,
+    callback_url: str | None = None,
 ) -> PipelineRunResponse:
-    """Shared execution logic used by all route variants."""
-    if mode == "local":
-        executor = local_executor
-        mode_label = "local"
-    else:
-        executor = distributed_executor
-        mode_label = "distributed"
-
-    rate_limit_override = rate_limit
+    """Forward one run to the manager and answer with what it said."""
+    pipeline_name = pipeline.name
+    mode_label = "local" if mode == "local" else "distributed"
 
     logger.info(
         "Running pipeline %s (mode=%s, rate_limit=%s, %d params)",
@@ -68,10 +61,12 @@ def _run_body(
     )
 
     try:
-        status = executor.execute(
+        status = client.execute(
             pipeline=pipeline,
             runtime_params=runtime_params_dict,
-            rate_limit_override=rate_limit_override,
+            rate_limit_override=rate_limit,
+            callback_url=callback_url,
+            mode=mode_label,
         )
     except Exception as e:
         logger.exception(
@@ -81,7 +76,6 @@ def _run_body(
         )
         raise HTTPException(status_code=500, detail=str(e))
 
-    execution_tracker.track(status)
     _check_status(status)
 
     logger.info(
@@ -92,7 +86,7 @@ def _run_body(
             "event": "run_finished",
             "execution_id": status.execution_id,
             "pipeline_name": pipeline_name,
-            "state": str(status.state),
+            "state": status.state,
         },
     )
 
@@ -102,6 +96,45 @@ def _run_body(
         mode=mode_label,
         rate_limit=rate_limit,
         status=status.to_dict(),
+    )
+
+
+def pipeline_folder(pipeline: Any, module_name: Optional[str] = None) -> str:
+    """Folder of the pipeline's file relative to the pipeline module, '' at the top level.
+
+    ``pipelines/bob1_pipeline/pipeline1.py`` (module ``pipelines.bob1_pipeline.pipeline1``)
+    gives ``"bob1_pipeline"``; ``pipelines/a/b/x.py`` gives ``"a/b"``. A pipeline defined
+    outside the pipeline module (a test, an installed package) counts as top level.
+    """
+    if module_name is None:
+        module_name = os.getenv("PIPELINE_MODULE", "pipelines")
+    defined_in = type(pipeline).__module__
+    prefix = module_name + "."
+    if not defined_in.startswith(prefix):
+        return ""
+    parts = defined_in[len(prefix) :].split(".")
+    return "/".join(parts[:-1])  # drop the file name itself
+
+
+def pipeline_route_base(pipeline: Any) -> str:
+    """URL prefix of a pipeline's routes: ``/pipelines[/<folder>]/<name>``."""
+    folder = pipeline_folder(pipeline)
+    return f"/pipelines/{folder}/{pipeline.name}" if folder else f"/pipelines/{pipeline.name}"
+
+
+def _pipeline_tags(pipeline: Any) -> List[str]:
+    """Swagger section: ``pipelines`` at the top level, the folder (``bob1_pipeline``) in one."""
+    folder = pipeline_folder(pipeline)
+    return [folder or "pipelines"]
+
+
+def _register(
+    app: FastAPI, method: str, pipeline: Any, suffix: str, endpoint: Any, **kwargs: Any
+) -> None:
+    """Register ``endpoint`` under the pipeline's folder-aware path."""
+    route = getattr(app, method)
+    route(f"{pipeline_route_base(pipeline)}/{suffix}", tags=_pipeline_tags(pipeline), **kwargs)(
+        endpoint
     )
 
 
@@ -131,13 +164,7 @@ def _is_body_param(p: Any) -> bool:
     return p.choices is None and p.param_type in _BODY_PARAM_TYPES
 
 
-def _create_run_route(
-    app: FastAPI,
-    pipeline: Any,
-    local_executor: Any,
-    distributed_executor: Any,
-    params: Any,
-) -> None:
+def _create_run_route(app: FastAPI, pipeline: Any, client: Any, params: Any) -> None:
     """
     Register the POST /pipelines/{name}/run route for a pipeline.
 
@@ -149,11 +176,12 @@ def _create_run_route(
     body_params = [p for p in params if _is_body_param(p)]
     query_params = [p for p in params if not _is_body_param(p)]
 
-    reserved = {"mode", "rate_limit", "body"} & {p.name for p in params}
+    reserved = {"mode", "rate_limit", "callback_url", "body"} & {p.name for p in params}
     if reserved:
         raise ValueError(
             f"Pipeline '{pipeline_name}' declares parameter(s) {sorted(reserved)} that collide "
-            "with the run route's reserved names (mode, rate_limit, body); rename them."
+            "with the run route's reserved names (mode, rate_limit, callback_url, body); "
+            "rename them."
         )
 
     mode_param = Parameter(
@@ -168,7 +196,19 @@ def _create_run_route(
         default=Query(None, description=_rate_limit_description(pipeline)),
         annotation=float,
     )
-    sig_params = [mode_param, rate_limit_param]
+    callback_url_param = Parameter(
+        "callback_url",
+        Parameter.KEYWORD_ONLY,
+        default=Query(
+            None,
+            description=(
+                "http(s) URL that receives a POST with the execution summary once the "
+                "run ends (completed, failed or cancelled)."
+            ),
+        ),
+        annotation=Optional[str],
+    )
+    sig_params = [mode_param, rate_limit_param, callback_url_param]
 
     if body_params:
         fields: Dict[str, Any] = {}
@@ -208,6 +248,7 @@ def _create_run_route(
     async def run_pipeline(
         mode: str = "distributed",
         rate_limit: Optional[float] = None,
+        callback_url: Optional[str] = None,
         body: Any = None,
         **kwargs: Any,
     ):
@@ -217,33 +258,35 @@ def _create_run_route(
             runtime_params.update(body.model_dump())
         return _run_body(
             pipeline=pipeline,
-            local_executor=local_executor,
-            distributed_executor=distributed_executor,
-            pipeline_name=pipeline_name,
+            client=client,
             runtime_params_dict=runtime_params,
             mode=mode,
             rate_limit=rate_limit,
+            callback_url=callback_url,
         )
 
     setattr(run_pipeline, "__signature__", Signature(parameters=sig_params))
 
-    app.post(
-        f"/pipelines/{pipeline_name}/run",
+    _register(
+        app,
+        "post",
+        pipeline,
+        "run",
+        run_pipeline,
         response_model=PipelineRunResponse,
-        tags=["pipelines"],
         summary=f"Run {pipeline_name}",
         description=(
             (f"{pipeline.description}\n\n" if pipeline.description else "")
             + f"Execute {pipeline_name}. Use mode='local' for testing, 'distributed' for production."
         ),
-    )(run_pipeline)
+    )
 
     body_str = ("body: " + ", ".join(p.name for p in body_params)) if body_params else "no body"
     query_str = "&".join(p.name + "=..." for p in query_params)
     full_query = "?mode=distributed&rate_limit=..." + (f"&{query_str}" if query_str else "")
     logger.debug(
-        "Registered POST /pipelines/%s/run%s [%s]",
-        pipeline_name,
+        "Registered POST %s/run%s [%s]",
+        pipeline_route_base(pipeline),
         full_query,
         body_str,
         extra={"event": "route_registered"},
@@ -257,44 +300,14 @@ def _rate_limit_description(pipeline: Any) -> str:
     return text
 
 
-def create_pipeline_routes(
-    app: FastAPI,
-    pipeline: Any,
-    local_executor: Any,
-    distributed_executor: Any,
-) -> None:
+def create_pipeline_routes(app: FastAPI, pipeline: Any, client: Any) -> None:
     """
-    Create dynamic routes for a pipeline.
+    Create the dynamic POST /pipelines[/{folder}]/{name}/run route for a pipeline.
 
-    Creates:
-    - POST /pipelines/{name}/run
-    - GET  /pipelines/{name}/status
+    ``folder`` is the pipeline file's directory relative to the pipeline module
+    (``pipelines/bob1_pipeline/p1.py`` → ``bob1_pipeline``), and Swagger groups the
+    route under a ``{folder}`` tag (e.g. ``bob1_pipeline``). Top-level pipelines are unchanged.
     """
     # get_all_parameters() is the declared params plus any the pipeline injects
     # (IdBasedPipeline adds the built-in 'ids').
-    _create_run_route(
-        app, pipeline, local_executor, distributed_executor, pipeline.get_all_parameters()
-    )
-
-    pipeline_name = pipeline.name
-
-    @app.get(
-        f"/pipelines/{pipeline_name}/status",
-        tags=["pipelines"],
-        summary=f"Get {pipeline_name} info",
-        description=pipeline.description or None,
-    )
-    async def get_pipeline_status():
-        """Get pipeline configuration and metadata."""
-        return {
-            "name": pipeline.name,
-            "description": pipeline.description,
-            "transformations": pipeline.get_transformation_names(),
-            "runtime_parameters": pipeline.get_runtime_parameters(),
-            "rate_limit": pipeline.rate_limit,
-            "config": pipeline.config,
-        }
-
-    logger.debug(
-        "Registered GET /pipelines/%s/status", pipeline_name, extra={"event": "route_registered"}
-    )
+    _create_run_route(app, pipeline, client, pipeline.get_all_parameters())

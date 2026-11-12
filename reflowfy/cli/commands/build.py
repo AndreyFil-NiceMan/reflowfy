@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Optional
 from python_on_whales import DockerClient
 
-from reflowfy.cli.utils import console, get_dockerfiles_path
+from reflowfy.cli.utils import check_uv_project, console, get_dockerfiles_path
+from reflowfy.cli.project import DEFAULT_PROJECT, IMAGES, image_repository, require_registry
 
 docker = DockerClient()
 
@@ -26,13 +27,9 @@ def _build_images(
         Panel(f"Building images for registry: [bold cyan]{registry}[/bold cyan]{cache_msg}")
     )
 
-    image_map = {
-        "reflowfy-api": "api",
-        "reflowfy-reflow-manager": "reflow-manager",
-        "reflowfy-worker": "worker",
-    }
 
     build_context = Path(".")
+    check_uv_project(build_context)
 
     if not (build_context / "src" / "pipelines").exists():
         console.print("⚠️  No 'src/pipelines/' folder found in current directory.", style="yellow")
@@ -40,8 +37,8 @@ def _build_images(
             "   Make sure you're in your project root or run 'reflowfy init' first.", style="yellow"
         )
 
-    for image_name, dockerfile_name in image_map.items():
-        base_image = f"{registry}/{project}/{image_name}"
+    for dockerfile_name, image_name in IMAGES.items():
+        base_image = image_repository(registry, project, dockerfile_name)
         if custom_tag:
             tags = [f"{base_image}:{custom_tag}"]
         else:
@@ -117,13 +114,5 @@ def register(app: typer.Typer):
         """
         Build and push Reflowfy images to a private registry (OpenShift Ready).
         """
-        project = project or "reflowfy"
-
-        if not registry:
-            console.print(
-                "❌ Registry is required. Set --registry or REGISTRY in .env", style="red"
-            )
-            if not Path(".env").exists():
-                console.print("⚠️  No .env file found in current directory.", style="yellow")
-            raise typer.Exit(code=1)
-        _build_images(registry, project, push, no_cache=no_cache, custom_tag=tag)
+        project = project or DEFAULT_PROJECT
+        _build_images(require_registry(registry), project, push, no_cache=no_cache, custom_tag=tag)

@@ -282,7 +282,11 @@ rm -rf "$WORKSPACE"
 
 # Build package
 log_info "Building package..."
-uv run python -m build || {
+# `build` lives in the dev extra: a bare `uv run` syncs the venv without it. Install
+# the dependencies from wheels only (--no-build: no package's setup code runs here),
+# then build without syncing again.
+uv sync --extra dev --no-install-project --no-build --inexact && \
+uv run --no-sync --no-build python -m build || {
     log_error "Failed to build package. Make sure 'build' is installed (uv pip install build)"
     exit 1
 }
@@ -314,7 +318,8 @@ cd "$WORKSPACE"
 
 # Run reflowfy init
 log_info "Running reflowfy init..."
-uv run python -m reflowfy.cli.main init . --name e2e_pipeline || {
+# --no-lock: the lock is made below, once the reflowfy pin is relaxed.
+uv run python -m reflowfy.cli.main init . --name e2e_pipeline --no-lock || {
     log_error "reflowfy init failed"
     exit 1
 }
@@ -328,7 +333,7 @@ for dir in "${REQUIRED_DIRS[@]}"; do
     fi
 done
 
-REQUIRED_FILES=("src/pipelines/e2e_pipeline.py" ".env" "Dockerfile.api" "Dockerfile.reflow-manager" "Dockerfile.worker" "docker-compose.yml" "requirements.txt")
+REQUIRED_FILES=("src/pipelines/e2e_pipeline.py" ".env" "Dockerfile.api" "Dockerfile.reflow-manager" "Dockerfile.worker" "docker-compose.yml" "pyproject.toml" ".dockerignore")
 for file in "${REQUIRED_FILES[@]}"; do
     if [ ! -f "$file" ]; then
         log_error "Missing expected file after init: $file"
@@ -352,8 +357,23 @@ export REFLOWFY_BASE_IMAGE=reflowfy-base:local
 log_info "Preparing local reflowfy base image (Dockerfile.base + local wheel)..."
 cp "$PROJECT_ROOT/Dockerfile.base" .
 # Swap the PyPI install for the local wheel (matches the templated RUN line).
-sed -i "s|RUN pip install --no-cache-dir \"reflowfy.*|COPY $WHEEL_FILENAME /tmp/$WHEEL_FILENAME\nRUN pip install --no-cache-dir /tmp/$WHEEL_FILENAME|" Dockerfile.base
+sed -i "s|^RUN \(.*\)uv pip install \"reflowfy.*|COPY $WHEEL_FILENAME /tmp/$WHEEL_FILENAME\nRUN \1uv pip install /tmp/$WHEEL_FILENAME|" Dockerfile.base
+grep -q "uv pip install /tmp/$WHEEL_FILENAME" Dockerfile.base || {
+    log_error "Could not point Dockerfile.base at the local wheel (install line changed?)"
+    exit 1
+}
 log_success "  Dockerfile.base prepared for local wheel"
+
+# The service images `uv sync --locked` the project's uv.lock. The scaffold pins
+# reflowfy>=<version under test>, which may not be on PyPI yet; relax it before
+# locking. reflowfy itself comes from the base image (the local wheel), not the lock.
+sed -i 's|"reflowfy>=[^"]*"|"reflowfy"|' pyproject.toml
+log_info "Locking the workspace project (uv lock)..."
+uv lock --directory "$WORKSPACE" || {
+    log_error "uv lock failed in the E2E workspace"
+    exit 1
+}
+log_success "  uv.lock created"
 
 # Modify docker-compose.yml for E2E testing (different ports, container names, env vars)
 log_info "Modifying docker-compose.yml for E2E..."
@@ -427,7 +447,13 @@ if [ "$SKIP_DOCKER" = false ]; then
     # (which build from Dockerfile.worker) build FROM it.
     log_info "Building local reflowfy base image (${REFLOWFY_BASE_IMAGE})..."
     ensure_workspace
-    docker build -f Dockerfile.base -t "${REFLOWFY_BASE_IMAGE}" . || {
+    # E2E_PYTHON_IMAGE / E2E_UV_IMAGE swap the base's FROM images, e.g. for a runner
+    # behind a TLS-intercepting proxy (a python image that trusts its CA) or with no
+    # access to ghcr.io / Docker Hub. Unset: Dockerfile.base's defaults.
+    BASE_BUILD_ARGS=()
+    [[ -n "${E2E_PYTHON_IMAGE:-}" ]] && BASE_BUILD_ARGS+=(--build-arg "PYTHON_IMAGE=${E2E_PYTHON_IMAGE}")
+    [[ -n "${E2E_UV_IMAGE:-}" ]] && BASE_BUILD_ARGS+=(--build-arg "UV_IMAGE=${E2E_UV_IMAGE}")
+    docker build ${BASE_BUILD_ARGS[@]+"${BASE_BUILD_ARGS[@]}"} -f Dockerfile.base -t "${REFLOWFY_BASE_IMAGE}" . || {
         log_error "Base image build failed"
         exit 1
     }
@@ -462,6 +488,19 @@ if [ "$SKIP_DOCKER" = false ]; then
         --bootstrap-server localhost:29092 \
         --replication-factor 1 --partitions 1 \
         --if-not-exists 2>/dev/null || log_warning "Topic e2e-kafka-concurrency might already exist"
+    docker exec reflofy-e2e-kafka kafka-topics --create \
+        --topic e2e-kafka-headers \
+        --bootstrap-server localhost:29092 \
+        --replication-factor 1 --partitions 1 \
+        --if-not-exists 2>/dev/null || log_warning "Topic e2e-kafka-headers might already exist"
+    # @record_destination: one job writes to all three (tests/e2e/destinations/test_record_destination.py).
+    for rd_topic in e2e-rd-whisper e2e-rd-google e2e-rd-azure; do
+        docker exec reflofy-e2e-kafka kafka-topics --create \
+            --topic "$rd_topic" \
+            --bootstrap-server localhost:29092 \
+            --replication-factor 1 --partitions 1 \
+            --if-not-exists 2>/dev/null || log_warning "Topic $rd_topic might already exist"
+    done
     log_success "Kafka topics created"
 
     # Start main services (they join the existing network)

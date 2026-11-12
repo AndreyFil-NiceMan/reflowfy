@@ -21,7 +21,7 @@ from reflowfy.core.abstract_pipeline import AbstractPipeline, ScheduledRun
 from reflowfy.core.runtime_params import Param, RuntimeParams
 from reflowfy.reflow_manager.database import get_db
 from reflowfy.reflow_manager.manager import ReflowManager
-from reflowfy.reflow_manager.models import Base, Execution, Job, PipelineSchedule
+from reflowfy.store.models import Base, Execution, Job, PipelineSchedule
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner
 from reflowfy.reflow_manager.pipeline_scheduler import PipelineScheduler
 from reflowfy.sources.static import StaticSource
@@ -164,9 +164,31 @@ def test_health_is_503_until_the_database_is_ready(client, monkeypatch):
 
 def test_health_once_the_database_is_ready(client, monkeypatch):
     monkeypatch.setattr(app_module, "_db_ready", True)
+    monkeypatch.setattr(app_module, "_failed_components", [])
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "healthy" and response.json()["version"] == __version__
+
+
+def test_health_is_degraded_while_a_scheduler_failed_to_start(client, monkeypatch):
+    monkeypatch.setattr(app_module, "_db_ready", True)
+    monkeypatch.setattr(app_module, "_failed_components", ["DLQ Scheduler"])
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "degraded"
+    assert response.json()["failed_components"] == ["DLQ Scheduler"]
+
+
+def test_a_component_that_fails_to_start_is_recorded(monkeypatch):
+    monkeypatch.setattr(app_module, "_failed_components", [])
+
+    def broken() -> None:
+        raise RuntimeError("no database")
+
+    app_module._start_component("Pipeline Scheduler", broken)
+    app_module._start_component("Content Dedup Sweeper", lambda: None)
+
+    assert app_module._failed_components == ["Pipeline Scheduler"]
 
 
 def test_metrics_endpoint_serves_prometheus_text(client):
@@ -232,7 +254,8 @@ def test_run_accepts_persists_and_schedules_the_dispatch(client, db, background)
     assert response.status_code == 202
     body = response.json()
     assert body["execution_id"] == "run-1" and body["state"] == "pending"
-    assert body["status_url"] == "/executions/run-1"
+    assert body["status_url"] == "/executions/run-1/stats"
+    assert client.get(body["status_url"]).status_code == 200  # a route that exists
     assert "warnings" not in body
 
     execution = _execution_row(db, "run-1")
@@ -284,7 +307,7 @@ def test_run_unexpected_error_is_500(client, monkeypatch):
     def broken(db, mode=None):
         raise RuntimeError("kafka config exploded")
 
-    monkeypatch.setattr(app_module, "_make_manager", broken)
+    monkeypatch.setattr(app_module, "make_manager", broken)
     response = client.post("/run", json={"pipeline_name": PIPE, "runtime_params": {"env": "dev"}})
     assert response.status_code == 500
     assert "kafka config exploded" in response.json()["detail"]
@@ -562,14 +585,6 @@ def test_errors_of_a_clean_or_unknown_execution(client, db):
     _execution(db, "completed")
     assert client.get("/executions/e/errors").json() == []
     assert client.get("/executions/nope/errors").status_code == 404
-
-
-def test_checkpoints_is_deprecated_but_answers(client, with_jobs):
-    response = client.get("/executions/e/checkpoints", params={"state": "pending"})
-    assert response.status_code == 200
-    assert response.headers["Deprecation"] == "true"
-    assert "/executions/e/jobs" in response.headers["Link"]
-    assert [j["job_id"] for j in response.json()] == ["j3"]
 
 
 def test_execution_stats_route(client, with_jobs):

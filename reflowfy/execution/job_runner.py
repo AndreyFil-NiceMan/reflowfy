@@ -4,7 +4,6 @@ A single source of truth for how one job's records flow from a (narrowed)
 source through transformations to a resolved destination. Used by:
 
 - ``reflowfy/worker/executor.py`` (distributed/local-dispatcher worker),
-- ``reflowfy/execution/local_executor.py`` (API local-mode executor),
 - ``reflowfy/cli/commands/test.py`` (``reflowfy test``).
 
 Each caller owns its own concerns around this core (slice planning via
@@ -21,18 +20,39 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple, cast
 from reflowfy.core.async_utils import run_coroutine_sync
 from reflowfy.core.execution_context import ExecutionContext
 from reflowfy.core.exceptions import RecordValidationError, SkipJob, pipeline_step
+from reflowfy.core.planning import PlannedJob
+from reflowfy.core.planning import chunk as chunk  # its old home; kept importable
 from reflowfy.core.record_validation import describe_invalid, find_invalid_records
 from reflowfy.core.serialization import to_json_safe
+from reflowfy.destinations.fan_out import as_destination
+from reflowfy.destinations.record import RecordDestination
 from reflowfy.execution.transformation_runner import (
     AppliedStep,
+    StepMode,
     apply_transformations_iteratively_async,
 )
 from reflowfy.observability.logging import get_logger
+from reflowfy.core.record_steps import count_skip_reason, top_skip_reasons
 
 logger = get_logger("execution.job_runner")
 
 RECORD_TYPE_STEP = "record_type"
 """Name of the :class:`AppliedStep` that reports the ``record_type`` check."""
+
+ROUTE_MODE = StepMode.ROUTE
+"""``AppliedStep.mode`` of a ``@record_destination`` choosing each record's destination.
+
+Not a transformation: reported as a step so its time and skipped records show up
+wherever a transformation's do."""
+
+
+def _route_concurrency(destination: RecordDestination) -> Optional[int]:
+    """Records routed at once, for an ``async def`` destination function; else None."""
+    import inspect
+
+    if not inspect.iscoroutinefunction(destination.destination_for_record):
+        return None
+    return destination.effective_concurrency()
 
 
 def check_record_type(pipeline: Any, records: List[Any]) -> Tuple[List[Any], AppliedStep]:
@@ -44,7 +64,6 @@ def check_record_type(pipeline: Any, records: List[Any]) -> Tuple[List[Any], App
     (:class:`RecordValidationError`) unless ``on_invalid_record = "skip"``, which
     drops them with reasons such as ``invalid data.amount: missing``.
     """
-    from reflowfy.transformations.base import count_skip_reason
 
     record_type = pipeline.record_type
     start = time.time()
@@ -64,36 +83,44 @@ def check_record_type(pipeline: Any, records: List[Any]) -> Tuple[List[Any], App
         duration=time.time() - start,
         records_in=len(records),
         records_out=len(kept),
-        mode="validate",
+        mode=StepMode.VALIDATE,
         skip_reasons=skip_reasons,
     )
     return kept, step
 
 
-def chunk(records: List[Any], size: int = 1) -> List[List[Any]]:
-    """Split ``records`` into per-job chunks of at most ``size`` items.
+def log_job_dropped(log: Any, reason: str) -> None:
+    """The ``job_dropped`` line for a job a pipeline dropped with ``SkipJob``: one
+    wording for the worker and ``reflowfy test`` (each passes its own logger)."""
+    log.info(
+        "Job dropped by pipeline (%s)",
+        reason,
+        extra={"event": "job_dropped", "skip_reason": reason},
+    )
 
-    Intended for :meth:`AbstractPipeline.define_jobs`, whose return value is the
-    job plan — one job per element. ``chunk(rows, size=1)`` gives one job per
-    record; the last chunk holds the remainder.
 
-    Args:
-        records: The records to split.
-        size: Maximum number of records per job. Must be >= 1.
+def log_skipped_records(log: Any, step: AppliedStep) -> None:
+    """The ``records_skipped`` line for a step that dropped records, if it did.
 
-    Returns:
-        A list of record chunks, one per job.
-
-    Example:
-        >>> chunk([1, 2, 3], size=2)
-        [[1, 2], [3]]
+    Reasons stay in the message: as a field their keys would be unbounded mapping
+    names in the log index.
     """
-    if size < 1:
-        raise ValueError(f"chunk size must be >= 1, got {size}")
-    return [records[i : i + size] for i in range(0, len(records), size)]
+    if not step.records_skipped:
+        return
+    log.info(
+        "%s skipped %d records (%s)",
+        step.name,
+        step.records_skipped,
+        top_skip_reasons(step.skip_reasons or {}),
+        extra={
+            "event": "records_skipped",
+            "transformation": step.name,
+            "records_skipped": step.records_skipped,
+        },
+    )
 
 
-def job(records: List[Any], **params: Any) -> Any:
+def job(records: List[Any], **params: Any) -> PlannedJob:
     """One job carrying ``records``, plus the params that job alone should see.
 
     ``define_jobs`` decides what a job is; this is how it says what a job is
@@ -103,23 +130,12 @@ def job(records: List[Any], **params: Any) -> Any:
     custom plan's jobs all share the execution's params and cannot tell each
     other apart.
 
-    Args:
-        records: The records for this one job.
-        **params: Extra runtime_params for this job only.
-
-    Returns:
-        A source carrying the records and the per-job params.
-
     Example:
         >>> def define_jobs(self, params):
         ...     for entity_id in params.get("input_ids", []):
         ...         yield job(fetch_rows(entity_id), current_id=entity_id)
     """
-    from reflowfy.sources.static import StaticSource
-
-    source = StaticSource(records)
-    source.job_params = params
-    return source
+    return PlannedJob(records, params)
 
 
 def preview_runtime_params(pipeline_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -145,59 +161,51 @@ def preview_runtime_params(pipeline_name: str, params: Dict[str, Any]) -> Dict[s
     return flat
 
 
-def job_runtime_params(source: Any, runtime_params: Dict[str, Any]) -> Dict[str, Any]:
-    """The runtime_params one planned job runs with: the execution's, plus its own.
+def plan_slices(jobs: Any, runtime_params: Dict[str, Any]) -> Iterator[PlannedJob]:
+    r"""Yield one :class:`PlannedJob` per job of a plan (what ``define_jobs`` returned).
 
-    Keeps the local/preview runners agreeing with what the manager writes into
-    each dispatched job's metadata.
+    - A source is split with :meth:`BaseSource.split` (one job per narrowed source);
+      a duck-typed source with no ``split`` is one job.
+    - A :class:`PlannedJob` (from :func:`job` or the ID-based plan) keeps its params
+      on every job its source splits into; a list of records as its source is one
+      job carrying them.
+    - Any other iterable is the plan itself: each element is one job, a list of
+      records (wrapped in a :class:`StaticSource` so it travels in the job payload),
+      a source or a :class:`PlannedJob`. A generator is consumed lazily, so a
+      ``define_jobs`` that ``yield``\ s plans an unbounded number of jobs in constant
+      memory; the caller writes each job out as it arrives.
     """
-    return {**runtime_params, **(getattr(source, "job_params", None) or {})}
-
-
-def plan_slices(source: Any, runtime_params: Dict[str, Any]) -> Iterator[Any]:
-    """Yield the per-job narrowed sources for ``source``.
-
-    Uses :meth:`BaseSource.split` when the source provides it (the v2
-    planning hook). Falls back to a single job — the source itself — for
-    duck-typed or custom sources that don't implement ``split``, so local
-    preview/test runs work with any source shape.
-
-    Any other iterable is the job plan itself (what ``define_jobs`` returns):
-    each element is one job, either a list of records — wrapped in a
-    :class:`StaticSource` so it travels in the job payload — or a source that
-    splits itself. A generator works and is consumed lazily, so a
-    ``define_jobs`` that ``yield``\\ s plans an unbounded number of jobs in
-    constant memory; the caller writes each job out as it arrives.
-    """
-    split = getattr(source, "split", None)
-    if split is not None:
-        # split() builds new narrowed sources, so anything the planner attached
-        # to the parent (job_params — the params this job's records belong to)
-        # has to be carried onto each child, or it is lost before dispatch.
-        parent_job_params = getattr(source, "job_params", None)
-        for narrowed in split(runtime_params):
-            if parent_job_params is not None and getattr(narrowed, "job_params", None) is None:
-                narrowed.job_params = parent_job_params
-            yield narrowed
-        return
-
-    if isinstance(source, (str, bytes, dict)) or not hasattr(source, "__iter__"):
-        # Duck-typed or custom source with no split() — one job, the source itself.
-        yield source
-        return
-
     from reflowfy.sources.base import BaseSource
     from reflowfy.sources.static import StaticSource
 
-    for item in source:
-        if isinstance(item, BaseSource):
+    if isinstance(jobs, PlannedJob):
+        source: Any = jobs.source
+        if isinstance(source, list):
+            source = StaticSource(cast(List[Any], source))
+        for planned in plan_slices(source, runtime_params):
+            yield PlannedJob(planned.source, jobs.params)
+        return
+
+    split = getattr(jobs, "split", None)
+    if split is not None:
+        for narrowed in split(runtime_params):
+            yield PlannedJob(narrowed)
+        return
+
+    if isinstance(jobs, (str, bytes, dict)) or not hasattr(jobs, "__iter__"):
+        # Duck-typed or custom source with no split() — one job, the source itself.
+        yield PlannedJob(jobs)
+        return
+
+    for item in jobs:
+        if isinstance(item, (BaseSource, PlannedJob)):
             yield from plan_slices(item, runtime_params)
         elif isinstance(item, list):
             # Empty chunk = no job, consistent with StaticSource.split().
             if item:
                 # ponytail: records ride in the job payload; chunks approaching
                 # Kafka's 1MB limit need a custom BaseSource that re-fetches.
-                yield StaticSource(cast(List[Any], item))
+                yield PlannedJob(StaticSource(cast(List[Any], item)))
         else:
             raise TypeError(
                 "define_jobs returned an iterable, so each element must be one job: "
@@ -246,6 +254,9 @@ async def run_job_records_async(
 
     Does NOT send — the caller owns sending, stats, and presentation.
 
+    A ``define_destination`` that returns a list gets a :func:`fan_out` of it, routed
+    like any ``@record_destination`` (so the caller always gets one destination).
+
     Returns ``(records, transformed_records, applied, destination)`` where
     ``applied`` is the list of :class:`AppliedStep` from the
     transformation runner.
@@ -271,9 +282,29 @@ async def run_job_records_async(
         )
         applied = checks + applied
         with pipeline_step("define_destination", name):
-            destination = await asyncio.to_thread(
-                pipeline.define_destination, transformed_records, runtime_params
+            # A list is several destinations: fan_out(...) sends every record to each.
+            destination = as_destination(
+                await asyncio.to_thread(
+                    pipeline.define_destination, transformed_records, runtime_params
+                )
             )
+        if isinstance(destination, RecordDestination) and transformed_records:
+            # Choose every record's destination now, before dedup and the send: a
+            # skipped record must not be claimed, and dedup hashes where each goes.
+            start = time.time()
+            routed = await destination.route(transformed_records, runtime_params)
+            applied.append(
+                AppliedStep(
+                    name=destination.name,
+                    duration=time.time() - start,
+                    records_in=len(transformed_records),
+                    records_out=len(routed.records),
+                    mode=ROUTE_MODE,
+                    concurrency=_route_concurrency(destination),
+                    skip_reasons=routed.skip_reasons or None,
+                )
+            )
+            transformed_records = routed.records
     except SkipJob as exc:
         # The pipeline dropped this job. Same shape as an empty slice, which every
         # caller already treats as a no-op — no destination write, no failure.

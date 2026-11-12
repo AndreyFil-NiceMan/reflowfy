@@ -1,9 +1,9 @@
 """
-Tests for the sample pipeline. Run them with:  pytest
+Tests for the sample pipeline. Run them with:  uv run pytest
 
 No Docker, Kafka or database is needed: reflowfy.testing runs the pipeline through
 the same code the worker runs, on records you supply, and keeps what it would
-have sent in memory. Install the test tools with:  pip install "reflowfy[test]"
+have sent in memory. Install the test tools with:  uv add --dev "reflowfy[test]"
 """
 
 from pipelines.__PIPELINE_MODULE__ import FilterActiveUsers

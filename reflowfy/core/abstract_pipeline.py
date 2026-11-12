@@ -26,11 +26,9 @@ Example:
     ...         return [MyTransformation()]
 """
 
-import copy
 import logging
 import re
 import typing
-import warnings
 import types
 from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass, field
@@ -56,10 +54,15 @@ from typing import (
 )
 
 import typing_extensions
+from croniter import croniter
 
 from reflowfy.core.exceptions import pipeline_step
+from reflowfy.core.execution_summary import ExecutionSummary
+from reflowfy.core.job_retry import JobRetryConfig
+from reflowfy.core.planning import ResolvedPlan
 from reflowfy.core.query_loader import QueryLoaderMixin
 from reflowfy.core.runtime_params import P, Param, RuntimeParams
+from reflowfy.core.registry import pipeline_registry
 
 if TYPE_CHECKING:
     from reflowfy.destinations.base import BaseDestination
@@ -99,17 +102,12 @@ def _validate_schedules(schedules: List["ScheduledRun"], pipeline_name: str) -> 
             )
         seen_names.add(run.name)
 
-        try:
-            from croniter import croniter as _croniter
-
-            if not _croniter.is_valid(run.cron):
-                raise ValueError(
-                    f"Pipeline '{pipeline_name}' schedule '{run.name}' has invalid cron "
-                    f"expression: '{run.cron}'. "
-                    f"(reflowfy uses 5-field cron: minute hour day month weekday)"
-                )
-        except ImportError:
-            pass  # croniter not installed; validated at runtime by scheduler
+        if not croniter.is_valid(run.cron):
+            raise ValueError(
+                f"Pipeline '{pipeline_name}' schedule '{run.name}' has invalid cron "
+                f"expression: '{run.cron}'. "
+                f"(reflowfy uses 5-field cron: minute hour day month weekday)"
+            )
 
 
 class PipelineMeta(ABCMeta):
@@ -149,26 +147,7 @@ class PipelineMeta(ABCMeta):
 
             # Check if this is a concrete pipeline with a name
             if "name" in namespace and namespace["name"]:
-                # Import here to avoid circular dependency
-                from reflowfy.core.registry import pipeline_registry
-
                 pipeline_name = namespace["name"]
-
-                # getattr, not namespace: a subclass of a typed pipeline inherits
-                # its parent's params type and is not deprecated.
-                if getattr(cls, "_params_type", None) is None:
-                    warnings.warn(
-                        f"Pipeline '{pipeline_name}' does not declare a params type. "
-                        f"Untyped runtime_params is deprecated; pass a RuntimeParams "
-                        f"subclass so the hooks are typed and define_parameters() is "
-                        f"derived:\n"
-                        f"    class {name}(AbstractPipeline[MyParams]):\n"
-                        f"Use AbstractPipeline[RuntimeParams] if the pipeline takes no "
-                        f"parameters of its own.",
-                        DeprecationWarning,
-                        # 2 = the `class ...` statement in the user's module.
-                        stacklevel=2,
-                    )
 
                 try:
                     instance = cls()
@@ -475,6 +454,9 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
     - Override `define_parameters()` to expose required runtime parameters
     - Override `define_rate_limit()` for dynamic rate limiting
     - Override `should_apply_transformation()` for runtime condition checks
+    - Set `job_retry` (a :class:`JobRetryConfig`) to retry jobs that fail transiently
+    - Override `on_execution_complete()` / `on_execution_failed()` /
+      `on_execution_cancelled()` to act once the whole execution has ended
     - Declare their parameters as a type: subclass :class:`RuntimeParams` and
       pass it as the type argument (``AbstractPipeline[MyParams]``). Every hook
       then receives that type instead of an opaque dict, and
@@ -516,6 +498,11 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
     # A key that ignores a field means a change to that field is not resent.
     dedup_key: Optional[Union[str, Callable[[Any, Any], Any]]] = None
 
+    # Automatic job retries (opt-in): a job that fails with a transient error (source or
+    # destination down, timeout, refused connection) goes back to the queue after a
+    # backoff instead of failing. None = a failed job stays failed (as before).
+    job_retry: Optional[JobRetryConfig] = None
+
     # Runtime record checks (see core/record_validation.py):
     #   record_type       = the TypedDict every fetched record must match, e.g.
     #                       TypedRecord[Order]; checked right after source.fetch
@@ -545,6 +532,7 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
         config: Optional[Dict[str, Any]] = None,
         enable_duplicate_jobs: Optional[bool] = None,
         dedup_key: Optional[Union[str, Callable[[Any, Any], Any]]] = None,
+        job_retry: Optional[JobRetryConfig] = None,
     ):
         """
         Initialize the abstract pipeline.
@@ -556,6 +544,7 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
                 False = each record is sent at most once per destination
             dedup_key: What identifies a record for dedup — a field name or
                 ``fn(record, runtime_params)``; None hashes the whole record
+            job_retry: Retry jobs that fail transiently (see :class:`JobRetryConfig`)
         """
         if rate_limit is not None:
             self.rate_limit = rate_limit
@@ -565,6 +554,14 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
             self.enable_duplicate_jobs = enable_duplicate_jobs
         if dedup_key is not None:
             self.dedup_key = dedup_key
+        if job_retry is not None:
+            self.job_retry = job_retry
+        job_retry_value = cast(object, self.job_retry)
+        if job_retry_value is not None and not isinstance(job_retry_value, JobRetryConfig):
+            raise TypeError(
+                f"{self.__class__.__name__}.job_retry must be a JobRetryConfig or None, "
+                f"got {self.job_retry!r}"
+            )
         if self.dedup_key is not None:
             if not (isinstance(self.dedup_key, str) or callable(self.dedup_key)):
                 raise ValueError(
@@ -780,6 +777,27 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
         """
         return self.rate_limit
 
+    # Lifecycle hooks. Called once by the manager when the execution ends — not per job,
+    # and never by `reflowfy test` (there is no execution). Each runs in a thread with
+    # HOOK_TIMEOUT_SECONDS (60) to finish; an error or a timeout is logged and stored on
+    # the execution (`hook_error`) and never changes its state. To start another
+    # pipeline from one, call `reflowfy.reflow_manager.lifecycle.run_pipeline`.
+
+    def on_execution_complete(self, summary: ExecutionSummary, runtime_params: P) -> None:
+        """Called once when an execution of this pipeline has completed.
+
+        Args:
+            summary: Job and record counts, duration and the first errors.
+            runtime_params: The execution's parameters (with defaults applied).
+        """
+
+    def on_execution_failed(self, summary: ExecutionSummary, runtime_params: P) -> None:
+        """Called once when an execution of this pipeline has failed (a job failed, or
+        the run was force-failed or abandoned while planning)."""
+
+    def on_execution_cancelled(self, summary: ExecutionSummary, runtime_params: P) -> None:
+        """Called once when an execution of this pipeline was cancelled."""
+
     def should_apply_transformation(
         self, transformation: "BaseTransformation", runtime_params: P, records: List[Any]
     ) -> bool:
@@ -814,10 +832,6 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
         read this, so an injected parameter behaves like a declared one.
         """
         return self.define_parameters()
-
-    def get_required_parameters(self) -> Set[str]:
-        """Get names of required parameters."""
-        return {p.name for p in self.get_all_parameters() if p.required}
 
     def validate_parameters(self, runtime_params: P) -> List[str]:
         """
@@ -861,11 +875,18 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
         """
         Return list of all possible transformation names.
 
-        This is used for worker registration.
+        Metadata only (``GET /pipelines``): the hook is called with no records and no
+        params, which a real ``define_transformations`` may not handle, so a failure
+        here means "not listable", not a broken pipeline.
         """
         try:
             return [t.name for t in self.define_transformations([], cast(P, {}))]
-        except Exception:
+        except Exception as exc:
+            logger.debug(
+                "%s: transformation names not listable without records (%s)",
+                self.name,
+                type(exc).__name__,
+            )
             return []
 
     def get_runtime_parameters(self) -> List[str]:
@@ -876,84 +897,30 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
         """
         return [p.name for p in self.get_all_parameters()]
 
-    # =========================================================================
-    # Execution Support - Properties for compatibility with execution engine
-    # =========================================================================
+    # Params the execution receives but no single job does (see ResolvedPlan).
+    execution_only_params: Tuple[str, ...] = ()
 
-    _resolved_params: Optional[Dict[str, Any]] = None
-    _source: Any = None
-    _destination: Any = None
-    _transformations: List[Any] | None = None
+    def resolve(self, runtime_params: P) -> ResolvedPlan:
+        """Validate ``runtime_params``, apply defaults and call ``define_jobs``.
 
-    def fork(self) -> "AbstractPipeline[P]":
-        """A private copy of this pipeline for one execution.
+        Returns the plan as a value and stores nothing on the pipeline, so the one
+        registered instance can plan any number of executions at once.
 
-        The registry holds a single instance per pipeline and :meth:`resolve` stores the
-        plan on the instance (``_source``, ``_resolved_params``). Two executions of the
-        same pipeline resolving that one instance at the same moment — a burst of
-        ``/run`` calls, two schedules firing together — overwrote each other's plan: of
-        16 simultaneous runs every one got the wrong job count, most of them none, and
-        finished ``completed`` having processed nothing. Resolve a fork, never the
-        registered instance.
+        Raises:
+            ValueError: the params are invalid.
         """
-        return copy.copy(self)
-
-    def resolve(self, runtime_params: P) -> "AbstractPipeline[P]":
-        """
-        Resolve the pipeline with specific runtime parameters.
-
-        This method prepares the pipeline for execution by calling all
-        define_* methods and caching the results. Should be called before
-        passing the pipeline to an executor.
-
-        Args:
-            runtime_params: Runtime parameters for this execution
-
-        Returns:
-            self (for chaining)
-        """
-        # Apply defaults and validate
         params = self.apply_defaults(runtime_params)
         errors = self.validate_parameters(params)
         if errors:
             raise ValueError(f"Invalid parameters: {'; '.join(errors)}")
 
-        self._resolved_params = cast(Dict[str, Any], params)
         with pipeline_step("define_jobs", self.name):
-            self._source = self.define_jobs(params)
-        # destination and transformations are resolved per-job/per-batch,
-        # once records are available.
-        self._destination = None
-        self._transformations = None
-
-        return self
-
-    @property
-    def source(self) -> Any:
-        """Get the resolved source. Call resolve() first."""
-        if self._source is None:
-            raise RuntimeError(
-                "Pipeline not resolved. Call pipeline.resolve(runtime_params) before execution."
-            )
-        return self._source
-
-    @property
-    def destination(self) -> Any:
-        """Get the resolved destination. Call resolve() first."""
-        if self._destination is None:
-            raise RuntimeError(
-                "Pipeline not resolved. Call pipeline.resolve(runtime_params) before execution."
-            )
-        return self._destination
-
-    @property
-    def transformations(self) -> List[Any]:
-        """Get the resolved transformations. Call resolve() first."""
-        if self._transformations is None:
-            raise RuntimeError(
-                "Pipeline not resolved. Call pipeline.resolve(runtime_params) before execution."
-            )
-        return self._transformations
+            jobs = self.define_jobs(params)
+        return ResolvedPlan(
+            params=cast(Dict[str, Any], params),
+            jobs=jobs,
+            execution_only=self.execution_only_params,
+        )
 
     @property
     def is_scheduled(self) -> bool:
@@ -969,6 +936,7 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
             "config": self.config,
             "transformations": self.get_transformation_names(),
             "enable_duplicate_jobs": self.enable_duplicate_jobs,
+            "job_retry": self.job_retry.to_dict() if self.job_retry is not None else None,
             "dedup_key": (
                 self.dedup_key
                 if self.dedup_key is None or isinstance(self.dedup_key, str)

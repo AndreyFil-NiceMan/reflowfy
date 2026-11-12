@@ -4,6 +4,7 @@ import pytest
 
 from reflowfy import chunk
 from reflowfy.core.abstract_pipeline import AbstractPipeline
+from reflowfy.core.planning import PlannedJob, ResolvedPlan
 from reflowfy.execution.job_runner import plan_slices
 from reflowfy.sources.mock import MockSource
 from reflowfy.sources.static import StaticSource
@@ -35,14 +36,14 @@ class TestPlanSlicesJobPlan:
         slices = list(plan_slices(chunk([1, 2, 3], size=1), {}))
 
         assert len(slices) == 3
-        assert all(isinstance(s, StaticSource) for s in slices)
-        assert [s.fetch({}) for s in slices] == [[1], [2], [3]]
+        assert all(isinstance(s.source, StaticSource) for s in slices)
+        assert [s.source.fetch({}) for s in slices] == [[1], [2], [3]]
 
     def test_empty_chunks_produce_no_jobs(self):
         slices = list(plan_slices([[], [{"id": 1}], []], {}))
 
         assert len(slices) == 1
-        assert slices[0].fetch({}) == [{"id": 1}]
+        assert slices[0].source.fetch({}) == [{"id": 1}]
 
     def test_empty_plan_produces_no_jobs(self):
         assert list(plan_slices([], {})) == []
@@ -54,7 +55,7 @@ class TestPlanSlicesJobPlan:
         slices = list(plan_slices(plan, {}))
 
         assert len(slices) == 3
-        assert [s.fetch({}) for s in slices] == [
+        assert [s.source.fetch({}) for s in slices] == [
             [{"id": 0}],
             [{"data": {"id": 1}}],
             [{"data": {"id": 2}}],
@@ -78,7 +79,7 @@ class TestPlanSlicesJobPlan:
 
         source = _DuckSource()
 
-        assert list(plan_slices(source, {})) == [source]
+        assert [s.source for s in plan_slices(source, {})] == [source]
 
 
 class TestPlanSlicesStreaming:
@@ -91,7 +92,7 @@ class TestPlanSlicesStreaming:
 
         slices = list(plan_slices(plan(), {}))
 
-        assert [s.fetch({}) for s in slices] == [[{"id": 0}], [{"id": 1}], [{"id": 2}]]
+        assert [s.source.fetch({}) for s in slices] == [[{"id": 0}], [{"id": 1}], [{"id": 2}]]
 
     def test_generator_plan_is_not_materialized(self):
         """An unbounded plan must be safe to consume one job at a time."""
@@ -106,7 +107,7 @@ class TestPlanSlicesStreaming:
         slices = plan_slices(endless_plan(), {})
         first = next(slices)
 
-        assert first.fetch({}) == [{"id": 1}]
+        assert first.source.fetch({}) == [{"id": 1}]
         assert planned == 1, "planning ran ahead of consumption"
 
     def test_generator_of_sources_still_splits_each_one(self):
@@ -156,23 +157,21 @@ class TestDefineJobsHook:
     def test_resolve_uses_define_jobs_plan(self):
         pipeline = _DefineJobsPipeline()
 
-        pipeline.resolve({"job_size": 1})
+        plan = pipeline.resolve({"job_size": 1})
 
-        assert len(list(plan_slices(pipeline.source, {}))) == 3
+        assert len(list(plan_slices(plan.jobs, {}))) == 3
 
     def test_job_size_controls_job_count(self):
         pipeline = _DefineJobsPipeline()
 
-        pipeline.resolve({"job_size": 2})
+        plan = pipeline.resolve({"job_size": 2})
 
-        assert len(list(plan_slices(pipeline.source, {}))) == 2
+        assert len(list(plan_slices(plan.jobs, {}))) == 2
 
     def test_define_jobs_defaults_to_define_source(self):
         pipeline = _DefineSourcePipeline()
 
-        pipeline.resolve({})
-
-        assert isinstance(pipeline.source, MockSource)
+        assert isinstance(pipeline.resolve({}).jobs, MockSource)
 
     def test_neither_hook_implemented_raises(self):
         with pytest.raises(NotImplementedError, match="define_source\\(\\) or define_jobs\\(\\)"):
@@ -180,24 +179,22 @@ class TestDefineJobsHook:
 
 
 class TestPlanSlicesCarriesJobParams:
-    """Params the planner attaches to a source must reach that source's jobs."""
+    """Params the planner attaches to a job must reach every job its source splits into."""
 
     def test_job_params_survive_a_source_that_splits_itself(self):
         source = MockSource(data=[{"id": 1}, {"id": 2}], batch_size=1)
-        source.job_params = {"current_ids": [7]}
 
-        slices = list(plan_slices(source, {}))
+        slices = list(plan_slices(PlannedJob(source, {"current_ids": [7]}), {}))
 
         assert len(slices) == 2
-        assert all(s.job_params == {"current_ids": [7]} for s in slices)
+        assert all(s.params == {"current_ids": [7]} for s in slices)
 
-    def test_a_narrowed_source_keeps_its_own_job_params(self):
-        parent = MockSource(data=[{"id": 1}], batch_size=1)
-        parent.job_params = {"current_ids": ["parent"]}
-        child = next(iter(parent.split({})))
-        child.job_params = {"current_ids": ["child"]}
+    def test_a_list_of_records_is_one_job_carrying_them(self):
+        slices = list(plan_slices(PlannedJob([{"id": 1}], {"current_id": 1}), {}))
 
-        assert child.job_params == {"current_ids": ["child"]}
+        assert [(s.source.fetch({}), s.params) for s in slices] == [
+            ([{"id": 1}], {"current_id": 1})
+        ]
 
 
 class TestJobHelper:
@@ -206,26 +203,30 @@ class TestJobHelper:
     def test_job_carries_its_records_and_params(self):
         from reflowfy import job
 
-        planned = job([{"n": 1}], current_id=7)
-
-        assert planned.fetch({}) == [{"n": 1}]
-        assert planned.job_params == {"current_id": 7}
+        assert job([{"n": 1}], current_id=7) == PlannedJob([{"n": 1}], {"current_id": 7})
 
     def test_job_params_reach_each_planned_slice(self):
         from reflowfy import job
 
         slices = list(plan_slices([job([{"n": i}], current_id=i) for i in (1, 2)], {}))
 
-        assert [s.job_params for s in slices] == [{"current_id": 1}, {"current_id": 2}]
+        assert [s.params for s in slices] == [{"current_id": 1}, {"current_id": 2}]
 
     def test_a_plan_without_job_falls_back_to_the_execution_params(self):
         """chunk() attaches nothing, so those jobs just get the execution's params."""
-        from reflowfy.execution.job_runner import job_runtime_params
-
         slices = list(plan_slices(chunk([{"n": 1}, {"n": 2}], size=1), {}))
 
-        assert all(s.job_params is None for s in slices)
-        assert job_runtime_params(slices[0], {"env": "prod"}) == {"env": "prod"}
+        assert all(s.params == {} for s in slices)
+        plan = ResolvedPlan(params={"env": "prod"}, jobs=None)
+        assert plan.job_params(slices[0]) == {"env": "prod"}
+
+    def test_execution_only_params_reach_no_job(self):
+        plan = ResolvedPlan({"input_ids": [1, 2], "env": "prod"}, None, ("input_ids",))
+
+        assert plan.job_params(PlannedJob([], {"current_id": 1})) == {
+            "env": "prod",
+            "current_id": 1,
+        }
 
 
 class _RaisingPlanPipeline(AbstractPipeline):
@@ -248,7 +249,7 @@ def test_generator_define_jobs_errors_name_the_hook():
     from reflowfy.reflow_manager.pipeline_runner import _iter_plan
 
     pipeline = _RaisingPlanPipeline()
-    pipeline.resolve({})
+    plan = pipeline.resolve({})
 
     with pytest.raises(PipelineError, match="define_jobs"):
-        list(_iter_plan(pipeline.name, plan_slices(pipeline.source, {})))
+        list(_iter_plan(pipeline.name, plan_slices(plan.jobs, {})))

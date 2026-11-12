@@ -49,6 +49,7 @@ def _kubernetes_fields() -> Dict[str, Any]:
 
 
 def _service_version() -> str:
+    # Logging is configured while the reflowfy package may itself still be importing.
     try:
         from reflowfy import __version__
 
@@ -94,7 +95,13 @@ class ECSJSONFormatter(logging.Formatter):
         for key, val in record.__dict__.items():
             if key in _STANDARD_ATTRS or key.startswith("_") or val is None:
                 continue
-            data[_ECS_RENAMES.get(key, key)] = val
+            name = _ECS_RENAMES.get(key, key)
+            if any(field.startswith(name + ".") for field in data):
+                # A scalar named like an ECS object (extra={"service": "api"} beside
+                # service.name) makes Elasticsearch reject the whole document, so the
+                # line is lost. Keep it, as a label.
+                name = f"labels.{name}"
+            data[name] = val
         if record.exc_info:
             exc_type, exc, _tb = record.exc_info
             if exc_type is not None:

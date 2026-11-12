@@ -236,6 +236,10 @@ class TestHelmCommand:
         assert values["postgresql.image.tag"] == tag
         assert values["postgresql.image.registry"] == ""
         assert values["global.security.allowInsecureImages"] == "true"
+        # copy-certs init container (only with TLS) reuses the same image: air-gap
+        assert values["postgresql.volumePermissions.image.repository"] == repo
+        assert values["postgresql.volumePermissions.image.tag"] == tag
+        assert values["postgresql.volumePermissions.image.registry"] == ""
 
     def test_postgres_password_and_route(self, calls):
         result = deploy(*BASE, "--postgres-password", "pgpw", "--pg-route")
@@ -244,6 +248,14 @@ class TestHelmCommand:
         assert values["postgresql.auth.password"] == "pgpw"
         assert values["postgresql.auth.postgresPassword"] == "pgpw"
         assert values["postgresql.route.enabled"] == "true"
+        assert values["postgresql.tls.enabled"] == "true"
+
+    def test_no_route_leaves_tls_at_chart_default(self, calls):
+        # TLS (and with it the Postgres copy-certs init container) stays off
+        # unless the Route needs it.
+        result = deploy(*BASE)
+        assert result.exit_code == 0, result.output
+        assert "postgresql.tls.enabled" not in set_map(calls[0]["cmd"])
 
     def test_external_database(self, calls, monkeypatch):
         monkeypatch.setenv("DATABASE_URL", f"postgresql://user:{_DB_PW}@db.example:6543/reflow")
@@ -357,7 +369,32 @@ class TestExecution:
         deploy(*BASE)
         for call in calls[1:]:
             assert call["stdout"] is subprocess.DEVNULL
-            assert call["stderr"] is subprocess.DEVNULL
+            assert call["stderr"] is subprocess.PIPE  # read, to tell AlreadyExists apart
+
+    def test_an_existing_route_is_fine(self, calls, monkeypatch):
+        def run(cmd: List[str], **kwargs: Any) -> subprocess.CompletedProcess:
+            calls.append({"cmd": list(cmd), **kwargs})
+            if cmd[0] == "oc":
+                return subprocess.CompletedProcess(cmd, 1, stderr='routes "x" AlreadyExists')
+            return subprocess.CompletedProcess(cmd, 0)
+
+        monkeypatch.setattr(deploy_mod.subprocess, "run", run)
+        result = deploy(*BASE)
+        assert "Routes created/verified" in result.output
+
+    def test_a_failed_route_is_reported_not_claimed(self, calls, monkeypatch):
+        """It used to print 'Routes created/verified' whatever oc said."""
+
+        def run(cmd: List[str], **kwargs: Any) -> subprocess.CompletedProcess:
+            calls.append({"cmd": list(cmd), **kwargs})
+            if cmd[0] == "oc":
+                return subprocess.CompletedProcess(cmd, 1, stderr="Forbidden: no access")
+            return subprocess.CompletedProcess(cmd, 0)
+
+        monkeypatch.setattr(deploy_mod.subprocess, "run", run)
+        result = deploy(*BASE)
+        assert "Routes created/verified" not in result.output
+        assert "Could not create route reflowfy-api: Forbidden: no access" in result.output
 
     def test_helm_command_is_printed(self, calls):
         result = deploy(*BASE)

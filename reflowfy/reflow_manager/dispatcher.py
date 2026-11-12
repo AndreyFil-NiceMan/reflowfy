@@ -10,6 +10,7 @@ from typing import Callable, Dict, Any, List, Optional, Union
 from aiokafka import AIOKafkaProducer
 from aiokafka.errors import KafkaError, MessageSizeTooLargeError
 
+from reflowfy.core.kafka_settings import connection_kwargs
 from reflowfy.reflow_manager.rate_limiter import RateLimiter
 
 logger = logging.getLogger(__name__)
@@ -32,16 +33,6 @@ class BaseDispatcher(ABC):
 
     def __init__(self, rate_limiter: RateLimiter):
         self.rate_limiter = rate_limiter
-
-    @abstractmethod
-    async def dispatch_job(
-        self,
-        job_payload: Dict[str, Any],
-        pipeline_name: str,
-        rate_limit: Optional[float] = None,
-    ) -> bool:
-        """Dispatch a single job."""
-        pass
 
     @abstractmethod
     async def dispatch_jobs_batch(
@@ -124,23 +115,18 @@ class KafkaDispatcher(BaseDispatcher):
             self._started = False
 
         if self._producer is None or not self._started:
-            # Build producer kwargs
             producer_kwargs: Dict[str, Any] = {
-                "bootstrap_servers": self.kafka_bootstrap_servers,
+                **connection_kwargs(
+                    self.kafka_bootstrap_servers,
+                    security_protocol=self.security_protocol,
+                    sasl_mechanism=self.sasl_mechanism,
+                    sasl_username=self.sasl_username,
+                    sasl_password=self.sasl_password,
+                ),
                 "compression_type": "gzip",
             }
-
-            # Add SASL config if credentials provided
             if self.sasl_username and self.sasl_password:
-                producer_kwargs.update(
-                    {
-                        "security_protocol": self.security_protocol or "SASL_PLAINTEXT",
-                        "sasl_mechanism": self.sasl_mechanism or "SCRAM-SHA-256",
-                        "sasl_plain_username": self.sasl_username,
-                        "sasl_plain_password": self.sasl_password,
-                        "client_id": self.sasl_username,  # client_id = username
-                    }
-                )
+                producer_kwargs["client_id"] = self.sasl_username
 
             self._producer = AIOKafkaProducer(**producer_kwargs)
             await self._producer.start()
@@ -148,39 +134,6 @@ class KafkaDispatcher(BaseDispatcher):
             self._started = True
 
         return self._producer
-
-    async def dispatch_job(
-        self,
-        job_payload: Dict[str, Any],
-        pipeline_name: str,
-        rate_limit: Optional[float] = None,
-    ) -> bool:
-        """Dispatch a single job to Kafka."""
-        # Check and consume tokens
-        if not self.rate_limiter.consume_tokens(pipeline_name, 1, rate_limit):
-            return False
-
-        # Send to Kafka
-        producer = await self._get_producer()
-
-        try:
-            await producer.send_and_wait(
-                topic=self.kafka_topic,
-                value=json.dumps(job_payload).encode("utf-8"),
-            )
-            return True
-
-        except KafkaError as e:
-            logger.error(
-                "Kafka error: %s",
-                e,
-                extra={
-                    "event": "kafka_send_error",
-                    "job_id": job_payload.get("job_id"),
-                    "error_type": type(e).__name__,
-                },
-            )
-            return False
 
     async def dispatch_jobs_batch(
         self,

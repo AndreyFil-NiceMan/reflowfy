@@ -1,10 +1,34 @@
 """Execution management for ReflowManager."""
 
+import logging
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, List, Optional
-from sqlalchemy import and_, or_
+from typing import Callable, Dict, Any, List, Mapping, Optional, Tuple
+from sqlalchemy import and_, exists, or_
 from sqlalchemy.orm import Session
-from reflowfy.reflow_manager.models import Execution
+from reflowfy.store.models import Execution, Job
+from reflowfy.store.states import ExecutionState, JobState, jobs_dispatched
+
+logger = logging.getLogger(__name__)
+
+# Called as fn(bind, execution_id, state) right after an execution was moved to a terminal
+# state by update_execution_state — the one place every terminal transition goes through
+# (drive loop, /cancel, PATCH state, planning-crash recovery, a run that raised). The
+# manager service registers the lifecycle hooks here at startup (lifecycle.install());
+# nothing is registered elsewhere (unit tests, the CLI).
+TerminalListener = Callable[[Any, str, str], None]
+_terminal_listeners: List[TerminalListener] = []
+
+
+def add_terminal_listener(listener: TerminalListener) -> None:
+    """Call ``listener(bind, execution_id, state)`` whenever an execution ends (idempotent)."""
+    if listener not in _terminal_listeners:
+        _terminal_listeners.append(listener)
+
+
+def remove_terminal_listener(listener: TerminalListener) -> None:
+    """Undo :func:`add_terminal_listener` (no-op if it was not added)."""
+    if listener in _terminal_listeners:
+        _terminal_listeners.remove(listener)
 
 
 class ExecutionManager:
@@ -19,6 +43,8 @@ class ExecutionManager:
         pipeline_name: str,
         runtime_params: Optional[Dict[str, Any]] = None,
         rate_limit: Optional[float] = None,
+        parent_execution_id: Optional[str] = None,
+        callback_url: Optional[str] = None,
     ) -> Execution:
         """
         Create new execution record.
@@ -28,6 +54,8 @@ class ExecutionManager:
             pipeline_name: Name of the pipeline
             runtime_params: Runtime parameters for the pipeline
             rate_limit: The request's rate_limit override, if any (jobs/min)
+            parent_execution_id: The execution whose hook started this one, if any
+            callback_url: URL POSTed the execution summary once it ends, if any
 
         Returns:
             Created Execution object
@@ -35,10 +63,12 @@ class ExecutionManager:
         execution = Execution(
             execution_id=execution_id,
             pipeline_name=pipeline_name,
-            state="pending",
+            state=ExecutionState.PENDING,
             runtime_params=runtime_params or {},
             rate_limit=rate_limit,
             plan_complete=False,
+            parent_execution_id=parent_execution_id,
+            callback_url=callback_url,
         )
 
         self.db.add(execution)
@@ -46,6 +76,30 @@ class ExecutionManager:
         self.db.refresh(execution)
 
         return execution
+
+    def set_total_jobs(self, execution_id: str, total: int) -> None:
+        execution = self.get_execution(execution_id)
+        if execution:
+            execution.total_jobs = total
+            self.db.commit()
+
+    def store_job_counts(
+        self, execution_id: str, counts: Mapping[str, int]
+    ) -> Tuple[int, int, int]:
+        """Write a count per job state onto the execution row; returns (dispatched,
+        finished, failed), deduplicated jobs counting as finished."""
+        dispatched = jobs_dispatched(counts)
+        failed = counts.get(JobState.FAILED, 0)
+        deduplicated = counts.get(JobState.DEDUPLICATED, 0)
+        finished = counts.get(JobState.COMPLETED, 0) + deduplicated
+        execution = self.get_execution(execution_id)
+        if execution:
+            execution.jobs_dispatched = dispatched
+            execution.jobs_completed = finished
+            execution.jobs_failed = failed
+            execution.deduplicated_jobs = deduplicated
+            self.db.commit()
+        return dispatched, finished, failed
 
     def get_execution(self, execution_id: str, for_update: bool = False) -> Optional[Execution]:
         """
@@ -58,9 +112,7 @@ class ExecutionManager:
         Returns:
             Execution object or None if not found
         """
-        query = self.db.query(Execution).filter(
-            Execution.execution_id == execution_id
-        )
+        query = self.db.query(Execution).filter(Execution.execution_id == execution_id)
         if for_update:
             query = query.with_for_update()
         return query.first()
@@ -70,100 +122,162 @@ class ExecutionManager:
         execution_id: str,
         state: str,
         error_message: Optional[str] = None,
+        notify: bool = True,
+        unless_jobs_unfinished: bool = False,
+        from_states: Optional[Tuple[str, ...]] = None,
     ) -> Optional[Execution]:
-        """
-        Update execution state.
+        """Move an execution to ``state`` if it may get there from where it is now.
+
+        One compare-and-set — ``UPDATE … WHERE state IN ExecutionState.FROM[state]`` — so
+        of two concurrent transitions only a legal one lands. It used to read, then write
+        unconditionally: a ``/cancel`` that landed before the planner's ``running`` was
+        overwritten (the cancelled run went ahead in full), a pause racing the end of a run
+        turned ``completed`` back into ``paused``, and the drive loop's final state could
+        overwrite a cancel.
 
         Args:
             execution_id: Execution identifier
-            state: New state (pending, running, paused, completed, failed)
+            state: New state (one of ``ExecutionState.ALL``)
             error_message: Optional error message if failed
+            notify: Tell the terminal listeners (lifecycle hooks) when the state is
+                terminal. False when the caller finishes the transition first (cancel
+                also cancels the jobs) and calls :meth:`notify_terminal` itself.
+            unless_jobs_unfinished: Refuse while any job is pending, dispatched or
+                running — the drive loop's end, so jobs requeued by ``/retry-failed``
+                after it counted them keep the execution open.
+            from_states: Narrow the states it may come from (within
+                ``ExecutionState.FROM[state]``): the planner moves ``pending -> running``
+                only, so a pause that landed first is not taken for a /resume.
 
         Returns:
-            Updated Execution object or None if not found
+            The updated Execution, or None if it does not exist or the transition was
+            refused (the execution is in a state ``state`` cannot be entered from).
         """
-        execution = self.get_execution(execution_id)
-        if not execution:
-            return None
-
-        execution.state = state
+        allowed = ExecutionState.FROM.get(state)
+        if allowed is None:
+            raise ValueError(f"Unknown execution state {state!r}")
+        if from_states is not None:
+            allowed = tuple(s for s in allowed if s in from_states)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        values: Dict[Any, Any] = {"state": state, "updated_at": now}
         if error_message:
-            execution.error_message = error_message
+            values["error_message"] = error_message
+        if state in self.TERMINAL_STATES:
+            values["completed_at"] = now
 
-        if state in ["completed", "failed", "cancelled"]:
-            execution.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
-
+        query = self.db.query(Execution).filter(
+            Execution.execution_id == execution_id, Execution.state.in_(allowed)
+        )
+        if unless_jobs_unfinished:
+            query = query.filter(
+                ~exists().where(
+                    Job.execution_id == execution_id,
+                    Job.state.in_(JobState.UNSTARTED + (JobState.RUNNING,)),
+                )
+            )
+        won = query.update(values, synchronize_session=False)
         self.db.commit()
-        self.db.refresh(execution)
 
-        return execution
-
-    def update_job_counts(
-        self,
-        execution_id: str,
-        jobs_dispatched: Optional[int] = None,
-        jobs_completed: Optional[int] = None,
-        jobs_failed: Optional[int] = None,
-    ) -> Optional[Execution]:
-        """
-        Update job counts for an execution.
-
-        Note: Does NOT commit - caller should commit after all updates.
-
-        Args:
-            execution_id: Execution identifier
-            jobs_dispatched: Increment jobs dispatched
-            jobs_completed: Increment jobs completed
-            jobs_failed: Increment jobs failed
-
-        Returns:
-            Updated Execution object or None if not found
-        """
         execution = self.get_execution(execution_id)
-        if not execution:
+        if execution is None:
+            return None
+        self.db.refresh(execution)
+        if not won:
+            logger.info(
+                "Execution is %s; not moving it to %s",
+                execution.state,
+                state,
+                extra={
+                    "event": "execution_transition_refused",
+                    "execution_id": execution_id,
+                    "state": execution.state,
+                    "requested_state": state,
+                },
+            )
             return None
 
-        if jobs_dispatched is not None:
-            execution.jobs_dispatched += jobs_dispatched
-        if jobs_completed is not None:
-            execution.jobs_completed += jobs_completed
-        if jobs_failed is not None:
-            execution.jobs_failed += jobs_failed
+        if notify and state in self.TERMINAL_STATES:
+            self.notify_terminal(execution_id, state)
 
-        # Don't commit here - caller will commit
         return execution
+
+    def notify_terminal(self, execution_id: str, state: str) -> None:
+        """Tell the terminal listeners (lifecycle hooks); never raises into the caller."""
+        for listener in list(_terminal_listeners):
+            try:
+                listener(self.db.get_bind(), execution_id, state)
+            except Exception:
+                logger.warning(
+                    "Terminal-state listener failed",
+                    exc_info=True,
+                    extra={"event": "terminal_listener_error", "execution_id": execution_id},
+                )
+
+    def set_rate_limit(self, execution_id: str, rate_limit: Optional[float]) -> None:
+        """Persist the rate limit the execution runs at, so a resume reuses it."""
+        self.db.query(Execution).filter(Execution.execution_id == execution_id).update(
+            {"rate_limit": rate_limit}, synchronize_session=False
+        )
+        self.db.commit()
+
+    def claim_hooks(self, execution_id: str) -> bool:
+        """Claim the right to fire this execution's lifecycle hooks. True exactly once.
+
+        ``UPDATE ... SET hooks_fired_at = now WHERE hooks_fired_at IS NULL``: of any
+        number of callers (two manager pods, a cancel racing the drive loop's end) one
+        gets the row.
+        """
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        claimed = (
+            self.db.query(Execution)
+            .filter(
+                Execution.execution_id == execution_id,
+                Execution.hooks_fired_at.is_(None),
+                # Checked in the same statement: a /retry-failed reopening the execution
+                # between the caller's check and this claim must not take the claim the
+                # retried run's real end needs.
+                Execution.state.in_(ExecutionState.TERMINAL),
+            )
+            .update({"hooks_fired_at": now}, synchronize_session=False)
+        )
+        self.db.commit()
+        return claimed == 1
+
+    def set_hook_error(self, execution_id: str, error: Optional[str]) -> None:
+        """Record what failed in a hook or the callback (never touches ``state``)."""
+        self.db.query(Execution).filter(Execution.execution_id == execution_id).update(
+            {"hook_error": error}, synchronize_session=False
+        )
+        self.db.commit()
 
     def pause_execution(self, execution_id: str) -> Optional[Execution]:
-        """Pause a pending or running execution. None if missing or already settled
-        (pausing a completed execution used to flip it back to non-terminal)."""
-        execution = self.get_execution(execution_id)
-        if not execution or execution.state not in ("pending", "running"):
-            return None
-        return self.update_execution_state(execution_id, "paused")
+        """Pause a pending or running execution. None if missing or in any other state."""
+        return self.update_execution_state(execution_id, ExecutionState.PAUSED)
 
     def resume_execution(self, execution_id: str) -> Optional[Execution]:
-        """Resume a paused execution."""
-        execution = self.get_execution(execution_id)
-        if not execution or execution.state != "paused":
+        """Resume a paused execution. None if missing or not paused."""
+        if (execution := self.get_execution(execution_id)) is None:
             return None
-
-        return self.update_execution_state(execution_id, "running")
+        if execution.state != ExecutionState.PAUSED:
+            return None
+        return self.update_execution_state(execution_id, ExecutionState.RUNNING)
 
     # States an execution can be in, and the ones it never leaves on its own.
-    STATES = ("pending", "running", "paused", "completed", "failed", "cancelled")
-    TERMINAL_STATES = ("completed", "failed", "cancelled")
+    STATES = ExecutionState.ALL
+    TERMINAL_STATES = ExecutionState.TERMINAL
 
-    def cancel_execution(self, execution_id: str) -> Optional[Execution]:
+    def cancel_execution(self, execution_id: str, notify: bool = True) -> Optional[Execution]:
         """Mark a pending, running or paused execution ``cancelled``.
 
         Returns None if it does not exist or is already finished. Cancelling its jobs
         is the caller's job (see ``JobManager.cancel_unstarted_jobs``): this only moves the
-        execution, which is what stops its dispatch loop and its planner.
+        execution, which is what stops its dispatch loop and its planner. A caller that
+        cancels the jobs passes ``notify=False`` and calls :meth:`notify_terminal` after,
+        so the hooks' summary counts them.
         """
-        execution = self.get_execution(execution_id)
-        if not execution or execution.state in self.TERMINAL_STATES:
-            return None
-        return self.update_execution_state(execution_id, "cancelled", error_message="Cancelled")
+        return self.update_execution_state(
+            execution_id, ExecutionState.CANCELLED, error_message="Cancelled", notify=notify
+        )
 
     def mark_plan_complete(self, execution_id: str) -> None:
         """Record that every job of the execution is saved (planning finished)."""
@@ -173,15 +287,42 @@ class ExecutionManager:
         self.db.commit()
 
     def reopen_execution(self, execution_id: str) -> Optional[Execution]:
-        """Move a settled execution back to running so its dispatch loop can resume it."""
-        execution = self.get_execution(execution_id)
-        if not execution:
-            return None
-        execution.state = "running"
-        execution.completed_at = None
-        execution.error_message = None
+        """Move a settled (terminal) execution back to running so a dispatch loop can
+        resume it. None if it does not exist or is not terminal — a pending or running
+        execution already has a planner or a loop that will pick its requeued jobs up.
+
+        Compare-and-set, so a ``/retry-failed`` racing the drive loop's end either finds
+        the execution still open (its loop sees the requeued jobs) or reopens it after
+        the loop settled it (the caller then starts a loop) — never ``running`` with
+        no loop.
+        """
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        reopened = (
+            self.db.query(Execution)
+            .filter(
+                Execution.execution_id == execution_id,
+                Execution.state.in_(ExecutionState.TERMINAL),
+            )
+            .update(
+                {
+                    "state": ExecutionState.RUNNING,
+                    "completed_at": None,
+                    "error_message": None,
+                    # Its next end fires the hooks again (they reported the run before
+                    # the retry).
+                    "hooks_fired_at": None,
+                    "hook_error": None,
+                    "updated_at": now,
+                },
+                synchronize_session=False,
+            )
+        )
         self.db.commit()
-        self.db.refresh(execution)
+        if not reopened:
+            return None
+        execution = self.get_execution(execution_id)
+        if execution is not None:
+            self.db.refresh(execution)
         return execution
 
     def claim_driver(self, execution_id: str, driver_id: str, lease_seconds: float) -> bool:
@@ -246,13 +387,6 @@ class ExecutionManager:
         ).update({"driver_id": None, "driver_heartbeat_at": None}, synchronize_session=False)
         self.db.commit()
 
-    def update_deduplicated_count(self, execution_id: str, count: int) -> None:
-        """Set the deduplicated_jobs count for an execution."""
-        execution = self.get_execution(execution_id)
-        if execution:
-            execution.deduplicated_jobs = count
-            self.db.commit()
-
     def get_interrupted_executions(self) -> List[Execution]:
         """
         Find executions that were running when the service crashed.
@@ -269,10 +403,12 @@ class ExecutionManager:
             self.db.query(Execution)
             .filter(
                 or_(
-                    Execution.state == "running",
-                    and_(Execution.state == "pending", Execution.plan_complete.is_(False)),
+                    Execution.state == ExecutionState.RUNNING,
+                    and_(
+                        Execution.state == ExecutionState.PENDING,
+                        Execution.plan_complete.is_(False),
+                    ),
                 )
             )
             .all()
         )
-

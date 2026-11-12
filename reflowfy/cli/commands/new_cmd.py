@@ -13,8 +13,8 @@ def _pipeline_test(name: str) -> str:
     pipeline works, so the marker cannot be left behind by accident.
     """
     return f'''"""
-Tests for the {name} pipeline. Run them with:  pytest
-(needs: pip install "reflowfy[test]")
+Tests for the {name} pipeline. Run them with:  uv run pytest
+(needs: uv add --dev "reflowfy[test]")
 
 reflowfy.testing runs the pipeline through the same code the worker runs, on the
 records you give it, and keeps what it would have sent in memory: no Docker,
@@ -212,7 +212,7 @@ def {name}(**overrides):
         def define_source(self, runtime_params):
             return {name}(index="my-index")
     """
-    # Example: return elastic_source(url=os.getenv("ELASTIC_URL"), **overrides)
+    # Example: return elastic_source(url=os.getenv("ELASTICSEARCH_URL"), **overrides)
     raise NotImplementedError("Configure your source here")
 ''')
         console.print(f"✅ Created source: {target}", style="green")

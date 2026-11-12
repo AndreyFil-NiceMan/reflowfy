@@ -20,8 +20,33 @@ from sqlalchemy.pool import StaticPool
 
 import reflowfy.reflow_manager.pipeline_scheduler as ps_mod
 from reflowfy.reflow_manager.execution import ExecutionManager
-from reflowfy.reflow_manager.models import Base, Execution, PipelineSchedule
+from reflowfy.store.models import Base, Execution, PipelineSchedule
 from reflowfy.reflow_manager.pipeline_scheduler import PipelineScheduler
+from reflowfy import AbstractPipeline, RuntimeParams, pipeline_registry
+
+
+class _Scheduled(AbstractPipeline[RuntimeParams]):
+    """Stand-in for a scheduled pipeline: the scheduler checks the name is registered."""
+
+    def define_source(self, runtime_params: Any) -> Any:
+        return []
+
+    def define_transformations(self, records: Any, runtime_params: Any) -> Any:
+        return []
+
+    def define_destination(self, records: Any, runtime_params: Any) -> Any:
+        return None
+
+
+@pytest.fixture(autouse=True)
+def _registered_pipelines() -> Any:
+    names = ("due", "p", "later", "off")
+    for name in names:
+        type(f"_Scheduled_{name}", (_Scheduled,), {"name": name})  # registers itself
+    yield
+    for name in names:
+        pipeline_registry.unregister(name)
+
 
 
 def _now() -> datetime:

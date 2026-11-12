@@ -18,7 +18,8 @@ from fastapi.testclient import TestClient
 from reflowfy.api.routes import create_pipeline_routes
 from reflowfy.core.abstract_pipeline import AbstractPipeline, PipelineParameter
 from reflowfy.core.id_based_pipeline import IdBasedPipeline
-from reflowfy.execution.base import ExecutionState, ExecutionStatus
+from reflowfy.execution.distributed_executor import ExecutionStatus
+from reflowfy.store.states import ExecutionState
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -44,13 +45,15 @@ def _make_executor(state: ExecutionState = ExecutionState.COMPLETED, error: str 
 
 
 def _build_app(*pipelines) -> tuple[FastAPI, MagicMock, MagicMock]:
-    """Return (app, local_executor, distributed_executor) with pipelines registered."""
+    """Return (app, manager client, manager client) with pipelines registered.
+
+    One client serves both modes; it is returned twice so the tests can keep
+    naming the one they mean."""
     app = FastAPI()
-    local_ex = _make_executor()
-    dist_ex = _make_executor()
+    manager = _make_executor()
     for pipeline in pipelines:
-        create_pipeline_routes(app, pipeline, local_ex, dist_ex)
-    return app, local_ex, dist_ex
+        create_pipeline_routes(app, pipeline, manager)
+    return app, manager, manager
 
 
 # ---------------------------------------------------------------------------
@@ -182,27 +185,21 @@ class TestNoParmsPipeline:
         assert "execution_id" in body
         assert body["status"]["state"] == "completed"
 
-    def test_status_endpoint(self, no_params_client):
+    def test_status_endpoint_is_gone(self, no_params_client):
         client, _, _ = no_params_client
-        r = client.get("/pipelines/_test_no_params/status")
-        assert r.status_code == 200
-        assert r.json()["name"] == "_test_no_params"
+        assert client.get("/pipelines/_test_no_params/status").status_code == 404
 
-    def test_distributed_mode_uses_dist_executor(self, no_params_client):
-        client, local_ex, dist_ex = no_params_client
-        local_ex.reset_mock()
-        dist_ex.reset_mock()
+    def test_distributed_mode_is_forwarded(self, no_params_client):
+        client, manager, _ = no_params_client
+        manager.reset_mock()
         client.post("/pipelines/_test_no_params/run", params={"mode": "distributed"})
-        assert dist_ex.execute.called
-        assert not local_ex.execute.called
+        assert manager.execute.call_args.kwargs["mode"] == "distributed"
 
-    def test_local_mode_uses_local_executor(self, no_params_client):
-        client, local_ex, dist_ex = no_params_client
-        local_ex.reset_mock()
-        dist_ex.reset_mock()
+    def test_local_mode_is_forwarded(self, no_params_client):
+        client, manager, _ = no_params_client
+        manager.reset_mock()
         client.post("/pipelines/_test_no_params/run", params={"mode": "local"})
-        assert local_ex.execute.called
-        assert not dist_ex.execute.called
+        assert manager.execute.call_args.kwargs["mode"] == "local"
 
 
 # ---------------------------------------------------------------------------
@@ -402,9 +399,9 @@ class TestIdBasedRouteBody:
 class TestFailureResponse:
     def _make_failing_app(self, pipeline):
         app = FastAPI()
-        local_ex = _make_executor(ExecutionState.FAILED, "Something went wrong")
-        dist_ex = _make_executor(ExecutionState.FAILED, "Something went wrong")
-        create_pipeline_routes(app, pipeline, local_ex, dist_ex)
+        create_pipeline_routes(
+            app, pipeline, _make_executor(ExecutionState.FAILED, "Something went wrong")
+        )
         return TestClient(app)
 
     def test_no_params_pipeline_failure_returns_422(self):

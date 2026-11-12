@@ -16,7 +16,7 @@ from sqlalchemy.pool import StaticPool
 
 import reflowfy.reflow_manager.content_dedup_scheduler as sweep_mod
 from reflowfy.reflow_manager.content_dedup_scheduler import ContentDedupScheduler
-from reflowfy.reflow_manager.models import Base, Execution, Job, ProcessedContent
+from reflowfy.store.models import Base, Execution, Job, ProcessedRecord
 
 
 def _now() -> datetime:
@@ -130,12 +130,8 @@ def test_a_sweep_that_raises_does_not_kill_the_loop(sessions, monkeypatch, caplo
 def test_a_sweep_purges_expired_hashes_and_executions_and_commits(sessions, caplog):
     db = sessions()
     old = _now() - timedelta(hours=48)
-    db.add(
-        ProcessedContent(
-            content_hash="old", pipeline_name="p", job_id="j", execution_id="x", created_at=old
-        )
-    )
-    db.add(ProcessedContent(content_hash="new", pipeline_name="p", job_id="j", execution_id="x"))
+    db.add(ProcessedRecord(record_hash=b"o" * 32, job_id="j", created_at=old))
+    db.add(ProcessedRecord(record_hash=b"n" * 32, job_id="j"))
     db.add(Execution(execution_id="done", pipeline_name="p", state="completed", completed_at=old))
     db.add(Execution(execution_id="live", pipeline_name="p", state="running"))
     db.add(Job(job_id="jd", execution_id="done", job_payload={}, state="completed"))
@@ -154,7 +150,7 @@ def test_a_sweep_purges_expired_hashes_and_executions_and_commits(sessions, capl
             scheduler.stop()
 
     db.expire_all()
-    assert [r.content_hash for r in db.query(ProcessedContent)] == ["new"]
+    assert [r.record_hash for r in db.query(ProcessedRecord)] == [b"n" * 32]
     assert [e.execution_id for e in db.query(Execution)] == ["live"]
     assert [j.job_id for j in db.query(Job)] == ["jl"]
     messages = [r.getMessage() for r in caplog.records]

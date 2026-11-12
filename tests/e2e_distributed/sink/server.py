@@ -61,6 +61,10 @@ def channel(name: str) -> Channel:
         return CHANNELS.setdefault(name, Channel())
 
 
+class _TruncatedBody(Exception):
+    """The request's body ended before its Content-Length."""
+
+
 def key_of(record: Any) -> Any:
     """The identity of a delivered record: ``id``, else ``data.id``, else the value."""
     if isinstance(record, dict):
@@ -84,6 +88,10 @@ class Handler(BaseHTTPRequestHandler):
     def _body(self) -> Any:
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length) if length else b""
+        if len(raw) < length:
+            # The client went away mid-body (a request cancelled in flight): a real
+            # server discards it, so must the ledger, or it shows as a bogus delivery.
+            raise _TruncatedBody(f"{len(raw)} of {length} body bytes")
         if not raw:
             return None
         try:
@@ -143,14 +151,20 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PUT(self) -> None:
         parts = self._parts()
-        body = self._body()
+        try:
+            body = self._body()
+        except _TruncatedBody as exc:
+            return self._send(400, {"error": f"incomplete body: {exc}"})
         if len(parts) == 3 and parts[0] == "record":
             return self._record(parts[1], parts[2], body)
         self._send(404, {"error": f"no route {self.path}"})
 
     def do_POST(self) -> None:
         parts = self._parts()
-        body = self._body()
+        try:
+            body = self._body()
+        except _TruncatedBody as exc:
+            return self._send(400, {"error": f"incomplete body: {exc}"})
         if len(parts) == 3 and parts[0] == "record":
             return self._record(parts[1], parts[2], body)
         if len(parts) == 2 and parts[0] == "ingest":

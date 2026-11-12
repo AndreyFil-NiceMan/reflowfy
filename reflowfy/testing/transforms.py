@@ -2,10 +2,11 @@
 
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
+from reflowfy.core.async_utils import run_coroutine_sync
 from reflowfy.core.types import Record, Records, wrap_as_record
 from reflowfy.execution.transformation_runner import (
     AppliedStep,
-    apply_transformations_iteratively,
+    apply_transformations_iteratively_async,
 )
 
 
@@ -26,7 +27,9 @@ def run_step(
     step: Any, records: List[Any], runtime_params: Dict[str, Any]
 ) -> Tuple[List[Any], AppliedStep]:
     """Run one transformation instance exactly as a job would run it."""
-    out, applied = apply_transformations_iteratively(_OneStep(step), records, runtime_params)
+    out, applied = run_coroutine_sync(
+        apply_transformations_iteratively_async(_OneStep(step), records, runtime_params)
+    )
     return out, applied[0]
 
 

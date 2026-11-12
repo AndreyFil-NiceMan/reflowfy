@@ -11,8 +11,9 @@ class TransformationRegistry:
     """
     Thread-safe singleton registry for transformations.
 
-    Transformations are automatically registered via metaclass when defined.
-    Workers use this registry to load transformations by name from job metadata.
+    Transformations are automatically registered via metaclass when defined. The
+    framework does not read it at runtime: the worker gets a job's transformations
+    from the pipeline's ``define_transformations``, not by name.
     """
 
     _instance: "Optional[TransformationRegistry]" = None

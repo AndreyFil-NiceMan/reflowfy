@@ -7,8 +7,7 @@ import httpx
 import pytest
 
 from reflowfy.destinations.api import ApiDestination, api_destination
-from reflowfy.destinations.base import DestinationError
-from reflowfy.destinations.schemas import ApiDestinationConfig
+from reflowfy.destinations.base import DestinationError, PermanentDestinationError
 
 
 class TestApiDestinationFactory:
@@ -41,22 +40,6 @@ class TestApiDestinationFactory:
     def test_batch_requests_kwarg_rejected(self):
         with pytest.raises(TypeError):
             api_destination(url="https://api.example.com", batch_requests=True)
-
-
-class TestApiDestinationConfig:
-    def test_valid_config(self):
-        cfg = ApiDestinationConfig(url="https://api.example.com/webhook")
-        assert cfg.url == "https://api.example.com/webhook"
-        assert cfg.method == "POST"
-        assert cfg.body is None
-
-    def test_invalid_url_raises(self):
-        with pytest.raises(Exception):
-            ApiDestinationConfig(url="not-a-url")
-
-    def test_body_accepts_dict_and_list(self):
-        assert ApiDestinationConfig(url="https://x.com", body={"a": 1}).body == {"a": 1}
-        assert ApiDestinationConfig(url="https://x.com", body=[1, 2]).body == [1, 2]
 
 
 class TestSendVerbatim:
@@ -164,16 +147,17 @@ class TestErrorHandling:
         return api_destination(url="https://api.example.com/ingest", body={"k": "v"})
 
     async def test_http_4xx_raises_destination_error(self, dest):
-        error_response = MagicMock()
-        error_response.status_code = 401
-        error_response.text = "Unauthorized"
-        http_error = httpx.HTTPStatusError("401", request=MagicMock(), response=error_response)
-        error_response.raise_for_status = MagicMock(side_effect=http_error)
+        error_response = httpx.Response(
+            401,
+            request=httpx.Request("POST", "https://api.example.com/ingest"),
+            text="Unauthorized",
+        )
         dest._client = MagicMock()
         dest._client.request = AsyncMock(return_value=error_response)
-        with pytest.raises(DestinationError) as exc_info:
+        with pytest.raises(PermanentDestinationError) as exc_info:
             await dest.send([{"id": 1}])
-        assert "401" in str(exc_info.value)
+        assert "HTTP 401 Unauthorized (text/plain, 12 bytes)" in str(exc_info.value)
+        assert isinstance(exc_info.value, DestinationError)
 
     async def test_network_error_raises_destination_error(self, dest):
         dest._client = MagicMock()
@@ -284,9 +268,9 @@ class TestPerRecord:
     async def test_missing_placeholder_field_fails_without_request(self, mock_response):
         dest = api_destination(url="https://api.example.com/users/{user_id}", per_record=True)
         calls = await self._capture(dest, mock_response)
-        with pytest.raises(ValueError, match=r"\{user_id\}.*record 2"):
+        with pytest.raises(ValueError, match=r"\{user_id\}.*record 2 of 2"):
             await dest.send([{"user_id": 1}, {"name": "no id"}])
-        assert len(calls) == 1
+        assert calls == []  # every request is built before the first is sent
 
     async def test_placeholder_on_non_dict_record_fails(self, mock_response):
         dest = api_destination(url="https://api.example.com/{id}", per_record=True)
@@ -294,21 +278,24 @@ class TestPerRecord:
         with pytest.raises(ValueError):
             await dest.send(["raw line"])
 
-    async def test_failure_names_the_record_and_stops(self):
+    async def test_failure_names_the_record_and_stops(self, monkeypatch):
+        monkeypatch.setenv("TRANSFORM_CONCURRENCY", "1")  # one at a time: the stop is visible
         ok = MagicMock()
         ok.raise_for_status = MagicMock()
-        bad = MagicMock()
-        bad.status_code = 404
-        bad.text = "Not Found"
-        bad.raise_for_status = MagicMock(
-            side_effect=httpx.HTTPStatusError("404", request=MagicMock(), response=bad)
+        bad = httpx.Response(
+            404,
+            request=httpx.Request("PUT", "https://api.example.com/2"),
+            json={"error": "no such user", "id": 2},
         )
         dest = api_destination(url="https://api.example.com/{id}", per_record=True)
         dest._client = MagicMock()
         dest._client.request = AsyncMock(side_effect=[ok, bad, ok])
-        with pytest.raises(DestinationError) as exc_info:
+        with pytest.raises(PermanentDestinationError) as exc_info:
             await dest.send([{"id": 1}, {"id": 2}, {"id": 3}])
-        assert str(exc_info.value) == "Destination 'api' error: record 2 of 3: HTTP 404: Not Found"
+        assert str(exc_info.value).startswith(
+            "Destination 'api' error: record 2 of 3: HTTP 404 Not Found (application/json, 31 bytes)"
+        )
+        assert "no such user" not in str(exc_info.value)  # the body stays out of the message
         assert dest._client.request.await_count == 2
 
     async def test_health_check_probes_url_before_first_placeholder(self):
@@ -357,9 +344,9 @@ class TestPerRecord:
             url="https://api.example.com", per_record=True, params={"v": "{version}"}
         )
         calls = await self._capture(dest, mock_response)
-        with pytest.raises(ValueError, match=r"params\['v'\].*\{version\}.*record 2"):
+        with pytest.raises(ValueError, match=r"params\['v'\].*\{version\}.*record 2 of 2"):
             await dest.send([{"version": 1}, {"id": 2}])
-        assert len(calls) == 1
+        assert calls == []
 
     async def test_param_placeholders_untouched_without_per_record(self, mock_response):
         dest = api_destination(url="https://api.example.com", params={"v": "{version}"})
@@ -418,7 +405,7 @@ class TestPerRecord:
     async def test_params_field_not_a_dict_fails_without_request(self, mock_response):
         dest = api_destination(url="https://api.example.com", per_record=True, params_field="q")
         calls = await self._capture(dest, mock_response)
-        with pytest.raises(ValueError, match=r"'q' on record 1 must be a dict.*str"):
+        with pytest.raises(ValueError, match=r"'q' on record 1 of 1 must be a dict.*str"):
             await dest.send([{"q": "a=1"}])
         assert calls == []
 
@@ -432,16 +419,6 @@ class TestPerRecord:
                 url="https://api.example.com", per_record=True, body_field="p", params_field="p"
             )
 
-    def test_unset_params_field_not_in_identity(self):
-        dest = api_destination(url="https://api.example.com", per_record=True)
-        assert "params_field" not in dest.identity_config()
-        dest = api_destination(url="https://api.example.com", per_record=True, params_field="q")
-        assert dest.identity_config()["params_field"] == "q"
-        dest = api_destination(url="https://api.example.com", per_record=True, body_field="k")
-        # Hashed under its old name, so the rename kept every dedup hash.
-        assert dest.identity_config()["key_field"] == "k"
-        assert "body_field" not in dest.identity_config()
-
     def test_body_with_per_record_rejected(self):
         with pytest.raises(ValueError, match="per_record"):
             api_destination(url="https://api.example.com", per_record=True, body={"a": 1})
@@ -450,27 +427,4 @@ class TestPerRecord:
         with pytest.raises(ValueError, match="per_record"):
             api_destination(url="https://api.example.com", body_field="payload")
 
-    def test_config_round_trips_through_factory(self):
-        from reflowfy.factories.destination_factory import DestinationFactory
 
-        dest = api_destination(
-            url="https://api.example.com/{id}",
-            per_record=True,
-            body_field="p",
-            params={"v": "{v}"},
-            params_field="q",
-        )
-        rebuilt = DestinationFactory.create("api", dest.config)
-        assert rebuilt.config == dest.config
-
-    def test_schema_accepts_per_record_fields(self):
-        cfg = ApiDestinationConfig(
-            url="https://x.com/{id}",
-            per_record=True,
-            body_field="p",
-            params={"v": "{v}", "n": 1},
-            params_field="q",
-        )
-        assert cfg.per_record is True
-        assert cfg.body_field == "p"
-        assert cfg.params_field == "q"

@@ -51,6 +51,24 @@ def plain_cli_output(monkeypatch):
     monkeypatch.setattr(console, "_color_system", None, raising=False)
 
 
+@pytest.fixture
+def uv_project(temp_workspace):
+    """Make the temporary workspace look like a `reflowfy init` project to the uv guard.
+
+    `reflowfy build` and `reflowfy run --build` refuse to start without
+    pyproject.toml and uv.lock (`cli.utils.check_uv_project`), because the service
+    images run `uv sync --locked`. These tests mock Docker, so the files only have
+    to exist. The guard itself is covered in tests/unit/test_init_env.py.
+
+    `temp_workspace` is defined per module (each CLI test file has its own).
+    """
+    with open(os.path.join(temp_workspace, "pyproject.toml"), "w") as f:
+        f.write('[project]\nname = "e2e-cli-test"\nversion = "0.1.0"\n')
+    with open(os.path.join(temp_workspace, "uv.lock"), "w") as f:
+        f.write("version = 1\n")
+    return temp_workspace
+
+
 def pytest_configure(config):
     """Add custom markers."""
     config.addinivalue_line(

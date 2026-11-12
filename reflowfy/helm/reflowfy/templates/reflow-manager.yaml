@@ -77,6 +77,7 @@ spec:
               protocol: TCP
           env:
             {{- include "reflowfy.observability.env" . | nindent 12 }}
+            {{- include "reflowfy.auth.env" . | nindent 12 }}
             - name: HOST
               value: "0.0.0.0"
             - name: PORT
@@ -95,8 +96,6 @@ spec:
             {{- if .Values.kafka.sasl.enabled }}
             {{- include "reflowfy.kafka.saslEnv" . | nindent 12 }}
             {{- end }}
-            - name: MAX_JOBS_PER_MINUTE
-              value: {{ .Values.reflowManager.maxJobsPerMinute | quote }}
             - name: PIPELINE_MODULE
               value: {{ .Values.reflowManager.pipelineModule | quote }}
             - name: LOG_LEVEL

@@ -1,21 +1,19 @@
 """Database connection and session management."""
 
 import logging
-import os
 import re
 import time
 from typing import Generator
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import QueuePool
-from reflowfy.reflow_manager.db_settings import sync_connect_args
-from reflowfy.reflow_manager.models import Base
+from reflowfy.store.db_settings import database_url, sync_connect_args
+from reflowfy.store.models import Base
 
 logger = logging.getLogger(__name__)
 
 
-# Database URL from environment
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://reflowfy:reflowfy@localhost:5432/reflowfy")
+DATABASE_URL = database_url()
 
 # Create engine with connection pooling
 engine = create_engine(
@@ -29,7 +27,6 @@ engine = create_engine(
     connect_args=sync_connect_args(DATABASE_URL),
 )
 
-# Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -93,8 +90,22 @@ def _apply_column_migrations() -> None:
         # Dispatch-loop ownership lease (one loop per execution, takeover when stale)
         "ALTER TABLE executions ADD COLUMN IF NOT EXISTS driver_id VARCHAR(255)",
         "ALTER TABLE executions ADD COLUMN IF NOT EXISTS driver_heartbeat_at TIMESTAMP",
-        # Planning finished (NULL = an execution from before this column: treat as planned)
-        "ALTER TABLE executions ADD COLUMN IF NOT EXISTS plan_complete BOOLEAN",
+        # Planning finished: False while the manager saves the jobs, True once all are saved
+        "ALTER TABLE executions ADD COLUMN IF NOT EXISTS plan_complete BOOLEAN NOT NULL "
+        "DEFAULT FALSE",
+        # The delivery that owns a running job (fences a worker whose lease expired)
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS claimed_by VARCHAR(64)",
+        # job_retry: a retried job is pending but not dispatched before this time
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMP",
+        # Lifecycle hooks: fired exactly once (claimed by setting hooks_fired_at), errors kept
+        "ALTER TABLE executions ADD COLUMN IF NOT EXISTS hooks_fired_at TIMESTAMP",
+        "ALTER TABLE executions ADD COLUMN IF NOT EXISTS hook_error TEXT",
+        # Chaining: the execution whose hook started this one
+        "ALTER TABLE executions ADD COLUMN IF NOT EXISTS parent_execution_id VARCHAR(255)",
+        # /run callback_url, POSTed the execution summary once it ends
+        "ALTER TABLE executions ADD COLUMN IF NOT EXISTS callback_url TEXT",
+        "CREATE INDEX IF NOT EXISTS idx_executions_parent_execution_id "
+        "ON executions(parent_execution_id)",
         # Retention sweeper filters on completed_at; partial index skips unfinished rows
         "CREATE INDEX IF NOT EXISTS idx_executions_completed_at "
         "ON executions(completed_at) WHERE completed_at IS NOT NULL",
@@ -150,8 +161,3 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
-
-
-def close_db() -> None:
-    """Close database engine."""
-    engine.dispose()

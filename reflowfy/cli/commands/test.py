@@ -12,6 +12,7 @@ what a test asserts and what production does; this module only presents it.
 """
 
 import importlib.util
+import inspect
 import json
 import logging
 import os
@@ -31,8 +32,11 @@ if TYPE_CHECKING:  # Runtime imports stay lazy — these are only for annotation
 from reflowfy.cli.utils import console
 from reflowfy.core.exceptions import PipelineError
 from reflowfy.core.async_utils import run_coroutine_sync
+from reflowfy.core.planning import chunk
+from reflowfy.destinations.pool import loop_pool_scope
 from reflowfy.execution.job_runner import preview_runtime_params
-from reflowfy.execution.transformation_runner import AppliedStep
+from reflowfy.execution.transformation_runner import SKIPPED_MODE, AppliedStep
+from reflowfy.sources.static import StaticSource
 from reflowfy.observability.logging import get_logger, setup_logging
 from reflowfy.transformations.base import TransformationError, top_skip_reasons
 
@@ -99,6 +103,7 @@ class BatchReport:
                     "name": s.name,
                     "records_in": s.records_in,
                     "records_out": s.records_out,
+                    "mode": s.mode,
                     "duration_ms": round(s.duration * 1000, 3),
                     "records_skipped": s.records_skipped,
                     "skip_reasons": dict(s.skip_reasons or {}),
@@ -172,6 +177,13 @@ def summarize(value: Any, verbose: int) -> str:
 def render_steps(report: BatchReport, opts: TestOptions, indent: str = "") -> None:
     """One line per transformation: real in/out counts, and timing under -v."""
     for step in report.applied:
+        if step.mode == SKIPPED_MODE:
+            # Shown whatever the verbosity: "why didn't my step run?" is the question.
+            console.print(
+                f"{indent}  [dim]– {step.name}  not applied "
+                f"(should_apply_transformation declined it)[/dim]"
+            )
+            continue
         delta = step.delta
         if delta < 0:
             change = f"[yellow]{delta}[/yellow]"
@@ -322,9 +334,21 @@ def _send_job(
     console.print(f"{indent}[bold]📤 Destination:[/bold] {summarize(destination, opts.verbose)}")
 
     async def _send() -> None:
-        if not await destination.health_check():
-            raise PipelineError("destination health check failed")
-        await destination.send_with_retry(records, job_params)
+        # Closed in the same loop that sent: a Kafka producer belongs to its loop,
+        # and an unclosed one leaks a connection per job. So the connection pool
+        # is this job's too, closed when the scope ends.
+        async with loop_pool_scope():
+            try:
+                if not await destination.health_check():
+                    raise PipelineError("destination health check failed")
+                await destination.send_with_retry(records, job_params)
+            finally:
+                # A duck-typed destination may have no close().
+                close = getattr(destination, "close", None)
+                if close is not None:
+                    closed = close()
+                    if inspect.isawaitable(closed):
+                        await closed
 
     run_coroutine_sync(_send())
     report.sent = True
@@ -356,7 +380,7 @@ def run_batch(
     whether to stop or carry on to the next batch.
     """
     from reflowfy.testing.cassette import Session, activate, current_session
-    from reflowfy.testing.runner import execute
+    from reflowfy.testing.runner import execute, private_copy
 
     report = BatchReport(label=label, source_repr=repr(source))
 
@@ -366,7 +390,7 @@ def run_batch(
     def go(session: Session) -> None:
         # A private copy: the run instruments define_transformations on it.
         result = execute(
-            pipeline.fork(),
+            private_copy(pipeline),
             flat_params,
             lambda: source,
             session,
@@ -952,7 +976,7 @@ def run_id_batches(
         raise typer.Exit(1)
 
     batch_size: int = pipeline.ids_batch_size
-    id_batches: List[List[Any]] = [ids[i : i + batch_size] for i in range(0, len(ids), batch_size)]
+    id_batches = chunk(ids, batch_size)
     console.print(
         f"\n[bold]🔑 IdBasedPipeline: {len(ids)} ID(s) in {len(id_batches)} batch(es) "
         f"(ids_batch_size={batch_size})[/bold]"
@@ -965,13 +989,9 @@ def run_id_batches(
         label = f"Batch {number}/{len(id_batches)}: {id_batch}"
         console.print(f"\n[bold cyan]━━━ {label} ━━━[/bold cyan]")
 
-        # Fresh per-batch copy so define_source enrichments don't accumulate.
-        flat = dict(flat_base)
-        flat["current_ids"] = list(id_batch)
-        flat["current_id"] = id_batch[0] if id_batch else None
-
         try:
-            source = pipeline.resolve_source(flat)
+            # The manager's own batch planner, so the preview cannot drift from it.
+            planned = pipeline.plan_batch(flat_base, id_batch)
         except Exception as exc:  # noqa: BLE001 — reported, not swallowed
             report = BatchReport(label=label, error=exc)
             reports.append(report)
@@ -980,6 +1000,10 @@ def run_id_batches(
                 break
             continue
 
+        source = planned.source
+        if isinstance(source, list):
+            source = StaticSource(cast(List[Any], source))
+        flat = {**flat_base, **planned.params}
         console.print(f"  [bold]🔌 Source:[/bold] {summarize(source, opts.verbose)}")
         render_params(flat, opts, indent="  ")
 

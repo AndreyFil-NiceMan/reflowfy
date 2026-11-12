@@ -70,6 +70,10 @@ class FakeConsumer:
         self.stop_requests += 1
         self._running = False
 
+    @property
+    def stop_requested(self) -> bool:
+        return self.stop_requests > 0
+
     async def start(self) -> None:
         self.gauge_while_running = metrics.active_workers._value.get()
         if FakeConsumer.start_error is not None:
@@ -216,6 +220,17 @@ def test_second_signal_exits_immediately(harness):
     assert excinfo.value.code == 1
     assert consumer.stop_requests == 1  # not asked again
     assert "Second shutdown signal, exiting now" in logs
+
+
+def test_first_signal_while_still_connecting_drains_not_exits(harness):
+    """Before the consumer connects nothing is running yet; that is not a second signal."""
+    main_mod.main()
+    consumer = _consumer()
+    consumer._running = False  # still in the start-up backoff
+
+    harness.handlers[signal.SIGTERM](signal.SIGTERM, None)  # must not raise SystemExit
+
+    assert consumer.stop_requests == 1
 
 
 def test_active_worker_gauge_is_one_while_consuming_and_zero_after(harness):
