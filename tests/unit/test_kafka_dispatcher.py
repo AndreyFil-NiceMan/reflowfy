@@ -5,6 +5,7 @@ sent (on_sent + the return value), in order, and stops at the first transient se
 failure, so the caller leaves the remainder `pending` for the next call.
 """
 
+import ssl
 import asyncio
 import json
 import logging
@@ -146,7 +147,6 @@ class TestProducer:
 
         await d.dispatch_jobs_batch(_jobs(2), "p")
         await d.dispatch_jobs_batch(_jobs(2), "p")
-        await d.dispatch_job({"job_id": "single"}, "p")
 
         assert len(fake_producer.instances) == 1
         assert fake_producer.instances[0].kwargs == {
@@ -166,6 +166,20 @@ class TestProducer:
             "sasl_plain_password": "pw",
             "client_id": "svc",
         }
+
+    async def test_tls_without_sasl_keeps_the_protocol_and_gets_a_context(self, fake_producer):
+        """It used to drop security_protocol here and connect in plaintext."""
+        d = _dispatcher(security_protocol="SSL")
+        await d._get_producer()
+        kwargs = fake_producer.instances[0].kwargs
+        assert kwargs["security_protocol"] == "SSL"
+        assert isinstance(kwargs["ssl_context"], ssl.SSLContext)
+
+    async def test_sasl_ssl_gets_a_context(self, fake_producer):
+        """aiokafka refuses SASL_SSL without one; the job producer could not connect."""
+        d = _dispatcher(security_protocol="SASL_SSL", sasl_username="u", sasl_password="p")
+        await d._get_producer()
+        assert isinstance(fake_producer.instances[0].kwargs["ssl_context"], ssl.SSLContext)
 
     async def test_explicit_sasl_protocol_and_mechanism(self, fake_producer):
         d = _dispatcher(
@@ -298,28 +312,6 @@ class TestDispatchBatch:
 
     async def test_empty_batch(self, fake_producer):
         assert await _dispatcher().dispatch_jobs_batch([], "p") == 0
-
-
-# ---------------------------------------------------------------- dispatch_job
-
-
-class TestDispatchJob:
-    async def test_sends_one_job(self, fake_producer):
-        d = _dispatcher()
-        assert await d.dispatch_job({"job_id": "x"}, "p", rate_limit=5.0) is True
-        assert _sent_ids(fake_producer.instances[0]) == ["x"]
-        assert d.rate_limiter.consume_calls == [{"pipeline": "p", "rate_limit": 5.0}]
-
-    async def test_rate_limited_job_is_not_sent(self, fake_producer):
-        d = _dispatcher(tokens=0)
-        assert await d.dispatch_job({"job_id": "x"}, "p") is False
-        assert fake_producer.instances == []  # not even connected
-
-    async def test_kafka_error_returns_false(self, fake_producer):
-        d = _dispatcher()
-        await d._get_producer()
-        fake_producer.instances[0].errors["x"] = KafkaError("boom")
-        assert await d.dispatch_job({"job_id": "x"}, "p") is False
 
 
 # ---------------------------------------------------------------- close

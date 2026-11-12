@@ -30,7 +30,7 @@ uv run pytest tests/unit/test_api_destination.py::TestClassName::test_name -v   
 # Lint / format / type-check (line-length 100; mypy strict; pyright strict)
 uv run ruff check reflowfy/
 uv run black reflowfy/
-uv run mypy reflowfy/       # NOT clean: ~133 pre-existing errors, mostly no-untyped-def.
+uv run mypy reflowfy/       # NOT clean: ~99 pre-existing errors, mostly no-untyped-def.
                             # The bar for a change is "the count does not go up".
                             # `redundant-cast` is disabled in [tool.mypy]: mypy and
                             # pyright disagree about isinstance-narrowed Any, and the
@@ -68,7 +68,11 @@ three; none of them need new infrastructure:
 - **Log it** — `get_logger(__name__)`, `logger.info` for a decision a user would ask
   about ("why did nothing arrive?"), `debug` for volume. Inside the worker the job's
   `log_context` already binds execution_id/job_id/pipeline_name, so don't re-pass
-  them. Never log record contents or credentials.
+  them. Never log record contents or credentials. (Re-passing one in `extra=` used to raise
+  "Attempt to overwrite … in LogRecord" and fail the run; it now just replaces the bound
+  value.) Don't name an `extra` key after an ECS object (`service`, `host`, `log`,
+  `error`, …): the formatter moves it to `labels.<key>`, since Elasticsearch rejects
+  the whole line otherwise.
 - **Persist it on the job** — a new terminal outcome or a per-job number belongs in
   `JobStats` (`worker/executor.py`); it lands in the job row's `stats` JSON and is
   queryable after the fact. A log line alone is gone once it rotates.
@@ -100,13 +104,15 @@ HTTP POST /run → API (FastAPI) ──┐
               Worker pool (KafkaJobConsumer → executor) → Destinations
 ```
 
-- **`reflowfy/reflow_manager/`** — the orchestrator. `manager.py` (`ReflowManager`) is a slim coordinator composing `execution.py` (execution records), `job_manager.py` (job + checkpoint tracking), `rate_limiter.py` (token bucket), `dispatcher.py`/`local_dispatcher.py` (Kafka vs in-process), and `pipeline_runner.py` (runs the source, builds jobs). `app.py` is the FastAPI service exposing `/run`, plus routers for DLQ, stats, and schedules. SQL schemas live alongside as `schema.sql` and `dlq_schema.sql`.
+- **`reflowfy/reflow_manager/`** — the orchestrator. `manager.py` (`ReflowManager`) is a slim coordinator composing `execution.py` (execution records), `job_manager.py` (job + checkpoint tracking), `rate_limiter.py` (token bucket), `dispatcher.py`/`local_dispatcher.py` (Kafka vs in-process), and `pipeline_runner.py` (runs the source, builds jobs). `app.py` is the FastAPI service exposing `/run`, plus routers for DLQ, stats, and schedules. `start.py` is the one way an execution starts (`check_runnable`, then `drive_execution` in the background, which marks a crashed run `failed`): `/run`, `lifecycle.run_pipeline`, the cron scheduler and the DLQ (`PipelineRunner.start_pipeline`) all use it. The schema is the SQLAlchemy models plus the column migrations in `database.py`.
+- **`reflowfy/store/`** — persistence shared by the manager, the worker and content dedup: `models.py`, `db_settings.py` (`database_url()`, keepalive settings), `states.py` (`JobState`/`ExecutionState` string constants with their groups, `ExecutionState.FROM` — the states each execution state may be entered from — and `jobs_dispatched(counts)`) and `leases.py` (`JobLeases`: the worker heartbeat and the manager's job leases, read together; both services log `job_lease_too_short` at startup when the running lease is under 3 heartbeats).
 - **`reflowfy/worker/`** — `consumer.py` (`KafkaJobConsumer`) pulls jobs off Kafka; `executor.py` applies transformations and writes to the destination, reporting state back to Postgres directly.
 - **`reflowfy/api/`** — thin FastAPI front door that forwards run requests to the ReflowManager.
-- **`reflowfy/core/`** — the user-facing pipeline model. `abstract_pipeline.py` defines `AbstractPipeline` (with `define_source` / `define_transformations` / `define_destination` / `define_parameters` hooks). `id_based_pipeline.py` is a specialization for ID-range sharding. `execution_context.py` carries runtime params/metadata through a run.
+- **`reflowfy/core/`** — the user-facing pipeline model and the bottom of the import stack. `abstract_pipeline.py` defines `AbstractPipeline` (with `define_source` / `define_transformations` / `define_destination` / `define_parameters` hooks). `id_based_pipeline.py` is a specialization for ID-range sharding. `execution_context.py` carries runtime params/metadata through a run. Also the shared pieces everything above uses: the error hierarchy (`exceptions.py`, including `SourceError`/`DestinationError`/`TransformationError`, re-exported from their old modules), `record_steps.py` (record concurrency, skip-reason counting), `kafka_settings.py` (the one builder of aiokafka connection arguments + `KafkaSettings.from_env()`), `planning.py` (`chunk`).
+- **Import direction** (`tests/unit/test_layering.py`): `core` imports no connector or service; `sources`/`destinations`/`transformations` import no service and not each other; `store` imports no connector or service; `execution` and `worker` never import `reflow_manager`. There are no exceptions; a new upward import fails that test.
 - **`reflowfy/cli/`** — `typer` app (`main.py`); each subcommand registers itself from `commands/` (`init`, `new`, `run`, `build`, `check`, `deploy`, `test`).
 - **`reflowfy/sources/`, `destinations/`, `transformations/`** — built-in connectors plus the `@source`, `@destination`, `@transformation` decorators. `factories/` builds connector instances from serialized config.
-- **`reflowfy/execution/`** — `LocalExecutor` vs `DistributedExecutor` behind `base.py`'s `ExecutionStatus` / `ExecutionState` state machine.
+- **`reflowfy/execution/`** — the per-job core shared by the worker and `reflowfy test` (`job_runner.py`, `transformation_runner.py`), content dedup, and `DistributedExecutor` (the API's one client for the manager's `/run`: every route shares it and each call names its `mode`; `local` makes the manager use `LocalDispatcher`; its result is an `ExecutionStatus` with `store.states` string states).
 - **`reflowfy/helm/`** — packaged Helm charts (api / reflow-manager / worker) used by `reflowfy deploy` for OpenShift/Kubernetes (KEDA-autoscaled workers).
 
 ### Worker job message (v2 schema)
@@ -117,11 +123,13 @@ The manager dispatches a JSON message per planned slice on Kafka topic `reflow.j
 
 Pipelines register themselves with **no explicit registry calls**. `AbstractPipeline` uses a metaclass (`PipelineMeta`) that instantiates and registers any subclass defining a `name` attribute at class-definition time. If `__init__` raises (e.g. missing config), registration is **silently skipped** — a pipeline that fails to construct simply won't appear, with no error. The `pipeline_registry` (`core/registry.py`) is a thread-safe singleton and registration is idempotent by name.
 
-**The registered instance is shared — never `resolve()` it.** The registry holds one instance per pipeline and `resolve()` stores the plan on the instance (`_source`, `_resolved_params`). Executions of the same pipeline running at once in one manager process (a burst of `/run` calls, two schedules firing together) overwrote each other's plan: 16 simultaneous runs all got the wrong job count, most of them none, and finished `completed` having processed nothing. Callers resolve a private copy — `pipeline = pipeline.fork()` (`PipelineRunner`, `LocalExecutor`) — and `tests/unit/test_concurrent_executions.py` forces the interleaving. Anything new that stores per-execution state on a pipeline instance has the same problem.
+**The registered instance is shared, so planning is a value.** The registry holds one instance per pipeline. `resolve(params)` validates, applies defaults, calls `define_jobs` and returns a `ResolvedPlan(params, jobs, execution_only)` (`core/planning.py`), storing nothing on the pipeline. It used to store the plan on the instance (`_source`, `_resolved_params`), and executions of the same pipeline running at once (a burst of `/run` calls, two schedules firing together) overwrote each other's plan: 16 simultaneous runs all got the wrong job count, most of them none. `tests/unit/test_concurrent_executions.py` forces that interleaving. Each job of a plan is a `PlannedJob(source, params)`: `plan_slices` yields them, `reflowfy.job(records, **params)` builds one, `IdBasedPipeline.plan_batch` builds one per ID batch (the manager and `reflowfy test` both use it), and `ResolvedPlan.job_params(job)` is the one merge (execution params minus `execution_only_params` — `input_ids` for an ID-based pipeline — plus the job's own). Anything new that stores per-execution state on a pipeline instance reintroduces the bug.
 
 `PipelineMeta` also records the pipeline's params TypedDict (see below) from the subscripted base, reading `namespace["__orig_bases__"]` before it instantiates the class.
 
 `core/pipeline_discovery.py` (`discover_and_load_pipelines`) imports every module under the `PIPELINE_MODULE` directory (default `pipelines`) plus sibling `sources/`, `destinations/`, `transformations/` dirs, which triggers the metaclass and decorator registration. All three services call this on startup. In E2E, `PIPELINE_MODULE` is overridden to `tests.e2e.test_pipelines`.
+
+**Subfolders show in Swagger.** A pipeline in `pipelines/bob1_pipeline/pipeline1.py` gets its run route at `/pipelines/bob1_pipeline/<name>/run`, grouped under a `bob1_pipeline` Swagger tag (the folder alone, no `pipelines/` prefix) (`api/routes.py` `pipeline_folder`, from the class's `__module__` relative to `PIPELINE_MODULE`). There is no flat alias: a pipeline answers only on its folder path. Pipeline names stay globally unique; the folder is only for display and URLs. `GET /pipelines` reports `folder` and `run_path`. There is no per-pipeline `GET …/status` route (removed); use `GET /pipelines` or `/executions/{id}/status`.
 
 ### Typed runtime_params
 
@@ -129,19 +137,21 @@ Pipelines register themselves with **no explicit registry calls**. `AbstractPipe
 
 A pipeline declares its parameters **once**, as a type: `class MyPipeline(AbstractPipeline[MyParams])` where `MyParams(RuntimeParams, total=False)` adds its own keys. Every hook then receives `MyParams` instead of `Dict[str, Any]`, and `define_parameters()` is *derived* from it by `params_from_typeddict` (`core/abstract_pipeline.py`) — so validation, defaults, CLI prompts and the generated OpenAPI routes all follow from the same declaration. A hand-written `define_parameters()` override still wins.
 
-**Not declaring one is deprecated.** `PipelineMeta` raises a `DeprecationWarning` at class-definition time for any registered pipeline whose `_params_type` is `None`, naming the pipeline and the fix. A pipeline with no parameters of its own migrates with one token — `AbstractPipeline[RuntimeParams]` — so nobody needs an empty TypedDict. Every pipeline under `pipelines/` and `tests/e2e/test_pipelines/` is migrated; the remaining unsubscripted ones live in `tests/unit/` on purpose, as backward-compat canaries. Nothing raises: an unsubscripted pipeline still registers and runs.
+**Declaring one is the recommended style, not a requirement.** A pipeline with no parameters of its own uses `AbstractPipeline[RuntimeParams]`, so nobody needs an empty TypedDict. Every pipeline under `pipelines/` and `tests/e2e/test_pipelines/` declares one; an unsubscripted `AbstractPipeline` (many in `tests/unit/`) still registers and runs, with no warning, and its hooks get `Any`.
 
 Notes:
 - `P` defaults to `Any` (PEP 696, via `typing_extensions`), **not** to `RuntimeParams`. That is what keeps the ~130 unsubscripted `AbstractPipeline` subclasses working: defaulting to `RuntimeParams` makes every pre-existing hook annotated `Dict[str, Any]` a Liskov violation.
 - TypedDicts are closed, so a pipeline that declares `MyParams` must also declare the enrichment keys its own code *writes* into `runtime_params` (see `tests/e2e/test_pipelines/runtime_params_enrichment_pipeline.py`). Untyped pipelines are unaffected.
 - Reserved keys are all optional because the execution context is built per job: `define_source`/`define_jobs` run before `execution_id` et al. exist. Read them with `.get()`.
-- `IdBasedPipeline` injects **`input_ids`** (the caller's whole list) and declares that parameter for you — do not put it in `define_parameters()`. It lives on `RuntimeParams` beside `current_ids`/`current_id`, and `define_jobs` is the only hook that reads it: it runs once, before any job exists, so there is no "current" slice yet. The manager strips `input_ids` from each job before dispatch (`define_jobs` / `pipeline_runner.py`), so downstream hooks read `current_ids`/`current_id` — reading `input_ids` there would mean every job processing every ID. It was renamed from `ids` on 2026-08-23 so it no longer collides with pipelines that legitimately declare their own `ids` parameter (`pipelines/api_example_pipeline.py`); `IDBasedAPISource._get_all_ids` accepts either.
+- `IdBasedPipeline` injects **`input_ids`** (the caller's whole list) and declares that parameter for you — do not put it in `define_parameters()`. It lives on `RuntimeParams` beside `current_ids`/`current_id`, and `define_jobs` is the only hook that reads it: it runs once, before any job exists, so there is no "current" slice yet. No job receives `input_ids` (`IdBasedPipeline.execution_only_params`, applied by `ResolvedPlan.job_params`), so downstream hooks read `current_ids`/`current_id` — reading `input_ids` there would mean every job processing every ID. It was renamed from `ids` on 2026-08-23 so it no longer collides with pipelines that legitimately declare their own `ids` parameter (`pipelines/api_example_pipeline.py`); `IDBasedAPISource._get_all_ids` accepts either.
 - `BaseTransformation.apply` deliberately keeps `Dict[str, Any]` — a transformation is shared across pipelines, so it cannot name one pipeline's params type.
 - Worked examples: `typed_params_pipeline.py` (+ `tests/e2e/test_typed_params.py`), `id_based_api_advanced_pipeline_test.py`, `define_jobs_test_pipeline.py`. Derivation is unit-tested in `tests/unit/test_typed_runtime_params.py`.
 
 ### Typed records and hook returns
 
-`reflowfy` exports the names a pipeline author needs to annotate a hook without a deep import: `Record` (`Dict[str, Any]`), `Records` (`List[Record]`), `Transformations` (`Sequence[BaseTransformation]`), plus `BaseSource` and `BaseDestination`. They live in `core/types.py`.
+`reflowfy` exports the names a pipeline author needs to annotate a hook without a deep import: `Record` (`Dict[str, Any]`), `Records` (`List[Record]`), `Transformations` (`Sequence[BaseTransformation]`), plus `BaseSource` and `BaseDestination`. `Record`/`Records`/`TypedRecord` live in `core/types.py`; `Transformations` beside `BaseTransformation` in `transformations/base.py` (so `core` never imports transformations).
+
+**Top-level exports.** Everything a pipeline author touches is importable from `reflowfy`: connectors (`elastic_source`, `sql_source`, `s3_source`, `id_based_api_source`, `mock_source`, `kafka_destination`, `api_destination`, `console_destination`, `fan_out`), `secret`, `RetryConfig`/`JobRetryConfig`, `ExecutionSummary`/`run_pipeline`, and the errors (`PermanentDestinationError`, `SecretError`, `SourceRoundTripError`, `SqlTemplateError`, …). `s3_source` (optional boto3) and `run_pipeline` (pulls in the manager's database layer) load on first use through a module `__getattr__`, with `TYPE_CHECKING` imports so they stay typed; `tests/unit/test_top_level_exports.py` checks every `__all__` name resolves.
 
 They are aliases, not a second generic parameter. The framework's own signatures stay `List[Any]` because a source may yield non-dict records (raw S3 text, scalars), and `List[Any]` accepts a `Records`-annotated override — so `AbstractPipeline` did **not** need an `R` TypeVar next to `P`.
 
@@ -189,7 +199,7 @@ class OrdersPipeline(AbstractPipeline[OrderParams]):
 ```
 
 - **Validate only, strict.** Records are never replaced by pydantic's output: it would coerce (`"3.5"` → float) and silently drop undeclared keys. Strict means what passes is what the annotated code sees; an `int` still passes as `float`. Undeclared keys do not fail. One `TypeAdapter(List[T])` per type, cached; ~2.7 µs per record.
-- **After fetch** (`job_runner.check_record_type`): runs before `define_transformations`, which then sees only the kept records. `"fail"` raises `RecordValidationError` (a `PipelineError`): `record 3 of 50 does not match TypedRecord[Order]: data.amount: missing`. `"skip"` drops them the way `SkipRecord` does, reason `invalid data.amount: missing`. The check is reported as an `AppliedStep` named `record_type` with `mode="validate"`, so the worker, `LocalExecutor` and `reflowfy test` show its time and skips with no extra code; the worker leaves it out of the step names the legacy dedup hash uses.
+- **After fetch** (`job_runner.check_record_type`): runs before `define_transformations`, which then sees only the kept records. `"fail"` raises `RecordValidationError` (a `PipelineError`): `record 3 of 50 does not match TypedRecord[Order]: data.amount: missing`. `"skip"` drops them the way `SkipRecord` does, reason `invalid data.amount: missing`. The check is reported as an `AppliedStep` named `record_type` with `mode="validate"`, so the worker and `reflowfy test` show its time and skips with no extra code.
 - **After each step** (`validate_steps`, `transformation_runner._check_step_output`): the promised type comes from `step_output_type` — an explicit `output_type` class attribute (a record type, not a list; how a `BaseTransformation` subclass declares one), else the `@transformation` function's `-> List[X]` (or `Tuple[X, ...]`) or the `@record_transformation` function's `-> X | None`. `-> Records`, `List[Any]`, a `dict` type, no annotation or an unresolvable forward reference: unchecked. A mismatch is a bug in that step, so it **always** fails the job with `StepOutputError` (a `TransformationError` naming the step and `culprit_index`), whatever `on_invalid_record` says.
 - Reasons and messages name a field path and pydantic's error type, never a value; list positions inside a record become `[]` (`data.items[].price: float_type`) so reasons group.
 
@@ -199,8 +209,8 @@ Observability: a skip is the existing record-skip path — `records_skipped`/`re
 
 A transformation may be a coroutine. The per-job core is async
 (`run_job_records_async` / `apply_transformations_iteratively_async`) and the worker awaits it on
-its own event loop; the sync `run_job_records` / `apply_transformations_iteratively` that
-`LocalExecutor` and `reflowfy test` call drive the same coroutine through
+its own event loop; the sync `run_job_records` that
+`reflowfy test` calls drives the same coroutine through
 `core/async_utils.run_coroutine_sync` (one loop per job; on a helper thread when a loop is
 already running, e.g. inside FastAPI). Three kinds of step, freely mixed in one chain:
 
@@ -211,12 +221,17 @@ already running, e.g. inside FastAPI). Three kinds of step, freely mixed in one 
   `AsyncTransformation.apply` still works for sync callers. It is a separate method name
   because overriding sync `apply` with an `async def` is an LSP error.
 - **per_record** (`RecordTransformation.apply_record`, or `@record_transformation(name,
-  concurrency=, timeout=)` on an `async def f(record, params) -> record | None`): every record
+  concurrency=, timeout=, on_error=)` on an `async def f(record, params) -> record | None`): every record
   awaited, `concurrency` at a time (default `TRANSFORM_CONCURRENCY`, 16) by a fixed pool of
   workers, not a task per record. Order is kept, `None` drops the record, the first failure
   cancels the rest and raises `TransformationError` with the exact `culprit_index` (via
-  `RecordFailure`), `SkipJob` from any record drops the job, and `raise SkipRecord("why")`
-  drops just that record *with* a reason (see below). Subclass it for a client shared by
+  `RecordFailure`) — or, with `on_error="skip"`, drops that record instead (see "Dropping a
+  record") — `SkipJob` from any record drops the job, and `raise SkipRecord("why")`
+  drops just that record *with* a reason (see below). It must return **one record (a `dict`,
+  so `Record`/`TypedRecord`) or `None`**: a list, tuple, string or scalar fails the job with
+  `record N: RecordContractError: returned list; a per-record step returns one record or None`
+  — a contract error, so `on_error="skip"` does not hide it (it used to pass a list on as one
+  "record"). Subclass it for a client shared by
   the step's records: `setup()` / `teardown()` run once around them. An `httpx.AsyncClient`
   costs ~40 ms of CPU to build, so one per record is slow *and* stalls the loop.
 
@@ -233,6 +248,34 @@ state or metric: its outcomes are the existing ones (the one new counter is for 
 `tests/e2e/test_async_transform.py` (the mock API counts lookups in flight),
 `tests/e2e_distributed/test_async_pipelines.py` (`dist_async`, per-job peak from the sink).
 
+### Authoring transformations: options and `should_apply_transformation`
+
+**Options.** A `@transformation` / `@record_transformation` function's parameters after
+`(records|record, runtime_params)` are options, given as keyword arguments when the step is
+built and passed to every call: `def multiply(records, params, *, factor)` is used as
+`multiply(factor=2)`. The constructor binds them against the function's signature
+(`inspect.signature(...).bind`, signature taken once at decoration), so an unknown or missing
+option raises `TypeError` naming the transformation inside `define_transformations`, not
+mid-job; they are kept on the instance as `.options`. `TransformFn` is
+`Callable[Concatenate[Any, Any, ...], Any]` (the per-record one returns
+`Awaitable[Mapping[str, Any] | None]`, `Mapping` so a TypedDict return is accepted): it still
+rejects a function with fewer than two positional parameters, and admits the options.
+`validate_steps` keeps reading the function's return annotation (`_transform_fn`).
+
+**`should_apply_transformation(transformation, runtime_params, records)`** (a pipeline method,
+default yes) is asked before each step, in a thread like other sync user code, with the records
+as they are at that point. A declined step keeps its position — it counts as applied, so
+re-resolution never offers it again (append-only rule) — and is reported as an `AppliedStep`
+with `mode="skipped"` (`SKIPPED_MODE`), `records_in == records_out`, `duration` = the hook's
+time; it is not run and not validated. The hook is not called at all when the pipeline does
+not override it (no thread hop). If it raises, the job fails with a `TransformationError`
+naming the step ("should_apply_transformation raised KeyError: …"); `SkipJob` drops the job.
+Observability: info log `transform_declined` from the runner (so the worker and
+`reflowfy test` both have it), the worker's existing `transform_applied` debug line with
+`mode=skipped`, `reflowfy test` prints `– <step>  not applied (should_apply_transformation
+declined it)` at any verbosity and `"mode"` per step in `--json`. No job state or metric: the
+job's outcome is unchanged. Tests: `tests/unit/test_transformation_authoring.py`.
+
 ### Dropping a record
 
 `raise SkipRecord("why")` inside a per-record transformation drops that one record; the job goes
@@ -240,13 +283,18 @@ on. Returning `None` drops it silently (a filter); `SkipRecord` keeps the reason
 returns its skips beside its records (`RecordTransformation.apply_records` → `RecordResults`), so
 nothing is stored on the shared transformation instance. Raised from a sync or whole-batch async
 step it fails the job saying to use `@record_transformation` (there is no "current record"
-there). Observability: `AppliedStep.skip_reasons`; the worker logs `Job <id>: <step> skipped N
+there). `@record_transformation(..., on_error="skip")` (subclass form: `on_error = "skip"` class
+attribute, checked at class definition; the decorator checks its value at decoration) drops a
+record whose call raised — a timeout included — through the same path, reason
+`type(exc).__name__` (never the message: it can carry record values, and reasons are counted),
+the same semantics as `@record_destination`'s `on_error`. `"fail"` is the default; `SkipJob` and
+`SkipRecord` keep their meaning either way, and a wrong return type still fails. Observability: `AppliedStep.skip_reasons`; the worker logs `Job <id>: <step> skipped N
 records ('reason' xN, …)`, stores `records_skipped` and `record_skip_reasons` in the job's
 `stats`, and counts `reflowfy_records_skipped_total{pipeline, transformation}` — a new counter,
 because a record outcome has no place on the per-job `jobs_processed_total` and adding a label to
 `records_processed_total` would break its existing series. Reasons are counted, so they must be
 short fixed phrases: at most 20 distinct per step (the rest go to "(other reasons)"), 200
-characters each. `LocalExecutor` and `reflowfy test` show them too (`--json`: `records_skipped` and `skip_reasons` per step). `reflowfy test` also logs both skips with the worker's events (`records_skipped`, `job_dropped`, plus `jobs_dropped` in `--json`), so `LOG_DESTINATION=elastic` ships them from a CLI run as `service.name: cli`. That works because `ElasticLogHandler` registers `close()` with `atexit` itself and drains its queue there: left to `logging.shutdown`, urllib3's own exit hooks emptied the client's pool first and a short process shipped nothing.
+characters each. `reflowfy test` shows them too (`--json`: `records_skipped` and `skip_reasons` per step). `reflowfy test` also logs both skips with the worker's events (`records_skipped`, `job_dropped`, plus `jobs_dropped` in `--json`), so `LOG_DESTINATION=elastic` ships them from a CLI run as `service.name: cli`. That works because `ElasticLogHandler` registers `close()` with `atexit` itself and drains its queue there: left to `logging.shutdown`, urllib3's own exit hooks emptied the client's pool first and a short process shipped nothing.
 
 ### Testing user pipelines (`reflowfy.testing`)
 
@@ -306,7 +354,7 @@ worker calls `send(records)` once. `kafka_destination` already writes one messag
 record. `api_destination` by default sends **one request per job** with `body=` verbatim
 (build it from `records`). `api_destination(url=".../users/{user_id}", per_record=True)`
 works like Kafka instead: one request per record, the record as the body (`body_field="x"`
-sends only `record["x"]`; it was `key_field=` until 1.1.2 and was renamed, no alias), and `{field}` placeholders in the URL filled
+sends only `record["x"]`), and `{field}` placeholders in the URL filled
 from each record, URL-encoded (a missing field fails the job, not retried). A retry
 re-sends the whole job, so the endpoint should be idempotent. Errors name the record's
 position (`record 2 of 3: HTTP 404 …`), never its contents. Query params are per record
@@ -315,24 +363,189 @@ alone keeps the value's type, so a list repeats the param; httpx does the encodi
 `params_field="query"` merges the dict in `record["query"]` over `params` (`None` value
 removes a key) and leaves that field out of the body. Same failure rule as the URL: a
 missing placeholder field or a non-dict `params_field` fails the job before its request.
-Unset `params_field` is dropped from `identity_config()`, and `body_field` is hashed under
-its old key `key_field` so the rename kept every hash. No `dedup_identity` needed:
-the records are not in the config. Tests: `tests/unit/test_api_destination.py::TestPerRecord`.
+Its `identity_config()` is the whole config. No `dedup_identity` needed: the records are not
+in the config.
 
-**`concurrency=N`** (both `kafka_destination` and per-record `api_destination`, default 1)
-keeps N messages/requests in flight per job through `core/async_utils.for_each_concurrently`
-— the same fixed worker pool record transformations use, not a task per record. 1 is the old
-behaviour exactly (one at a time, in order); above 1 records start in order but may land
-out of order, and the first failure cancels the rest. It is not part of the dedup hash:
-`BaseDestination.identity_config()` is what `destination_identity` hashes, and destinations
-drop tuning knobs there. `ApiDestination` also drops `per_record`/`body_field` when unset,
-so adding those keys did not change every existing destination's hash (which would have
-re-sent the last 24 h of records once after upgrade). A new config key on a destination
-needs the same treatment. Tests: `tests/unit/test_destination_concurrency.py`; E2E
+**Errors (behaviour change, 2026-11).** A 4xx other than 408/425/429 raises
+`PermanentDestinationError` (`destinations/base.py`, a `DestinationError` subclass) and is
+**not retried** — it used to be retried `max_attempts` times. 5xx, 408/425/429 and connection
+errors are retried; a 429/503 `Retry-After` (seconds or HTTP date, `core/http_errors.py`) replaces
+the backoff, capped at `retry_config.max_wait_seconds` (`DestinationError.retry_after`, read by
+`BaseDestination.send_with_retry`). Messages carry no response body: `HTTP 404 Not Found
+(application/json, 812 bytes)` (`describe_response`); the body is a debug log, 200 characters
+(`log_response_body`). The `id_based_api` source formats its errors the same way. The health
+check probes once more after `health_retry_delay` (1 s) before failing, and in a pool a healthy
+result is cached 30 s per `health_key()`. Tests: `tests/unit/test_api_destination_errors.py`. Headers are per record too: a `headers` value with a
+`{field}` placeholder is filled per request (the others ride on the client), or `headers=` is a
+function `record -> {str: str} | None` (per-record mode only; kept off `config`). A request
+passes `headers=` to httpx only when it has its own. Tests:
+`tests/unit/test_api_destination.py::TestPerRecord`, `test_destination_pool.py::TestPerRecordHeaders`.
+
+**No `concurrency=` on the destinations (removed in 1.1.4).** `kafka_destination` sends a
+job's messages as **one batch**: every message is handed to `producer.send()`, then all the
+ack futures are awaited together (`asyncio.gather`), so aiokafka batches them. Order on a
+partition is kept — aiokafka mutes a partition while its batch is in flight
+(`aiokafka/producer/sender.py`). A message refused on hand-over stops the loop; every future
+already handed over is still awaited; the error names `record N of M`. Measured on a local
+broker (1000 messages, 3 topics): 27–38 ms batched vs 259–725 ms at the old default of one
+ack at a time, and faster than the old `concurrency=16` (42–46 ms). Passing `concurrency=`
+raises a `TypeError` saying so (it would otherwise fall into `**producer_config`). A
+per-record `api_destination` keeps `send_concurrency` requests in flight — set by a
+`@record_destination`, else `default_record_concurrency()` (`TRANSFORM_CONCURRENCY`, 16) —
+through `core/async_utils.for_each_concurrently`, so requests may land out of order. Tests:
+`tests/unit/test_destination_concurrency.py`; E2E
 `tests/e2e/destinations/test_api_destination_per_record.py` (the mock webhook's
-`/items/<run>/<id>` counts requests open per job) and `test_kafka_destination_concurrency.py`
-(real broker, exactly-once and order at concurrency 1); distributed
+`/items/<run>/<id>` counts requests open per job; the pipeline's `concurrency` param wraps the
+destination in a `@record_destination` with that limit) and `test_kafka_destination_concurrency.py`
+(real broker: exactly-once and each job's order with batching); distributed
 `tests/e2e_distributed/test_destination_concurrency.py` (`dist_per_record`, sink `PUT /record/…`).
+
+**Per-record templates — one engine.** `core/record_templates.py` (`fill`, `fill_value`,
+`lookup`) is the only `{field}` filler: Kafka `headers=`/`key=`, API `url`/`params`/`headers=`.
+`{data.region}` walks nested dicts (a key containing the dot wins first); only `{` + dotted
+identifier + `}` is a placeholder, nothing is evaluated (not `str.format`). A missing field
+raises `TemplateError` (a `ValueError`: not retried) — `"<owner>: <what> placeholder {f} has no
+matching field on record N of M"`. Both destinations build every record's templates **before
+the first send**, so a bad record writes nothing (the API used to fill each request lazily and
+had sent the records before it).
+
+**Kafka value, key, headers.** `value_field="data"` sends `record["data"]` as the message
+value. `key=` sets the
+message key per record: a template (`"{customer_id}"`) or a function `record -> str | bytes |
+None`; like headers it is not in `identity_config()`, a template is `config["key"]`, a function
+stays off `config`. `kafka_destination(headers=...)` sets message headers: a `{name: str}`
+mapping, `{field}` placeholders filled from each record (`{"tenant": "{tenant_id}"}`), or a
+function `record -> {name: str | bytes | None} | None` for anything computed. Headers for every
+record are built before the first send, so a missing field or a function that raises fails the
+job (`ValueError`, not retried) with nothing written, naming the record's position, never its
+contents. They replace a metadata header of the same name (`reflowfy test` passes slice params
+as `metadata`). A static mapping is `config["headers"]` only when set; a function is kept off
+`config` (its repr is an address, like `ssl_context`). Neither is in `identity_config()`:
+headers describe the message, not where it goes, so adding them does not change the dedup hash.
+Tests: `tests/unit/test_kafka_destination_send.py::TestHeaders`; E2E
+`tests/e2e/destinations/test_kafka_destination_headers.py` (real broker: static, function and
+missing-field modes of `e2e_kafka_headers_test`, topic `e2e-kafka-headers`).
+
+### A destination per record: `@record_destination`
+
+`define_destination` runs once per job; `@record_destination("name", on_error="fail"|"skip",
+concurrency=None, timeout=None)` turns a function `(record, runtime_params, **options) -> BaseDestination`
+(sync or `async def`) into a `RecordDestination` subclass (`destinations/record.py`) that
+`define_destination` returns (`return stt_engines()`; kwargs become `options`). It is for
+records of one job going to different topics/clusters/credentials.
+
+- **Routing is a step of the job runner**, not of the send: `run_job_records_async` calls
+  `RecordDestination.route()` right after `define_destination`, so every record has its
+  destination before dedup and before the first send. It is reported as an `AppliedStep`
+  named after the destination with `mode="route"` (`job_runner.ROUTE_MODE`), so its time and
+  skips appear wherever a transformation's do (worker, `reflowfy test`).
+- **Grouping:** destinations with the same class, `config`, `retry_config` and `dedup_identity`
+  (`_group_key`, JSON) share one — 200 records over 3 topics open 3 producers. Records are
+  mapped to their group by `id(record)` (the route keeps them alive). Anything kept off
+  `config` (a Kafka `headers` function, `ssl_context`) comes from the group's first record.
+- **Failures:** `SkipRecord` skips with its reason; `on_error="skip"` skips any other exception
+  with `type(exc).__name__` as the reason (never the message: it can carry record values, and
+  reasons are counted); `"fail"` (default) raises `RecordDestinationError` (a `PipelineError`)
+  naming the destination, the record's position and the exception type. A return that is not a
+  `BaseDestination` (or is another `RecordDestination`) always fails. `SkipJob` drops the job.
+- **Shared connections (`destinations/pool.py` `ConnectionPool`).** One pool per
+  `RecordDestination` (per job, carrying its request budget), which takes its connections from
+  the event loop's pool when one is open (see "Connection pool per worker" below);
+  `_group_index` sets `connection_pool` and `send_concurrency` on every group. Kafka takes its producer from the pool keyed by `_connection_key()` (all
+  producer kwargs — cluster, credentials, compression, producer_config — **not** the topic; an
+  `ssl_context` is keyed by identity), API its client keyed by scheme+host, client headers and
+  timeout. `pool.get` creates each once under a per-key lock (groups send concurrently); the
+  pool, not the destination, closes them (a destination's `close()` only releases them). Keyed by host on
+  purpose: one client for the whole job measured ~20% slower than one per host (httpcore pool
+  contention). The shared client's keep-alive pool is sized to the concurrency (httpx keeps 20
+  by default and churned connections above it). `health_check` runs once per
+  `BaseDestination.health_key()` (Kafka: per cluster, or per topic+group when it measures lag;
+  API: per host + client settings; default `None`: every destination). Measured (200 records,
+  5 ms latency, plain HTTP): a destination per record went from 1,685 ms / 200 clients / 200
+  HEADs / 156 ms loop stall to 341 ms / 1 / 1 / 22 ms, the template pattern unchanged.
+- **One request budget.** `ConnectionPool(request_limit=effective_concurrency())` holds an
+  `asyncio.Semaphore` (created lazily, in the sending loop); a pooled per-record API destination
+  acquires it per request, so `concurrency` caps requests across **all** groups together (it
+  used to multiply: groups × each destination's own `concurrency`).
+- **Advice.** A job of `ADVICE_MIN_RECORDS` (10)+ records that built one destination per record
+  logs a warning once per record destination per process (`destination_per_record`): per-record
+  values belong in templates (encoding, grouping).
+- **Worker:** dedup hashes each record against **its own** destination
+  (`destination_identity(destination.destination_for(record))`), so one record to two topics is
+  two writes; after dedup the destination is **not** re-resolved for a `RecordDestination`
+  (each was built from its own record, and re-routing would count skips twice).
+  `send_with_retry` sends the groups through `for_each_concurrently` (the record
+  transformations' worker pool), each with its own retries, so a failing group does not
+  re-send the ones already written; the first failure cancels the sends in flight.
+  `health_check` (every group healthy) and `close` (all closed, first error raised after) run
+  through the same pool.
+- **Concurrency/timeout, as `@record_transformation`:** `effective_concurrency()` (the
+  decorator's `concurrency`, else `TRANSFORM_CONCURRENCY`, 16) is the request budget above, the
+  groups in flight and, for an `async def` function, records routed at once
+  (`AppliedStep.concurrency` reports the latter; `None` for a sync function, which routes
+  sequentially in one thread). `concurrency=1` sends one request / one group at a time. `timeout` (async only — a sync function in a
+  thread cannot be interrupted, so it raises `TypeError` at decoration) wraps each call in
+  `asyncio.wait_for` and turns a timeout into `TimeoutError("timed out after Ns")`, which then
+  follows `on_error` (reason/type `TimeoutError`).
+- Observability: the existing skip path (`records_skipped`/`record_skip_reasons`,
+  `reflowfy_records_skipped_total{transformation=<name>}`, the `… skipped N records` line);
+  `records_routed` info log `<name> routed N records to K destinations`; a warning when every
+  record was skipped; `destinations` (count) in the job's `stats`, present only for a record
+  destination. No new metric: a topic or cluster as a label is unbounded.
+- **Sending outside the worker.** `reflowfy test` sends and closes the destination in one
+  loop (a Kafka producer belongs to its loop).
+- **Several destinations per record.** The function may return a list (a multicast) or
+  `fan_out(d1, d2, optional=[d2])`: the record joins each group. A group is optional only
+  while every record that chose it said so; an optional group that fails (after its own
+  retries) or is unhealthy is logged (`destination_optional_failed` /
+  `destination_optional_unhealthy`) and appended to `failed_optional`, and the job completes.
+  Dedup claims one hash per (record, destination); a record already in one destination is
+  narrowed to the others with `keep_only`.
+- Tests: `tests/unit/test_record_destination.py`, `test_destination_pool.py`,
+  `test_record_templates.py`, `test_fan_out.py`; E2E
+  `tests/e2e/destinations/test_record_destination.py` (`e2e_record_destination_test`, one job to
+  topics `e2e-rd-whisper`/`-google`/`-azure`, in route, skip and fail modes).
+
+### Several destinations: a list or `fan_out`
+
+`define_destination` may return a list, or `fan_out(d1, d2, optional=[d2])`
+(`destinations/fan_out.py`): every record goes to each. `job_runner.run_job_records_async`
+turns a list into a `fan_out` (`as_destination`); `FanOut` is a `RecordDestination` whose
+function returns the same targets for every record, so routing, grouping, per-group retries,
+pooling, health checks and per-(record, destination) dedup are the record destination's
+(above). It is reported as a route step named `fan_out`. A required destination that fails fails
+the job; an optional one is logged and counted — `destinations_failed_optional` in the job's
+`stats`, present (like `destinations`) only for a record destination. No new metric: a
+destination is not a low-cardinality label, and the job's own outcome is still `completed`.
+Like any record destination it is **not** re-resolved after dedup drops records, so an
+`api_destination` whose body carries the records belongs in `per_record=True` mode there.
+`fan_out` / `PermanentDestinationError` are not exported from `reflowfy` yet (import them from
+`reflowfy.destinations.fan_out` / `.base`). Tests: `tests/unit/test_fan_out.py`.
+
+### Connection pool per worker
+
+`destinations/pool.py`. Every Kafka/API destination takes its producer/client from the event
+loop's `ConnectionPool` when one is open (`BaseDestination._active_pool`: its job's pool, else
+`loop_pool()`), keyed by `_connection_key()` — so jobs, executions and pipelines writing to the
+same cluster with the same credentials share one producer, and the same host with the same
+client settings one client; different credentials never share. Scopes: the worker opens one for
+its life (`KafkaJobConsumer.start`) and closes it after draining; `LocalDispatcher` opens one per
+execution loop and `close()` (end of the drive loop) closes it; `reflowfy test` uses `loop_pool_scope()` around one job's send. A producer belongs to its loop,
+so a pool never outlives one (`WeakKeyDictionary` by loop). Outside any scope a destination owns
+its connection as before.
+
+- `close()` on a destination **releases** (`_release_pooled`), never closes, a pooled
+  connection. A job still completes only after every ack (Kafka `send` awaits them all).
+- Idle eviction: unheld connections unused for `DESTINATION_POOL_IDLE_SECONDS` (default 300) are
+  closed on the next `get` and by a sweeper task. A destination that saw a connection fail
+  (Kafka send/ack error, httpx `TransportError`) calls `evict`, so the retry builds a new one;
+  an evicted connection still held is closed on its last release.
+- Health: `pool.cached_health(health_key, probe)` reuses a healthy result 30 s; an unhealthy one
+  is not cached; concurrent checks of a key share one probe.
+- Observability: info `pool_connection_created` / `pool_connection_evicted` (reason `idle` or
+  `error`) / `pool_closed`, debug `pool_connection_reused` (once per destination joining, not per
+  request). Keys are logged as `kafka#<hash>` — a Kafka key holds the SASL password. No metric.
+- Tests: `tests/unit/test_destination_loop_pool.py`.
 
 ### Execution modes
 
@@ -343,7 +556,7 @@ needs the same treatment. Tests: `tests/unit/test_destination_concurrency.py`; E
 `raise SkipJob("why")` from `source.fetch`, a transformation, `define_transformations`
 or `define_destination` to drop the current job: `run_job_records` catches it and
 returns the same empty-slice tuple an empty fetch does, so every caller (worker,
-`LocalExecutor`, `reflowfy test`) treats it as a no-op — no destination write, no
+`reflowfy test`) treats it as a no-op — no destination write, no
 failure. It subclasses `PipelineError`, so `pipeline_step` passes it through
 untouched; `transformation_runner` re-raises it instead of wrapping it in a
 `TransformationError`. The job records as `completed` with 0 records — there is no
@@ -355,7 +568,7 @@ key on `RuntimeParams`) rather than a 5th return value. The worker logs
 `Job <id>: dropped by pipeline (<reason>)` inside the job's `log_context`
 (execution_id/job_id/pipeline_name bound), stores `skip_reason` in the job's `stats`
 JSON, and counts it as `reflowfy_jobs_processed_total{status="skipped"}` — so a drop
-is not silently indistinguishable from an ordinary completed job. `LocalExecutor`
+is not silently indistinguishable from an ordinary completed job. `reflowfy test`
 logs the same reason.
 
 ### Elasticsearch window modes
@@ -364,6 +577,64 @@ logs the same reason.
 
 - `"snapshot"` (default): every job reads one PIT opened at planning, so the run sees the index as it was at the start, in exact `docs_per_job` windows. The PIT is shared state: an Elasticsearch restart, or workers stopped longer than `pit_keep_alive` (30m), destroys it and every remaining job fails with `No search context found`.
 - `"range"`: windows are value ranges `(a, b]` of the **first `sort` key** (which must be a real field — `_doc`, `_shard_doc`, `_score` or no sort raise), and each job opens its own 5-minute PIT, pages through its range and closes it. An ES restart fails only the jobs in flight — re-run them with `POST /executions/{id}/retry-failed`. Documents sharing a boundary value all fall in one window (sizes are approximate; an all-equal field degenerates to one big job), and documents indexed or deleted while the run progresses may or may not appear. Use it for long runs. `tests/unit/test_elastic_range_windows.py` checks exactly-once reads on tied values with a fake ES; `tests/e2e/sources/test_elastic_source.py::TestElasticRangeWindows` does it on a real index.
+
+### Custom sources
+
+A `BaseSource` subclass in the user's project runs on workers like a built-in one: every
+concrete subclass registers itself in `SourceFactory` under its class name when the class is
+defined (`BaseSource.__init_subclass__`; abstract ones are skipped), and discovery imports the
+module on every service. A source needs `fetch` and `health_check`, and usually `split`
+(default: one job). The legacy `split_jobs` (manager-side fetch) was removed; a user
+source that still defines it keeps working, but it is never called. The worker rebuilds each job's slice with the classmethod
+`from_config(config)`: `cls(**config)` by default, `cls(config)` when `__init__` keeps
+`BaseSource`'s `(self, config)` signature, or an override. `SourceFactory.serialize` proves
+that contract at planning, once per `(type, config keys)` shape per process
+(`check_round_trip`): JSON-encodable config, type registered to this very class, rebuild
+succeeds and gives the same config — otherwise `SourceRoundTripError` naming the fix, instead
+of every job failing on the worker. Two classes with one name log `source_type_replaced`.
+Tests: `tests/unit/test_custom_sources.py`; E2E `tests/e2e/test_custom_source.py`
+(`e2e_custom_source`).
+
+### SQL source: bound values, `| ident`
+
+`sql_source` query templates are rendered by `render_sql_template` (`sources/sql.py`), not the
+generic resolver: every `{{ expr }}` **value is a bind parameter** (`:reflowfy_p0`…), never
+spliced into the SQL. `'{{ x }}'` quoted on its own is bound in place of the literal (old
+templates keep working; a space keeps `::timestamp` after it parseable); a list/tuple is an
+expanding bind (`id IN {{ ids }}` or `IN ({{ ids }})`); a value in a comment is dropped; a
+missing parameter fails. **Identifiers need `{{ name | ident }}`** (validated
+`[A-Za-z_][A-Za-z0-9_.]*`): a plain `{{ }}` after `FROM`/`JOIN`/`INTO`/`UPDATE`/`TABLE`/`BY`/`AS`,
+next to a `.`, inside `"…"` or inside a longer `'…'` literal raises `SqlTemplateError`
+pointing at `| ident` — this was a behaviour change (it used to be string substitution, i.e.
+injection). `params={...}` binds hand-written `:name`s; `id_column` is validated as an
+identifier. `split()` wraps the rendered SQL (`WHERE id >= :reflowfy_lo AND id < :reflowfy_hi`)
+and each slice carries the SQL and every value in `config["params"]` with `template=False`, so
+the worker runs the same statement without the runtime params. One trailing `;` is dropped
+before any wrapping (and the wrappers put `)` on a new line, so a trailing `--` comment is
+harmless); `fetch(limit=n)` is `fetchmany(n)`. Tests: `tests/unit/sources/test_sql_binds.py`.
+
+### Secrets and API auth
+
+- **`secret("ENV")`** (`core/secrets.py`; export it from `reflowfy` in the exports PR) is a
+  `str` subclass holding the variable's value but remembering its name. `SourceFactory.serialize`
+  writes `{"$secret": "ENV"}`, `SourceFactory.create` reads the variable from the worker's own
+  environment (`SecretError` naming it if unset; no default, since a default would not travel).
+  The manager plans with it too (`split()` connects), so set it on both. A source config that
+  holds a *literal* credential when serialized logs `literal_secret_serialized` once per
+  pipeline/type/field.
+- **Redaction.** `BaseSource.secret_fields` names a source's credential keys (Sql:
+  `connection_url` — only the URL's password; Elastic: `auth`; S3: `aws_secret_access_key`;
+  API: `auth_token`, `headers`). `public_row(row)` (`reflow_manager/redaction.py`: `redact_row(row.to_dict())`) is how every route returns a stored row — `test_routes_return_stored_rows_only_through_public_row` fails on a bare `to_dict()` — and also masks URL passwords in `error_message`/`hook_error`. It hides `job_payload`/`runtime_params` in every
+  manager route returning job, execution, schedule or DLQ rows: declared fields, any
+  credential-named key at any depth (`password`, `token`, `api_key`, `Authorization`,
+  `secret`…) and the password of any `scheme://user:pass@host`. The stored rows are unchanged.
+- **`REFLOWFY_API_TOKEN`** (`core/api_auth.py`): set (non-blank) on the API and the manager,
+  every route but `/health` and `/metrics` needs `Authorization: Bearer <token>` (CORS
+  preflight passes; the token is read per request). The API's `DistributedExecutor` sends it
+  to the manager. Rejections log `auth_rejected` with `missing`/`invalid`, never the token.
+  Helm: `auth.apiToken` or `auth.existingSecret` (api + reflow-manager only); compose:
+  `${REFLOWFY_API_TOKEN:-}`. `/docs` is guarded too.
+- Tests: `tests/unit/test_secrets.py`, `tests/unit/test_api_auth_and_redaction.py`.
 
 ### Dispatch loop, leases and redelivery
 
@@ -375,11 +646,15 @@ Phase 1 (planning) is unchanged: jobs are streamed into Postgres in groups of `C
 - retries database errors with backoff (5 s doubling to 60 s) instead of exiting — the job rows are the state, so a Postgres restart just pauses dispatch;
 - runs in one event loop, so the Kafka producer is created once per execution.
 
-**Planning crashes.** Phase 1 holds a heartbeated lease on the execution (a thread refreshes `driver_heartbeat_at` every 10 s while planning blocks, e.g. enumerating 2M ES docs) and sets `executions.plan_complete` only after the last job is saved. A manager killed mid-plan leaves `plan_complete = false`, which used to look like "no unfinished jobs" and ended `completed` having processed nothing (or dispatched a fragment of the plan). Recovery (`PipelineRunner._recover_plan`, also for `pending` executions) waits while the planning lease is fresh — a rollout's old pod may still be planning — and once the lease is gone and the execution is older than `DRIVER_LEASE_SECONDS` it marks the execution `failed` with "The manager stopped while planning this execution… run it again". A plan cannot be continued (the source's position is not saved), so the fix is a new run. `plan_complete = NULL` (an execution from before the column) resumes as before.
+**Planning crashes.** Phase 1 holds a heartbeated lease on the execution (a thread refreshes `driver_heartbeat_at` every 10 s while planning blocks, e.g. enumerating 2M ES docs) and sets `executions.plan_complete` only after the last job is saved. A manager killed mid-plan leaves `plan_complete = false`, which used to look like "no unfinished jobs" and ended `completed` having processed nothing (or dispatched a fragment of the plan). Recovery (`PipelineRunner._recover_plan`, also for `pending` executions) waits while the planning lease is fresh — a rollout's old pod may still be planning — and once the lease is gone and the execution is older than `DRIVER_LEASE_SECONDS` it marks the execution `failed` with "The manager stopped while planning this execution… run it again". A plan cannot be continued (the source's position is not saved), so the fix is a new run. `plan_complete` is `NOT NULL DEFAULT FALSE`.
 
-**Dead database sessions.** Every Reflowfy connection asks the server to probe it with TCP keepalives (`reflow_manager/db_settings.py`: idle 30 s, 10 s × 3 probes, so a killed process's session is dropped in about a minute instead of the two-hour default). Without it a force-killed manager's `idle in transaction` session kept its locks, and the replacement's startup `ALTER TABLE … ADD COLUMN IF NOT EXISTS` queued behind it and never finished. Migrations now skip columns that exist (no lock taken) and give up after `lock_timeout` 5 s on the rest. `DB_SESSION_KEEPALIVES=false` turns the settings off (PgBouncer rejects startup options).
+**Dead database sessions.** Every Reflowfy connection asks the server to probe it with TCP keepalives (`store/db_settings.py`: idle 30 s, 10 s × 3 probes, so a killed process's session is dropped in about a minute instead of the two-hour default). Without it a force-killed manager's `idle in transaction` session kept its locks, and the replacement's startup `ALTER TABLE … ADD COLUMN IF NOT EXISTS` queued behind it and never finished. Migrations now skip columns that exist (no lock taken) and give up after `lock_timeout` 5 s on the rest. `DB_SESSION_KEEPALIVES=false` turns the settings off (PgBouncer rejects startup options).
 
-Job states: `pending → dispatched → running → completed | failed | deduplicated`. The **worker claims** a job before running it (`WorkerExecutor._claim_job`: `pending|dispatched → running`, `attempts + 1`). Any other delivery of that job — Kafka redelivery after a rebalance/scale-down/crash, or a lease re-send — sees it `running`/finished and is skipped, committed, logged and counted as `reflowfy_jobs_processed_total{status="redelivered"}`. A job with no row runs anyway, and the claim fails open on a DB error.
+Job states: `pending → dispatched → running → completed | failed | deduplicated` (or `running → pending` again when `job_retry` schedules a retry, see below). The **worker claims** a job before running it (`WorkerExecutor._claim_job`: `pending|dispatched → running`, `attempts + 1`). Any other delivery of that job — Kafka redelivery after a rebalance/scale-down/crash, or a lease re-send — sees it `running`/finished and is skipped, committed, logged and counted as `reflowfy_jobs_processed_total{status="redelivered"}`. A job with no row runs anyway, and the claim fails open on a DB error.
+
+**The claim fences the worker's writes.** It also writes a fresh token to `jobs.claimed_by` (kept on `JobStats.claim_token`), and the heartbeat, the final outcome and a `job_retry` write all require `state = 'running' AND claimed_by = <token>` (`WorkerExecutor._owned`); right before the send the worker checks it still owns the job (`_still_owns`, fails open). They used to match `job_id` alone, so a worker that stalled past its lease (GC pause, partition) overwrote a job that the sweep had requeued and another worker claimed, failed out of attempts, or that was cancelled after the requeue — and its heartbeat kept the new owner's lease alive. A delivery that lost its job sends nothing more, writes nothing, logs `job_claim_lost` and counts as `reflowfy_jobs_processed_total{status="superseded"}` (not `jobs_failed_total`); its stats are not stored (the row is the owner's). Dedup claims are not released then: they are keyed by `job_id`, which the owner shares. Tests: `tests/unit/test_state_transitions.py`.
+
+**Execution transitions are compare-and-set.** `ExecutionManager.update_execution_state` writes `UPDATE … WHERE state IN ExecutionState.FROM[to]` and returns None (log `execution_transition_refused`, no terminal listener) when it loses; nothing leaves a terminal state except `reopen_execution` (terminal → `running`, also CAS). The planner moves `pending → running` only (`from_states=`), and the drive loop settles the execution only while no job is pending/dispatched/running (`unless_jobs_unfinished`). These used to read, then write unconditionally: a `/cancel` that landed while the execution was still `pending` was overwritten by the planner and the run went ahead in full (with the cancel hook already fired), a pause racing the end turned `completed` into `paused`, the loop's final state could overwrite a cancel, and `/retry-failed` racing the loop's end left it `running` with no loop. Map of every state machine and what is still open: `docs/state-machines.md`.
 
 On SIGTERM the worker **drains**: it stops taking messages, lets the job in progress finish and commit, then leaves the consumer group (`KafkaJobConsumer.request_stop`; a second signal exits at once). A job longer than the pod's `terminationGracePeriodSeconds` (120 s in the chart) is still killed mid-way and re-run once its heartbeat lease expires, re-sending what it had already written.
 
@@ -389,11 +664,26 @@ On SIGTERM the worker **drains**: it stops taking messages, lets the job in prog
 
 `PATCH /executions/{id}/state` is an administrative override and accepts only `failed` (force-fail a stuck run, with `error_message`) and `cancelled`, from a non-terminal state. Every other state has an owner and answers 422 with a pointer to it: `completed` is set by the system once all jobs finished, `paused`/`running` by `/pause` and `/resume` (which also restart the loop), a retry by `/retry-failed`. It used to set any string and any transition, e.g. `running → completed` while a loop was dispatching, or `completed → running` with nothing driving it.
 
-**Pause during planning** cannot stop the planner half way — its position in the source lives in the manager's memory — so it means: planning finishes, nothing is dispatched until `/resume`.
+**Pause during planning** cannot stop the planner half way — its position in the source lives in the manager's memory — so it means: planning finishes, nothing is dispatched until `/resume`. That holds for a pause before planning starts too: the planner's `pending → running` loses, it plans anyway and the execution stays `paused`; a cancel or force-fail before then ends planning before it begins (`plan_aborted`).
 
-**Retrying failures.** Nothing retries a `failed` job by itself (the DLQ is not a failure sink). `POST /executions/{id}/retry-failed[?error_contains=text]` requeues the execution's failed jobs (attempts reset, error cleared), reopens the execution and restarts its loop; a retried job runs from scratch, so one that failed after a partial write sends those records again unless the run used `enable_duplicate_jobs=false`. A paused execution answers 409; a running one just picks the requeued jobs up.
+**Automatic retries (`job_retry`, opt-in).** A pipeline with `job_retry = JobRetryConfig(max_retries=2, backoff_seconds=30, multiplier=2, max_backoff_seconds=600, retry_on=..., never_retry=...)` (`core/job_retry.py`; also an `__init__` kwarg) has its failed jobs retried; `None` (default) changes nothing. The manager puts `config.to_dict()` (exception classes as import paths) in every job's `metadata["job_retry"]` and **the worker decides** (`WorkerExecutor._finish_failed_job`): the error — or anything in its `__cause__`/`original_error` chain — matches `retry_on` and not `never_retry` (which wins), and fewer than `max_retries` retries were scheduled (counted in the job's previous `stats`) → the job goes back to `pending` with `jobs.next_attempt_at = now + backoff` (exponential, capped; an error's `retry_after` is honoured up to the cap), `attempts` reset to 0, the error kept; otherwise `failed` as before. Defaults: `retry_on` = `SourceError`, `DestinationError`, `TimeoutError`, `ConnectionError`, `socket.gaierror`, `httpx.TransportError`; `never_retry` = `RecordValidationError`, `StepOutputError`, `PermanentDestinationError`, `KeyError`, `TypeError`, `ValueError` (so `TemplateError`) — bad data and bugs fail the same way every time. A failed health check counts as a `DestinationError`. A retry is not scheduled once the execution is cancelled/failed (the update is guarded on the execution's state). The drive loop only fetches pending jobs whose `next_attempt_at` has passed, and the execution cannot end while one waits (it is still `pending`); `mark_job_dispatched(sent_after=…)` leaves a retry scheduled after the send pending, and the worker's claim refuses a pending job whose backoff has not passed (an old message delivered again). Content-dedup claims are released on every failure, so the retry re-claims its records; a retried job runs from the start and re-sends what it had written unless `enable_duplicate_jobs = False`. Retries live on the manager/worker path (local and distributed); `reflowfy test` runs a job once. Observability: `Job failed (X), retry 1/2 in 30s` (`job_retry_scheduled`) / `… not retried: …` (`job_retry_exhausted`), `retry_count` + `error_history` (type + 200-char message, last 5) and `retry_scheduled`/`retry_in_seconds` in the job's `stats` (only for a `job_retry` pipeline; a job that succeeds after retries keeps `retry_count`/`error_history`, so it does not look like a first-time success), `reflowfy_jobs_processed_total{status="retry_scheduled"}` (and not `jobs_failed_total` until the final failure), `jobs_retry_scheduled` in `/executions/{id}/stats`. Tests: `tests/unit/test_job_retry.py`, `test_job_retry_worker.py`.
 
-The `/run` `rate_limit` override is persisted on the execution (`executions.rate_limit`) and reused when a restarted manager resumes it.
+**`job_retry` vs `JOB_MAX_ATTEMPTS`.** Two different things, side by side: `JOB_MAX_ATTEMPTS` caps how often a job whose **worker disappeared** (no heartbeat, never reported) is re-run by the lease sweep; `job_retry.max_retries` caps how often a job that **failed with an error** is re-run. Each scheduled retry resets `attempts`, so it gets the full lease budget again.
+
+**Retrying failures by hand.** Without `job_retry` nothing retries a `failed` job by itself (the DLQ is not a failure sink). `POST /executions/{id}/retry-failed[?error_contains=text]` requeues the execution's failed jobs (attempts reset, error cleared), reopens the execution and restarts its loop; a retried job runs from scratch, so one that failed after a partial write sends those records again unless the run used `enable_duplicate_jobs=false`. A paused execution answers 409; a running one just picks the requeued jobs up. The route requeues first and then reopens (CAS from terminal), starting a loop only when the reopen won.
+
+**Rate limit.** `pipeline_runner.resolve_rate_limit`: the `/run` `rate_limit` override > the rate persisted on the execution > `pipeline.define_rate_limit(params)` > the `rate_limit` attribute (`define_rate_limit` returning None falls through). Nothing set = **unlimited** — there is no global default any more: `MAX_JOBS_PER_MINUTE` is ignored (startup warns if it is set; the chart, compose files and env example no longer set it). The result is persisted on the execution (`executions.rate_limit`) at planning and reused when a restarted manager resumes it. The token bucket is **per execution** (`rate_limit_state` row keyed `execution_bucket_key(pipeline, execution_id)` = `<pipeline>:<execution_id>`), so concurrent runs of one pipeline don't overwrite each other's rate; an unlimited execution writes no row, and the row is deleted when the execution ends (drive loop `finally`, and the terminal listener). Tests: `tests/unit/test_rate_limit_resolution.py`.
+
+### Lifecycle hooks
+
+Optional pipeline methods `on_execution_complete(summary, params)`, `on_execution_failed(...)`, `on_execution_cancelled(...)`, called **once per execution end** on the manager (never by `reflowfy test`). `summary` is an `ExecutionSummary` (`core/execution_summary.py`): job counts (completed/failed/deduplicated/cancelled/skipped), records in/out/skipped/deduplicated, retries, duration, the execution's `error_message`, up to five failed jobs' errors, `parent_execution_id`. `params` are the execution's runtime params with defaults applied.
+
+- **Where.** `ExecutionManager.update_execution_state` is the one place every terminal transition goes through (drive-loop completion/failure, `/cancel`, `PATCH …/state`, planning-crash recovery, a run that raised, a pipeline gone on resume); it calls the registered terminal listeners after the commit. The service installs `lifecycle.on_terminal` at startup (`lifecycle.install()`); nothing else registers it, so unit tests and the CLI fire nothing (`tests/unit/conftest.py` uninstalls after each test). Cancel passes `notify=False` and notifies after cancelling the jobs, so the summary counts them.
+- **At most once.** `on_terminal` starts a thread (`run_terminal_work`: drop the rate bucket, then `fire_execution_hooks`), which claims with `UPDATE executions SET hooks_fired_at = now WHERE execution_id = :id AND hooks_fired_at IS NULL AND state IN (terminal)` — of any number of callers (two pods, a cancel racing the loop's end) one gets the row, and never while the execution is open. It is at most once rather than exactly once: the claim is taken before the hook runs, and nothing re-fires hooks lost to a manager that died in between (`docs/state-machines.md` F3). `/retry-failed` (`reopen_execution`) clears `hooks_fired_at`/`hook_error`, so the retried run's end fires them again.
+- **Isolation.** The hook runs in its own daemon thread, waited on for `HOOK_TIMEOUT_SECONDS` (60); an exception (even `SystemExit`) or a timeout is logged (`hook_failed`) and stored in `executions.hook_error` and **never changes the execution state**. No DB transaction is held while it runs. Shutdown waits for hooks in flight (`wait_for_hooks`).
+- **Callback.** `/run` accepts `callback_url` (the API's `POST /pipelines/…/run?callback_url=` forwards it — a reserved route name like `mode`/`rate_limit`; http/https only; persisted in `executions.callback_url`, kept out of `to_dict` since a URL may carry a token). After the hooks it gets a POST of `summary.to_dict()` (`CALLBACK_TIMEOUT_SECONDS`, 10); a 4xx/5xx or connection error is logged (`callback_failed`, host only) and added to `hook_error`.
+- **Chaining.** `run_pipeline(name, …)` (`from reflowfy import run_pipeline`, loaded lazily; it lives in `lifecycle.py`): `lifecycle.run_pipeline(name, params, parent_execution_id=None, rate_limit=None, execution_id=None, callback_url=None, mode=None)` validates like `/run`, creates the execution and plans/dispatches it in its own thread, returning the id at once. Called from a hook it uses the hook's database and records the hook's execution as `parent_execution_id` (`current_execution_id()`).
+- **Observability.** `hook_fired` / `hook_failed` / `callback_sent` / `callback_failed` / `execution_chained` log events; `hooks: {fired_at, error}` and `parent_execution_id` in `/executions/{id}/stats`; `hooks_fired_at`/`hook_error`/`parent_execution_id` in the execution's `to_dict`. No new metric (a hook outcome per execution is not a rate). Tests: `tests/unit/test_lifecycle_hooks.py`.
 
 ### Content deduplication & DLQ
 
@@ -419,19 +709,21 @@ Observability: `Job <id>: N of M records already processed — dropped`, `record
 
 Size: one row per record sent, about 0.6–0.7 GB per 4M records (estimate), purged after `CONTENT_DEDUP_RETENTION_HOURS` (24) in chunks of `CONTENT_DEDUP_PURGE_CHUNK_SIZE` (10 000) per transaction.
 
-**Upgrade from job-level dedup.** Dedup used to claim one hash per job in `processed_content`, and record hashes never match those. So the worker still computes the old job hashes (`compute_content_hash`, with and without the destination) and treats a job whose old hash another job holds as already written (`held_by_other_job`, `DEDUP_HONOR_LEGACY_HASH`, default true). Nothing writes `processed_content` any more; set the flag to `false` once the 24h retention has emptied it, and the guard, the table and `compute_content_hash` can then be removed.
-
 This is content idempotency across executions. Within one execution, the job-level claim above already stops a redelivered message from running a job twice.
 
-The **DLQ is not a failure sink** despite the name — nothing auto-populates it. It is a "run this pipeline later with these params" queue: `POST /dlq/schedule` takes a `job_payload` that is really *runtime params* (an unregistered pipeline answers 404, as `/run` does), and `dlq_scheduler.py` calls `run_pipeline` with them when due. Due jobs of one pipeline are grouped by identical params — one execution per distinct set, so every job runs with its own params (`/dlq/pipelines/{name}/dispatch` returns all of them as `execution_ids`). `dlq_routes.py` handles inspection. `pipeline_scheduler.py` runs cron-scheduled pipelines (5-field cron, validated at class-definition time in the metaclass).
+The **DLQ is not a failure sink** despite the name — nothing auto-populates it. It is a "run this pipeline later with these params" queue: `POST /dlq/schedule` takes a `job_payload` that is really *runtime params* (an unregistered pipeline answers 404, as `/run` does), and `dlq_scheduler.py` starts a run with them when due (`PipelineRunner.start_pipeline`: pipeline and params checked and the execution created in the poll — a failure there retries/archives the DLQ job — then planned and driven on a thread of its own, so a long run no longer holds the poll's row locks; a later failure ends the execution `failed`, as for `/run`). Due jobs of one pipeline are grouped by identical params — one execution per distinct set, so every job runs with its own params (`/dlq/pipelines/{name}/dispatch` returns all of them as `execution_ids`). `dlq_routes.py` handles inspection. `pipeline_scheduler.py` runs cron-scheduled pipelines (5-field cron, validated at class-definition time in the metaclass).
 
 ### Distributed E2E suite
 
 `tests/e2e_distributed/` tests AbstractPipeline and IdBasedPipeline over **Kafka and real workers** against a deployment you point it at (see its README); `tests/e2e` below only covers local mode. Pipelines write to a sink that keeps a delivery ledger, and each test asserts every record arrived exactly once. It skips as a whole when no deployment is reachable. `pytest -m chaos` kills pods and needs `E2E_DIST_KILL_WORKER_CMD` / `E2E_DIST_RESTART_MANAGER_CMD`.
 
+**Running it on the local Docker stack** (no cluster needed): after `./scripts/run_e2e_tests.sh --keep-docker`, copy `tests/e2e_distributed/pipelines/dist_*.py` into `e2e_workspace/tests/e2e/test_pipelines/`, bring the stack up with `-f docker-compose.yml -f ../scripts/e2e-distributed.override.yml -f ../scripts/e2e-distributed-sink.override.yml up -d --build worker reflow-manager api e2e-sink`, and run with `E2E_DIST_MANAGER_URL=http://localhost:8002 E2E_DIST_SINK_URL=http://localhost:8090`. Elasticsearch tests: index `docs` with `seq` 1..20000 into `localhost:9201`, then `E2E_DIST_ES=1 E2E_DIST_ES_INTERNAL_URL=http://reflofy-e2e-elasticsearch:9200`. Chaos: `E2E_DIST_KILL_WORKER_CMD='docker restart -t 0 reflofy-e2e-worker'`, `E2E_DIST_RESTART_MANAGER_CMD='docker restart -t 0 reflofy-e2e-reflow-manager'`. The sink is mounted from `e2e_workspace/tests`, so copy an edited `sink/server.py` there and restart it. The framework-gaps features (custom source with `secret()`, transformation options/`should_apply_transformation`/`on_error`/the one-record contract, `fan_out`, multicast, `JobRetryConfig`, 404 not retried, hooks, chaining, `callback_url`, `define_rate_limit`) are `test_framework_gaps.py` there and in `tests/e2e`; the latter also runs over Kafka with `E2E_RUN_MODE=distributed`.
+
 ## E2E test mechanics
 
-`scripts/run_e2e_tests.sh` does **not** test the source tree in place. It builds a wheel, runs `reflowfy init` into a throwaway `e2e_workspace/`, patches the generated Dockerfiles to install the local wheel, rewrites `docker-compose.yml` (E2E ports 5433/8002/8003, container prefix `reflofy-e2e-`, `PIPELINE_MODULE=tests.e2e.test_pipelines`), brings up `docker-compose.e2e-infra.yml` (Kafka/ES/mock servers) plus the app, seeds test data, then runs `pytest tests/e2e/`. So changes to packaging, the CLI scaffolding, Dockerfiles, or compose files are all exercised by the E2E run, and a stale build will mask source edits — always rebuild.
+**Images.** `Dockerfile.base` puts reflowfy + deps in `/opt/venv` and ships uv; the scaffolded service Dockerfiles (`reflowfy/templates/Dockerfile.*`) are uv-only — no `requirements.txt` — and run `uv sync --locked --no-dev --no-install-project --no-install-package reflowfy --inexact` against the user project's `pyproject.toml`/`uv.lock` (scaffolded by `reflowfy init`, which runs `uv lock`), before `COPY src/`, then `USER 10001` (GID 0, for OpenShift). The base image, not the lock, decides the reflowfy version. `reflowfy build` / `run --build` refuse to start without both files (`cli/utils.check_uv_project`).
+
+`scripts/run_e2e_tests.sh` does **not** test the source tree in place. It builds a wheel, runs `reflowfy init --no-lock` into a throwaway `e2e_workspace/`, unpins reflowfy in its `pyproject.toml` and runs `uv lock`, bakes the local wheel into a `reflowfy-base:local` image, rewrites `docker-compose.yml` (E2E ports 5433/8002/8003, container prefix `reflofy-e2e-`, `PIPELINE_MODULE=tests.e2e.test_pipelines`), brings up `docker-compose.e2e-infra.yml` (Kafka/ES/mock servers) plus the app, seeds test data, then runs `pytest tests/e2e/`. So changes to packaging, the CLI scaffolding, Dockerfiles, or compose files are all exercised by the E2E run, and a stale build will mask source edits — always rebuild.
 
 **E2E only covers local mode.** The scaffold it runs (`reflowfy init`) sets `EXECUTION_MODE: local`, `KAFKA_BOOTSTRAP_SERVERS: 'ignored:9092'`, and defines **no worker service** — so every E2E exercises `LocalDispatcher`, and the production path (manager → Kafka → `KafkaJobConsumer` → worker) has unit coverage only (`tests/unit/test_define_jobs_worker_path.py`, `test_executor_worker_sourcing.py`). To exercise it, copy the ready-made `scripts/e2e-distributed.override.yml` into `e2e_workspace/docker-compose.override.yml` (it flips `reflow-manager` to `EXECUTION_MODE: distributed` and adds a `worker` from `Dockerfile.worker`), then:
 
@@ -443,6 +735,8 @@ cd .. && uv run pytest tests/e2e/test_typed_params.py   # now runs over Kafka
 ```
 
 Note `docker compose up` reuses a stale `e2e_workspace-worker` image, so `--build` matters, and the override must not be in place during the script's own run or it will silently switch that run to distributed too.
+
+**Behind a TLS-intercepting proxy / without ghcr.io or Docker Hub**, `E2E_PYTHON_IMAGE` and `E2E_UV_IMAGE` replace `Dockerfile.base`'s `FROM` images (e.g. a `python:3.11-slim` that trusts the proxy CA); unset, nothing changes. BuildKit prefers a registry's copy of a public tag over a local image of the same name, so give a local replacement its own name (`local/python-ca:3.11-slim`).
 
 ## graphify knowledge graph
 

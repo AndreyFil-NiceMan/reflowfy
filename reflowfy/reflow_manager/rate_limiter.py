@@ -4,33 +4,55 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy.orm import Session
-from reflowfy.reflow_manager.models import RateLimitState
+from reflowfy.store.models import RateLimitState
 
 SECONDS_PER_MINUTE = 60.0
+
+
+def execution_bucket_key(pipeline_name: str, execution_id: str) -> str:
+    """The token bucket of one execution.
+
+    Per execution, not per pipeline: two executions of one pipeline running at once
+    each get their own rate instead of overwriting each other's refill rate.
+    """
+    return f"{pipeline_name}:{execution_id}"
 
 
 class RateLimiter:
     """
     Token bucket rate limiter with database-backed state.
 
-    Provides per-pipeline rate limiting with persistent state
-    that survives restarts and works across multiple instances.
+    One bucket per key — the drive loop uses one per execution
+    (:func:`execution_bucket_key`) — with persistent state that survives restarts
+    and works across multiple instances.
 
     All rate limits in the public API are expressed in **jobs per minute**;
     they are converted to tokens per second for the bucket, which is what
-    `rate_limit_state.refill_rate` stores.
+    `rate_limit_state.refill_rate` stores. No rate limit (None) means unlimited:
+    no token is taken and no bucket row is written.
     """
 
-    def __init__(self, db_session: Session, default_rate: float = 6000.0):
+    def __init__(self, db_session: Session, default_rate: Optional[float] = None):
         """
         Initialize rate limiter.
 
         Args:
             db_session: SQLAlchemy database session
-            default_rate: Default rate limit (jobs per minute)
+            default_rate: Rate (jobs per minute) for a call that passes none; None
+                (the default) leaves such calls unlimited.
         """
         self.db = db_session
         self.default_rate = default_rate
+
+    def delete_bucket(self, key: str) -> int:
+        """Remove a bucket (its execution ended). Returns the rows deleted (0 or 1)."""
+        deleted = (
+            self.db.query(RateLimitState)
+            .filter(RateLimitState.pipeline_name == key)
+            .delete(synchronize_session=False)
+        )
+        self.db.commit()
+        return deleted
 
     def _tokens_per_second(self, rate_per_minute: float) -> float:
         """Convert a jobs-per-minute rate limit into the bucket's tokens/second."""
@@ -101,9 +123,10 @@ class RateLimiter:
             True if dispatch is allowed, False otherwise
         """
         effective_rate = rate_limit if rate_limit is not None else self.default_rate
+        if effective_rate is None:
+            return True  # unlimited
         state = self._get_or_create_state(pipeline_name, effective_rate)
 
-        # Refill tokens
         self._refill_tokens(state)
 
         return state.tokens >= count
@@ -157,6 +180,8 @@ class RateLimiter:
             True if tokens were consumed, False if not enough tokens
         """
         effective_rate = rate_limit if rate_limit is not None else self.default_rate
+        if effective_rate is None:
+            return True  # unlimited
 
         # Get state with row-level lock to prevent concurrent consumption
         state = self._get_state_with_lock(pipeline_name, effective_rate)
@@ -201,13 +226,15 @@ class RateLimiter:
         """
         start_time = time.time()
         effective_rate = rate_limit if rate_limit is not None else self.default_rate
+        if effective_rate is None:
+            return True  # unlimited
 
         # Calculate how long to wait between tokens
         wait_per_token = 1.0 / self._tokens_per_second(effective_rate)
 
         while True:
             # Try to consume a token
-            if self.consume_tokens(pipeline_name, 1, rate_limit):
+            if self.consume_tokens(pipeline_name, 1, effective_rate):
                 return True
 
             # Check if we've exceeded max wait time

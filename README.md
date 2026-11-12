@@ -66,9 +66,19 @@ my_project/
 │   ├── destinations/   # Reusable @destination configs
 │   ├── transformations/ # Reusable @transformation logic
 │   └── queries/        # Query templates
+├── pyproject.toml      # Project dependencies (uv)
+├── uv.lock             # Locked versions — commit it
+├── Dockerfile.api / Dockerfile.reflow-manager / Dockerfile.worker
+├── .dockerignore
 ├── .env
 └── docker-compose.yml
 ```
+
+Dependencies are managed with [uv](https://docs.astral.sh/uv/): `uv add <package>` updates
+`pyproject.toml` and `uv.lock`. The images install exactly what `uv.lock` pins
+(`uv sync --locked`, so a stale lock fails the build), on top of the reflowfy base
+image, and run as the non-root user `10001`. `reflowfy init` runs `uv lock` for you
+when uv is installed. Building needs BuildKit (the default in Docker 23+ / compose v2).
 
 ### 3. Generate Components
 
@@ -213,6 +223,103 @@ def prod_kafka(**overrides):
         **overrides
     )
 ```
+
+#### Choosing a destination
+
+| You need | Use |
+|---|---|
+| One topic, one message per record | `kafka_destination(...)` |
+| One request per job, a body you build | `api_destination(url=..., body=...)` |
+| One endpoint, one request per record | `api_destination(url=".../{id}", per_record=True)` |
+| What a message holds varies per record | `{field}` templates or functions (below) |
+| *Where* it goes varies per record — topic, cluster, region, credentials | `@record_destination` returning one of the above |
+
+The rule: **`@record_destination` decides where a record goes; templates decide what each
+message looks like.**
+
+#### Per-record values: one template syntax everywhere
+
+`{field}` is replaced by `record["field"]`; `{data.region}` walks nested dicts (records from a
+source are `{"data": {...}}`). A record missing a field fails the job **before anything is
+sent**, naming the record's position, never its values. Wherever a template is accepted, a
+function of the record works too.
+
+```python
+kafka_destination(
+    bootstrap_servers="kafka:9092",
+    topic="events",
+    key="{customer_id}",                      # message key: one customer, one partition, in order
+    value_field="data",                       # send record["data"] as the message value
+    headers={"tenant": "{tenant_id}"},        # or a function: lambda r: {"type": r["type"]}
+)
+
+api_destination(
+    url="https://api.example.com/users/{data.user_id}",   # URL-encoded per record
+    per_record=True,
+    params={"version": "{version}"},                       # query params per record
+    headers={"X-Tenant": "{tenant_id}"},                   # or a function of the record
+    body_field="payload",                                  # send only record["payload"]
+)
+```
+
+- `kafka_destination` sends each job's messages as **one batch**: all handed to the producer,
+  acks awaited together. Order on a partition is kept.
+- A per-record `api_destination` keeps **16 requests in flight** per job
+  (`TRANSFORM_CONCURRENCY`), so they may land out of order; make the endpoint idempotent.
+- Neither destination takes `concurrency=` any more (removed in 1.1.4): to set a limit, use
+  `@record_destination(concurrency=N)`.
+
+#### A destination per record: `@record_destination`
+
+When the records of one job go to different places — another topic, another cluster, other
+credentials — choose the destination per record. The function is called once for every record
+with `(record, runtime_params)` and returns that record's destination, built exactly as you
+build one today:
+
+```python
+# destinations/stt_engines.py
+from reflowfy import kafka_destination, record_destination
+
+@record_destination("stt_engines", on_error="skip")
+def stt_engines(record, runtime_params):
+    topic = Settings.KAFKA.topics[record["engine"]][runtime_params["env"]]
+    return kafka_destination(
+        bootstrap_servers=Settings.KAFKA.clusters[topic.cluster].hosts,
+        topic=topic.name,
+        sasl_username=topic.username,
+        sasl_password=topic.password,
+    )
+
+# in the pipeline
+def define_destination(self, records, runtime_params):
+    return stt_engines()
+```
+
+- **Connections are shared per job.** Records whose destinations have the same class and
+  config share one; beyond that, one Kafka producer serves every topic of a cluster (per
+  credentials), one HTTP client every request to a host, and each cluster or host is
+  health-checked once. Building a destination is cheap: none connects before its first send.
+- **One limit:** `concurrency` (default `TRANSFORM_CONCURRENCY`, 16) is the job's whole budget —
+  per-record API requests in flight across *all* its destinations together, destinations sent
+  to at once, and records routed at once by an `async def` function. `concurrency=1` sends
+  one request at a time, in order. A Kafka destination is one batch and needs no limit.
+- Every record is routed before anything is sent. A failing record fails the job with nothing
+  written (`record_destination 'stt_engines' failed on record 37 of 200: KeyError`) — unless
+  `on_error="skip"`, which skips it with the exception's type as the reason.
+  `raise SkipRecord("unknown engine")` skips a record either way; `SkipJob` drops the job.
+  `timeout=` bounds each record of an `async def` function and follows `on_error`.
+- Skips are reported like a per-record transformation's: the job's `records_skipped` /
+  `record_skip_reasons`, `reflowfy_records_skipped_total{transformation="stt_engines"}`, and a
+  log line. The job's `stats` also show how many `destinations` it wrote to.
+- Each destination is sent with its own retries, so a failing one does not re-send those
+  already written. Order is kept within a destination, not across them.
+- Put only *where* in the function's f-strings (host, region, topic, credentials) and
+  per-record values in templates — `api_destination(url=f"https://{record['region']}.api.com/users/{{id}}", per_record=True)`
+  groups by region and URL-encodes the id. A job that builds a destination per record logs a
+  one-time warning saying so.
+- Keyword arguments given in `define_destination` — `stt_engines(region="eu")` — are passed
+  on to every call. Filter records in a transformation, not here: returning anything but a
+  destination fails the job.
 
 ### 2. Create Reusable Transformations
 

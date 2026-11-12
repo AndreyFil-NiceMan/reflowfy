@@ -24,7 +24,7 @@ import reflowfy.worker.executor as executor_mod
 from reflowfy.core.exceptions import SkipJob
 from reflowfy.core.registry import pipeline_registry
 from reflowfy.destinations.base import DestinationError
-from reflowfy.reflow_manager.models import Base, Execution, Job
+from reflowfy.store.models import Base, Execution, Job
 from reflowfy.transformations.base import BaseTransformation
 from reflowfy.worker.executor import JobStats, WorkerExecutor
 
@@ -367,7 +367,7 @@ class TestOutcomes:
 # ---------------------------------------------------------------- content dedup
 
 
-def _claims(monkeypatch, won: bool = True, legacy_held: bool = False):
+def _claims(monkeypatch, won: bool = True):
     """Stub the record claim: every hash is won (or none is). Returns the claim mock."""
 
     async def claim(session_factory, hashes, job_id):
@@ -375,7 +375,6 @@ def _claims(monkeypatch, won: bool = True, legacy_held: bool = False):
 
     claim_mock = AsyncMock(side_effect=claim)
     monkeypatch.setattr(executor_mod, "claim_record_hashes", claim_mock)
-    monkeypatch.setattr(executor_mod, "held_by_other_job", AsyncMock(return_value=legacy_held))
     return claim_mock
 
 
@@ -401,44 +400,6 @@ class TestContentDedup:
         # one hash per record, claimed under this job
         args = claim.await_args.args
         assert len(args[1]) == 2 and args[2] == "j"
-
-    async def test_a_job_the_previous_release_wrote_is_deduplicated(
-        self, register, stub_worker, monkeypatch
-    ):
-        dest = FakeDest()
-        register(FakePipeline("p2-legacy", dest))
-        claim = _claims(monkeypatch, legacy_held=True)
-
-        assert await stub_worker.execute_job(_payload("p2-legacy", dedup_check=True)) is True
-        assert stub_worker.updates[0].deduplicated is True
-        assert dest.sent == []
-        claim.assert_not_awaited()
-
-    async def test_the_legacy_guard_can_be_switched_off(
-        self, register, stub_worker, monkeypatch
-    ):
-        monkeypatch.setenv("DEDUP_HONOR_LEGACY_HASH", "false")
-        dest = FakeDest()
-        register(FakePipeline("p2-legacy-off", dest))
-        _claims(monkeypatch, legacy_held=True)
-
-        assert await stub_worker.execute_job(_payload("p2-legacy-off", dedup_check=True)) is True
-        executor_mod.held_by_other_job.assert_not_awaited()  # type: ignore[attr-defined]
-        assert dest.sent == [{"id": 1}, {"id": 2}]
-
-    async def test_the_guard_checks_the_previous_releases_destination_identity(
-        self, register, stub_worker, monkeypatch
-    ):
-        """The release before last kept an X-API-Key header in the identity; a job it
-        wrote is still found by that hash."""
-        dest = FakeDest()
-        dest.config = {"url": "http://x", "headers": {"X-API-Key": "k"}}
-        register(FakePipeline("p2-legacy-prev", dest))
-        _claims(monkeypatch)
-
-        assert await stub_worker.execute_job(_payload("p2-legacy-prev", dedup_check=True))
-        job_hashes = executor_mod.held_by_other_job.await_args.args[1]  # type: ignore[attr-defined]
-        assert len(job_hashes) == 3 and len(set(job_hashes)) == 3
 
     async def test_no_claim_without_dedup_check(self, register, stub_worker, monkeypatch):
         register(FakePipeline("p2-nodedup", FakeDest()))
@@ -607,14 +568,39 @@ class TestUpdateJobInDb:
         assert "Job not found in database" in logs
         assert await _rows(url) == {}
 
-    async def test_database_error_is_logged_not_raised(self, tmp_path):
+    async def test_database_error_is_retried_then_logged_not_raised(self, tmp_path):
         worker = WorkerExecutor(database_url=f"sqlite+aiosqlite:///{tmp_path}/none.db")
+        worker._save_retry_delays = (0.0, 0.0)
         try:
             with capture_logs() as logs:
-                await worker._update_job_in_db("e", "j", JobStats())
+                assert await worker._update_job_in_db("e", "j", JobStats()) is False
         finally:
             await worker.close()
-        assert any(m.startswith("Failed to update database:") for m in logs)
+        assert sum(m.startswith("Failed to update database (attempt") for m in logs) == 2
+        assert any(m.startswith("Job outcome not saved after 3 attempts") for m in logs)
+
+    async def test_a_transient_database_error_does_not_lose_the_outcome(self, tmp_path):
+        url = await _make_db(tmp_path, {"j": "running"})
+        worker = WorkerExecutor(database_url=url)
+        worker._save_retry_delays = (0.0,)
+        real_write = worker._write_job_row
+        calls = 0
+
+        async def flaky(*args: Any, **kwargs: Any) -> bool:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise ConnectionError("postgres restarting")
+            return await real_write(*args, **kwargs)
+
+        worker._write_job_row = flaky  # type: ignore[method-assign]
+        try:
+            stats = JobStats()
+            stats.success = True
+            assert await worker._update_job_in_db("e", "j", stats) is True
+        finally:
+            await worker.close()
+        assert (await _rows(url))["j"].state == "completed"
 
 
 @pytest.mark.real_claim
@@ -709,3 +695,36 @@ class TestEndToEndOnSqlite:
 
         failures = [m for m in logs if m == "Heartbeat failed; will retry"]
         assert len(failures) >= 2  # kept beating after the first failure
+
+
+async def test_a_failed_claim_release_is_logged(monkeypatch):
+    import reflowfy.worker.executor as executor_mod
+
+    async def broken(*args: Any, **kwargs: Any) -> None:
+        raise ConnectionError("postgres down")
+
+    monkeypatch.setattr(executor_mod, "release_record_hashes", broken)
+    worker = WorkerExecutor(database_url="postgresql://x/y")
+    with capture_logs() as logs:
+        await worker._release_claims([b"h1", b"h2"], "j")
+    assert "Could not release 2 content-dedup claims" in logs
+
+
+async def test_a_worker_that_lost_its_job_sends_nothing(register, stub_worker, monkeypatch):
+    """Lease expired and the job was taken (claimed again, cancelled) while the worker
+    stalled: it must not send the job a second time, nor write the job row."""
+    dest = FakeDest()
+    register(FakePipeline("p-superseded", dest))
+    before = processed("p-superseded", "superseded")
+
+    async def taken(job_id: str, stats: JobStats) -> bool:
+        stats.claim_lost = True
+        return False
+
+    monkeypatch.setattr(stub_worker, "_still_owns", taken)
+
+    assert await stub_worker.execute_job(_payload("p-superseded")) is True
+
+    assert dest.sent == [] and dest.closed
+    assert stub_worker.updates == []
+    assert processed("p-superseded", "superseded") == before + 1

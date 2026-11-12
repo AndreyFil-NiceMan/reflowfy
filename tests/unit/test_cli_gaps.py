@@ -11,6 +11,7 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
+from reflowfy.core.planning import PlannedJob
 from reflowfy.cli.commands import init_cmd
 from reflowfy.cli.commands import test as test_cmd
 from reflowfy.cli.commands.test import BatchReport
@@ -26,6 +27,7 @@ from reflowfy.sources.mock import MockSource
 from reflowfy.transformations.base import BaseTransformation, TransformationError
 from reflowfy.transformations.registry import transformation_registry
 from test_cli_deploy_unit import BASE, calls, deploy  # type: ignore[import-not-found]  # noqa: F401
+import reflowfy.cli.project as project_mod
 
 # Built into URLs at runtime: a credentialed URL literal reads as a leaked secret
 # to secret scanners (SonarCloud).
@@ -110,6 +112,7 @@ def test_init_still_scaffolds_a_project_when_the_package_files_are_unreadable(
         raise OSError("package data missing")
 
     monkeypatch.setattr(init_cmd, "get_package_path", broken)
+    monkeypatch.setattr(project_mod, "get_package_path", broken)
     monkeypatch.setattr(init_cmd, "get_dockerfiles_path", broken)
     monkeypatch.setattr(console, "_width", 300)
 
@@ -126,6 +129,7 @@ def test_init_still_scaffolds_a_project_when_the_package_files_are_unreadable(
         "example_query.sql",
         "example_query.json",
         "Dockerfiles",
+        "pyproject.toml",
         ".env",
     ):
         assert (
@@ -264,7 +268,7 @@ class TestReportBatch:
 def _stub_pipeline() -> Any:
     """The least run_batch needs of a pipeline when the job core is stubbed out."""
     stub = types.SimpleNamespace(name="stub", define_transformations=lambda records, params: [])
-    stub.fork = lambda: stub
+    stub.execution_only_params = ()
     return stub
 
 
@@ -284,8 +288,9 @@ class TestRunBatchErrors:
         from reflowfy.testing import runner
 
         monkeypatch.setattr(runner, "run_job_records", run_job_records)
-        monkeypatch.setattr(runner, "plan_slices", lambda source, params: iter(source))
-        monkeypatch.setattr(runner, "job_runtime_params", lambda sub, params: dict(params))
+        monkeypatch.setattr(
+            runner, "plan_slices", lambda source, params: (PlannedJob(s) for s in source)
+        )
         return script
 
     def test_a_non_transformation_error_is_recorded_as_is(self, jobs: List[Any]) -> None:

@@ -188,6 +188,19 @@ def test_split_yields_one_source_per_page_with_its_keys(stubbed) -> None:
     assert all(s.config["page_size"] == 2 and s.config["bucket"] == "bkt" for s in subs)
 
 
+def test_split_keeps_extra_client_options_on_every_job(stubbed) -> None:
+    """split() used to rebuild each job from a hand-written list of keys, dropping the
+    extra boto3 client kwargs (``**kwargs``) the source was built with."""
+    client, stub = stubbed
+    _list(stub, ["a.json"])
+    src = _source(client, verify=False)
+
+    (sub,) = src.split({})
+
+    assert sub.config["verify"] is False
+    assert sub.config["keys"] == ["a.json"]
+
+
 def test_sub_source_fetch_reads_only_its_keys(stubbed) -> None:
     client, stub = stubbed
     _get(stub, "a.json", b'[{"n": 1}, {"n": 2}]')
@@ -214,48 +227,6 @@ def test_split_empty_bucket_plans_no_jobs(stubbed) -> None:
     client, stub = stubbed
     _list(stub, [])
     assert list(_source(client).split({})) == []
-
-
-# -- split_jobs (legacy) --------------------------------------------------------
-
-
-def test_split_jobs_one_job_per_matching_page(stubbed) -> None:
-    client, stub = stubbed
-    # the paginator is lazy: each page is listed only after the previous job is read
-    _list(stub, ["a.json"], next_token="t1")
-    _get(stub, "a.json", b'{"n": 1}')
-    _list(stub, [], token="t1", next_token="t2")
-    _list(stub, ["b.json", "c.json"], token="t2")
-    _get(stub, "b.json", b'{"n": 2}')
-    _get(stub, "c.json", b'[{"n": 3}, {"n": 4}]')
-
-    jobs = list(_source(client, prefix="").split_jobs({}))
-
-    assert [[r["data"]["n"] for r in j.records] for j in jobs] == [[1], [2, 3, 4]]
-    assert jobs[1].metadata == {
-        "page_num": 1,
-        "bucket": "bkt",
-        "prefix": "",
-        "object_count": 2,
-        "record_count": 3,
-    }
-
-
-def test_split_jobs_metadata_only_and_pattern_filtered_page_skipped(stubbed) -> None:
-    client, stub = stubbed
-    _list(stub, ["skip.txt"], next_token="t1")
-    _list(stub, ["a.json"], token="t1")
-    jobs = list(_source(client, file_pattern="*.json", read_content=False).split_jobs({}))
-    assert len(jobs) == 1
-    assert jobs[0].records[0]["data"]["key"] == "a.json"
-    assert jobs[0].metadata["page_num"] == 0
-
-
-def test_split_jobs_error_is_a_source_error(stubbed) -> None:
-    client, stub = stubbed
-    stub.add_client_error("list_objects_v2", "AccessDenied", http_status_code=403)
-    with pytest.raises(SourceError, match="Failed to split jobs"):
-        list(_source(client).split_jobs({}))
 
 
 # -- health_check ----------------------------------------------------------------

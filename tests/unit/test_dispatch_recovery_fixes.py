@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session, sessionmaker
 import reflowfy.reflow_manager.pipeline_runner as runner_mod
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
-from reflowfy.reflow_manager.models import Base, Execution, Job
+from reflowfy.store.models import Base, Execution, Job
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner
 from reflowfy.worker.executor import WorkerExecutor
 
@@ -41,7 +41,11 @@ def db() -> Session:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine)()
-    session.add(Execution(execution_id="e", pipeline_name="p", state="running", total_jobs=0))
+    session.add(
+        Execution(
+            execution_id="e", pipeline_name="p", state="running", total_jobs=0, plan_complete=True
+        )
+    )
     session.commit()
     return session
 
@@ -292,7 +296,6 @@ async def test_claim_released_when_job_cancelled(monkeypatch):
     import reflowfy.worker.executor as executor_mod
 
     _register(monkeypatch, _CancellingDest())
-    monkeypatch.setattr(executor_mod, "held_by_other_job", AsyncMock(return_value=False))
     monkeypatch.setattr(
         executor_mod, "claim_record_hashes", AsyncMock(side_effect=lambda sf, h, j: set(h))
     )
@@ -515,6 +518,10 @@ async def test_heartbeat_refreshes_updated_at_only_while_running(tmp_path, monke
         await asyncio.sleep(0.4)
         for beat in beats:
             beat.cancel()
+        # Let them actually stop before the engine is disposed: a beat cancelled
+        # mid-write still holds an aiosqlite connection, and closing the engine under
+        # it hung the loop's teardown until pytest-timeout killed the run.
+        await asyncio.gather(*beats, return_exceptions=True)
     finally:
         await ex.close()
 

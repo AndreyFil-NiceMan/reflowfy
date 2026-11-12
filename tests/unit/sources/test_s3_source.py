@@ -183,67 +183,6 @@ class TestS3Source:
         assert records[0]["data"]["name"] == "test"
         assert records[0]["data"]["value"] == 123
 
-    def test_split_jobs_pagination(self, mock_s3_client):
-        """Test job splitting with pagination."""
-        # Create two pages of results
-        page1 = {
-            "Contents": [
-                {
-                    "Key": "data/file1.json",
-                    "Size": 100,
-                    "LastModified": datetime.now(),
-                    "ETag": '"a"',
-                },
-                {
-                    "Key": "data/file2.json",
-                    "Size": 100,
-                    "LastModified": datetime.now(),
-                    "ETag": '"b"',
-                },
-            ]
-        }
-        page2 = {
-            "Contents": [
-                {
-                    "Key": "data/file3.json",
-                    "Size": 100,
-                    "LastModified": datetime.now(),
-                    "ETag": '"c"',
-                },
-            ]
-        }
-
-        mock_paginator = MagicMock()
-        mock_paginator.paginate.return_value = [page1, page2]
-        mock_s3_client.get_paginator.return_value = mock_paginator
-
-        source = S3Source(
-            bucket="test-bucket",
-            prefix="data/",
-            read_content=False,
-            page_size=2,
-        )
-
-        jobs = list(source.split_jobs({}))
-
-        assert len(jobs) == 2
-        assert jobs[0].metadata["page_num"] == 0
-        assert jobs[0].metadata["object_count"] == 2
-        assert jobs[1].metadata["page_num"] == 1
-        assert jobs[1].metadata["object_count"] == 1
-
-    def test_split_jobs_empty_bucket(self, mock_s3_client):
-        """Test job splitting with empty bucket."""
-        mock_paginator = MagicMock()
-        mock_paginator.paginate.return_value = [{"Contents": []}]
-        mock_s3_client.get_paginator.return_value = mock_paginator
-
-        source = S3Source(bucket="empty-bucket", prefix="")
-
-        jobs = list(source.split_jobs({}))
-
-        assert len(jobs) == 0
-
     def test_runtime_parameter_resolution(self, mock_s3_client, sample_objects):
         """Test that runtime parameters are resolved in prefix."""
         mock_paginator = MagicMock()

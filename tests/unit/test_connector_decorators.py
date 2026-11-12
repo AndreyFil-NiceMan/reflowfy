@@ -128,17 +128,9 @@ def test_mock_split_slices_by_batch_size():
     assert all(s.config["batch_size"] == 3 for s in subs)
 
 
-def test_mock_split_jobs_uses_configured_batch_size():
-    jobs = list(MockSource(_DATA, batch_size=4).split_jobs({}, batch_size=1000))
-    assert [j.metadata for j in jobs] == [
-        {"batch_num": 0, "count": 4},
-        {"batch_num": 1, "count": 3},
-    ]
-
-
 def test_mock_empty_data_plans_nothing_and_is_healthy():
     src = mock_source([])
-    assert list(src.split({})) == [] and list(src.split_jobs({})) == []
+    assert list(src.split({})) == []
     assert src.health_check() is True
 
 

@@ -29,7 +29,7 @@ def example_kafka(**overrides: Any):
         "Building kafka destination for topic %s", overrides.get("topic", "default-output")
     )
     return kafka_destination(
-        bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092"),
+        bootstrap_servers=os.getenv("KAFKA_SERVERS", "kafka:9092"),
         topic=overrides.get("topic", "default-output"),
         compression_type=overrides.get("compression_type", "gzip"),
     )

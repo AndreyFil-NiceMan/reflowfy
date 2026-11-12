@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session, sessionmaker
 import reflowfy.reflow_manager.pipeline_runner as runner_mod
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
-from reflowfy.reflow_manager.models import Base, Execution, Job
+from reflowfy.store.models import Base, Execution, Job
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner, _PlanLease
 
 
@@ -137,18 +137,6 @@ def test_abandoned_partial_plan_is_failed_and_its_fragment_is_not_dispatched(db)
     assert runner.dispatcher.sent == []  # nothing from the fragment ran
 
 
-def test_legacy_execution_without_the_flag_still_resumes(db):
-    """plan_complete NULL = created before the column existed: unchanged behaviour."""
-    _execution(db, plan_complete=None)
-    _jobs(db, 2)
-    runner = _runner(db)
-
-    runner.resume_execution("e")
-
-    assert sorted(runner.dispatcher.sent) == ["j0", "j1"]
-    assert _state(db).state == "completed"
-
-
 def test_completed_plan_resumes_normally(db):
     _execution(db, plan_complete=True)
     _jobs(db, 2)
@@ -221,15 +209,15 @@ def test_a_just_created_execution_is_not_mistaken_for_an_orphan(db, monkeypatch)
 
 def test_recovery_finds_pending_executions_with_unfinished_plans(db):
     for i, (state, flag) in enumerate(
-        [("pending", False), ("pending", True), ("pending", None), ("running", None),
-         ("running", False), ("completed", False)]
+        [("pending", False), ("pending", True), ("running", True), ("running", False),
+         ("completed", False)]
     ):
         db.add(Execution(execution_id=f"e{i}", pipeline_name="p", state=state, plan_complete=flag))
     db.commit()
 
     found = {e.execution_id for e in ExecutionManager(db).get_interrupted_executions()}
 
-    assert found == {"e0", "e3", "e4"}  # not pending+True/None, not completed
+    assert found == {"e0", "e2", "e3"}  # not pending+True, not completed
 
 
 def test_new_executions_start_unplanned(db):

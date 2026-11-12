@@ -10,7 +10,7 @@ Import from the package root::
 """
 
 from contextlib import contextmanager
-from typing import Dict, Generator, Optional
+from typing import Any, Dict, Generator, List, Optional
 
 
 class PipelineError(Exception):
@@ -38,9 +38,6 @@ def pipeline_step(step: str, pipeline_name: str) -> Generator[None, None, None]:
     ``NotImplementedError`` — an unimplemented hook is a framework contract
     error, not a failure of the user's code.
     """
-    # Imported lazily so this module stays dependency-free and cannot cycle.
-    from reflowfy.transformations.base import TransformationError
-
     try:
         yield
     except (PipelineError, TransformationError, NotImplementedError):
@@ -104,3 +101,95 @@ class RecordValidationError(PipelineError):
         self.invalid = invalid
         self.total = total
         super().__init__(message)
+
+
+# ----- connector and step errors ---------------------------------------------------
+# Defined here, at the bottom of the package, so core (pipeline_step, job_retry's
+# defaults) can name them without importing the connectors. The module each used to
+# live in re-exports it.
+
+
+class SourceError(Exception):
+    """Raised when a source operation fails."""
+
+    def __init__(self, source_type: str, message: str, original_error: Exception | None):
+        self.source_type = source_type
+        self.original_error = original_error
+        super().__init__(f"Source '{source_type}' error: {message}")
+
+
+class DestinationError(Exception):
+    """Raised when a destination operation fails. ``send_with_retry`` retries it.
+
+    ``retry_after``: seconds the server asked to wait before the next attempt
+    (HTTP ``Retry-After``), or None.
+    """
+
+    def __init__(
+        self,
+        destination_type: str,
+        message: str,
+        original_error: Optional[Exception] = None,
+        retry_after: Optional[float] = None,
+    ):
+        self.destination_type = destination_type
+        self.original_error = original_error
+        self.retry_after = retry_after
+        self.reason = message
+        super().__init__(f"Destination '{destination_type}' error: {message}")
+
+
+class PermanentDestinationError(DestinationError):
+    """A destination failure that sending again cannot fix, so it is not retried.
+
+    For example an HTTP 4xx other than 408/425/429: the request itself is wrong
+    (bad URL, rejected payload, missing permission). The job fails at once instead
+    of after every retry.
+    """
+
+
+class TransformationError(Exception):
+    """Raised when a transformation fails.
+
+    Carries enough context to say *where* in the chain the failure happened and
+    *which* record caused it, so callers can report it without re-running any
+    user code.
+
+    Attributes:
+        transformation_name: The transformation that raised.
+        original_error: The underlying exception, if any.
+        step_index: 0-based position in the applied chain, or None if unknown.
+        records_in: How many records this step received, or None if unknown.
+        culprit_index: Index of the implicated record, or None if not identified.
+        culprit_record: The implicated record itself, or None.
+        applied_steps: The steps that succeeded before this one, in order.
+    """
+
+    def __init__(
+        self,
+        transformation_name: str,
+        message: str,
+        original_error: Optional[Exception] = None,
+        step_index: Optional[int] = None,
+        records_in: Optional[int] = None,
+        culprit_index: Optional[int] = None,
+        culprit_record: Optional[Any] = None,
+        applied_steps: Optional[List[Any]] = None,
+    ):
+        self.transformation_name = transformation_name
+        self.original_error = original_error
+        self.step_index = step_index
+        self.records_in = records_in
+        self.culprit_index = culprit_index
+        self.culprit_record = culprit_record
+        self.applied_steps: List[Any] = applied_steps or []
+        super().__init__(f"Transformation '{transformation_name}' failed: {message}")
+
+
+class StepOutputError(TransformationError):
+    """A transformation returned records that do not match its own return type.
+
+    Raised after the step when the pipeline sets ``validate_steps = True``. It is a
+    bug in that step, not bad input, so it always fails the job — whatever
+    ``on_invalid_record`` says — and is counted under its own ``error_type``.
+    """

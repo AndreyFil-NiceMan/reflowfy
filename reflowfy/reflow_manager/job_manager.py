@@ -3,8 +3,9 @@
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import func, insert
-from reflowfy.reflow_manager.models import Job
+from sqlalchemy import func, insert, or_
+from reflowfy.store.models import Job
+from reflowfy.store.states import JobState
 
 
 class JobManager:
@@ -32,7 +33,7 @@ class JobManager:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         self.db.execute(
             insert(Job),
-            [{**row, "state": "pending", "created_at": now, "updated_at": now} for row in rows],
+            [{**row, "state": JobState.PENDING, "created_at": now, "updated_at": now} for row in rows],
         )
         self.db.commit()
 
@@ -41,14 +42,37 @@ class JobManager:
         return self.db.query(Job).filter(Job.job_id == job_id).first()
 
     def get_pending_jobs(self, execution_id: str, limit: int) -> List[Job]:
-        """Next pending jobs to dispatch, oldest planned first."""
+        """Next pending jobs to dispatch, oldest planned first.
+
+        A job whose ``job_retry`` retry is scheduled for later (``next_attempt_at`` in
+        the future) is pending but not due yet, so it is left out.
+        """
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         return (
             self.db.query(Job)
-            .filter(Job.execution_id == execution_id, Job.state == "pending")
+            .filter(
+                Job.execution_id == execution_id,
+                Job.state == JobState.PENDING,
+                or_(Job.next_attempt_at.is_(None), Job.next_attempt_at <= now),
+            )
             .order_by(Job.batch_number, Job.created_at)
             .limit(limit)
             .all()
         )
+
+    def count_scheduled_retries(self, execution_id: str) -> int:
+        """Pending jobs waiting for a ``job_retry`` backoff to pass."""
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        count: int = (
+            self.db.query(func.count(Job.job_id))
+            .filter(
+                Job.execution_id == execution_id,
+                Job.state == JobState.PENDING,
+                Job.next_attempt_at > now,
+            )
+            .scalar()
+        ) or 0
+        return count
 
     def get_jobs(
         self,
@@ -74,19 +98,31 @@ class JobManager:
 
         return query.order_by(Job.created_at).all()
 
-    def mark_job_dispatched(self, job_id: str) -> None:
+    def mark_job_dispatched(self, job_id: str, sent_after: Optional[datetime] = None) -> None:
         """Record that one job's message was sent, right after the send.
 
         Only a pending job becomes dispatched: a fast worker may already have
         claimed it (running) or finished it. dispatched_at is the send time of the
         latest dispatch, which the dispatch lease is measured from.
+
+        ``sent_after``: when the send began. A worker that ran this very message and
+        failed it may already have scheduled a ``job_retry`` retry (pending again, with a
+        ``next_attempt_at`` after that); such a job stays pending — marked dispatched it
+        would wait out the dispatch lease instead of its backoff. A due retry being
+        sent now has its ``next_attempt_at`` cleared.
         """
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         self.db.query(Job).filter(Job.job_id == job_id).update(
             {"dispatched_at": now}, synchronize_session=False
         )
-        self.db.query(Job).filter(Job.job_id == job_id, Job.state == "pending").update(
-            {"state": "dispatched", "updated_at": now}, synchronize_session=False
+        pending = self.db.query(Job).filter(Job.job_id == job_id, Job.state == JobState.PENDING)
+        if sent_after is not None:
+            pending = pending.filter(
+                or_(Job.next_attempt_at.is_(None), Job.next_attempt_at < sent_after)
+            )
+        pending.update(
+            {"state": JobState.DISPATCHED, "updated_at": now, "next_attempt_at": None},
+            synchronize_session=False,
         )
         self.db.commit()
 
@@ -102,9 +138,9 @@ class JobManager:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         cancelled = (
             self.db.query(Job)
-            .filter(Job.execution_id == execution_id, Job.state.in_(["pending", "dispatched"]))
+            .filter(Job.execution_id == execution_id, Job.state.in_(JobState.UNSTARTED))
             .update(
-                {"state": "cancelled", "completed_at": now, "updated_at": now},
+                {"state": JobState.CANCELLED, "completed_at": now, "updated_at": now},
                 synchronize_session=False,
             )
         )
@@ -121,13 +157,14 @@ class JobManager:
         Returns:
             Number of jobs requeued.
         """
-        query = self.db.query(Job).filter(Job.execution_id == execution_id, Job.state == "failed")
+        query = self.db.query(Job).filter(Job.execution_id == execution_id, Job.state == JobState.FAILED)
         if error_contains:
             query = query.filter(Job.error_message.contains(error_contains))
         requeued = query.update(
             {
-                "state": "pending",
+                "state": JobState.PENDING,
                 "attempts": 0,
+                "next_attempt_at": None,
                 "error_message": None,
                 "error_traceback": None,
                 "completed_at": None,
@@ -165,7 +202,7 @@ class JobManager:
         dispatch_cutoff = now - timedelta(seconds=dispatch_lease_seconds)
         stale_running = (
             Job.execution_id == execution_id,
-            Job.state == "running",
+            Job.state == JobState.RUNNING,
             Job.updated_at < running_cutoff,
         )
 
@@ -174,7 +211,7 @@ class JobManager:
             .filter(*stale_running, Job.attempts >= max_attempts)
             .update(
                 {
-                    "state": "failed",
+                    "state": JobState.FAILED,
                     "error_message": (
                         f"Worker lost: no result within {running_lease_seconds:.0f}s, "
                         f"{max_attempts} attempt(s)"
@@ -188,16 +225,16 @@ class JobManager:
         requeued_running = (
             self.db.query(Job)
             .filter(*stale_running)
-            .update({"state": "pending", "updated_at": now}, synchronize_session=False)
+            .update({"state": JobState.PENDING, "updated_at": now}, synchronize_session=False)
         )
         requeued_dispatched = (
             self.db.query(Job)
             .filter(
                 Job.execution_id == execution_id,
-                Job.state == "dispatched",
+                Job.state == JobState.DISPATCHED,
                 Job.dispatched_at < dispatch_cutoff,
             )
-            .update({"state": "pending", "updated_at": now}, synchronize_session=False)
+            .update({"state": JobState.PENDING, "updated_at": now}, synchronize_session=False)
         )
         self.db.commit()
         return {
@@ -224,7 +261,7 @@ class JobManager:
             "updated_at": datetime.now(timezone.utc).replace(tzinfo=None),
         }
 
-        if state in ["completed", "failed"]:
+        if state in (JobState.COMPLETED, JobState.FAILED):
             update_data["completed_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
         if processed_records is not None:
             update_data["processed_records"] = processed_records
@@ -243,28 +280,6 @@ class JobManager:
             return None
 
         return self.get_job(job_id)
-
-    def get_job_states(self, job_ids: List[str]) -> Dict[str, str]:
-        """
-        Get states for multiple jobs efficiently.
-
-        Note: Expires session cache first to see external updates from workers
-        who update jobs from their own database sessions.
-
-        Args:
-            job_ids: List of job identifiers
-
-        Returns:
-            Dictionary mapping job_id to state
-        """
-        # Expire cached objects to see external updates from workers
-        self.db.expire_all()
-
-        results = self.db.query(Job.job_id, Job.state).filter(
-            Job.job_id.in_(job_ids)
-        ).all()
-
-        return {job_id: state for job_id, state in results}
 
     def get_job_counts(self, execution_id: str) -> Dict[str, int]:
         """

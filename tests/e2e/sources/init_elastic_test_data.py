@@ -80,7 +80,9 @@ def insert_sample_data(client: Elasticsearch, count: int = 500):
         doc = {
             "@timestamp": timestamp.isoformat(),
             "event_type": event_type,
-            "user_id": random.randint(1, 100),
+            # Cycled, not random: half odd and half even, so routing tests that split
+            # on user_id parity (elastic_routed_destinations) see both sides.
+            "user_id": i % 100 + 1,
             "user_name": f"{random.choice(first_names)} {random.choice(last_names)}",
             "status": random.choice(statuses),
             "amount": round(random.uniform(10.0, 500.0), 2) if event_type == "purchase" else None,

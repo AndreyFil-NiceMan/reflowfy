@@ -117,8 +117,11 @@ def test_per_id_non_404_error_fails_the_job_instead_of_dropping_the_id(transport
     seen = transport(lambda req: httpx.Response(status, text="slow down"))
     src = id_based_api_source("https://api.test", "/users/{id}", ids=[1, 2])
 
-    with pytest.raises(SourceError, match=f"HTTP {status} for id 1"):
+    with pytest.raises(
+        SourceError, match=rf"HTTP {status} [A-Za-z ]+ \(text/plain, 9 bytes\) for id 1"
+    ) as exc:
         src.fetch({})
+    assert "slow down" not in str(exc.value)  # the body is not in the message
     assert len(seen) == 1  # stops at the first failure
 
 
@@ -192,7 +195,7 @@ def test_batch_mode_raw_list_body(transport) -> None:
 
 def test_batch_mode_http_error_and_connection_error(transport) -> None:
     transport(lambda req: httpx.Response(429, text="rate limited"))
-    with pytest.raises(SourceError, match="HTTP 429: rate limited"):
+    with pytest.raises(SourceError, match=r"HTTP 429 Too Many Requests \(text/plain, 12 bytes\)$"):
         id_based_api_source("https://api.test", "/b").fetch({})
 
     def boom(req: httpx.Request) -> httpx.Response:
@@ -215,39 +218,6 @@ def test_batch_mode_http_error_and_connection_error(transport) -> None:
 def test_extract_records_shapes(response_key, payload, expected) -> None:
     src = IDBasedAPISource("https://api.test", "/b", response_key=response_key)
     assert src._extract_records(payload) == expected
-
-
-# -- split_jobs ------------------------------------------------------------------
-
-
-def test_split_jobs_batch_mode_chunks_the_response(transport) -> None:
-    transport(_batch_handler(5))
-    src = id_based_api_source(
-        "https://api.test", "/batch", ids=[1, 2], batch_size=2, response_key="data.users"
-    )
-
-    jobs = list(src.split_jobs({}))
-
-    assert [j.metadata["record_count"] for j in jobs] == [2, 2, 1]
-    assert [j.metadata["batch_num"] for j in jobs] == [0, 1, 2]
-    assert all(j.metadata["ids_count"] == 2 for j in jobs)
-
-
-def test_split_jobs_per_id_groups_ids_and_drops_empty_batches(transport) -> None:
-    seen = transport(_users)
-    src = id_based_api_source("https://api.test", "/users/{id}", ids=[1, 2, 404], batch_size=2)
-
-    jobs = list(src.split_jobs({}))
-
-    assert len(jobs) == 1  # second batch [404] had no records
-    assert jobs[0].metadata == {"batch_num": 0, "id_count": 2, "record_count": 2, "ids": [1, 2]}
-    assert len(seen) == 3
-
-
-def test_split_jobs_invalid_config_is_a_source_error() -> None:
-    src = id_based_api_source("https://api.test", "/u/{id}", ids=[1], batch_size=0)
-    with pytest.raises(SourceError, match="Invalid configuration"):
-        list(src.split_jobs({}))
 
 
 # -- split (planning) ------------------------------------------------------------

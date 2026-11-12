@@ -15,7 +15,7 @@ from reflowfy.core.abstract_pipeline import AbstractPipeline
 from reflowfy.core.runtime_params import RuntimeParams
 from reflowfy.transformations.base import BaseTransformation
 from reflowfy.worker.executor import JobStats, WorkerExecutor
-from reflowfy.reflow_manager.models import Base
+from reflowfy.store.models import Base
 from test_worker_executor_paths import (  # type: ignore[import-not-found]
     FakeDest,
     FakePipeline,
@@ -263,3 +263,24 @@ async def test_the_destination_is_rebuilt_from_the_records_kept(register, worker
 
     assert [r["id"] for d in built for r in d.sent] == [1, 2, 3]
     assert len(built) == 3 and built[1].closed  # resolved again for job b, first one closed
+
+
+async def test_the_destination_is_rebuilt_off_the_event_loop(register, worker):  # noqa: F811
+    """define_destination is user code: after dedup it runs in a thread, like the first
+    call, so a slow one does not stall the loop (and the worker's Kafka heartbeat)."""
+    import threading
+
+    loop_thread = threading.get_ident()
+    threads: List[int] = []
+
+    class ThreadPipeline(FakePipeline):
+        def define_destination(self, records: List[Any], params: Dict[str, Any]) -> Any:
+            threads.append(threading.get_ident())
+            return FakeDest()
+
+    register(ThreadPipeline("rd-thread", FakeDest()))
+    await _run(worker, "rd-thread", "a", _ids(1, 2))
+    await _run(worker, "rd-thread", "b", _ids(2, 3))  # partly new: rebuilt after dedup
+
+    assert len(threads) == 3
+    assert loop_thread not in threads

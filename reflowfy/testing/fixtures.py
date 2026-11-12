@@ -32,7 +32,13 @@ from reflowfy.execution.job_runner import job, preview_runtime_params
 from reflowfy.testing.cassette import FixtureError, Session, UnmockedCallError, activate
 from reflowfy.testing.diff import diff_values, redact, summarize, without_fields
 from reflowfy.testing.result import PipelineResult
-from reflowfy.testing.runner import PipelineRef, StepHooks, execute, resolve_pipeline
+from reflowfy.testing.runner import (
+    PipelineRef,
+    StepHooks,
+    execute,
+    private_copy,
+    resolve_pipeline,
+)
 
 FIXTURE_VERSION = 1
 
@@ -159,7 +165,7 @@ def expected_from(result: PipelineResult) -> Dict[str, Any]:
 
 def _prepare(pipeline: PipelineRef, params: Dict[str, Any]) -> Tuple[Any, Dict[str, Any]]:
     """A private copy of the pipeline and the flat params a run of it starts from."""
-    fork = resolve_pipeline(pipeline).fork()
+    fork = private_copy(resolve_pipeline(pipeline))
     user_params = dict(fork.apply_defaults(dict(params)))
     return fork, preview_runtime_params(fork.name, user_params)
 

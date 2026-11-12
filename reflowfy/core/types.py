@@ -20,12 +20,10 @@ annotate the `records` argument in one token instead of writing
 (e.g. plain IDs from ``define_source``), so it does not wrap.
 """
 
-from typing import Any, Dict, Generic, List, Sequence, TypeVar
+from typing import Any, Dict, Generic, List, TypeVar
 
 # typing_extensions, not typing: a generic TypedDict needs it on Python 3.10.
 from typing_extensions import TypedDict
-
-from reflowfy.transformations.base import BaseTransformation
 
 T = TypeVar("T")
 
@@ -34,9 +32,6 @@ Record = Dict[str, Any]
 
 Records = List[Record]
 """A batch of records — what every hook receives and returns."""
-
-Transformations = Sequence[BaseTransformation]
-"""What ``define_transformations`` returns."""
 
 
 class TypedRecord(TypedDict, Generic[T]):

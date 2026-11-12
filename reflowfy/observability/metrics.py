@@ -1,13 +1,41 @@
 """Prometheus metrics collection."""
 
+from enum import Enum
+
 from prometheus_client import Counter, Histogram, Gauge
 
-# Job metrics
+
+class JobOutcome(str, Enum):
+    """Every ``status`` label value of ``reflowfy_jobs_processed_total``.
+
+    Dashboards and alerts query these strings, so a new outcome is added here.
+    """
+
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"  # SkipJob from the pipeline
+    DEDUPLICATED = "deduplicated"  # every record already written by another job
+    REDELIVERED = "redelivered"  # a second delivery of a job already claimed
+    # It ran, but lost the job before saving its outcome: its lease expired and another
+    # delivery claimed it, or the job was cancelled or failed by the lease sweep.
+    SUPERSEDED = "superseded"
+    CANCELLED = "cancelled"  # its execution was cancelled before it ran
+    RETRY_SCHEDULED = "retry_scheduled"  # failed; job_retry runs it again later
+    LEASE_EXPIRED = "lease_expired"  # its worker vanished too often (manager side)
+    INVALID = "invalid"  # a Kafka message that is not a job
+
+
 jobs_processed_total = Counter(
     "reflowfy_jobs_processed_total",
     "Total number of jobs processed",
     ["pipeline", "status"],
 )
+
+
+def count_job(pipeline: str, outcome: JobOutcome, jobs: int = 1) -> None:
+    """``jobs`` jobs of ``pipeline`` reached ``outcome``."""
+    jobs_processed_total.labels(pipeline=pipeline, status=outcome.value).inc(jobs)
+
 
 jobs_failed_total = Counter(
     "reflowfy_jobs_failed_total",

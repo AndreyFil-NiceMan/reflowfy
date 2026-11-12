@@ -1,12 +1,25 @@
 """Base transformation class with automatic registration."""
 
 import asyncio
-import os
 from abc import ABCMeta, abstractmethod
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, ClassVar, Dict, List, Literal, NamedTuple, Optional, Sequence, Tuple
 
 from reflowfy.core.exceptions import SkipJob, SkipRecord
 from reflowfy.core.query_loader import QueryLoaderMixin
+from reflowfy.core.record_steps import (  # noqa: F401  (re-exported: their old home)
+    DEFAULT_RECORD_CONCURRENCY as DEFAULT_RECORD_CONCURRENCY,
+    MAX_SKIP_REASON_LENGTH as MAX_SKIP_REASON_LENGTH,
+    MAX_SKIP_REASONS as MAX_SKIP_REASONS,
+    OTHER_SKIP_REASON as OTHER_SKIP_REASON,
+    count_skip_reason as count_skip_reason,
+    default_record_concurrency as default_record_concurrency,
+    top_skip_reasons as top_skip_reasons,
+)
+from reflowfy.core.exceptions import (  # their old home
+    StepOutputError as StepOutputError,
+    TransformationError as TransformationError,
+)
+from reflowfy.transformations.registry import transformation_registry
 
 
 class TransformationMeta(ABCMeta):
@@ -26,9 +39,6 @@ class TransformationMeta(ABCMeta):
         if name != "BaseTransformation" and bases:
             # Check if this is a concrete transformation with a name
             if "name" in namespace and namespace["name"]:
-                # Import here to avoid circular dependency
-                from reflowfy.transformations.registry import transformation_registry
-
                 transformation_registry.register(cls)
 
         return cls
@@ -111,6 +121,10 @@ class BaseTransformation(QueryLoaderMixin, metaclass=TransformationMeta):
         return f"{self.__class__.__name__}(name='{self.name}')"
 
 
+Transformations = Sequence[BaseTransformation]
+"""What ``define_transformations`` returns."""
+
+
 class AsyncTransformation(BaseTransformation):
     """A transformation whose work is a coroutine: implement :meth:`apply_async`.
 
@@ -145,21 +159,6 @@ class AsyncTransformation(BaseTransformation):
         return run_coroutine_sync(self.apply_async(records, runtime_params))
 
 
-DEFAULT_RECORD_CONCURRENCY = 16
-
-
-def default_record_concurrency() -> int:
-    """``TRANSFORM_CONCURRENCY`` (records in flight per per-record step), default 16."""
-    raw = os.getenv("TRANSFORM_CONCURRENCY", "")
-    try:
-        value = int(raw) if raw.strip() else DEFAULT_RECORD_CONCURRENCY
-    except ValueError:
-        raise ValueError(f"TRANSFORM_CONCURRENCY must be an integer, got {raw!r}") from None
-    if value < 1:
-        raise ValueError(f"TRANSFORM_CONCURRENCY must be >= 1, got {value}")
-    return value
-
-
 class RecordFailure(Exception):
     """One record of a :class:`RecordTransformation` failed.
 
@@ -174,33 +173,38 @@ class RecordFailure(Exception):
         super().__init__(f"record {index}: {type(error).__name__}: {error}")
 
 
-MAX_SKIP_REASONS = 20
-"""Distinct ``SkipRecord`` reasons kept per step; the rest are counted as ``OTHER_SKIP_REASON``."""
-MAX_SKIP_REASON_LENGTH = 200
-OTHER_SKIP_REASON = "(other reasons)"
-
-
-def count_skip_reason(reasons: Dict[str, int], reason: str, times: int = 1) -> None:
-    """Add ``times`` skips for ``reason`` to ``reasons``, keeping the dict bounded."""
-    reason = reason[:MAX_SKIP_REASON_LENGTH] or "(no reason)"
-    if reason not in reasons and len(reasons) >= MAX_SKIP_REASONS:
-        reason = OTHER_SKIP_REASON
-    reasons[reason] = reasons.get(reason, 0) + times
-
-
-def top_skip_reasons(reasons: Dict[str, int], limit: int = 3) -> str:
-    """``"user inactive" x3, "no email" x1`` — the most frequent reasons, for one log line."""
-    top = sorted(reasons.items(), key=lambda item: -item[1])[:limit]
-    more = len(reasons) - len(top)
-    text = ", ".join(f"{reason!r} x{times}" for reason, times in top)
-    return f"{text}, +{more} more" if more > 0 else text
-
-
 class _Skipped:
     """Marks a record its transformation dropped with ``SkipRecord``."""
 
     def __init__(self, reason: str):
         self.reason = reason
+
+
+OnError = Literal["fail", "skip"]
+"""What a per-record step does with a record whose call raised: fail the job, or skip it."""
+ON_ERROR_CHOICES: Tuple[str, ...] = ("fail", "skip")
+
+
+def check_on_error(owner: str, on_error: object) -> None:
+    """Raise ``ValueError`` unless ``on_error`` is ``"fail"`` or ``"skip"``."""
+    if on_error not in ON_ERROR_CHOICES:
+        raise ValueError(f"{owner}: on_error must be 'fail' or 'skip', got {on_error!r}")
+
+
+class RecordContractError(TypeError):
+    """A per-record step returned something that is not one record or ``None``."""
+
+
+def check_record_result(result: Any) -> None:
+    """A per-record step returns one record (a ``dict``) or ``None``; raise otherwise.
+
+    The error is a contract violation, not a failure of the record's call, so
+    ``on_error="skip"`` does not apply to it.
+    """
+    if result is not None and not isinstance(result, dict):
+        raise RecordContractError(
+            f"returned {type(result).__name__}; a per-record step returns one record or None"
+        )
 
 
 class RecordResults(NamedTuple):
@@ -219,7 +223,13 @@ class RecordTransformation(AsyncTransformation):
     flight are cancelled and the job fails naming that record's index.
     ``SkipRecord`` drops that record and records why; ``SkipJob`` from any record
     drops the whole job. ``timeout`` (seconds) bounds
-    each record's call.
+    each record's call. With ``on_error = "skip"`` a record whose call raised (a
+    timeout included) is dropped instead of failing the job, the exception's type
+    name as the skip reason.
+
+    ``apply_record`` returns one record (a ``dict``: a ``Record`` or ``TypedRecord``)
+    or ``None``. Anything else — a list, a tuple, a string — fails the job whatever
+    ``on_error`` says: it is a bug in the step, not a bad record.
 
     The concurrent calls share one ``runtime_params``: read it, don't write it.
     Usually built with ``@record_transformation``; subclass it to share one client
@@ -246,6 +256,15 @@ class RecordTransformation(AsyncTransformation):
     """Records in flight at once; ``None`` means ``TRANSFORM_CONCURRENCY`` (16)."""
     timeout: Optional[float] = None
     """Seconds allowed per record; ``None`` means no limit."""
+    on_error: ClassVar[OnError] = "fail"
+    """``"fail"`` (default): a record whose call raised fails the job. ``"skip"``: it is
+    dropped, ``type(exc).__name__`` as the reason (never the message: it can carry
+    record values, and reasons are counted). ``SkipRecord`` and ``SkipJob`` keep their
+    meaning either way."""
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        check_on_error(f"{cls.__name__}.on_error", cls.on_error)
 
     @abstractmethod
     async def apply_record(self, record: Any, runtime_params: Dict[str, Any]) -> Any:
@@ -261,24 +280,32 @@ class RecordTransformation(AsyncTransformation):
         """The cap this step runs with."""
         return self.concurrency if self.concurrency is not None else default_record_concurrency()
 
+    async def _call_one(self, record: Any, runtime_params: Dict[str, Any]) -> Any:
+        if self.timeout is None:
+            return await self.apply_record(record, runtime_params)
+        try:
+            return await asyncio.wait_for(self.apply_record(record, runtime_params), self.timeout)
+        except asyncio.TimeoutError as exc:
+            # The bare asyncio.TimeoutError says nothing on its own.
+            raise TimeoutError(f"timed out after {self.timeout}s") from exc
+
     async def _apply_one(self, index: int, record: Any, runtime_params: Dict[str, Any]) -> Any:
         try:
-            if self.timeout is None:
-                return await self.apply_record(record, runtime_params)
-            try:
-                return await asyncio.wait_for(
-                    self.apply_record(record, runtime_params), self.timeout
-                )
-            except asyncio.TimeoutError as exc:
-                # The bare asyncio.TimeoutError says nothing on its own.
-                timed_out = TimeoutError(f"timed out after {self.timeout}s")
-                raise RecordFailure(index, record, timed_out) from exc
-        except (SkipJob, RecordFailure):
+            result = await self._call_one(record, runtime_params)
+        except SkipJob:
             raise
         except SkipRecord as exc:
             return _Skipped(str(exc))
         except Exception as exc:
+            if self.on_error == "skip":
+                return _Skipped(type(exc).__name__)
             raise RecordFailure(index, record, exc) from exc
+        # Outside the try: a wrong return type is the step's bug, never skipped.
+        try:
+            check_record_result(result)
+        except RecordContractError as exc:
+            raise RecordFailure(index, record, exc) from None
+        return result
 
     async def apply_async(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
         return (await self.apply_records(records, runtime_params)).records
@@ -328,48 +355,24 @@ class RecordTransformation(AsyncTransformation):
         return results
 
 
-class TransformationError(Exception):
-    """Raised when a transformation fails.
+class DecoratedTransformation(BaseTransformation):
+    """What ``@transformation`` / ``@record_transformation`` turn a function into.
 
-    Carries enough context to say *where* in the chain the failure happened and
-    *which* record caused it, so callers can report it without re-running any
-    user code.
-
-    Attributes:
-        transformation_name: The transformation that raised.
-        original_error: The underlying exception, if any.
-        step_index: 0-based position in the applied chain, or None if unknown.
-        records_in: How many records this step received, or None if unknown.
-        culprit_index: Index of the implicated record, or None if not identified.
-        culprit_record: The implicated record itself, or None.
-        applied_steps: The steps that succeeded before this one, in order.
+    Its constructor takes the function's options as keyword arguments
+    (``multiply(factor=2)``), checked against the function's signature at once, so
+    ``step(option=...)`` type-checks for callers. A hand-written subclass of
+    :class:`BaseTransformation` keeps object's constructor and still rejects
+    arguments it does not declare.
     """
 
-    def __init__(
-        self,
-        transformation_name: str,
-        message: str,
-        original_error: Optional[Exception] = None,
-        step_index: Optional[int] = None,
-        records_in: Optional[int] = None,
-        culprit_index: Optional[int] = None,
-        culprit_record: Optional[Any] = None,
-        applied_steps: Optional[List[Any]] = None,
-    ):
-        self.transformation_name = transformation_name
-        self.original_error = original_error
-        self.step_index = step_index
-        self.records_in = records_in
-        self.culprit_index = culprit_index
-        self.culprit_record = culprit_record
-        self.applied_steps: List[Any] = applied_steps or []
-        super().__init__(f"Transformation '{transformation_name}' failed: {message}")
+    options: Dict[str, Any]
+
+    def __init__(self, **options: Any) -> None:
+        bind_options = getattr(type(self), "_bind_options", None)
+        if bind_options is not None:
+            bind_options(options)
+        self.options = options
 
 
-class StepOutputError(TransformationError):
-    """A transformation returned records that do not match its own return type.
 
-    Raised after the step when the pipeline sets ``validate_steps = True``. It is a
-    bug in that step, not bad input, so it always fails the job — whatever
-    ``on_invalid_record`` says — and is counted under its own ``error_type``.
-    """
+

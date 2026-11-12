@@ -24,6 +24,7 @@ from reflowfy.cli.commands import init_cmd as init_mod
 from reflowfy.cli.commands import run as run_mod
 from reflowfy.cli.main import app
 from reflowfy.cli.utils import console
+import reflowfy.cli.project as project_mod
 
 runner = CliRunner()
 
@@ -31,6 +32,9 @@ runner = CliRunner()
 @pytest.fixture(autouse=True)
 def _cwd(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
+    # build / run --build require a locked uv project (see TestUvProjectCheck).
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'p'\n")
+    (tmp_path / "uv.lock").write_text("version = 1\n")
     monkeypatch.setattr(console, "_width", 300)
     for name in ("REGISTRY", "PROJECT", "REFLOWFY_BASE_IMAGE"):
         monkeypatch.delenv(name, raising=False)
@@ -183,6 +187,15 @@ class TestRun:
         assert result.exit_code == 1
         assert "Build failed" in result.output
         assert seen == [["docker", "compose", "build", "--no-cache"]]
+
+    def test_a_failed_up_exits_non_zero(self, monkeypatch):
+        """It used to exit 0 whatever docker compose up returned."""
+        monkeypatch.setattr(
+            run_mod.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 17)
+        )
+        result = cli("run")
+        assert result.exit_code == 17
+        assert "docker compose up failed (exit 17)" in result.output
 
     def test_ctrl_c_stops_cleanly(self, monkeypatch):
         def interrupted(cmd: List[str], **kwargs: Any) -> None:
@@ -348,7 +361,7 @@ class TestInit:
         assert "sys.path.insert" in (root / "tests" / "conftest.py").read_text()
         test_text = (root / "tests" / "test_first.py").read_text()
         assert "from pipelines.first import FilterActiveUsers" in test_text
-        assert 'pip install "reflowfy[test]"' in result.output
+        assert 'uv add --dev "reflowfy[test]"' in result.output
 
     def test_rerun_keeps_existing_env_and_files(self, tmp_path):
         assert cli("init", "proj").exit_code == 0
@@ -380,6 +393,7 @@ class TestInit:
         empty = tmp_path / "no_package"
         empty.mkdir()
         monkeypatch.setattr(init_mod, "get_package_path", lambda: empty)
+        monkeypatch.setattr(project_mod, "get_package_path", lambda: empty)
         monkeypatch.setattr(init_mod, "get_dockerfiles_path", lambda: empty)
 
         result = cli("init", "proj", "--name", "fallback_pipe")

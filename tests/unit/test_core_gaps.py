@@ -26,7 +26,8 @@ from reflowfy.core.id_based_pipeline import IdBasedPipeline
 from reflowfy.core.registry import PipelineRegistry, pipeline_registry
 from reflowfy.core.runtime_params import RuntimeParams
 from reflowfy.core.serialization import to_json_safe
-from reflowfy.execution.base import ExecutionState, ExecutionStatus
+from reflowfy.execution.distributed_executor import ExecutionStatus
+from reflowfy.store.states import ExecutionState
 from reflowfy.transformations.registry import TransformationRegistry, transformation_registry
 
 
@@ -179,12 +180,9 @@ class TestDefaultsAndHelpers:
     def test_every_transformation_applies_by_default(self, pipeline: Any) -> None:
         assert pipeline.should_apply_transformation(object(), {}, []) is True
 
-    def test_required_parameter_names(self, pipeline: Any) -> None:
-        assert pipeline.get_required_parameters() == {"env"}
-
     def test_resolve_rejects_invalid_parameters(self, pipeline: Any) -> None:
         with pytest.raises(ValueError, match="Invalid parameters: Missing required parameter: env"):
-            pipeline.fork().resolve({})
+            pipeline.resolve({})
 
     def test_repr_names_the_pipeline(self, pipeline: Any) -> None:
         assert repr(pipeline) == "GapPipeline(name='gaps_helpers_pipeline')"
@@ -200,27 +198,13 @@ class TestDefaultsAndHelpers:
         assert cls().to_dict()["transformations"] == []
 
 
-class TestUnresolvedGuards:
+class TestResolve:
     @pytest.fixture
     def pipeline(self, isolated_registry: None) -> Any:
         return _pipeline_class("gaps_unresolved_pipeline")()
 
-    @pytest.mark.parametrize("attr", ["source", "destination", "transformations"])
-    def test_reading_the_plan_before_resolve_says_so(self, pipeline: Any, attr: str) -> None:
-        with pytest.raises(RuntimeError, match=r"Call pipeline.resolve\(runtime_params\)"):
-            getattr(pipeline, attr)
-
-    def test_destination_and_transformations_once_set(self, pipeline: Any) -> None:
-        pipeline._destination = "dest"
-        pipeline._transformations = ["t"]
-        assert pipeline.destination == "dest"
-        assert pipeline.transformations == ["t"]
-
-    def test_resolve_clears_per_batch_state(self, pipeline: Any) -> None:
-        resolved = pipeline.fork().resolve({})
-        assert resolved.source == [{"id": 1}]
-        with pytest.raises(RuntimeError):
-            resolved.destination
+    def test_resolve_plans_the_source(self, pipeline: Any) -> None:
+        assert pipeline.resolve({}).jobs == [{"id": 1}]
 
 
 # ----- IdBasedPipeline --------------------------------------------------------------
@@ -265,11 +249,13 @@ class TestIdBasedPipeline:
         pipeline = _id_pipeline_class("gaps_id_repr")()
         assert repr(pipeline) == "GapIdPipeline(name='gaps_id_repr', type='id_based')"
 
-    def test_resolve_for_id_wraps_a_single_id(self, isolated_registry: None) -> None:
+    def test_plan_batch_gives_the_batch_its_ids_and_not_input_ids(
+        self, isolated_registry: None
+    ) -> None:
         pipeline = _id_pipeline_class("gaps_id_single")()
-        resolved = pipeline.resolve_for_id({"input_ids": [5]}, 5)
-        assert resolved["current_ids"] == [5]
-        assert resolved["source"].config["records"] == [{"id": 5}]  # list -> StaticSource
+        planned = pipeline.plan_batch({"input_ids": [5], "env": "x"}, [5])
+        assert planned.source == [{"id": 5}]  # a list: one job carrying the records
+        assert planned.params == {"env": "x", "current_ids": [5], "current_id": 5}
 
 
 # ----- PipelineRegistry / TransformationRegistry singletons -------------------------
@@ -401,13 +387,9 @@ def test_success_rate_of_an_execution_without_jobs_is_zero() -> None:
     assert ExecutionStatus("e", "p", ExecutionState.COMPLETED).success_rate == 0.0
 
 
-def test_success_rate_and_completion() -> None:
+def test_success_rate() -> None:
     status = ExecutionStatus("e", "p", ExecutionState.RUNNING, total_jobs=4, completed_jobs=3)
     assert status.success_rate == 0.75
-    assert status.is_complete is False
-
-    status.state = ExecutionState.PARTIALLY_FAILED
-    assert status.is_complete is True
 
 
 # ----- pipeline discovery: sys.path handling -----------------------------------------

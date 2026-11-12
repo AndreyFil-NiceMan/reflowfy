@@ -1,26 +1,33 @@
+# syntax=docker/dockerfile:1.7
 # Builds the Reflowfy API image on top of the published reflowfy base image.
-# The base image already provides reflowfy + all of its dependencies.
+# The base image already provides reflowfy + all of its dependencies in /opt/venv,
+# plus uv. BuildKit is required (the default for docker build / compose v2).
 ARG REFLOWFY_BASE_IMAGE=reflowfy-base:latest
 FROM ${REFLOWFY_BASE_IMAGE}
 
 WORKDIR /app
 
-# Install the user's project dependencies on top of the base image.
-# Supports both pip (requirements.txt) and uv (pyproject.toml / uv.lock).
-# requirements.txt is always scaffolded; pyproject.toml / uv.lock are optional.
-COPY requirements.txt pyproject.tom[l] uv.loc[k] ./
-RUN if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi \
- && if [ -f pyproject.toml ]; then pip install --no-cache-dir uv && uv pip install --system --no-cache .; fi
+# Install the project's dependencies exactly as locked in uv.lock, into the base
+# image's venv. This layer comes before the source so it is rebuilt only when
+# pyproject.toml / uv.lock change, not on every pipeline edit.
+#   --locked                       fail if uv.lock is stale (run `uv lock`), never re-resolve
+#   --no-install-project           the project is your code under src/, not a package
+#   --no-install-package reflowfy  keep the base image's reflowfy
+#   --inexact                      keep the base image's packages that are not in uv.lock
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-dev --no-install-project --no-install-package reflowfy --inexact
 
 # Copy user pipelines and components
 COPY src/ src/
 
-# Environment variables
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH=/app/src:/app
-ENV API_HOST=0.0.0.0
-ENV API_PORT=8000
-ENV PIPELINE_MODULE=pipelines
+ENV PYTHONPATH=/app/src:/app \
+    PIPELINE_MODULE=pipelines \
+    API_HOST=0.0.0.0 \
+    API_PORT=8000
 
 EXPOSE 8000
+# Non-root user created by the base image (UID 10001, GID 0).
+USER 10001
+
 CMD ["python", "-m", "reflowfy.api.app"]

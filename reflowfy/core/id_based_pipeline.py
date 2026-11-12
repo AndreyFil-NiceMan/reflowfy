@@ -75,7 +75,7 @@ from reflowfy.core.runtime_params import P
 
 if TYPE_CHECKING:
     from reflowfy.sources.base import BaseSource
-from reflowfy.execution.job_runner import chunk
+from reflowfy.core.planning import PlannedJob, chunk
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +127,7 @@ class IdBasedPipeline(AbstractPipeline[P]):
     # Default 1 = one source call per ID (original behaviour).
     # Set > 1 to process a list of IDs per source/transform/destination resolution.
     ids_batch_size: int = 1
+    execution_only_params = ("input_ids",)
 
     # =========================================================================
     # Abstract Methods — Must be implemented by subclasses
@@ -186,23 +187,15 @@ class IdBasedPipeline(AbstractPipeline[P]):
         the request body while deciding what a job is (see the module docstring
         for the one-ID-fans-out-to-many case).
 
-        Each planned source carries its own ``job_params``: the batch's params
-        without the full ``input_ids`` list, since a job that handles two IDs
-        has no use for the other 999,998. ``current_ids``, ``current_id`` and
-        any keys ``define_source`` added stay, so workers still see them.
+        Each job carries its batch's params (see :meth:`plan_batch`).
         """
         # Cast the dict, not the result: pyright resolves `input_ids` off the
         # TypedDict and calls a cast on the value redundant, while mypy can't
         # see through the `P` TypeVar bound and needs one. Casting the mapping
         # satisfies both.
-        ids: List[Any] = cast(Dict[str, Any], runtime_params).get("input_ids", [])
-        for ids_batch in chunk(ids, self.ids_batch_size):
-            resolved = self.resolve_for_ids(cast(Dict[str, Any], runtime_params), ids_batch)
-            source = resolved["source"]
-            source.job_params = {
-                k: v for k, v in resolved["batch_params"].items() if k != "input_ids"
-            }
-            yield source
+        params = cast(Dict[str, Any], runtime_params)
+        for ids_batch in chunk(params.get("input_ids", []), self.ids_batch_size):
+            yield self.plan_batch(params, ids_batch)
 
     # =========================================================================
     # Built-in Logic — Parameters with auto-injected 'input_ids'
@@ -258,7 +251,13 @@ class IdBasedPipeline(AbstractPipeline[P]):
                     cast(P, {"current_ids": ["__discovery__"], "current_id": "__discovery__"}),
                 )
             ]
-        except Exception:
+        except Exception as exc:
+            # Metadata only: a hook that needs real records cannot be listed this way.
+            logger.debug(
+                "%s: transformation names not listable without records (%s)",
+                self.name,
+                type(exc).__name__,
+            )
             return []
 
     def to_dict(self) -> Dict[str, Any]:
@@ -271,81 +270,41 @@ class IdBasedPipeline(AbstractPipeline[P]):
 
     def resolve_source(self, batch_params: Dict[str, Any]) -> Any:
         """
-        Call ``define_source`` and coerce its return value into a source.
+        Call ``define_source`` for one batch and check what it returned.
 
-        ``define_source`` may return either:
-        - a ``BaseSource`` instance (fetched normally), or
-        - a plain list of records, which is wrapped in a ``StaticSource`` so the
-          records are used verbatim and no fetch happens. This lets ID-based
-          pipelines feed runtime-provided IDs straight into the
-          transformation/destination chain.
-
-        Args:
-            batch_params: Per-batch runtime params (with ``current_ids`` injected)
-
-        Returns:
-            A ``BaseSource`` instance.
+        ``define_source`` may return either a source, or a plain list of records,
+        which becomes one job carrying them verbatim (no fetch), so an ID-based
+        pipeline can feed the runtime-provided IDs straight into its
+        transformations.
 
         Raises:
-            TypeError: If ``define_source`` returns neither a ``BaseSource`` nor a list.
+            TypeError: ``define_source`` returned neither a source nor a list.
         """
-        from reflowfy.sources.base import BaseSource
-        from reflowfy.sources.static import StaticSource
-
         # Any, not the declared return type: the checks below are for the
         # unannotated pipelines the type system can't speak for.
         returned: Any = self.define_source(cast(P, batch_params))
-        if isinstance(returned, BaseSource):
-            return returned
-        if isinstance(returned, list):
-            return StaticSource(cast(List[Any], returned))
+        if isinstance(returned, list) or callable(getattr(returned, "fetch", None)):
+            return cast(Any, returned)
         raise TypeError(
             f"Pipeline '{self.name}': define_source must return a BaseSource or a "
             f"list of records, got {type(returned).__name__}"
         )
 
-    def resolve_for_ids(
-        self, runtime_params: Dict[str, Any], ids_batch: List[Any]
-    ) -> Dict[str, Any]:
+    def plan_batch(self, runtime_params: Dict[str, Any], ids_batch: List[Any]) -> PlannedJob:
+        """The job for one batch of IDs.
+
+        ``define_source`` gets a copy of the params with ``current_ids`` /
+        ``current_id`` set, so keys it adds stay with this batch and do not leak
+        into the next one; the job carries that copy (enrichments included), and
+        ``input_ids`` is left to the execution (``execution_only_params``).
         """
-        Resolve source for a batch of IDs and prepare per-batch params.
-
-        Called by :meth:`define_jobs` once per ID-batch (batch size is
-        determined by the pipeline's ``ids_batch_size`` attribute).
-
-        Uses a per-batch copy of runtime_params so that any keys added by
-        define_source (source enrichments) don't bleed into subsequent batches.
-        The enrichments are returned separately so callers can inject them into
-        the job payload metadata, making them available to workers.
-
-        Args:
-            runtime_params: Validated runtime parameters
-            ids_batch: List of IDs in this batch
-
-        Returns:
-            Dict with 'source', 'transformations', 'destination', 'current_ids',
-            'source_enrichments' (keys added by define_source), 'batch_params'
-            (the full per-batch param dict including enrichments and current IDs).
-        """
-        # Use a fresh copy per batch — prevents enrichments from one batch
-        # leaking into the next batch's runtime_params.
         batch_params = dict(runtime_params)
         batch_params["current_ids"] = list(ids_batch)
         batch_params["current_id"] = ids_batch[0] if ids_batch else None
         source = self.resolve_source(batch_params)
-        source_enrichments = {k: batch_params[k] for k in batch_params if k not in runtime_params}
-        return {
-            "source": source,
-            "transformations": None,
-            "destination": None,
-            "current_ids": ids_batch,
-            "source_enrichments": source_enrichments,
-            "batch_params": batch_params,
-        }
-
-    def resolve_for_id(self, runtime_params: Dict[str, Any], current_id: Any) -> Dict[str, Any]:
-        """Backward-compat shim: wraps single ID in a list and calls resolve_for_ids."""
-        return self.resolve_for_ids(runtime_params, [current_id])
+        return PlannedJob(
+            source, {k: v for k, v in batch_params.items() if k not in self.execution_only_params}
+        )
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(name='{self.name}', type='id_based')"

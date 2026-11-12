@@ -33,8 +33,6 @@ kafka:
   bootstrapServers: 'kafka:9092'
   topic: 'reflow.jobs'
 
-# Rate limiting
-maxJobsPerMinute: 6000
 
 # Pipeline module to import
 pipelineModule: 'pipelines'

@@ -4,6 +4,7 @@ import logging
 from typing import Dict, Any, List, Optional
 
 
+from reflowfy.destinations.pool import close_loop_pool, open_loop_pool
 from reflowfy.reflow_manager.dispatcher import (
     TOKEN_WAIT_SECONDS,
     BaseDispatcher,
@@ -25,6 +26,10 @@ class LocalDispatcher(BaseDispatcher):
 
     Supports rate limiting via the same token-bucket RateLimiter
     used by KafkaDispatcher.
+
+    Destination connections are pooled per event loop — the loop that drives one
+    execution — and closed by :meth:`close` at the end of it: a Kafka producer
+    belongs to the loop that started it.
     """
 
     def __init__(self, rate_limiter: RateLimiter, db_session: Any = None):
@@ -35,37 +40,6 @@ class LocalDispatcher(BaseDispatcher):
         from reflowfy.worker.executor import WorkerExecutor
 
         return WorkerExecutor()
-
-    async def dispatch_job(
-        self,
-        job_payload: Dict[str, Any],
-        pipeline_name: str,
-        rate_limit: Optional[float] = None,
-    ) -> bool:
-        """Dispatch single job locally with rate limiting."""
-        # Rate limit: acquire a token before executing
-        if rate_limit is not None:
-            acquired = self.rate_limiter.acquire_token(pipeline_name, rate_limit, max_wait=300.0)
-            if not acquired:
-                logger.warning(
-                    "Rate limit timeout, skipping job",
-                    extra={"event": "rate_limit_timeout", "job_id": job_payload.get("job_id")},
-                )
-                return False
-
-        executor = self._create_executor()
-        try:
-            await executor.execute_job(job_payload)
-            return True
-        except Exception:
-            logger.error(
-                "Local dispatch failed",
-                exc_info=True,
-                extra={"event": "local_dispatch_error", "job_id": job_payload.get("job_id")},
-            )
-            return False
-        finally:
-            await executor.close()
 
     async def dispatch_jobs_batch(
         self,
@@ -78,6 +52,7 @@ class LocalDispatcher(BaseDispatcher):
     ) -> int:
         """Dispatch batch locally with rate limiting and a fresh executor."""
         executor = self._create_executor()
+        open_loop_pool()  # kept across this execution's batches; close() closes it
         dispatched = 0
 
         try:
@@ -116,5 +91,5 @@ class LocalDispatcher(BaseDispatcher):
         return dispatched
 
     async def close(self) -> None:
-        """No persistent resources to close."""
-        pass
+        """Close the destination connections pooled in this (execution's) loop."""
+        await close_loop_pool()

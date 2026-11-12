@@ -1,9 +1,9 @@
 """
-E2E tests for ``kafka_destination(concurrency=...)`` against a real broker.
+E2E tests for ``kafka_destination``'s batched send against a real broker.
 
 Runs ``e2e_kafka_concurrency_test`` and consumes its topic: every record of this test's
-``run`` must arrive exactly once, and with ``concurrency=1`` in the order the job sent
-them (the topic has one partition).
+``run`` must arrive exactly once, and each job's in the order the job sent them (the
+topic has one partition, and aiokafka keeps one batch in flight per partition).
 
 Prerequisites:
     - Kafka on localhost:9095 (SASL_PLAINTEXT, from docker-compose.e2e-infra.yml)
@@ -89,12 +89,9 @@ async def _consume_run(run: str, expected: int, timeout: float = 60.0) -> List[i
     return ids
 
 
-@pytest.mark.parametrize("concurrency", [1, 16])
-async def test_every_record_arrives_exactly_once(manager, concurrency):
-    run = f"kafka-conc-{concurrency}-{uuid.uuid4().hex[:8]}"
-    stats = _run_and_wait(
-        manager, {"run": run, "count": 200, "batch_size": 50, "concurrency": concurrency}
-    )
+async def test_every_record_arrives_exactly_once(manager):
+    run = f"kafka-batch-{uuid.uuid4().hex[:8]}"
+    stats = _run_and_wait(manager, {"run": run, "count": 200, "batch_size": 50})
 
     assert stats.get("state") == "completed", stats
     assert (stats["total_jobs"], stats["jobs_completed"]) == (4, 4), stats
@@ -103,7 +100,7 @@ async def test_every_record_arrives_exactly_once(manager, concurrency):
     assert sorted(ids) == list(range(1, 201))
 
 
-async def test_concurrency_one_keeps_each_jobs_order(manager):
+async def test_a_batch_keeps_each_jobs_order(manager):
     run = f"kafka-order-{uuid.uuid4().hex[:8]}"
     stats = _run_and_wait(manager, {"run": run, "count": 100, "batch_size": 25})
 

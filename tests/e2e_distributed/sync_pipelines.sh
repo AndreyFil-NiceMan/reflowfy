@@ -4,5 +4,5 @@
 set -euo pipefail
 dest="${1:?usage: sync_pipelines.sh <project dir>}/src/pipelines"
 [ -d "$dest" ] || { echo "no $dest — is that a reflowfy project (reflowfy init)?" >&2; exit 1; }
-cp "$(dirname "$0")"/pipelines/dist_pipelines.py "$dest/"
-echo "copied dist_pipelines.py -> $dest (rebuild the api/manager/worker images and redeploy)"
+cp "$(dirname "$0")"/pipelines/dist_*.py "$dest/"
+echo "copied dist_*.py -> $dest (rebuild the api/manager/worker images and redeploy)"

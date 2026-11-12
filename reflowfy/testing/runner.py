@@ -15,9 +15,12 @@ from reflowfy.core.abstract_pipeline import AbstractPipeline
 from reflowfy.core.async_utils import run_coroutine_sync
 from reflowfy.core.id_based_pipeline import IdBasedPipeline
 from reflowfy.core.serialization import to_json_safe
+from reflowfy.core.planning import PlannedJob, ResolvedPlan
 from reflowfy.destinations.base import BaseDestination
+from reflowfy.destinations.pool import loop_pool_scope
 from reflowfy.execution.job_runner import (
-    job_runtime_params,
+    log_job_dropped,
+    log_skipped_records,
     plan_slices,
     preview_runtime_params,
     run_job_records,
@@ -38,11 +41,7 @@ from reflowfy.testing.cassette import (
 from reflowfy.testing.destinations import CaptureDestination
 from reflowfy.testing.result import JobResult, PipelineResult
 from reflowfy.testing.transforms import run_step
-from reflowfy.transformations.base import (
-    BaseTransformation,
-    TransformationError,
-    top_skip_reasons,
-)
+from reflowfy.transformations.base import BaseTransformation, TransformationError
 
 logger = get_logger("testing")
 
@@ -80,6 +79,16 @@ def resolve_pipeline(pipeline: PipelineRef) -> "AbstractPipeline[Any]":
         instance: "AbstractPipeline[Any]" = pipeline()
         return instance
     return pipeline
+
+
+def private_copy(pipeline: "AbstractPipeline[Any]") -> "AbstractPipeline[Any]":
+    """A shallow copy of ``pipeline`` for one test run.
+
+    A run instruments the copy's ``define_transformations`` (to know which step is
+    running, and to freeze or record steps), so the registered instance, shared by
+    every run in the process, is never touched.
+    """
+    return copy.copy(pipeline)
 
 
 def make_params(pipeline: PipelineRef, **overrides: Any) -> Dict[str, Any]:
@@ -210,31 +219,19 @@ def _setup_problem(exc: Optional[BaseException]) -> Optional[BaseException]:
 def _log_job(job: JobResult, logger: Any = logger) -> None:
     """The worker's ``job_dropped`` / ``records_skipped`` lines, so ``caplog`` sees them."""
     if job.skip_reason:
-        logger.info(
-            "Job dropped by pipeline (%s)",
-            job.skip_reason,
-            extra={"event": "job_dropped", "skip_reason": job.skip_reason},
-        )
+        log_job_dropped(logger, str(job.skip_reason))
     for step in job.steps:
-        if step.records_skipped:
-            logger.info(
-                "%s skipped %d records (%s)",
-                step.name,
-                step.records_skipped,
-                top_skip_reasons(step.skip_reasons or {}),
-                extra={
-                    "event": "records_skipped",
-                    "transformation": step.name,
-                    "records_skipped": step.records_skipped,
-                },
-            )
+        log_skipped_records(logger, step)
 
 
 async def _send(target: BaseDestination, records: List[Any], params: Dict[str, Any]) -> None:
-    try:
-        await target.send_with_retry(records, params)
-    finally:
-        await target.close()
+    # Sent and closed in one loop, with this job's connection pool: a Kafka producer
+    # belongs to its loop (as in ``reflowfy test`` and the worker).
+    async with loop_pool_scope():
+        try:
+            await target.send_with_retry(records, params)
+        finally:
+            await target.close()
 
 
 def execute(
@@ -250,7 +247,7 @@ def execute(
     sender: Optional[Callable[[Any, List[Any], Dict[str, Any]], None]] = None,
     job_logger: Any = None,
 ) -> PipelineResult:
-    """Plan and run every job of an already-forked pipeline inside ``session``.
+    """Plan and run every job of a private copy of a pipeline inside ``session``.
 
     The one loop behind ``run_pipeline``, the fixture recorder/replayer and
     ``reflowfy test``. Stops at the first job that fails; the failure is on
@@ -264,22 +261,22 @@ def execute(
     progress = _Progress()
     _instrument(fork, session, hooks or StepHooks(), progress)
     capture = CaptureDestination()
-    # As the manager does: a job has no use for the whole `input_ids` list.
-    drop_input_ids = isinstance(fork, IdBasedPipeline)
+    # The manager's merge, so a job sees what it would in production (an ID-based
+    # job gets its `current_ids`, not the whole `input_ids` list).
+    merge = ResolvedPlan(params=flat, jobs=None, execution_only=fork.execution_only_params)
     session.in_job = False
     session.current_step = None
     try:
-        for sub in plan_slices(plan(), flat):
+        for planned in plan_slices(plan(), flat):
             remaining = None if limit is None else limit - result.fetched
             if remaining is not None and remaining <= 0:
                 break
-            job_params = job_runtime_params(sub, flat)
-            if drop_input_ids:
-                job_params.pop("input_ids", None)
+            sub = planned.source
+            job_params = merge.job_params(planned)
             job = JobResult(
                 index=len(result.jobs),
                 params=job_params,
-                job_params=dict(getattr(sub, "job_params", None) or {}),
+                job_params=dict(planned.params),
             )
             result.jobs.append(job)
             progress.job, progress.resolutions = job.index, 0
@@ -349,7 +346,7 @@ def run_pipeline(
 
     Args:
         pipeline: A pipeline name, class or instance. The registered instance is
-            never touched: the run uses a private copy (``fork()``).
+            never touched: the run uses a private copy.
         params: The user's parameters. Defaults are applied and the values
             validated as ``/run`` would; invalid ones raise ``ValueError``.
         records: Input for one job, replacing the pipeline's source.
@@ -386,7 +383,7 @@ def run_pipeline(
     if len(given) > 1:
         raise ValueError(f"pass only one of records, jobs and source (got {', '.join(given)})")
 
-    fork = resolve_pipeline(pipeline).fork()
+    fork = private_copy(resolve_pipeline(pipeline))
     user_params = dict(fork.apply_defaults(dict(params or {})))
     checked = user_params
     if given and isinstance(fork, IdBasedPipeline) and "input_ids" not in user_params:
@@ -398,7 +395,8 @@ def run_pipeline(
     flat = preview_runtime_params(fork.name, user_params)
 
     def one_job(items: Any) -> Any:
-        if isinstance(items, BaseSource) or not wrap:
+        # A source, or a `reflowfy.job(...)`, is used as it is.
+        if isinstance(items, (BaseSource, PlannedJob)) or not wrap:
             return items
         return MockSource(data=list(items), batch_size=max(len(items), 1))
 

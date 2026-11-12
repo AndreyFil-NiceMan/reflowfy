@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.manager import ReflowManager
-from reflowfy.reflow_manager.models import Base, Execution, Job
+from reflowfy.store.models import Base, Execution, Job
 
 
 @pytest.fixture
@@ -146,43 +146,6 @@ def test_current_checkpoint_when_every_batch_completed(db):
     assert _manager(db).get_execution_stats("e")["current_checkpoint"] == 3  # type: ignore[index]
 
 
-def test_get_checkpoints_delegates_to_the_job_table(db):
-    _execution(db)
-    _jobs(db, 1, completed=1, failed=2)
-    manager = _manager(db)
-    assert len(manager.get_checkpoints("e")) == 3
-    assert {j.state for j in manager.get_checkpoints("e", "failed")} == {"failed"}
-
-
-# ----- ExecutionManager -------------------------------------------------------------
-
-
-def test_update_job_counts_increments_without_committing(db):
-    _execution(db, jobs_dispatched=1, jobs_completed=2, jobs_failed=0)
-    em = ExecutionManager(db)
-
-    em.update_job_counts("e", jobs_dispatched=4, jobs_completed=3)
-    execution = em.update_job_counts("e", jobs_failed=2)
-
-    assert execution is not None
-    assert (execution.jobs_dispatched, execution.jobs_completed, execution.jobs_failed) == (5, 5, 2)
-    db.rollback()  # the caller commits; nothing was persisted yet
-    db.expire_all()
-    persisted = em.get_execution("e")
-    assert persisted is not None
-    assert (persisted.jobs_dispatched, persisted.jobs_completed, persisted.jobs_failed) == (1, 2, 0)
-
-
-def test_update_job_counts_via_manager_and_unknown(db):
-    _execution(db, jobs_dispatched=0, jobs_completed=0, jobs_failed=0)
-    manager = _manager(db)
-    assert manager.update_job_counts("nope", jobs_completed=1) is None
-    execution = manager.update_job_counts("e", jobs_dispatched=1, jobs_completed=1, jobs_failed=1)
-    assert execution is not None
-    db.commit()
-    assert (execution.jobs_dispatched, execution.jobs_completed, execution.jobs_failed) == (1, 1, 1)
-
-
 @pytest.mark.parametrize(
     "state, paused",
     [
@@ -229,30 +192,23 @@ def test_pause_and_resume_unknown(db):
     assert em.resume_execution("nope") is None
 
 
-def test_update_deduplicated_count_sets_not_adds(db):
-    _execution(db, deduplicated_jobs=2)
-    em = ExecutionManager(db)
-    em.update_deduplicated_count("e", 7)
-    em.update_deduplicated_count("nope", 3)  # unknown: ignored
-    db.expire_all()
-    assert db.query(Execution).one().deduplicated_jobs == 7
-
-
 def test_update_execution_state_terminal_sets_completed_at(db):
     _execution(db)
     em = ExecutionManager(db)
     assert em.update_execution_state("nope", "failed") is None
 
-    running = em.update_execution_state("e", "running", error_message=None)
-    assert running is not None and running.completed_at is None
+    # running -> running is not a transition (ExecutionState.FROM): refused, untouched.
+    assert em.update_execution_state("e", "running", error_message=None) is None
+    assert db.query(Execution).one().completed_at is None
 
     failed = em.update_execution_state("e", "failed", error_message="boom")
     assert failed is not None
     assert failed.completed_at is not None and failed.error_message == "boom"
 
-    # a later update without a message keeps the old one
-    again = em.update_execution_state("e", "failed")
-    assert again is not None and again.error_message == "boom"
+    # failed -> failed is refused too: the first outcome and its message stay
+    assert em.update_execution_state("e", "failed", error_message="later") is None
+    db.expire_all()
+    assert db.query(Execution).one().error_message == "boom"
 
 
 def test_reopen_execution_clears_the_outcome(db):

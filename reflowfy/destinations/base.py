@@ -2,12 +2,32 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, TypeVar
 from tenacity import (
+    RetryCallState,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
 )
+
+from reflowfy.core.secrets import redact_config
+from reflowfy.destinations.pool import ConnectionPool, loop_pool
+from reflowfy.core.exceptions import (  # their old home
+    DestinationError as DestinationError,
+    PermanentDestinationError as PermanentDestinationError,
+)
+
+__all__ = [
+    "BaseDestination",
+    "ConnectionPool",
+    "DestinationError",
+    "PermanentDestinationError",
+    "RetryConfig",
+    "check_concurrency",
+    "is_retryable",
+]
+
+T = TypeVar("T")
 
 
 @dataclass
@@ -28,7 +48,6 @@ class BaseDestination(ABC):
     1. Sending transformed data
     2. Health checks
     3. Retry logic with exponential backoff
-    4. Metrics reporting
     """
 
     def __init__(self, config: Dict[str, Any], retry_config: Optional[RetryConfig] = None):
@@ -43,6 +62,46 @@ class BaseDestination(ABC):
         self.retry_config = retry_config or RetryConfig()
         # What identifies this destination for content dedup; None = the whole config.
         self.dedup_identity: Optional[Any] = None
+        # Set by a @record_destination: connections shared with the job's other
+        # destinations. None: this destination opens and closes its own.
+        self.connection_pool: Optional[ConnectionPool] = None
+        # Set by a @record_destination: requests in flight at once, for destinations
+        # that send one request per record. None: the destination's default.
+        self.send_concurrency: Optional[int] = None
+        # The pool this destination took a connection from, released by close().
+        self._used_pool: Optional[ConnectionPool] = None
+
+    def _active_pool(self) -> Optional[ConnectionPool]:
+        """Where this destination's connections come from: its job's pool, else the loop's.
+
+        None outside any pool scope: the destination opens and closes its own.
+        """
+        return self.connection_pool if self.connection_pool is not None else loop_pool()
+
+    async def _pooled(
+        self,
+        pool: ConnectionPool,
+        key: str,
+        create: Callable[[], Awaitable[T]],
+        close: Callable[[T], Awaitable[None]],
+    ) -> T:
+        """The pooled connection for ``key``, held until :meth:`_release_pooled`."""
+        self._used_pool = pool
+        return await pool.get(key, create, close, holder=self)
+
+    async def _release_pooled(self) -> None:
+        """Release (never close) the pooled connections this destination used."""
+        pool, self._used_pool = self._used_pool, None
+        if pool is not None:
+            await pool.release(self)
+
+    async def _cached_health(self, probe: Callable[[], Awaitable[bool]]) -> bool:
+        """``probe()``, reused for ``HEALTH_CACHE_SECONDS`` per ``health_key()`` when pooled."""
+        pool = self._active_pool()
+        key = self.health_key()
+        if pool is None or key is None:
+            return await probe()
+        return await pool.cached_health(key, probe)
 
     @abstractmethod
     async def send(self, records: List[Any], metadata: Optional[Dict[str, Any]] = None) -> None:
@@ -67,6 +126,14 @@ class BaseDestination(ABC):
             True if healthy, False otherwise
         """
         pass
+
+    def health_key(self) -> Optional[str]:
+        """Destinations with the same key share one health check per job; None: its own.
+
+        A ``@record_destination`` checks each distinct key once — one probe per host or
+        cluster, not one per routed destination.
+        """
+        return None
 
     def identity_config(self) -> Dict[str, Any]:
         """The part of ``config`` that says where records are written, for content dedup.
@@ -93,27 +160,45 @@ class BaseDestination(ABC):
         """
         Send records with automatic retry and exponential backoff.
 
+        A :class:`DestinationError` is retried, except a
+        :class:`PermanentDestinationError` (retrying cannot fix it). A ``retry_after``
+        on the error replaces the backoff, capped at ``max_wait_seconds``.
+
         Args:
             records: Records to send
             metadata: Optional metadata
         """
         from tenacity import AsyncRetrying
 
+        config = self.retry_config
+        backoff = wait_exponential(
+            multiplier=config.multiplier,
+            min=config.min_wait_seconds,
+            max=config.max_wait_seconds,
+        )
+
+        def wait(state: RetryCallState) -> float:
+            # A server that said when to come back (Retry-After) is believed, up to
+            # max_wait_seconds; otherwise exponential backoff.
+            error = state.outcome.exception() if state.outcome is not None else None
+            retry_after = getattr(error, "retry_after", None)
+            if isinstance(retry_after, (int, float)):
+                return min(max(float(retry_after), 0.0), config.max_wait_seconds)
+            return backoff(state)
+
         async for attempt in AsyncRetrying(
-            stop=stop_after_attempt(self.retry_config.max_attempts),
-            wait=wait_exponential(
-                multiplier=self.retry_config.multiplier,
-                min=self.retry_config.min_wait_seconds,
-                max=self.retry_config.max_wait_seconds,
-            ),
-            retry=retry_if_exception_type(DestinationError),
+            stop=stop_after_attempt(config.max_attempts),
+            wait=wait,
+            retry=retry_if_exception(is_retryable),
             reraise=True,
         ):
             with attempt:
                 await self.send(records, metadata)
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}(config={self.config})"
+        # Shown in logs and tracebacks: credentials (sasl_password, auth_token,
+        # Authorization headers, URL passwords) are hidden.
+        return f"{self.__class__.__name__}(config={redact_config(self.config)})"
 
 
 def check_concurrency(destination_type: str, concurrency: object) -> int:
@@ -127,10 +212,10 @@ def check_concurrency(destination_type: str, concurrency: object) -> int:
     return concurrency
 
 
-class DestinationError(Exception):
-    """Raised when a destination operation fails."""
 
-    def __init__(self, destination_type: str, message: str, original_error: Optional[Exception] = None):
-        self.destination_type = destination_type
-        self.original_error = original_error
-        super().__init__(f"Destination '{destination_type}' error: {message}")
+
+
+
+def is_retryable(error: BaseException) -> bool:
+    """What ``send_with_retry`` retries: a DestinationError that is not permanent."""
+    return isinstance(error, DestinationError) and not isinstance(error, PermanentDestinationError)

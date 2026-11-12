@@ -11,6 +11,8 @@ from typing import Any, List, Optional, Union
 from aiokafka import AIOKafkaConsumer
 from aiokafka.errors import CommitFailedError, KafkaError
 
+from reflowfy.core.kafka_settings import connection_kwargs
+from reflowfy.destinations.pool import close_loop_pool, open_loop_pool
 from reflowfy.observability import metrics
 from reflowfy.worker.executor import WorkerExecutor
 
@@ -74,10 +76,10 @@ class KafkaJobConsumer:
         self.consumer: Optional[AIOKafkaConsumer] = None
         self.executor = WorkerExecutor(database_url=database_url)
         self._running = False
+        self._stop_requested = False
 
     async def start(self):
         """Start consuming and processing jobs asynchronously."""
-        # Build consumer kwargs
         consumer_kwargs: dict[str, Any] = {
             "bootstrap_servers": self.bootstrap_servers,
             "group_id": self.group_id,
@@ -91,23 +93,27 @@ class KafkaJobConsumer:
             "max_poll_records": 1,
         }
 
-        # Add SASL config if credentials provided
-        if self.sasl_username and self.sasl_password:
-            consumer_kwargs.update(
-                {
-                    "security_protocol": self.security_protocol or "SASL_PLAINTEXT",
-                    "sasl_mechanism": self.sasl_mechanism or "SCRAM-SHA-256",
-                    "sasl_plain_username": self.sasl_username,
-                    "sasl_plain_password": self.sasl_password,
-                    "client_id": self.sasl_username,  # client_id = username
-                }
+        consumer_kwargs.update(
+            connection_kwargs(
+                self.bootstrap_servers,
+                security_protocol=self.security_protocol,
+                sasl_mechanism=self.sasl_mechanism,
+                sasl_username=self.sasl_username,
+                sasl_password=self.sasl_password,
             )
+        )
+        if self.sasl_username and self.sasl_password:
+            consumer_kwargs["client_id"] = self.sasl_username
 
         self.consumer = AIOKafkaConsumer(self.topic, **consumer_kwargs)
 
         # Retry starting consumer with backoff (handle GroupCoordinatorNotAvailableError)
         max_retries = 10
         for attempt in range(max_retries):
+            if self._stop_requested:
+                # Asked to stop while still connecting: no job to drain, exit cleanly.
+                logger.info("Stopped before connecting", extra={"event": "consumer_stopped"})
+                return
             try:
                 await self.consumer.start()
                 logger.info("Kafka consumer connected", extra={"event": "consumer_connected"})
@@ -136,7 +142,13 @@ class KafkaJobConsumer:
                     )
                     raise
 
+        if self._stop_requested:
+            await self.consumer.stop()
+            return
         self._running = True
+        # One pool of destination connections for the worker's life: every job,
+        # execution and pipeline writing to the same cluster or host reuses them.
+        open_loop_pool()
 
         try:
             await self._consume_until_stopped()
@@ -145,6 +157,8 @@ class KafkaJobConsumer:
             # right away instead of after the session timeout.
             await self.consumer.stop()
             await self.executor.close()
+            # Drained: no job is sending any more, so every pooled connection closes.
+            await close_loop_pool()
 
     async def _consume_until_stopped(self) -> None:
         """Process messages one at a time until :meth:`request_stop`.
@@ -246,7 +260,7 @@ class KafkaJobConsumer:
                     "kafka_offset": getattr(msg, "offset", None),
                 },
             )
-            metrics.jobs_processed_total.labels(pipeline="unknown", status="invalid").inc()
+            metrics.count_job("unknown", metrics.JobOutcome.INVALID)
             # Commit anyway to skip bad message
             await self.consumer.commit()
 
@@ -261,12 +275,16 @@ class KafkaJobConsumer:
 
         except Exception:
             logger.exception("Job processing error", extra={"event": "message_error"})
-            # Don't commit - will retry
+            # Not committed, but not retried either: the next message's commit()
+            # advances the whole partition past it (see above). Only a restart before
+            # that redelivers it.
 
     def request_stop(self) -> None:
         """Ask the loop to exit after the current job (safe from a signal handler)."""
+        self._stop_requested = True
         self._running = False
 
-    async def stop(self):
-        """Stop consuming."""
-        self.request_stop()
+    @property
+    def stop_requested(self) -> bool:
+        """True once :meth:`request_stop` was called (a second signal then forces exit)."""
+        return self._stop_requested

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 from reflowfy.core.abstract_pipeline import ScheduledRun
 from reflowfy.reflow_manager.pipeline_scheduler import PipelineScheduler
-from reflowfy.reflow_manager.models import PipelineSchedule
+from reflowfy.store.models import PipelineSchedule
 
 
 # ---------------------------------------------------------------------------

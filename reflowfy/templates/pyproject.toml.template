@@ -1,0 +1,22 @@
+# Your Reflowfy project. Dependencies are managed with uv:
+#
+#   uv add pandas        # add a dependency (updates uv.lock)
+#   uv lock              # re-lock after editing this file by hand
+#
+# Commit uv.lock: the api / reflow-manager / worker images install exactly what
+# it pins (`uv sync --locked`), and the build fails if it is stale.
+#
+# reflowfy is listed so the lock is checked against reflowfy's own requirements
+# and `uv run reflowfy test` works locally. In the images, reflowfy itself comes
+# from the reflowfy base image (REFLOWFY_BASE_IMAGE), not from this lock.
+[project]
+name = "{project_name}"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "reflowfy>={reflowfy_version}",
+]
+
+[tool.uv]
+# Your code lives under src/ and is loaded via PYTHONPATH; it is not a package.
+package = false
