@@ -1,0 +1,57 @@
+"""
+Tests for the sample pipeline. Run them with:  uv run pytest
+
+No Docker, Kafka or database is needed: reflowfy.testing runs the pipeline through
+the same code the worker runs, on records you supply, and keeps what it would
+have sent in memory. Install the test tools with:  uv add --dev "reflowfy[test]"
+"""
+
+from pipelines.__PIPELINE_MODULE__ import FilterActiveUsers
+
+from reflowfy.testing import apply_transformation, assert_ok, make_records, run_pipeline
+
+# ---------------------------------------------------------------------------
+# One transformation on its own
+# ---------------------------------------------------------------------------
+
+
+def test_filter_active_users_keeps_only_active_records():
+    records = make_records([{"id": 1, "active": True}, {"id": 2, "active": False}])
+
+    out, _ = apply_transformation(FilterActiveUsers(), records)
+
+    assert out == [{"data": {"id": 1, "active": True}}]
+
+
+# ---------------------------------------------------------------------------
+# The whole pipeline: your records in, what it would send out
+# ---------------------------------------------------------------------------
+
+
+def test_pipeline_end_to_end():
+    result = run_pipeline(
+        "simple_test_pipeline",
+        records=[
+            {"id": 1, "first_name": "ada", "last_name": "lovelace", "active": True},
+            {"id": 2, "first_name": "alan", "last_name": "turing", "active": False},
+        ],
+    )
+
+    assert_ok(result)
+    assert len(result.sent) == 1  # the inactive user was filtered out
+    assert result.sent[0]["data"]["first_name"] == "ADA"
+    assert result.sent[0]["_processed_by"] == "reflowfy"
+
+
+# A step that calls an HTTP API? Answer for it with the `mock_http` fixture; any
+# request you did not mock fails the test instead of reaching the network:
+#
+#   def test_enrich(mock_http):
+#       mock_http.get("https://crm.internal/customers/7", json={"tier": "gold"})
+#       result = run_pipeline("orders", records=[{"customer_id": 7}])
+#       assert result.sent[0]["tier"] == "gold"
+#
+# Rather test on real data? Record one run, and it becomes a test that replays
+# offline (every file in tests/fixtures/ is picked up by pytest):
+#
+#   reflowfy test simple_test_pipeline --save-fixture tests/fixtures/sample.json

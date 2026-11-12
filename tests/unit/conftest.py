@@ -6,6 +6,13 @@ import pytest
 
 
 def pytest_configure(config):
+    # The reflowfy pytest plugin (mock_http, mock_source, ...) loads from its entry
+    # point when reflowfy is installed. CI runs from the checkout without
+    # installing it, so register the plugin here when it is not there yet.
+    if not config.pluginmanager.has_plugin("reflowfy_pytest"):
+        import reflowfy_pytest
+
+        config.pluginmanager.register(reflowfy_pytest, "reflowfy_pytest")
     config.addinivalue_line(
         "markers", "real_claim: run WorkerExecutor._claim_job against a real database"
     )

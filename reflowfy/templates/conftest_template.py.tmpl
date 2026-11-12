@@ -1,0 +1,9 @@
+"""pytest setup for this project: makes src/ importable, so tests can write
+`from pipelines.my_pipeline import MyTransformation`."""
+
+import sys
+from pathlib import Path
+
+SRC = str(Path(__file__).resolve().parent.parent / "src")
+if SRC not in sys.path:
+    sys.path.insert(0, SRC)
