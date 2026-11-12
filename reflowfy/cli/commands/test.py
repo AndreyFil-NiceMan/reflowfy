@@ -17,7 +17,6 @@ import logging
 import os
 import sys
 import traceback
-import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, TypeGuard, cast
@@ -31,8 +30,12 @@ if TYPE_CHECKING:  # Runtime imports stay lazy — these are only for annotation
     from reflowfy.core.id_based_pipeline import IdBasedPipeline
 from reflowfy.cli.utils import console
 from reflowfy.core.exceptions import PipelineError
-from reflowfy.core.execution_context import ExecutionContext
-from reflowfy.execution.job_runner import job_runtime_params, plan_slices, run_job_records
+from reflowfy.execution.job_runner import (
+    job_runtime_params,
+    plan_slices,
+    preview_runtime_params,
+    run_job_records,
+)
 from reflowfy.execution.transformation_runner import AppliedStep
 from reflowfy.observability.context import log_context
 from reflowfy.observability.logging import get_logger, setup_logging
@@ -447,21 +450,7 @@ def report_batch(report: BatchReport, opts: TestOptions, indent: str = "") -> No
 
 def build_flat_params(pipeline: "AbstractPipeline[Any]", params: Dict[str, Any]) -> Dict[str, Any]:
     """The flat runtime_params a run starts from (mirrors the local executor)."""
-    context = ExecutionContext(
-        execution_id=str(uuid.uuid4()),
-        pipeline_name=pipeline.name,
-        runtime_params=params,
-    )
-    flat = dict(params)
-    flat.update(
-        {
-            "execution_id": context.execution_id,
-            "batch_id": context.batch_id,
-            "pipeline_name": context.pipeline_name,
-            "created_at": context.created_at.isoformat(),
-        }
-    )
-    return flat
+    return preview_runtime_params(pipeline.name, params)
 
 
 # ---------------------------------------------------------------------------

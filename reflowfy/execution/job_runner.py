@@ -15,9 +15,11 @@ test/preview paths cannot drift from what the worker actually runs.
 
 import asyncio
 import time
+import uuid
 from typing import Any, Dict, Iterator, List, Optional, Tuple, cast
 
 from reflowfy.core.async_utils import run_coroutine_sync
+from reflowfy.core.execution_context import ExecutionContext
 from reflowfy.core.exceptions import RecordValidationError, SkipJob, pipeline_step
 from reflowfy.core.record_validation import describe_invalid, find_invalid_records
 from reflowfy.core.serialization import to_json_safe
@@ -118,6 +120,29 @@ def job(records: List[Any], **params: Any) -> Any:
     source = StaticSource(records)
     source.job_params = params
     return source
+
+
+def preview_runtime_params(pipeline_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    """The flat runtime_params a local run starts from: ``params`` plus the reserved keys.
+
+    For the callers that run a pipeline outside the manager (``reflowfy test`` and
+    ``reflowfy.testing``), which have no execution row to take the IDs from.
+    """
+    context = ExecutionContext(
+        execution_id=str(uuid.uuid4()),
+        pipeline_name=pipeline_name,
+        runtime_params=params,
+    )
+    flat = dict(params)
+    flat.update(
+        {
+            "execution_id": context.execution_id,
+            "batch_id": context.batch_id,
+            "pipeline_name": context.pipeline_name,
+            "created_at": context.created_at.isoformat(),
+        }
+    )
+    return flat
 
 
 def job_runtime_params(source: Any, runtime_params: Dict[str, Any]) -> Dict[str, Any]:
