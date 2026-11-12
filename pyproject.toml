@@ -64,6 +64,12 @@ Repository = "https://github.com/AndreyFil-NiceMan/reflowfy"
 Issues = "https://github.com/AndreyFil-NiceMan/reflowfy/issues"
 
 [project.optional-dependencies]
+# For testing your own pipelines with reflowfy.testing (the pytest plugin itself
+# ships with reflowfy and loads on its own once pytest is there).
+test = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+]
 dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",
@@ -82,12 +88,19 @@ dev = [
     "testcontainers>=3.7.1",
     "build>=1.0.0",
     "hypothesis>=6.100",
+    # reflowfy.testing records and mocks aiohttp too; only its tests need it here.
+    "aiohttp>=3.9",
 ]
 
 [project.scripts]
 reflowfy = "reflowfy.cli.main:app"
 reflowfy-api = "reflowfy.api.app:main"
 reflowfy-worker = "reflowfy.worker.main:main"
+
+# pytest plugin: fixtures (mock_http, mock_source) and collection of recorded
+# fixture files. Named after its module so `-p reflowfy_pytest` is the same plugin.
+[project.entry-points.pytest11]
+reflowfy_pytest = "reflowfy_pytest"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -122,7 +135,7 @@ warn_unused_configs = true
 disable_error_code = ["redundant-cast"]
 
 [tool.pyright]
-include = ["reflowfy", "tests/e2e/test_pipelines", "pipelines"]
+include = ["reflowfy", "reflowfy_pytest", "tests/e2e/test_pipelines", "pipelines"]
 exclude = [
     "**/__pycache__",
     "build",

@@ -38,6 +38,15 @@ def _strip_secrets(value: Any, is_secret: Callable[[Any], bool] = _is_secret_key
     return value
 
 
+def without_secrets(value: Any) -> Any:
+    """``value`` with every credential-looking key removed, at any depth.
+
+    The same rule the dedup hash uses, for callers that write a config somewhere a
+    person will read it (``reflowfy.testing`` fixtures).
+    """
+    return _strip_secrets(value)
+
+
 def destination_identity(destination: Any) -> Dict[str, Any]:
     """Where a job writes: the destination's class plus its config, minus credentials.
 

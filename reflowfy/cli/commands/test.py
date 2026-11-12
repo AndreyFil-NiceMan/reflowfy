@@ -5,20 +5,19 @@ single run, or one ID batch) goes through :func:`run_batch`, and everything
 else is presentation. That matters because the reporting below is the whole
 point of the command, and it used to be written twice.
 
-Fetching and transforming go through the same shared core the worker runs
-(``reflowfy.execution.job_runner``), so what you see here is what production
-does.
+Planning, fetching, transforming and sending go through the same loop
+``reflowfy.testing`` uses (``reflowfy.testing.runner.execute``), which drives the
+worker's per-job core (``reflowfy.execution.job_runner``). What you see here is
+what a test asserts and what production does; this module only presents it.
 """
 
-import asyncio
-import inspect
 import importlib.util
+import inspect
 import json
 import logging
 import os
 import sys
 import traceback
-import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, TypeGuard, cast
@@ -32,20 +31,14 @@ if TYPE_CHECKING:  # Runtime imports stay lazy — these are only for annotation
     from reflowfy.core.id_based_pipeline import IdBasedPipeline
 from reflowfy.cli.utils import console
 from reflowfy.core.exceptions import PipelineError
-from reflowfy.core.execution_context import ExecutionContext
-from reflowfy.destinations.pool import loop_pool_scope
+from reflowfy.core.async_utils import run_coroutine_sync
 from reflowfy.core.planning import chunk
-from reflowfy.execution.job_runner import (
-    log_job_dropped,
-    log_skipped_records,
-    plan_slices,
-    run_job_records,
-)
-from reflowfy.sources.static import StaticSource
+from reflowfy.destinations.pool import loop_pool_scope
+from reflowfy.execution.job_runner import preview_runtime_params
 from reflowfy.execution.transformation_runner import SKIPPED_MODE, AppliedStep
-from reflowfy.observability.context import log_context
+from reflowfy.sources.static import StaticSource
 from reflowfy.observability.logging import get_logger, setup_logging
-from reflowfy.transformations.base import TransformationError
+from reflowfy.transformations.base import TransformationError, top_skip_reasons
 
 logger = get_logger("cli.test")
 
@@ -334,38 +327,33 @@ def _send_job(
     """Send one job's records to its own resolved destination.
 
     Mirrors the worker (``reflowfy/worker/executor.py``): each job's
-    destination — already resolved by ``run_job_records`` against that job's
-    transformed records — health-checks and sends independently. Any failure
-    is recorded on the report; the caller decides whether to keep going.
+    destination — already resolved against that job's transformed records —
+    health-checks and sends independently. Raises on failure, which fails the
+    job and stops the batch.
     """
-    try:
-        console.print(
-            f"{indent}[bold]📤 Destination:[/bold] {summarize(destination, opts.verbose)}"
-        )
+    console.print(f"{indent}[bold]📤 Destination:[/bold] {summarize(destination, opts.verbose)}")
 
-        async def _send() -> None:
-            # Closed in the same loop that sent: a Kafka producer belongs to its loop,
-            # and an unclosed one leaks a connection per job. So the connection pool
-            # is this job's too, closed when the scope ends.
-            async with loop_pool_scope():
-                try:
-                    if not await destination.health_check():
-                        raise PipelineError("destination health check failed")
-                    await destination.send_with_retry(records, job_params)
-                finally:
-                    # A duck-typed destination may have no close().
-                    close = getattr(destination, "close", None)
-                    if close is not None:
-                        closed = close()
-                        if inspect.isawaitable(closed):
-                            await closed
+    async def _send() -> None:
+        # Closed in the same loop that sent: a Kafka producer belongs to its loop,
+        # and an unclosed one leaks a connection per job. So the connection pool
+        # is this job's too, closed when the scope ends.
+        async with loop_pool_scope():
+            try:
+                if not await destination.health_check():
+                    raise PipelineError("destination health check failed")
+                await destination.send_with_retry(records, job_params)
+            finally:
+                # A duck-typed destination may have no close().
+                close = getattr(destination, "close", None)
+                if close is not None:
+                    closed = close()
+                    if inspect.isawaitable(closed):
+                        await closed
 
-        asyncio.run(_send())
-        report.sent = True
-        report.sent_count += 1
-        console.print(f"{indent}[green]✓ Sent {len(records)} records[/green]")
-    except Exception as exc:  # noqa: BLE001 — reported, not swallowed
-        report.error = exc
+    run_coroutine_sync(_send())
+    report.sent = True
+    report.sent_count += 1
+    console.print(f"{indent}[green]✓ Sent {len(records)} records[/green]")
 
 
 def run_batch(
@@ -376,7 +364,12 @@ def run_batch(
     label: Optional[str] = None,
     indent: str = "",
 ) -> BatchReport:
-    """Fetch + transform + send each job through the shared worker core.
+    """Fetch + transform + send each job, through the same loop ``reflowfy.testing`` uses.
+
+    That loop (``reflowfy.testing.runner.execute``) drives the worker's per-job
+    core, so what this command shows is what a test asserts and what production
+    does. Only presentation lives here: how a job is sent (printed and
+    health-checked) and which logger the skip lines go to.
 
     Sends per job — matching production, where each job resolves and sends
     its own destination — rather than merging every job's records into one
@@ -386,53 +379,49 @@ def run_batch(
     Never raises: the failure is captured on the report so the caller decides
     whether to stop or carry on to the next batch.
     """
+    from reflowfy.testing.cassette import Session, activate, current_session
+    from reflowfy.testing.runner import execute, private_copy
+
     report = BatchReport(label=label, source_repr=repr(source))
-    try:
-        for planned in plan_slices(source, flat_params):
-            remaining = opts.limit - report.fetched
-            if remaining <= 0:
-                break
-            job_params = {**flat_params, **planned.params}
-            with log_context(
-                execution_id=job_params.get("execution_id"),
-                pipeline_name=job_params.get("pipeline_name"),
-            ):
-                records, transformed, applied, destination = run_job_records(
-                    planned.source, pipeline, job_params, limit=remaining
-                )
-                log_skips(job_params, applied, report)
-            report.fetched += len(records)
-            report.transformed.extend(transformed)
-            report.applied.extend(applied)
 
-            if transformed and not opts.dry_run:
-                _send_job(destination, transformed, job_params, opts, report, indent)
-                if not report.ok:
-                    break
-    except Exception as exc:  # noqa: BLE001 — reported, not swallowed
-        report.error = exc
-        # A failure mid-chain still knows what ran before it; recover that so the
-        # report shows the whole chain up to the break, not just the break.
-        if isinstance(exc, TransformationError):
-            steps: List[AppliedStep] = [s for s in exc.applied_steps if isinstance(s, AppliedStep)]
-            report.applied.extend(steps)
-            if report.fetched == 0:
-                if steps:
-                    report.fetched = steps[0].records_in
-                elif exc.records_in:
-                    report.fetched = exc.records_in
+    def send(destination: Any, records: List[Any], job_params: Dict[str, Any]) -> None:
+        _send_job(destination, records, job_params, opts, report, indent)
+
+    def go(session: Session) -> None:
+        # A private copy: the run instruments define_transformations on it.
+        result = execute(
+            private_copy(pipeline),
+            flat_params,
+            lambda: source,
+            session,
+            send=not opts.dry_run,
+            limit=opts.limit,
+            sender=send,
+            job_logger=logger,
+        )
+        report.fetched = result.fetched
+        report.transformed = result.records
+        report.applied = result.steps
+        report.jobs_dropped = result.jobs_dropped
+        report.error = result.error
+
+    # Nothing is mocked here: a preview talks to the real systems.
+    active = current_session()
+    if active is not None:
+        go(active)
+    else:
+        with activate(Session("passthrough")) as session:
+            go(session)
+
+    exc = report.error
+    if isinstance(exc, TransformationError) and report.fetched == 0:
+        # A source that is not a BaseSource cannot be watched; the failing step
+        # still knows how many records it was given.
+        if report.applied:
+            report.fetched = report.applied[0].records_in
+        elif exc.records_in:
+            report.fetched = exc.records_in
     return report
-
-
-def log_skips(job_params: Dict[str, Any], applied: List[AppliedStep], report: BatchReport) -> None:
-    """Log SkipJob / SkipRecord the way the worker does, so LOG_DESTINATION=elastic
-    gets the same ``job_dropped`` / ``records_skipped`` events from a CLI run."""
-    skip_reason = job_params.get("skip_reason")
-    if skip_reason:
-        report.jobs_dropped.append(str(skip_reason))
-        log_job_dropped(logger, str(skip_reason))
-    for step in applied:
-        log_skipped_records(logger, step)
 
 
 def report_batch(report: BatchReport, opts: TestOptions, indent: str = "") -> None:
@@ -459,21 +448,7 @@ def report_batch(report: BatchReport, opts: TestOptions, indent: str = "") -> No
 
 def build_flat_params(pipeline: "AbstractPipeline[Any]", params: Dict[str, Any]) -> Dict[str, Any]:
     """The flat runtime_params a run starts from (mirrors the local executor)."""
-    context = ExecutionContext(
-        execution_id=str(uuid.uuid4()),
-        pipeline_name=pipeline.name,
-        runtime_params=params,
-    )
-    flat = dict(params)
-    flat.update(
-        {
-            "execution_id": context.execution_id,
-            "batch_id": context.batch_id,
-            "pipeline_name": context.pipeline_name,
-            "created_at": context.created_at.isoformat(),
-        }
-    )
-    return flat
+    return preview_runtime_params(pipeline.name, params)
 
 
 # ---------------------------------------------------------------------------
@@ -689,6 +664,42 @@ def register(app: typer.Typer):
         as_json: bool = typer.Option(
             False, "--json", help="Emit a machine-readable report on stdout"
         ),
+        save_fixture: Optional[Path] = typer.Option(
+            None,
+            "--save-fixture",
+            help="Record this run (input, what the steps' calls answered, expected output) "
+            "to a JSON file your tests replay offline. Never sends to the destination.",
+        ),
+        fixture: Optional[Path] = typer.Option(
+            None,
+            "--fixture",
+            help="Replay a recorded fixture offline and compare with its expected output",
+        ),
+        update_fixture: bool = typer.Option(
+            False,
+            "--update-fixture",
+            help="With --fixture: rewrite the expected output from the saved input",
+        ),
+        redact: List[str] = typer.Option(
+            [],
+            "--redact",
+            help="With --save-fixture: mask these fields in the file (key or dotted path, "
+            "comma-separated or repeated)",
+        ),
+        ignore: List[str] = typer.Option(
+            [],
+            "--ignore",
+            help="With --save-fixture: fields left out of the comparison, e.g. a timestamp",
+        ),
+        freeze_step: List[str] = typer.Option(
+            [],
+            "--freeze-step",
+            help="With --save-fixture: save this step's output and replay it instead of "
+            "running the step (for calls that cannot be recorded)",
+        ),
+        max_body_kb: int = typer.Option(
+            256, "--max-body-kb", help="With --save-fixture: largest HTTP response stored"
+        ),
     ):
         """
         Test a pipeline locally without Docker.
@@ -732,7 +743,26 @@ def register(app: typer.Typer):
         resolved = resolve_pipeline(pipeline, no_input=no_input)
         console.print(Panel(f"🧪 Testing [bold]{resolved.name}[/bold]", style="cyan"))
 
+        if update_fixture and fixture is None:
+            console.print("[red]❌ --update-fixture needs --fixture <file>[/red]")
+            raise typer.Exit(2)
+        if fixture is not None:
+            replay_fixture_file(resolved, fixture, update=update_fixture)
+            return
+
         params = collect_params(resolved, parse_param_flags(param), no_input=no_input)
+        if save_fixture is not None:
+            record_fixture_file(
+                resolved,
+                params,
+                save_fixture,
+                limit=opts.limit,
+                redact=split_fields(redact),
+                ignore=split_fields(ignore),
+                freeze_steps=split_fields(freeze_step),
+                max_body_kb=max_body_kb,
+            )
+            return
         console.print(f"\n[bold]⚙️  Params:[/bold] {params}")
         console.print(f"[bold]📊 Record limit:[/bold] {opts.limit}")
 
@@ -786,6 +816,109 @@ def register(app: typer.Typer):
             return
 
         console.print(f"\n[bold green]✅ Test complete: {total_records} {outcome}[/bold green]")
+
+
+# ---------------------------------------------------------------------------
+# Fixtures (reflowfy.testing)
+# ---------------------------------------------------------------------------
+
+
+def split_fields(values: Sequence[str]) -> List[str]:
+    """``--redact a,b --redact c`` -> ``["a", "b", "c"]``."""
+    return [name.strip() for value in values for name in value.split(",") if name.strip()]
+
+
+def record_fixture_file(
+    pipeline: "AbstractPipeline[Any]",
+    params: Dict[str, Any],
+    path: Path,
+    *,
+    limit: int,
+    redact: List[str],
+    ignore: List[str],
+    freeze_steps: List[str],
+    max_body_kb: int,
+) -> None:
+    """``--save-fixture``: run against the real source and write the run to ``path``."""
+    from reflowfy.testing.cassette import FixtureError
+    from reflowfy.testing.fixtures import record_fixture
+
+    console.print(f"\n[cyan]Recording (limit={limit}); nothing is sent...[/cyan]")
+    try:
+        recorded = record_fixture(
+            pipeline,
+            params,
+            limit=limit,
+            redact_fields=redact,
+            ignore=ignore,
+            freeze_steps=freeze_steps,
+            max_body_kb=max_body_kb,
+        )
+    except (FixtureError, ValueError) as exc:
+        console.print(f"[red]❌ {exc}[/red]")
+        raise typer.Exit(1)
+    recorded.save(path)
+
+    expected = recorded.expected
+    fetched = sum(len(records) for records in recorded.jobs)
+    would_send = sum(len(records) for records in expected["sent"])
+    console.print(f"[green]✓ Fetched {fetched} records in {len(recorded.jobs)} job(s)[/green]")
+    if recorded.http:
+        console.print(f"[green]✓ Recorded {len(recorded.http)} HTTP call(s)[/green]")
+    if recorded.source_calls:
+        console.print(f"[green]✓ Recorded {len(recorded.source_calls)} source call(s)[/green]")
+    if recorded.frozen_steps:
+        console.print(f"[green]✓ Frozen step(s): {', '.join(recorded.frozen_steps)}[/green]")
+    skipped = expected["records_skipped"]
+    outcome = f"{would_send} would be sent"
+    if skipped:
+        outcome += f", {skipped} skipped ({top_skip_reasons(expected['skip_reasons'])})"
+    console.print(f"[green]✓ {outcome}[/green]")
+    console.print(f"[bold green]✅ Fixture written: {path}[/bold green]")
+    console.print(
+        "[yellow]⚠️  It contains real data. Review it before committing "
+        "(--redact masks fields).[/yellow]"
+    )
+    console.print(f"[dim]Replay it offline: pytest, or reflowfy test {pipeline.name} --fixture {path}[/dim]")
+
+
+def replay_fixture_file(pipeline: "AbstractPipeline[Any]", path: Path, update: bool) -> None:
+    """``--fixture``: replay offline and compare; ``--update-fixture`` rewrites the expectation."""
+    from reflowfy.testing.cassette import FixtureError, UnmockedCallError
+    from reflowfy.testing.diff import summarize
+    from reflowfy.testing.fixtures import diff_fixture, load_fixture, replay
+    from reflowfy.testing.fixtures import update_fixture as rewrite_expected
+
+    try:
+        loaded = load_fixture(path)
+        if loaded.pipeline != pipeline.name:
+            raise FixtureError(
+                f"{path} was recorded for pipeline '{loaded.pipeline}', not '{pipeline.name}'"
+            )
+        if update:
+            _, changes = rewrite_expected(loaded)
+        else:
+            changes = diff_fixture(replay(loaded), loaded)
+    except (FixtureError, UnmockedCallError) as exc:
+        console.print(f"[red]❌ {exc}[/red]")
+        raise typer.Exit(1)
+
+    if update:
+        if changes:
+            console.print(f"[bold]Expected output updated ({len(changes)} change(s)):[/bold]")
+            console.print(summarize(changes), markup=False)
+            console.print(f"[bold green]✅ Fixture updated: {path}[/bold green]")
+        else:
+            console.print("[green]✅ Nothing changed: the fixture already matches[/green]")
+        return
+    if changes:
+        console.print(f"[bold red]❌ {len(changes)} difference(s) from {path}:[/bold red]")
+        console.print(summarize(changes), markup=False)
+        console.print(
+            "[dim]If the change is intended, add --update-fixture and review the file's diff.[/dim]"
+        )
+        raise typer.Exit(1)
+    console.print(f"[bold green]✅ Matches {path}[/bold green]")
 
 
 def run_pipeline_test(
