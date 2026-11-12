@@ -132,10 +132,17 @@ def test_invoices(mock_source):
 - Outside pytest: `with mock_network() as net:` gives the same two as `net.http`
   and `net.sources`.
 
-**What is covered.** HTTP sent with `httpx` (sync and async), `requests`,
-`urllib3`, the Elasticsearch client and `boto3`, and `fetch()` on any reflowfy
-source. **Not covered:** `aiohttp`, raw sockets and database drivers used directly;
-those still reach the network.
+**What is covered.** HTTP sent with `httpx` (sync and async), `aiohttp`,
+`requests`, `urllib3`, the Elasticsearch client and `boto3`, and `fetch()` on any
+reflowfy source. **Not covered:** raw sockets and database drivers used directly;
+those still reach the network (freeze the step, see below).
+
+With aiohttp, a mocked or replayed answer is a stand-in for `ClientResponse`, not
+the class itself. It supports `status`, `reason`, `ok`, `headers`, `url`,
+`content_type`, `read()`, `text()`, `json()`, `raise_for_status()`, `async with`,
+the session's or the call's `raise_for_status=`, and reading `response.content`
+(`read()`, `readline()`, `iter_chunked()`, `async for`). A form or stream body
+(`FormData`, a file) is not part of how a request is matched.
 
 ## Recorded fixtures
 
@@ -197,8 +204,8 @@ different output, it fails and names the fields to ignore. The run's own
 `execution_id`, `batch_id` and `created_at` are saved in the fixture and reused on
 replay, so stamping those into a record needs no `--ignore`.
 
-**`--freeze-step`** is for a step whose calls cannot be recorded (`aiohttp`, a
-database driver, gRPC) or that is random. Its output is saved per job and returned
+**`--freeze-step`** is for a step whose calls cannot be recorded (a database
+driver, gRPC, a raw socket) or that is random. Its output is saved per job and returned
 on replay; the step's own logic is then not exercised, the rest of the pipeline is.
 
 ### In a test of your own

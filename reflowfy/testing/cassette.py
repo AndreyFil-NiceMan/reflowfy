@@ -18,8 +18,10 @@ Two layers are covered. HTTP is intercepted at ``httpx``'s transports and at
 intercepted too, so a source used inside a step is answered without building its
 client (and covers sources that are not HTTP at all, like SQL).
 
-Not covered: ``aiohttp``, raw sockets and database drivers used directly. Freeze
-such a step instead (``--freeze-step``).
+``aiohttp`` is covered too, when it is installed (``reflowfy.testing.aiohttp_layer``).
+
+Not covered: raw sockets and database drivers used directly. Freeze such a step
+instead (``--freeze-step``).
 """
 
 import base64
@@ -615,6 +617,15 @@ def patch_sources() -> None:
             setattr(cls, "fetch", _wrap_fetch(original))
 
 
+def _aiohttp_layer(action: str) -> None:
+    """Install or remove the aiohttp patch, when aiohttp is installed at all."""
+    try:
+        from reflowfy.testing import aiohttp_layer
+    except ImportError:  # aiohttp is optional: without it there is nothing to patch
+        return
+    getattr(aiohttp_layer, action)()
+
+
 @contextmanager
 def activate(session: Session) -> Generator[Session, None, None]:
     """Put ``session`` between the pipeline and the outside world.
@@ -630,6 +641,7 @@ def activate(session: Session) -> Generator[Session, None, None]:
         setattr(httpx.HTTPTransport, "handle_request", _sync_handle)
         setattr(httpx.AsyncHTTPTransport, "handle_async_request", _async_handle)
         setattr(HTTPConnectionPool, "urlopen", _urlopen)
+        _aiohttp_layer("install")
     patch_sources()
     try:
         yield session
@@ -639,6 +651,7 @@ def activate(session: Session) -> Generator[Session, None, None]:
             setattr(httpx.HTTPTransport, "handle_request", _httpx_sync)
             setattr(httpx.AsyncHTTPTransport, "handle_async_request", _httpx_async)
             setattr(HTTPConnectionPool, "urlopen", _urllib3_urlopen)
+            _aiohttp_layer("uninstall")
             for cls, original in _patched_sources.items():
                 setattr(cls, "fetch", original)
             _patched_sources.clear()

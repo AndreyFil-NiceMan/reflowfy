@@ -88,6 +88,8 @@ dev = [
     "testcontainers>=3.7.1",
     "build>=1.0.0",
     "hypothesis>=6.100",
+    # reflowfy.testing records and mocks aiohttp too; only its tests need it here.
+    "aiohttp>=3.9",
 ]
 
 [project.scripts]

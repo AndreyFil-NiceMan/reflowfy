@@ -207,7 +207,7 @@ def _setup_problem(exc: Optional[BaseException]) -> Optional[BaseException]:
     return None
 
 
-def _log_job(job: JobResult) -> None:
+def _log_job(job: JobResult, logger: Any = logger) -> None:
     """The worker's ``job_dropped`` / ``records_skipped`` lines, so ``caplog`` sees them."""
     if job.skip_reason:
         logger.info(
@@ -247,11 +247,18 @@ def execute(
     send: bool = True,
     limit: Optional[int] = None,
     hooks: Optional[StepHooks] = None,
+    sender: Optional[Callable[[Any, List[Any], Dict[str, Any]], None]] = None,
+    job_logger: Any = None,
 ) -> PipelineResult:
     """Plan and run every job of an already-forked pipeline inside ``session``.
 
-    The one loop behind ``run_pipeline`` and the fixture recorder/replayer. Stops
-    at the first job that fails; the failure is on ``result.error``.
+    The one loop behind ``run_pipeline``, the fixture recorder/replayer and
+    ``reflowfy test``. Stops at the first job that fails; the failure is on
+    ``result.error``.
+
+    ``sender(destination, records, job_params)`` replaces how a job's records are
+    sent (``reflowfy test`` prints and health-checks); it raises to fail the job.
+    ``job_logger`` is where the skip/drop lines go (default ``reflowfy.testing``).
     """
     result = PipelineResult(pipeline=fork.name, params=flat)
     progress = _Progress()
@@ -291,8 +298,11 @@ def execute(
                     # still the job's input, and a fixture has to hold it.
                     raw = session.main_fetches.get(id(sub))
                     job.fetched = fetched if raw is None else to_json_safe(raw)[:remaining]
-                    _log_job(job)
-                    if job.records and send:
+                    _log_job(job, job_logger or logger)
+                    if job.records and send and sender is not None:
+                        sender(job.destination, job.records, job_params)
+                        job.sent = True
+                    elif job.records and send:
                         if isinstance(destination, BaseDestination):
                             target = destination
                         else:

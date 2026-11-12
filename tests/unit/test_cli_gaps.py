@@ -261,6 +261,13 @@ class TestReportBatch:
         assert "No records returned from source" in text
 
 
+def _stub_pipeline() -> Any:
+    """The least run_batch needs of a pipeline when the job core is stubbed out."""
+    stub = types.SimpleNamespace(name="stub", define_transformations=lambda records, params: [])
+    stub.fork = lambda: stub
+    return stub
+
+
 class TestRunBatchErrors:
     @pytest.fixture
     def jobs(self, monkeypatch: pytest.MonkeyPatch) -> List[Any]:
@@ -273,15 +280,18 @@ class TestRunBatchErrors:
                 raise item
             return item
 
-        monkeypatch.setattr(test_cmd, "run_job_records", run_job_records)
-        monkeypatch.setattr(test_cmd, "plan_slices", lambda source, params: iter(source))
-        monkeypatch.setattr(test_cmd, "job_runtime_params", lambda sub, params: dict(params))
+        # run_batch drives the shared loop in reflowfy.testing.runner.
+        from reflowfy.testing import runner
+
+        monkeypatch.setattr(runner, "run_job_records", run_job_records)
+        monkeypatch.setattr(runner, "plan_slices", lambda source, params: iter(source))
+        monkeypatch.setattr(runner, "job_runtime_params", lambda sub, params: dict(params))
         return script
 
     def test_a_non_transformation_error_is_recorded_as_is(self, jobs: List[Any]) -> None:
         jobs.append(RuntimeError("fetch timed out"))
 
-        report = test_cmd.run_batch(object(), ["slice"], {}, Opts(dry_run=True))
+        report = test_cmd.run_batch(_stub_pipeline(), ["slice"], {}, Opts(dry_run=True))
 
         assert isinstance(report.error, RuntimeError)
         assert (report.fetched, report.applied) == (0, [])
@@ -291,7 +301,7 @@ class TestRunBatchErrors:
         jobs.append(([1, 2], [1, 2], [], None))
         jobs.append(TransformationError("second", "boom", applied_steps=[step]))
 
-        report = test_cmd.run_batch(object(), ["a", "b"], {}, Opts(dry_run=True))
+        report = test_cmd.run_batch(_stub_pipeline(), ["a", "b"], {}, Opts(dry_run=True))
 
         assert report.fetched == 2  # not overwritten by the failing step's input count
         assert [s.name for s in report.applied] == ["first"]
@@ -299,10 +309,95 @@ class TestRunBatchErrors:
     def test_a_first_step_failure_with_an_unknown_input_count(self, jobs: List[Any]) -> None:
         jobs.append(TransformationError("only", "boom"))
 
-        report = test_cmd.run_batch(object(), ["a"], {}, Opts(dry_run=True))
+        report = test_cmd.run_batch(_stub_pipeline(), ["a"], {}, Opts(dry_run=True))
 
         assert report.fetched == 0
         assert isinstance(report.error, TransformationError)
+
+
+class TestRunBatchRealRuns:
+    """run_batch on the real shared loop, for the cases the stubs above cannot reach."""
+
+    def _pipeline(self, steps: List[Any]) -> Any:
+        from reflowfy import AbstractPipeline, RuntimeParams
+
+        class Plain(AbstractPipeline[RuntimeParams]):
+            def define_source(self, runtime_params: Any) -> Any:
+                raise AssertionError("run_batch is given the source")
+
+            def define_transformations(self, records: Any, runtime_params: Any) -> Any:
+                return [step() for step in steps]
+
+            def define_destination(self, records: Any, runtime_params: Any) -> Any:
+                from reflowfy.testing import CaptureDestination
+
+                return CaptureDestination()
+
+        Plain.name = "gaps_plain"  # set afterwards, so the class is not registered
+        return Plain()
+
+    class Duck:
+        """A source that is not a BaseSource: its fetch cannot be observed."""
+
+        def fetch(self, runtime_params: Any) -> List[Any]:
+            return [{"data": 1}, {"data": 2}]
+
+    def test_a_later_step_failing_on_a_duck_source_reports_its_input(self) -> None:
+        from reflowfy import BaseTransformation
+
+        class Passes(BaseTransformation):
+            def apply(self, records: Any, runtime_params: Any) -> Any:
+                return records
+
+        class Fails(BaseTransformation):
+            def apply(self, records: Any, runtime_params: Any) -> Any:
+                raise ValueError("boom")
+
+        report = test_cmd.run_batch(
+            self._pipeline([Passes, Fails]), self.Duck(), {}, Opts(dry_run=True)
+        )
+        assert isinstance(report.error, TransformationError)
+        assert report.fetched == 2 and [s.records_in for s in report.applied] == [2]
+
+    def test_a_first_step_failing_on_a_duck_source_reports_its_input(self) -> None:
+        from reflowfy import BaseTransformation
+
+        class Fails(BaseTransformation):
+            def apply(self, records: Any, runtime_params: Any) -> Any:
+                raise ValueError("boom")
+
+        report = test_cmd.run_batch(self._pipeline([Fails]), self.Duck(), {}, Opts(dry_run=True))
+        assert report.fetched == 2 and report.applied == []
+
+    def test_a_job_its_source_drops_is_reported_as_dropped(self) -> None:
+        from reflowfy import SkipJob
+        from reflowfy.sources.static import StaticSource
+
+        class Dropping(StaticSource):
+            def fetch(self, runtime_params: Any, limit: Any = None) -> Any:
+                raise SkipJob("closed today")
+
+        report = test_cmd.run_batch(self._pipeline([]), Dropping([1]), {}, Opts(dry_run=True))
+        assert report.ok and report.fetched == 0 and report.jobs_dropped == ["closed today"]
+        text = _render(test_cmd.report_batch, report, Opts())
+        assert "closed today" in text and "No records returned" not in text
+
+    def test_inside_a_test_session_the_preview_uses_it(self) -> None:
+        import httpx
+
+        from reflowfy import BaseTransformation
+        from reflowfy.testing import mock_network
+
+        class Calls(BaseTransformation):
+            def apply(self, records: Any, runtime_params: Any) -> Any:
+                return [{**r, "x": httpx.get("https://a.test/x").json()} for r in records]
+
+        with mock_network() as net:
+            net.http.get("https://a.test/x", json=7)
+            report = test_cmd.run_batch(
+                self._pipeline([Calls]), self.Duck(), {}, Opts(dry_run=True)
+            )
+        assert report.ok and [r["x"] for r in report.transformed] == [7, 7]
 
 
 def test_a_file_that_cannot_be_loaded_as_a_module_exits(

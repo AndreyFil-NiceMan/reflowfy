@@ -264,8 +264,16 @@ services.
   `boto3` send through), and wraps `fetch` on every `BaseSource` subclass. Modes:
   `replay` (default; an unanswered request raises `UnmockedCallError`, which
   `execute` re-raises to the test instead of leaving it in `result.error`),
-  `record`, `passthrough` (`allow_network=True`). Not covered: aiohttp, raw sockets,
-  DB drivers.
+  `record`, `passthrough` (`allow_network=True`). aiohttp has its own patch on
+  `ClientSession._request` (`testing/aiohttp_layer.py`, installed only if aiohttp
+  imports); its replayed answer is a duck-typed `ReplayedResponse`, because a real
+  `ClientResponse` needs private constructor args that change between releases.
+  Not covered: raw sockets, DB drivers.
+- **`reflowfy test` runs on the same loop**: `cli/commands/test.py::run_batch` calls
+  `runner.execute` in a `passthrough` session, passing a `sender` (prints,
+  health-checks, sends) and its own `job_logger`. So the preview, `run_pipeline`
+  and fixtures cannot drift; like production, an ID-based preview's jobs no longer
+  see `input_ids`.
 - **Which step is running** is known without wrapping steps: the runner re-resolves
   `define_transformations` before every step, so the n-th resolution of a job
   precedes step n (`runner._instrument`). Frozen/recording steps are swapped in at
@@ -287,7 +295,7 @@ services.
 - `reflowfy init` / `new pipeline` write starter tests from
   `templates/*.py.tmpl` (`.tmpl` so linters and type checkers skip them).
 
-Tests: `tests/unit/test_testing_{toolkit,cassette,fixtures,pytest_plugin}.py`
+Tests: `tests/unit/test_testing_{toolkit,cassette,aiohttp,fixtures,pytest_plugin}.py`
 (the cassette tests record against a real localhost server through each client;
 the plugin tests scaffold a project and run pytest in it).
 
