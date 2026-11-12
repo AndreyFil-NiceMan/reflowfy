@@ -248,6 +248,49 @@ because a record outcome has no place on the per-job `jobs_processed_total` and 
 short fixed phrases: at most 20 distinct per step (the rest go to "(other reasons)"), 200
 characters each. `LocalExecutor` and `reflowfy test` show them too (`--json`: `records_skipped` and `skip_reasons` per step). `reflowfy test` also logs both skips with the worker's events (`records_skipped`, `job_dropped`, plus `jobs_dropped` in `--json`), so `LOG_DESTINATION=elastic` ships them from a CLI run as `service.name: cli`. That works because `ElasticLogHandler` registers `close()` with `atexit` itself and drains its queue there: left to `logging.shutdown`, urllib3's own exit hooks emptied the client's pool first and a short process shipped nothing.
 
+### Testing user pipelines (`reflowfy.testing`)
+
+The supported way for a pipeline author to test their own pipeline; user guide in
+`docs/TESTING_PIPELINES.md`. `run_pipeline(name, params=, records=)` forks the
+pipeline and drives `plan_slices` → `run_job_records` (the worker's core, via
+`testing/runner.py::execute`), sending to a `CaptureDestination` instead of what
+`define_destination` returned (which is still called). `apply_transformation` runs
+one step through the real transformation runner. Nothing here is imported by the
+services.
+
+- **The outside world** (`testing/cassette.py`): one `Session` at a time patches
+  `httpx.HTTPTransport.handle_request`, `httpx.AsyncHTTPTransport.handle_async_request`
+  and `urllib3.HTTPConnectionPool.urlopen` (what `requests`, `elasticsearch` and
+  `boto3` send through), and wraps `fetch` on every `BaseSource` subclass. Modes:
+  `replay` (default; an unanswered request raises `UnmockedCallError`, which
+  `execute` re-raises to the test instead of leaving it in `result.error`),
+  `record`, `passthrough` (`allow_network=True`). Not covered: aiohttp, raw sockets,
+  DB drivers.
+- **Which step is running** is known without wrapping steps: the runner re-resolves
+  `define_transformations` before every step, so the n-th resolution of a job
+  precedes step n (`runner._instrument`). Frozen/recording steps are swapped in at
+  that position only. Anything that changes how often `define_transformations` is
+  called per step breaks this.
+- **Fixtures** (`testing/fixtures.py`, `reflowfy test --save-fixture/--fixture/
+  --update-fixture`): the file holds input (`params`, `context`, `jobs`,
+  `job_params`), answers (`http`, `source_calls`, `step_outputs`) and `expected`.
+  `expected` is computed by *replaying the fixture as saved* (after `--redact`),
+  never taken from the recording run, and a second replay must match or recording
+  fails naming the fields to `--ignore`. Only what happens after a job's fetch is
+  recorded (`Session.in_job`), so planning and the main fetch are not stored twice.
+- **pytest plugin** is the top-level package `reflowfy_pytest`, not
+  `reflowfy.testing.*`, on purpose: an entry-point plugin is imported before
+  pytest-cov starts, and importing `reflowfy` there would drop every module-level
+  line from this repo's coverage. It imports reflowfy lazily. CI does not install
+  the project, so `tests/unit/conftest.py` registers the plugin when the entry
+  point is absent.
+- `reflowfy init` / `new pipeline` write starter tests from
+  `templates/*.py.tmpl` (`.tmpl` so linters and type checkers skip them).
+
+Tests: `tests/unit/test_testing_{toolkit,cassette,fixtures,pytest_plugin}.py`
+(the cassette tests record against a real localhost server through each client;
+the plugin tests scaffold a project and run pytest in it).
+
 ### API destination: per job or per record
 
 `define_destination(records, params)` runs once per job and returns one destination; the

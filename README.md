@@ -126,6 +126,39 @@ works as a CI gate. An ID pipeline previews many independent batches, so one bad
 ID is reported but does not by itself fail the run — pass `--fail-fast` for the
 strict reading. A file path works in place of the name.
 
+#### Write tests for it
+
+`reflowfy.testing` runs a pipeline inside pytest, through the same code the worker
+runs, with no Docker, Kafka or network. `reflowfy init` and `reflowfy new pipeline`
+write a starter test for you.
+
+```bash
+pip install "reflowfy[test]"
+pytest
+```
+
+```python
+from reflowfy.testing import run_pipeline
+
+def test_orders_are_taxed(mock_http):
+    mock_http.get("https://crm.internal/customers/7", json={"tier": "gold"})
+
+    result = run_pipeline("orders", params={"region": "eu"},
+                          records=[{"id": 1, "amount": 10.0, "customer_id": 7}])
+
+    assert result.ok
+    assert result.sent[0]["tax"] == 2.0 and result.sent[0]["tier"] == "gold"
+```
+
+Or record one real run and let pytest replay it offline from then on:
+
+```bash
+reflowfy test orders --limit 50 --save-fixture tests/fixtures/orders.json --redact email
+pytest                      # tests/fixtures/orders.json::test_fixture[orders]
+```
+
+Full guide: [docs/TESTING_PIPELINES.md](docs/TESTING_PIPELINES.md).
+
 ### 5. Run Locally
 
 Start the full stack (API, Manager, Worker, Kafka, Postgres) locally using Docker Compose:
