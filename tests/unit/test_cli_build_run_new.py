@@ -259,6 +259,18 @@ class TestNew:
             pipeline.define_source({})
         assert list(pipeline.define_transformations([], {})) == []
 
+        # A starter test is written beside it, and left alone on a second run.
+        test_file = tmp_path / "tests" / "test_order_sync.py"
+        assert "Created test" in result.output
+        text = test_file.read_text()
+        assert 'run_pipeline("order_sync", records=[{"id": 1, "name": "example"}])' in text
+        assert "@pytest.mark.xfail(" in text and "strict=True" in text
+        compile(text, "test_order_sync.py", "exec")
+        test_file.write_text("# mine\n")
+        (tmp_path / "src" / "pipelines" / "order_sync.py").unlink()
+        assert cli("new", "pipeline", "order_sync").exit_code == 0
+        assert test_file.read_text() == "# mine\n"
+
     def test_pipeline_suffix_is_not_doubled(self, tmp_path):
         assert cli("new", "pipeline", "users_pipeline").exit_code == 0
         text = (tmp_path / "src" / "pipelines" / "users_pipeline.py").read_text()
@@ -331,6 +343,12 @@ class TestInit:
         )
         assert len(password_line.split("=", 1)[1]) >= 20
         assert "reflowfy test first --dry-run" in result.output
+        # Tests for the sample pipeline, and the place recorded fixtures go.
+        assert (root / "tests" / "fixtures").is_dir()
+        assert "sys.path.insert" in (root / "tests" / "conftest.py").read_text()
+        test_text = (root / "tests" / "test_first.py").read_text()
+        assert "from pipelines.first import FilterActiveUsers" in test_text
+        assert 'pip install "reflowfy[test]"' in result.output
 
     def test_rerun_keeps_existing_env_and_files(self, tmp_path):
         assert cli("init", "proj").exit_code == 0
@@ -345,6 +363,18 @@ class TestInit:
         assert ".env already exists, skipping" in result.output
         assert env.read_text() == "MINE=1\n"
         assert compose.read_text() == "# customised\n"
+
+    def test_rerun_keeps_existing_tests(self, tmp_path):
+        assert cli("init", "proj").exit_code == 0
+        tests = tmp_path / "proj" / "tests"
+        (tests / "conftest.py").write_text("# my conftest\n")
+        (tests / "test_my_pipeline.py").write_text("# my test\n")
+
+        result = cli("init", "proj")
+
+        assert result.exit_code == 0 and "Created tests" not in result.output
+        assert (tests / "conftest.py").read_text() == "# my conftest\n"
+        assert (tests / "test_my_pipeline.py").read_text() == "# my test\n"
 
     def test_falls_back_when_templates_are_missing(self, tmp_path, monkeypatch):
         empty = tmp_path / "no_package"
@@ -361,6 +391,7 @@ class TestInit:
         assert 'name = "fallback_pipe"' in text
         compile(text, "fallback_pipe.py", "exec")
         assert not (tmp_path / "proj" / ".env").exists()
+        assert "Could not create tests" in result.output
 
 
 # ---------------------------------------------------------------------------

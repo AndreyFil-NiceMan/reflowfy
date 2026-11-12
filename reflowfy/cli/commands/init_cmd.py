@@ -68,6 +68,25 @@ class {class_name}(AbstractPipeline):
 
         console.print(f"  ✅ Created pipeline: src/pipelines/{name}.py", style="green")
 
+        # Tests for the sample pipeline (reflowfy.testing), and where recorded
+        # fixtures go. Only for the real template: its test imports its classes.
+        tests_dir = target_dir / "tests"
+        try:
+            test_template = get_package_path() / "templates" / "pipeline_test_template.py.tmpl"
+            conftest_template = get_package_path() / "templates" / "conftest_template.py.tmpl"
+            (tests_dir / "fixtures").mkdir(parents=True, exist_ok=True)
+            conftest = tests_dir / "conftest.py"
+            if not conftest.exists():
+                conftest.write_text(conftest_template.read_text())
+            test_file = tests_dir / f"test_{name}.py"
+            if "SimpleTestPipeline" in sample_pipeline.read_text() and not test_file.exists():
+                test_file.write_text(
+                    test_template.read_text().replace("__PIPELINE_MODULE__", name)
+                )
+                console.print(f"  ✅ Created tests: tests/test_{name}.py", style="green")
+        except Exception as e:
+            console.print(f"  ⚠️ Could not create tests: {e}", style="yellow")
+
         # Create sample source
         source_file = target_dir / "src" / "sources" / "example_source.py"
         try:
@@ -176,6 +195,7 @@ Project structure:
   src/destinations/       — Reusable destination configurations (@destination decorator)
   src/transformations/    — Shared transformations (@transformation decorator)
   src/queries/            — Reusable query templates for sources (SQL, Elastic, etc.)
+  tests/                  — Tests for your pipelines (pip install "reflowfy\\[test]", then pytest)
 
 Next steps:
   1. cd {target_dir.absolute()}
@@ -183,8 +203,9 @@ Next steps:
   3. Edit src/pipelines/{name}.py to customize your pipeline
   4. reflowfy new pipeline|source|destination|transformation <name>
   5. reflowfy test {name} --dry-run   (no Docker, fastest loop)
-  6. reflowfy run --build    (run the full stack locally)
-  7. reflowfy deploy        (deploy to OpenShift - reads from .env)
+  6. pytest                  (your pipeline tests; needs: pip install "reflowfy\\[test]")
+  7. reflowfy run --build    (run the full stack locally)
+  8. reflowfy deploy        (deploy to OpenShift - reads from .env)
 """,
                 style="bold green",
             )

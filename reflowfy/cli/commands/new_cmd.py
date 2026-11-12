@@ -5,6 +5,60 @@ from pathlib import Path
 import typer
 
 
+def _pipeline_test(name: str) -> str:
+    """The starter test written beside a new pipeline.
+
+    The new pipeline does nothing yet (its hooks raise "not implemented"), so the
+    test is marked as an expected failure. ``strict`` makes it fail the moment the
+    pipeline works, so the marker cannot be left behind by accident.
+    """
+    return f'''"""
+Tests for the {name} pipeline. Run them with:  pytest
+(needs: pip install "reflowfy[test]")
+
+reflowfy.testing runs the pipeline through the same code the worker runs, on the
+records you give it, and keeps what it would have sent in memory: no Docker,
+Kafka or database.
+"""
+
+import pytest
+
+from reflowfy.testing import assert_ok, run_pipeline
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="{name} is not implemented yet. Remove this marker once define_destination "
+    "returns a destination, and assert what the pipeline should send.",
+)
+def test_{name}_on_sample_records():
+    # `records` replaces the pipeline's source, so define_source is not called.
+    result = run_pipeline("{name}", records=[{{"id": 1, "name": "example"}}])
+
+    assert_ok(result)
+    assert result.sent == [{{"data": {{"id": 1, "name": "example"}}}}]
+
+
+# One transformation on its own:
+#
+#   from reflowfy.testing import apply_transformation, make_records
+#
+#   def test_my_step():
+#       out, skipped = apply_transformation(my_step, make_records([{{"id": 1}}]))
+#       assert out == [...]
+#
+# A step that calls an HTTP API (anything not mocked fails the test):
+#
+#   def test_enrich(mock_http):
+#       mock_http.get("https://api.internal/items/1", json={{"tier": "gold"}})
+#       result = run_pipeline("{name}", records=[{{"id": 1}}])
+#
+# Or record one real run and let pytest replay it offline:
+#
+#   reflowfy test {name} --save-fixture tests/fixtures/{name}.json
+'''
+
+
 def register(app: typer.Typer):
     """Register the new command."""
 
@@ -114,6 +168,12 @@ class {class_name}(AbstractPipeline[{class_name}Params]):
         return []
 ''')
         console.print(f"✅ Created pipeline: {target}", style="green")
+
+        test_file = Path("tests") / f"test_{name}.py"
+        if not test_file.exists():
+            test_file.parent.mkdir(parents=True, exist_ok=True)
+            test_file.write_text(_pipeline_test(name))
+            console.print(f"✅ Created test: {test_file}  (run: pytest)", style="green")
 
     @new_app.command(name="source")
     def source_(

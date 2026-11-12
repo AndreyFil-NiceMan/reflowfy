@@ -666,6 +666,42 @@ def register(app: typer.Typer):
         as_json: bool = typer.Option(
             False, "--json", help="Emit a machine-readable report on stdout"
         ),
+        save_fixture: Optional[Path] = typer.Option(
+            None,
+            "--save-fixture",
+            help="Record this run (input, what the steps' calls answered, expected output) "
+            "to a JSON file your tests replay offline. Never sends to the destination.",
+        ),
+        fixture: Optional[Path] = typer.Option(
+            None,
+            "--fixture",
+            help="Replay a recorded fixture offline and compare with its expected output",
+        ),
+        update_fixture: bool = typer.Option(
+            False,
+            "--update-fixture",
+            help="With --fixture: rewrite the expected output from the saved input",
+        ),
+        redact: List[str] = typer.Option(
+            [],
+            "--redact",
+            help="With --save-fixture: mask these fields in the file (key or dotted path, "
+            "comma-separated or repeated)",
+        ),
+        ignore: List[str] = typer.Option(
+            [],
+            "--ignore",
+            help="With --save-fixture: fields left out of the comparison, e.g. a timestamp",
+        ),
+        freeze_step: List[str] = typer.Option(
+            [],
+            "--freeze-step",
+            help="With --save-fixture: save this step's output and replay it instead of "
+            "running the step (for calls that cannot be recorded)",
+        ),
+        max_body_kb: int = typer.Option(
+            256, "--max-body-kb", help="With --save-fixture: largest HTTP response stored"
+        ),
     ):
         """
         Test a pipeline locally without Docker.
@@ -709,7 +745,26 @@ def register(app: typer.Typer):
         resolved = resolve_pipeline(pipeline, no_input=no_input)
         console.print(Panel(f"🧪 Testing [bold]{resolved.name}[/bold]", style="cyan"))
 
+        if update_fixture and fixture is None:
+            console.print("[red]❌ --update-fixture needs --fixture <file>[/red]")
+            raise typer.Exit(2)
+        if fixture is not None:
+            replay_fixture_file(resolved, fixture, update=update_fixture)
+            return
+
         params = collect_params(resolved, parse_param_flags(param), no_input=no_input)
+        if save_fixture is not None:
+            record_fixture_file(
+                resolved,
+                params,
+                save_fixture,
+                limit=opts.limit,
+                redact=split_fields(redact),
+                ignore=split_fields(ignore),
+                freeze_steps=split_fields(freeze_step),
+                max_body_kb=max_body_kb,
+            )
+            return
         console.print(f"\n[bold]⚙️  Params:[/bold] {params}")
         console.print(f"[bold]📊 Record limit:[/bold] {opts.limit}")
 
@@ -763,6 +818,109 @@ def register(app: typer.Typer):
             return
 
         console.print(f"\n[bold green]✅ Test complete: {total_records} {outcome}[/bold green]")
+
+
+# ---------------------------------------------------------------------------
+# Fixtures (reflowfy.testing)
+# ---------------------------------------------------------------------------
+
+
+def split_fields(values: Sequence[str]) -> List[str]:
+    """``--redact a,b --redact c`` -> ``["a", "b", "c"]``."""
+    return [name.strip() for value in values for name in value.split(",") if name.strip()]
+
+
+def record_fixture_file(
+    pipeline: "AbstractPipeline[Any]",
+    params: Dict[str, Any],
+    path: Path,
+    *,
+    limit: int,
+    redact: List[str],
+    ignore: List[str],
+    freeze_steps: List[str],
+    max_body_kb: int,
+) -> None:
+    """``--save-fixture``: run against the real source and write the run to ``path``."""
+    from reflowfy.testing.cassette import FixtureError
+    from reflowfy.testing.fixtures import record_fixture
+
+    console.print(f"\n[cyan]Recording (limit={limit}); nothing is sent...[/cyan]")
+    try:
+        recorded = record_fixture(
+            pipeline,
+            params,
+            limit=limit,
+            redact_fields=redact,
+            ignore=ignore,
+            freeze_steps=freeze_steps,
+            max_body_kb=max_body_kb,
+        )
+    except (FixtureError, ValueError) as exc:
+        console.print(f"[red]❌ {exc}[/red]")
+        raise typer.Exit(1)
+    recorded.save(path)
+
+    expected = recorded.expected
+    fetched = sum(len(records) for records in recorded.jobs)
+    would_send = sum(len(records) for records in expected["sent"])
+    console.print(f"[green]✓ Fetched {fetched} records in {len(recorded.jobs)} job(s)[/green]")
+    if recorded.http:
+        console.print(f"[green]✓ Recorded {len(recorded.http)} HTTP call(s)[/green]")
+    if recorded.source_calls:
+        console.print(f"[green]✓ Recorded {len(recorded.source_calls)} source call(s)[/green]")
+    if recorded.frozen_steps:
+        console.print(f"[green]✓ Frozen step(s): {', '.join(recorded.frozen_steps)}[/green]")
+    skipped = expected["records_skipped"]
+    outcome = f"{would_send} would be sent"
+    if skipped:
+        outcome += f", {skipped} skipped ({top_skip_reasons(expected['skip_reasons'])})"
+    console.print(f"[green]✓ {outcome}[/green]")
+    console.print(f"[bold green]✅ Fixture written: {path}[/bold green]")
+    console.print(
+        "[yellow]⚠️  It contains real data. Review it before committing "
+        "(--redact masks fields).[/yellow]"
+    )
+    console.print(f"[dim]Replay it offline: pytest, or reflowfy test {pipeline.name} --fixture {path}[/dim]")
+
+
+def replay_fixture_file(pipeline: "AbstractPipeline[Any]", path: Path, update: bool) -> None:
+    """``--fixture``: replay offline and compare; ``--update-fixture`` rewrites the expectation."""
+    from reflowfy.testing.cassette import FixtureError, UnmockedCallError
+    from reflowfy.testing.diff import summarize
+    from reflowfy.testing.fixtures import diff_fixture, load_fixture, replay
+    from reflowfy.testing.fixtures import update_fixture as rewrite_expected
+
+    try:
+        loaded = load_fixture(path)
+        if loaded.pipeline != pipeline.name:
+            raise FixtureError(
+                f"{path} was recorded for pipeline '{loaded.pipeline}', not '{pipeline.name}'"
+            )
+        if update:
+            _, changes = rewrite_expected(loaded)
+        else:
+            changes = diff_fixture(replay(loaded), loaded)
+    except (FixtureError, UnmockedCallError) as exc:
+        console.print(f"[red]❌ {exc}[/red]")
+        raise typer.Exit(1)
+
+    if update:
+        if changes:
+            console.print(f"[bold]Expected output updated ({len(changes)} change(s)):[/bold]")
+            console.print(summarize(changes), markup=False)
+            console.print(f"[bold green]✅ Fixture updated: {path}[/bold green]")
+        else:
+            console.print("[green]✅ Nothing changed: the fixture already matches[/green]")
+        return
+    if changes:
+        console.print(f"[bold red]❌ {len(changes)} difference(s) from {path}:[/bold red]")
+        console.print(summarize(changes), markup=False)
+        console.print(
+            "[dim]If the change is intended, add --update-fixture and review the file's diff.[/dim]"
+        )
+        raise typer.Exit(1)
+    console.print(f"[bold green]✅ Matches {path}[/bold green]")
 
 
 def run_pipeline_test(

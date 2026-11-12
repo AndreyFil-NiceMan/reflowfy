@@ -73,9 +73,12 @@ def resolve_pipeline(pipeline: PipelineRef) -> "AbstractPipeline[Any]":
         return found
     if isinstance(pipeline, type):
         registered = pipeline_registry.get(str(getattr(pipeline, "name", "")))
-        if registered is not None and type(registered) is pipeline:
+        # Compared outside the `if`, so the type checkers keep `registered` as it is.
+        same_class = registered.__class__ is pipeline
+        if registered is not None and same_class:
             return registered
-        return pipeline()
+        instance: "AbstractPipeline[Any]" = pipeline()
+        return instance
     return pipeline
 
 
@@ -97,13 +100,18 @@ def make_params(pipeline: PipelineRef, **overrides: Any) -> Dict[str, Any]:
 class _RecordingStep(BaseTransformation):
     """Runs the real step and keeps what it returned (``--freeze-step``, recording)."""
 
-    def __init__(self, inner: Any, keep: Callable[[List[Any]], None]) -> None:
+    def __init__(self, inner: Any, session: Session, keep: Callable[[List[Any]], None]) -> None:
         self.name = str(getattr(inner, "name", ""))
         self._inner = inner
+        self._session = session
         self._keep = keep
 
     def apply(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
-        out, _ = run_step(self._inner, records, runtime_params)
+        self._session.paused = True
+        try:
+            out, _ = run_step(self._inner, records, runtime_params)
+        finally:
+            self._session.paused = False
         self._keep(to_json_safe(out))
         return out
 
@@ -171,7 +179,7 @@ def _instrument(
             elif name in hooks.capture:
                 job_index = progress.job
                 steps[position] = _RecordingStep(
-                    step, lambda out: hooks.captured.setdefault(name, {}).update({job_index: out})
+                    step, session, lambda out: hooks.captured.setdefault(name, {}).update({job_index: out})
                 )
             session.current_step = name
         return steps

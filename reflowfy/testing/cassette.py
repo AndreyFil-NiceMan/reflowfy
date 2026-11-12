@@ -36,6 +36,7 @@ from typing import (
     Callable,
     Deque,
     Dict,
+    Generator,
     Iterator,
     List,
     NamedTuple,
@@ -321,6 +322,9 @@ class Session:
         # main fetch and the planning never end up in a fixture twice.
         self.current_step: Optional[str] = None
         self.in_job = False
+        # True while a frozen step runs during recording: its output is what the
+        # fixture keeps, so its calls are neither needed nor wanted in the file.
+        self.paused = False
         self.main_sources: Set[int] = set()
         self.main_fetches: Dict[int, List[Any]] = {}
         self._lock = threading.Lock()
@@ -372,9 +376,10 @@ class Session:
 
     def records_http(self) -> bool:
         """Whether a response that came back just now belongs in the fixture."""
-        return (
-            self.mode == "record" and self.in_job and not getattr(_local, "in_source_call", False)
-        )
+        return self._recording() and not getattr(_local, "in_source_call", False)
+
+    def _recording(self) -> bool:
+        return self.mode == "record" and self.in_job and not self.paused
 
     def http_record(
         self, method: str, url: str, body: Optional[bytes], response: RawResponse
@@ -425,7 +430,7 @@ class Session:
                 f"a fetch on {key[0]}",
                 "Re-record the fixture, or stub it (mock_source).",
             )
-        if self.mode != "record" or not self.in_job:
+        if not self._recording():
             return fetch()
         # Its HTTP is part of this call: storing both would only double the file.
         _local.in_source_call = True
@@ -541,10 +546,11 @@ def _urlopen(
         return _urllib3_urlopen(self, method, url, body, headers, *args, **kwargs)
     verb = method.upper()
     full_url = _pool_url(self, url)
-    if isinstance(body, str):
-        sent: Optional[bytes] = body.encode("utf-8")
+    given: Any = body  # narrowed below; `body` itself goes on to urllib3 untouched
+    if isinstance(given, str):
+        sent: Optional[bytes] = given.encode("utf-8")
     else:
-        sent = bytes(body) if isinstance(body, (bytes, bytearray)) else None
+        sent = bytes(given) if isinstance(given, (bytes, bytearray)) else None
     preload = bool(kwargs.get("preload_content", True))
     found = session.http_lookup(verb, full_url, sent)
     if found is not None:
@@ -610,7 +616,7 @@ def patch_sources() -> None:
 
 
 @contextmanager
-def activate(session: Session) -> Iterator[Session]:
+def activate(session: Session) -> Generator[Session, None, None]:
     """Put ``session`` between the pipeline and the outside world.
 
     One at a time: a run started inside an active session (``run_pipeline`` under
@@ -639,7 +645,7 @@ def activate(session: Session) -> Iterator[Session]:
 
 
 @contextmanager
-def mock_network(allow_network: bool = False) -> Iterator[Session]:
+def mock_network(allow_network: bool = False) -> Generator[Session, None, None]:
     """A session for a hand-written test, outside pytest.
 
     Example:

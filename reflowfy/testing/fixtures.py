@@ -38,6 +38,10 @@ FIXTURE_VERSION = 1
 
 # Written by the framework per run; a recorded job must not bring its old ones back.
 _RESERVED_PARAMS = {"execution_id", "batch_id", "pipeline_name", "created_at", "skip_reason"}
+# The ones that differ from run to run. A fixture keeps the recorded values and a
+# replay runs with them, so a step that stamps `execution_id` into its records
+# produces the same records every time.
+_CONTEXT_KEYS = ("execution_id", "batch_id", "created_at")
 
 
 @dataclass
@@ -46,6 +50,9 @@ class PipelineFixture:
 
     pipeline: str
     params: Dict[str, Any] = field(default_factory=lambda: {})
+    context: Dict[str, Any] = field(default_factory=lambda: {})
+    """``execution_id``, ``batch_id`` and ``created_at`` of the recorded run; a
+    replay runs with the same ones."""
     jobs: List[List[Any]] = field(default_factory=lambda: [])
     """The records each job fetched, before any transformation."""
     job_params: List[Dict[str, Any]] = field(default_factory=lambda: [])
@@ -70,6 +77,7 @@ class PipelineFixture:
             "reflowfy_version": self.reflowfy_version,
             "recorded_at": self.recorded_at,
             "params": self.params,
+            "context": self.context,
             "jobs": self.jobs,
             "job_params": self.job_params,
             "http": self.http,
@@ -116,6 +124,7 @@ def load_fixture(path: Union[str, Path]) -> PipelineFixture:
     return PipelineFixture(
         pipeline=str(data["pipeline"]),
         params=dict(data.get("params") or {}),
+        context=dict(data.get("context") or {}),
         jobs=jobs,
         job_params=job_params + [{} for _ in range(len(jobs) - len(job_params))],
         http=list(data.get("http") or []),
@@ -164,7 +173,11 @@ def replay(
     hold raises :class:`UnmockedCallError`, and nothing is sent.
     """
     fork, flat = _prepare(fixture.pipeline, fixture.params)
-    frozen = list(dict.fromkeys([*fixture.frozen_steps, *(freeze_steps or [])]))
+    flat.update({key: fixture.context[key] for key in _CONTEXT_KEYS if key in fixture.context})
+    frozen: List[str] = []
+    for name in [*fixture.frozen_steps, *(freeze_steps or [])]:
+        if name not in frozen:
+            frozen.append(name)
     missing = [name for name in frozen if name not in fixture.step_outputs]
     if missing:
         raise FixtureError(
@@ -341,6 +354,7 @@ def record_fixture(
     fixture = PipelineFixture(
         pipeline=fork.name,
         params=to_json_safe(dict(fork.apply_defaults(dict(params or {})))),
+        context={key: flat[key] for key in _CONTEXT_KEYS},
         jobs=[redact(recorded.fetched, redact_fields) for recorded in kept],
         job_params=[
             to_json_safe(
@@ -382,4 +396,21 @@ def record_fixture(
             f"{type(replayed.error).__name__}: {replayed.error}"
         ) from replayed.error
     fixture.expected = expected_from(replayed)
+
+    # A second replay must give the same output, or the fixture can never pass.
+    unstable = diff_fixture(replay(fixture), fixture)
+    if unstable:
+        fields = sorted({_field_of(line) for line in unstable})
+        raise FixtureError(
+            "the pipeline's output changes from one run to the next, so this fixture "
+            f"would fail every time:\n{summarize(unstable, limit=5)}\n"
+            f"Leave what changes out of the comparison (--ignore {','.join(fields)}), "
+            "or freeze the step that produces it (--freeze-step)."
+        )
     return fixture
+
+
+def _field_of(line: str) -> str:
+    """The field a difference line is about: ``job 0, record 1: a.b[2].c: 1 → 2`` -> ``c``."""
+    path = line.split(": ")[1] if line.startswith("job ") else line.split(":")[0]
+    return path.split(".")[-1].split("[")[0]
