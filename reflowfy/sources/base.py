@@ -3,8 +3,9 @@
 import inspect
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, ClassVar, Dict, Iterator, List, Optional, Tuple, Type, TypeVar
+from typing import Any, ClassVar, Dict, Iterator, List, Optional, Tuple, Type, TypeVar, cast
 
 from reflowfy.core.execution_context import parameter_resolver
 from reflowfy.core.types import Records
@@ -125,16 +126,20 @@ class BaseSource(ABC):
         yield self
 
     @abstractmethod
-    def fetch(self, runtime_params: Dict[str, Any], limit: Optional[int] = None) -> Records:
+    def fetch(self, runtime_params: Dict[str, Any], limit: Optional[int] = None) -> Iterable[Any]:
         """
-        Fetch data from source (used in local mode).
+        Fetch this job's records (on the worker).
+
+        Return a list of records, or any iterable of them: a generator that ``yield``-s
+        rows from a cursor works too (it is consumed in full before the job's
+        transformations run). For an ``async def``, subclass :class:`AsyncSource`.
 
         Args:
             runtime_params: Runtime parameters for template resolution
             limit: Optional limit for testing (e.g., first 100 records)
 
         Returns:
-            List of records
+            The records
         """
         pass
 
@@ -150,6 +155,80 @@ class BaseSource(ABC):
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(config={self.config})"
+
+
+class AsyncSource(BaseSource):
+    """A source whose fetch is a coroutine: implement :meth:`fetch_async`.
+
+    The worker awaits it on its own event loop, so it can call HTTP APIs or databases
+    without a thread. Planning (``split``) stays synchronous: it runs on the manager.
+
+    Example:
+        >>> class Users(AsyncSource):
+        ...     def __init__(self, url: str):
+        ...         super().__init__({"url": url})
+        ...
+        ...     async def fetch_async(self, runtime_params, limit=None):
+        ...         async with httpx.AsyncClient() as client:
+        ...             return (await client.get(self.config["url"])).json()
+        ...
+        ...     def health_check(self):
+        ...         return True
+
+    Open clients inside ``fetch_async`` rather than at module level: ``reflowfy test``
+    and local mode run each job on a new event loop.
+    """
+
+    @abstractmethod
+    async def fetch_async(
+        self, runtime_params: Dict[str, Any], limit: Optional[int] = None
+    ) -> Iterable[Any]:
+        """Fetch this job's records; same contract as :meth:`BaseSource.fetch`."""
+
+    def fetch(self, runtime_params: Dict[str, Any], limit: Optional[int] = None) -> List[Any]:
+        """Synchronous entry point for callers that are not async; runs ``fetch_async``."""
+        from reflowfy.core.async_utils import run_coroutine_sync
+
+        async def fetch_all() -> List[Any]:
+            return materialize_fetch(await self.fetch_async(runtime_params, limit), self)
+
+        return run_coroutine_sync(fetch_all())
+
+
+class SourceContractError(TypeError):
+    """A source's fetch returned something that is not records.
+
+    A ``TypeError``: a bug in the source, never retried by ``job_retry``.
+    """
+
+
+def materialize_fetch(result: Any, source: Any) -> List[Any]:
+    """What ``fetch`` returned, as a list of records.
+
+    A list is returned as is, a tuple or any other iterable (a generator) is consumed
+    into a list, and ``None`` is an empty slice. Anything else raises
+    :class:`SourceContractError` — it used to be ``str()``-ed and sent one character
+    per record.
+    """
+    name = type(source).__name__
+    if result is None:
+        return []
+    if isinstance(result, list):
+        return cast(List[Any], result)
+    if inspect.isawaitable(result):
+        close = getattr(result, "close", None)
+        if callable(close):
+            close()  # no "coroutine was never awaited" warning on top of the error
+        raise SourceContractError(
+            f"{name}.fetch returned a coroutine; an async source subclasses AsyncSource "
+            "and implements `async def fetch_async`"
+        )
+    kind = type(cast(object, result)).__name__
+    if isinstance(result, (str, bytes, bytearray, dict)) or not isinstance(result, Iterable):
+        raise SourceContractError(
+            f"{name}.fetch returned {kind}; return a list of records (or yield them)"
+        )
+    return list(cast(Iterable[Any], result))
 
 
 source_types: Dict[str, Type[BaseSource]] = {}

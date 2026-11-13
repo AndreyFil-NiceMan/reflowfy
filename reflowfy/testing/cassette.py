@@ -32,9 +32,11 @@ import json as _json
 import threading
 from collections import deque
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import (
     Any,
+    Awaitable,
     Callable,
     Deque,
     Dict,
@@ -56,7 +58,7 @@ from urllib3.response import HTTPResponse
 from reflowfy.core.serialization import to_json_safe
 from reflowfy.core.types import wrap_as_record
 from reflowfy.execution.content_dedup import without_secrets
-from reflowfy.sources.base import BaseSource
+from reflowfy.sources.base import BaseSource, materialize_fetch
 
 
 class UnmockedCallError(Exception):
@@ -378,7 +380,7 @@ class Session:
 
     def records_http(self) -> bool:
         """Whether a response that came back just now belongs in the fixture."""
-        return self._recording() and not getattr(_local, "in_source_call", False)
+        return self._recording() and not _in_source_call.get()
 
     def _recording(self) -> bool:
         return self.mode == "record" and self.in_job and not self.paused
@@ -413,8 +415,11 @@ class Session:
 
     # -- sources -------------------------------------------------------------
 
-    def source_fetch(self, source: Any, fetch: Callable[[], Any]) -> Any:
-        """Answer a ``fetch()`` made from inside a step, or let it through."""
+    def _source_answer(self, source: Any) -> Any:
+        """A stub or a stored answer for this fetch, else ``_MISSING``.
+
+        Raises ``UnmockedCallError`` when replaying strictly and nothing answers.
+        """
         self.sources.calls.append(
             SourceCall(type(source).__name__, getattr(source, "config", None), self.current_step)
         )
@@ -432,14 +437,10 @@ class Session:
                 f"a fetch on {key[0]}",
                 "Re-record the fixture, or stub it (mock_source).",
             )
-        if not self._recording():
-            return fetch()
-        # Its HTTP is part of this call: storing both would only double the file.
-        _local.in_source_call = True
-        try:
-            records = to_json_safe(fetch())
-        finally:
-            _local.in_source_call = False
+        return _MISSING
+
+    def _keep_source_records(self, source: Any, records: Any) -> Any:
+        key = source_key(source)
         with self._lock:
             self.recorded_source_calls.append(
                 {
@@ -450,6 +451,37 @@ class Session:
             )
         return copy.deepcopy(records)
 
+    def source_fetch(self, source: Any, fetch: Callable[[], Any]) -> Any:
+        """Answer a ``fetch()`` made from inside a step, or let it through."""
+        answer = self._source_answer(source)
+        if answer is not _MISSING:
+            return answer
+        if not self._recording():
+            return fetch()
+        # Its HTTP is part of this call: storing both would only double the file.
+        token = _in_source_call.set(True)
+        try:
+            records = to_json_safe(fetch())
+        finally:
+            _in_source_call.reset(token)
+        return self._keep_source_records(source, records)
+
+    async def source_fetch_async(
+        self, source: Any, fetch: Callable[[], Awaitable[Any]]
+    ) -> Any:
+        """:meth:`source_fetch` for an ``AsyncSource.fetch_async`` made from inside a step."""
+        answer = self._source_answer(source)
+        if answer is not _MISSING:
+            return answer
+        if not self._recording():
+            return await fetch()
+        token = _in_source_call.set(True)
+        try:
+            records = to_json_safe(await fetch())
+        finally:
+            _in_source_call.reset(token)
+        return self._keep_source_records(source, records)
+
 
 # ---------------------------------------------------------------------------
 # Patching
@@ -458,7 +490,16 @@ class Session:
 _local = threading.local()
 _active: Optional[Session] = None
 _install_lock = threading.Lock()
-_patched_sources: Dict[type, Any] = {}
+# (source class, "fetch" | "fetch_async") -> the original method.
+_patched_sources: Dict[Tuple[type, str], Any] = {}
+_SOURCE_FETCH_METHODS = ("fetch", "fetch_async")
+# Context variables, not thread-locals: an async fetch awaits, and other tasks run on
+# the same thread meanwhile. Both travel into to_thread and run_coroutine_sync.
+_in_fetch: ContextVar[bool] = ContextVar("reflowfy_in_fetch", default=False)
+"""Inside a wrapped fetch: a nested one (``super().fetch``, AsyncSource's sync shim) passes through."""
+_in_source_call: ContextVar[bool] = ContextVar("reflowfy_in_source_call", default=False)
+"""Inside a recorded source call: its HTTP is not stored separately."""
+_MISSING = object()
 
 _httpx_sync = httpx.HTTPTransport.handle_request
 _httpx_async = httpx.AsyncHTTPTransport.handle_async_request
@@ -577,20 +618,44 @@ def _urlopen(
 def _wrap_fetch(original: Callable[..., Any]) -> Callable[..., Any]:
     def fetch(self: Any, *args: Any, **kwargs: Any) -> Any:
         session = _active
-        if session is None or getattr(_local, "in_fetch", False):
+        if session is None or _in_fetch.get():
             return original(self, *args, **kwargs)
-        _local.in_fetch = True
+        token = _in_fetch.set(True)
         try:
             if id(self) in session.main_sources:
                 # The job's own source: let it run, and keep what it returned.
-                records = original(self, *args, **kwargs)
+                records = materialize_fetch(original(self, *args, **kwargs), self)
                 session.main_fetches[id(self)] = records
                 return records
-            return session.source_fetch(self, lambda: original(self, *args, **kwargs))
+            return session.source_fetch(
+                self, lambda: materialize_fetch(original(self, *args, **kwargs), self)
+            )
         finally:
-            _local.in_fetch = False
+            _in_fetch.reset(token)
 
     return fetch
+
+
+def _wrap_fetch_async(original: Callable[..., Any]) -> Callable[..., Any]:
+    async def fetch_async(self: Any, *args: Any, **kwargs: Any) -> Any:
+        session = _active
+        if session is None or _in_fetch.get():
+            return await original(self, *args, **kwargs)
+        token = _in_fetch.set(True)
+        try:
+            if id(self) in session.main_sources:
+                records = materialize_fetch(await original(self, *args, **kwargs), self)
+                session.main_fetches[id(self)] = records
+                return records
+
+            async def fetch() -> List[Any]:
+                return materialize_fetch(await original(self, *args, **kwargs), self)
+
+            return await session.source_fetch_async(self, fetch)
+        finally:
+            _in_fetch.reset(token)
+
+    return fetch_async
 
 
 def _all_subclasses(cls: type) -> Iterator[type]:
@@ -610,11 +675,13 @@ def patch_sources() -> None:
         if _active is None:
             return
         for cls in _all_subclasses(BaseSource):
-            if cls in _patched_sources or "fetch" not in cls.__dict__:
-                continue
-            original = cls.__dict__["fetch"]
-            _patched_sources[cls] = original
-            setattr(cls, "fetch", _wrap_fetch(original))
+            for attr in _SOURCE_FETCH_METHODS:
+                if (cls, attr) in _patched_sources or attr not in cls.__dict__:
+                    continue
+                original = cls.__dict__[attr]
+                _patched_sources[(cls, attr)] = original
+                wrap = _wrap_fetch_async if attr == "fetch_async" else _wrap_fetch
+                setattr(cls, attr, wrap(original))
 
 
 def _aiohttp_layer(action: str) -> None:
@@ -652,8 +719,8 @@ def activate(session: Session) -> Generator[Session, None, None]:
             setattr(httpx.AsyncHTTPTransport, "handle_async_request", _httpx_async)
             setattr(HTTPConnectionPool, "urlopen", _urllib3_urlopen)
             _aiohttp_layer("uninstall")
-            for cls, original in _patched_sources.items():
-                setattr(cls, "fetch", original)
+            for (cls, attr), original in _patched_sources.items():
+                setattr(cls, attr, original)
             _patched_sources.clear()
 
 

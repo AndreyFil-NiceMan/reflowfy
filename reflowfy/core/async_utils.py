@@ -3,6 +3,7 @@
 import asyncio
 import concurrent.futures
 import contextvars
+import inspect
 from typing import Any, Awaitable, Callable, Coroutine, Sequence, TypeVar
 
 T = TypeVar("T")
@@ -26,6 +27,34 @@ def run_coroutine_sync(coro: Coroutine[Any, Any, T]) -> T:
     context = contextvars.copy_context()
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         return pool.submit(context.run, asyncio.run, coro).result()
+
+
+async def call_hook(fn: Callable[..., Any], *args: Any) -> Any:
+    """Call a user hook from the event loop, whichever way it was written.
+
+    An ``async def`` is awaited here; anything else runs in a thread, so it never
+    stalls the loop (and with it the worker's Kafka heartbeat). A sync function that
+    returns an awaitable (a wrapper around an async hook) has it awaited as well.
+    """
+    if inspect.iscoroutinefunction(fn):
+        result = await fn(*args)
+    else:
+        result = await asyncio.to_thread(fn, *args)
+    if inspect.isawaitable(result):
+        result = await result
+    return result
+
+
+def call_hook_sync(fn: Callable[..., Any], *args: Any) -> Any:
+    """:func:`call_hook` for synchronous callers: an async hook is run to completion."""
+    result = fn(*args)
+    if inspect.isawaitable(result):
+
+        async def wait() -> Any:
+            return await result
+
+        result = run_coroutine_sync(wait())
+    return result
 
 
 async def for_each_concurrently(

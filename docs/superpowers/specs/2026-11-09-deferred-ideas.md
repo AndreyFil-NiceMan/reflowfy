@@ -21,7 +21,10 @@ scheduled items: `docs/superpowers/plans/2026-11-09-framework-gaps.md`.
   as the third argument, closed even on failure. Per job because local mode and
   `reflowfy test` use a new loop per job; could later draw from the #22 worker pool.
 
-## #20 Async sources
+## #20 Async sources — done (2026-11-13)
+
+`AsyncSource.fetch_async`, awaited by `job_runner.fetch_records`. Converting the built-in
+sources (notes below) is still open.
 
 - Today `fetch` already runs in a thread, so the loop is not blocked; async adds
   concurrency inside one fetch and fewer threads.

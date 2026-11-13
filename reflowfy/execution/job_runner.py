@@ -17,7 +17,7 @@ import time
 import uuid
 from typing import Any, Dict, Iterator, List, Optional, Tuple, cast
 
-from reflowfy.core.async_utils import run_coroutine_sync
+from reflowfy.core.async_utils import call_hook, run_coroutine_sync
 from reflowfy.core.execution_context import ExecutionContext
 from reflowfy.core.exceptions import RecordValidationError, SkipJob, pipeline_step
 from reflowfy.core.planning import PlannedJob
@@ -215,6 +215,23 @@ def plan_slices(jobs: Any, runtime_params: Dict[str, Any]) -> Iterator[PlannedJo
             )
 
 
+async def fetch_records(source: Any, runtime_params: Dict[str, Any]) -> List[Any]:
+    """One job's records from its source, as a JSON-safe list.
+
+    An :class:`AsyncSource` is awaited on this loop; any other source's ``fetch`` runs
+    in a thread, and what it returned — a list, or a generator — is consumed there.
+    Normalizing runs in a thread either way: a large slice must not stall the loop.
+    """
+    from reflowfy.sources.base import AsyncSource, materialize_fetch
+
+    if isinstance(source, AsyncSource):
+        raw = materialize_fetch(await source.fetch_async(runtime_params), source)
+        return await asyncio.to_thread(to_json_safe, raw)
+    return await asyncio.to_thread(
+        lambda: to_json_safe(materialize_fetch(source.fetch(runtime_params), source))
+    )
+
+
 def run_job_records(
     source: Any,
     pipeline: Any,
@@ -264,7 +281,7 @@ async def run_job_records_async(
     name = getattr(pipeline, "name", "<unknown>")
     try:
         with pipeline_step("source fetch", name):
-            records = await asyncio.to_thread(lambda: to_json_safe(source.fetch(runtime_params)))
+            records = await fetch_records(source, runtime_params)
         if limit is not None:
             records = records[:limit]
         if not records:
@@ -284,9 +301,7 @@ async def run_job_records_async(
         with pipeline_step("define_destination", name):
             # A list is several destinations: fan_out(...) sends every record to each.
             destination = as_destination(
-                await asyncio.to_thread(
-                    pipeline.define_destination, transformed_records, runtime_params
-                )
+                await call_hook(pipeline.define_destination, transformed_records, runtime_params)
             )
         if isinstance(destination, RecordDestination) and transformed_records:
             # Choose every record's destination now, before dedup and the send: a

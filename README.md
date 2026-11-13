@@ -469,6 +469,21 @@ curl -X POST http://localhost:8001/run ... -d '{..., "dry_run": true}'
 - **HTTP API**: Offset/cursor pagination with various auth strategies
 - **S3**: Efficient distributed bucket processing (prefix splitting)
 
+A source of your own subclasses `BaseSource` (`fetch` may return a list or `yield`
+its records) or `AsyncSource` (`async def fetch_async`, awaited on the worker):
+
+```python
+class Rows(BaseSource):
+    def fetch(self, runtime_params, limit=None):
+        for row in cursor_for(self.config):
+            yield {"id": row.id}
+
+class Users(AsyncSource):
+    async def fetch_async(self, runtime_params, limit=None):
+        async with httpx.AsyncClient() as client:
+            return (await client.get(self.config["url"])).json()
+```
+
 ### Destinations
 
 - **Kafka**: High-throughput batching and compression
