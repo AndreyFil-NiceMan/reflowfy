@@ -49,6 +49,7 @@ import inspect
 import json
 from typing import (
     Any,
+    Awaitable,
     Callable,
     ClassVar,
     Dict,
@@ -63,7 +64,10 @@ from typing import (
     cast,
 )
 
+from typing_extensions import Concatenate
+
 from reflowfy.core.async_utils import for_each_concurrently
+from reflowfy.core.options import option_binder
 from reflowfy.core.exceptions import PipelineError, SkipJob, SkipRecord
 from reflowfy.destinations.base import BaseDestination, ConnectionPool, DestinationError
 from reflowfy.observability.logging import get_logger
@@ -80,8 +84,18 @@ _advised: Set[str] = set()
 OnError = Literal["fail", "skip"]
 """What a record whose function raises does: fail the job, or skip the record."""
 
-RecordDestinationFn = Callable[..., Any]
-"""``(record, runtime_params, **options) -> BaseDestination`` (sync or ``async def``)."""
+DestinationOrList = Union[BaseDestination, Sequence[BaseDestination]]
+"""What a record destination's function returns for one record."""
+
+RecordDestinationFn = Callable[
+    Concatenate[Any, Any, ...], Union[DestinationOrList, Awaitable[DestinationOrList]]
+]
+"""``(record, runtime_params, **options) -> BaseDestination`` (sync or ``async def``).
+
+Also a list of destinations, or ``fan_out(...)`` (itself a ``BaseDestination``). `Any`
+in the two leading positions, as for ``@transformation``: the arity is checked without
+rejecting an author's own params TypedDict. ``Sequence`` so ``-> List[KafkaDestination]``
+is accepted (``List`` is invariant)."""
 
 
 class RecordDestinationError(PipelineError):
@@ -139,6 +153,11 @@ class RecordDestination(BaseDestination):
         # The routed destinations are what records are written to; this one's config
         # only names it.
         super().__init__({"record_destination": self.name})
+        bind_options = getattr(type(self), "_bind_options", None)
+        if bind_options is not None:
+            # A typo fails here, in define_destination — not on every record at route
+            # time, where on_error="skip" would quietly skip them all.
+            bind_options(options)
         self.options = options
         self._groups: List[BaseDestination] = []
         self._group_by_key: Dict[str, int] = {}
@@ -566,6 +585,7 @@ def make_record_destination(
             "timeout": timeout,
             "destination_for_record": method,
             "_destination_fn": staticmethod(func),
+            "_bind_options": staticmethod(option_binder(func, f"record_destination {name!r}")),
             "__doc__": func.__doc__ or f"Record destination: {name}",
             "__module__": func.__module__,
         },
