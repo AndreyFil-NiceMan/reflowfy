@@ -2,7 +2,7 @@
 
 import asyncio
 from abc import ABCMeta, abstractmethod
-from typing import Any, ClassVar, Dict, List, Literal, NamedTuple, Optional, Sequence, Tuple
+from typing import Any, ClassVar, Dict, List, Literal, NamedTuple, Optional, Sequence, Tuple, cast
 
 from reflowfy.core.exceptions import SkipJob, SkipRecord
 from reflowfy.core.query_loader import QueryLoaderMixin
@@ -192,19 +192,30 @@ def check_on_error(owner: str, on_error: object) -> None:
 
 
 class RecordContractError(TypeError):
-    """A per-record step returned something that is not one record or ``None``."""
+    """A per-record step returned something that is not a record, a list of records or ``None``."""
+
+
+RECORD_CONTRACT = "a per-record step returns a record, a list of records, or None"
 
 
 def check_record_result(result: Any) -> None:
-    """A per-record step returns one record (a ``dict``) or ``None``; raise otherwise.
+    """A per-record step returns one record (a ``dict``), a ``list`` of records, or ``None``.
 
-    The error is a contract violation, not a failure of the record's call, so
-    ``on_error="skip"`` does not apply to it.
+    Raise :class:`RecordContractError` otherwise — including a list holding anything
+    but records. The error is a contract violation, not a failure of the record's
+    call, so ``on_error="skip"`` does not apply to it.
     """
-    if result is not None and not isinstance(result, dict):
-        raise RecordContractError(
-            f"returned {type(result).__name__}; a per-record step returns one record or None"
-        )
+    if result is None or isinstance(result, dict):
+        return
+    if isinstance(result, list):
+        for position, item in enumerate(cast(List[Any], result)):
+            if not isinstance(item, dict):
+                raise RecordContractError(
+                    f"returned list with {type(item).__name__} at position {position}; "
+                    f"{RECORD_CONTRACT}"
+                )
+        return
+    raise RecordContractError(f"returned {type(result).__name__}; {RECORD_CONTRACT}")
 
 
 class RecordResults(NamedTuple):
@@ -219,7 +230,8 @@ class RecordTransformation(AsyncTransformation):
     """Awaits :meth:`apply_record` once per record, ``concurrency`` records at a time.
 
     Output keeps input order; a record for which ``apply_record`` returns ``None``
-    is dropped. The first record that raises stops the step: the records still in
+    (or an empty list) is dropped, and one for which it returns a list of records is
+    replaced by those records, in place (one record in, many out). The first record that raises stops the step: the records still in
     flight are cancelled and the job fails naming that record's index.
     ``SkipRecord`` drops that record and records why; ``SkipJob`` from any record
     drops the whole job. ``timeout`` (seconds) bounds
@@ -227,9 +239,10 @@ class RecordTransformation(AsyncTransformation):
     timeout included) is dropped instead of failing the job, the exception's type
     name as the skip reason.
 
-    ``apply_record`` returns one record (a ``dict``: a ``Record`` or ``TypedRecord``)
-    or ``None``. Anything else — a list, a tuple, a string — fails the job whatever
-    ``on_error`` says: it is a bug in the step, not a bad record.
+    ``apply_record`` returns one record (a ``dict``: a ``Record`` or ``TypedRecord``),
+    a ``list`` of records, or ``None``. Anything else — a tuple, a string, a list
+    holding a non-record — fails the job whatever ``on_error`` says: it is a bug in
+    the step, not a bad record.
 
     The concurrent calls share one ``runtime_params``: read it, don't write it.
     Usually built with ``@record_transformation``; subclass it to share one client
@@ -268,7 +281,8 @@ class RecordTransformation(AsyncTransformation):
 
     @abstractmethod
     async def apply_record(self, record: Any, runtime_params: Dict[str, Any]) -> Any:
-        """Transform one record; return the new record, or ``None`` to drop it."""
+        """Transform one record; return the new record, a list of records (one in,
+        many out; ``[]`` drops it), or ``None`` to drop it."""
 
     async def setup(self, runtime_params: Dict[str, Any]) -> None:
         """Called once before the step's records run: open shared clients here."""
@@ -326,6 +340,8 @@ class RecordTransformation(AsyncTransformation):
         for result in results:
             if isinstance(result, _Skipped):
                 count_skip_reason(skip_reasons, result.reason)
+            elif isinstance(result, list):
+                kept.extend(cast(List[Any], result))
             elif result is not None:
                 kept.append(result)
         return RecordResults(kept, skip_reasons)

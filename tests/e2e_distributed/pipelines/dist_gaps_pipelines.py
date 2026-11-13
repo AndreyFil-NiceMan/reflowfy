@@ -117,7 +117,7 @@ class DistGapsSource(AbstractPipeline[GapsParams]):
 
 # --------------------------------------------------------------------------------
 # Transformations: options (#10), should_apply_transformation (#3),
-# on_error="skip" (#11), the one-record contract (#14)
+# on_error="skip" (#11), the per-record return contract (#14)
 # --------------------------------------------------------------------------------
 
 
@@ -138,9 +138,9 @@ async def dist_gaps_skip_odd(record: Dict[str, Any], runtime_params: Any) -> Dic
     return record
 
 
-@record_transformation("dist_gaps_returns_list")
-async def dist_gaps_returns_list(record: Dict[str, Any], runtime_params: Any) -> Any:
-    return [record]
+@record_transformation("dist_gaps_returns_tuple")
+async def dist_gaps_returns_tuple(record: Dict[str, Any], runtime_params: Any) -> Any:
+    return (record,)  # breaks the contract: a record, a list of records, or None
 
 
 class DistGapsTransform(AbstractPipeline[GapsParams]):
@@ -152,7 +152,7 @@ class DistGapsTransform(AbstractPipeline[GapsParams]):
     def define_transformations(self, records: List[Any], runtime_params: GapsParams) -> List[Any]:
         steps: List[Any] = [dist_gaps_label(label="dist"), dist_gaps_declined(), dist_gaps_skip_odd()]
         if runtime_params.get("scenario") == "contract":
-            steps.append(dist_gaps_returns_list())
+            steps.append(dist_gaps_returns_tuple())
         return steps
 
     def should_apply_transformation(self, transformation: Any, runtime_params: GapsParams, records: List[Any]) -> bool:

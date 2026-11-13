@@ -289,7 +289,7 @@ class TestOnError:
 
 
 # ---------------------------------------------------------------------------
-# #14 A per-record step returns one record or None
+# #14 A per-record step returns a record, a list of records, or None
 # ---------------------------------------------------------------------------
 
 
@@ -306,13 +306,20 @@ class _Returns(RecordTransformation):
         return self.value if record["id"] == 1 else record
 
 
-class TestOneRecordPerRecordStep:
+class TestPerRecordStepContract:
     @pytest.mark.parametrize(
-        "value, type_name",
-        [([{"id": 1}], "list"), (({"id": 1},), "tuple"), ("x", "str"), (7, "int")],
+        "value, returned",
+        [
+            (({"id": 1},), "tuple"),
+            ("x", "str"),
+            (7, "int"),
+            ([{"id": 1}, "x"], "list with str at position 1"),
+            ([None], "list with NoneType at position 0"),
+            ([[{"id": 1}]], "list with list at position 0"),
+        ],
     )
     async def test_a_non_record_fails_the_job_naming_position_and_type(
-        self, value: Any, type_name: str
+        self, value: Any, returned: str
     ):
         with pytest.raises(TransformationError) as info:
             await apply_transformations_iteratively_async(
@@ -321,13 +328,13 @@ class TestOneRecordPerRecordStep:
         error = info.value
         assert error.culprit_index == 1
         assert error.culprit_record == {"id": 1, "v": 1}
-        assert f"record 1: RecordContractError: returned {type_name}" in str(error)
-        assert "a per-record step returns one record or None" in str(error)
+        assert f"record 1: RecordContractError: returned {returned};" in str(error)
+        assert "a per-record step returns a record, a list of records, or None" in str(error)
 
     async def test_on_error_skip_does_not_hide_it(self):
-        with pytest.raises(TransformationError, match="returned list"):
+        with pytest.raises(TransformationError, match="returned tuple"):
             await apply_transformations_iteratively_async(
-                _Pipeline([_Returns([], on_error="skip")]), _records(3), {}
+                _Pipeline([_Returns((), on_error="skip")]), _records(3), {}
             )
 
     async def test_a_dict_or_none_passes(self):
@@ -340,12 +347,36 @@ class TestOneRecordPerRecordStep:
         )
         assert out[1] == {"data": {"order_id": 9}}
 
-    async def test_the_decorated_form_is_checked_too(self):
-        @record_transformation("ut_contract_decorated")
-        async def explode(record: Any, runtime_params: Any) -> Any:
-            return [record, record]
+    async def test_a_list_replaces_the_record_in_place(self):
+        out, applied = await apply_transformations_iteratively_async(
+            _Pipeline([_Returns([{"id": "1a"}, {"id": "1b"}])]), _records(3), {}
+        )
+        assert [r["id"] for r in out] == [0, "1a", "1b", 2]
+        assert (applied[0].records_in, applied[0].records_out) == (3, 4)
 
-        with pytest.raises(TransformationError, match="record 0: .*returned list"):
+    async def test_an_empty_list_drops_the_record(self):
+        out, _ = await apply_transformations_iteratively_async(
+            _Pipeline([_Returns([])]), _records(3), {}
+        )
+        assert [r["id"] for r in out] == [0, 2]
+
+    async def test_the_decorated_form_explodes_in_order_with_concurrency(self):
+        @record_transformation("ut_contract_decorated", concurrency=4)
+        async def explode(record: Dict[str, Any], runtime_params: Any) -> List[Dict[str, Any]]:
+            await asyncio.sleep(0.001 * (5 - record["id"]))  # finish out of order
+            return [{**record, "copy": n} for n in range(record["id"])]
+
+        out, _ = await apply_transformations_iteratively_async(
+            _Pipeline([explode()]), _records(4), {}
+        )
+        assert [(r["id"], r["copy"]) for r in out] == [(1, 0), (2, 0), (2, 1), (3, 0), (3, 1), (3, 2)]
+
+    async def test_the_decorated_form_is_checked_too(self):
+        @record_transformation("ut_contract_decorated_bad")
+        async def explode(record: Any, runtime_params: Any) -> Any:
+            return (record, record)
+
+        with pytest.raises(TransformationError, match="record 0: .*returned tuple"):
             await apply_transformations_iteratively_async(_Pipeline([explode()]), _records(1), {})
 
 
