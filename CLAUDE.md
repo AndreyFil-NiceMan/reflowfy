@@ -151,7 +151,7 @@ Notes:
 
 `reflowfy` exports the names a pipeline author needs to annotate a hook without a deep import: `Record` (`Dict[str, Any]`), `Records` (`List[Record]`), `Transformations` (`Sequence[BaseTransformation]`), plus `BaseSource` and `BaseDestination`. `Record`/`Records`/`TypedRecord` live in `core/types.py`; `Transformations` beside `BaseTransformation` in `transformations/base.py` (so `core` never imports transformations).
 
-**Top-level exports.** Everything a pipeline author touches is importable from `reflowfy`: connectors (`elastic_source`, `sql_source`, `s3_source`, `id_based_api_source`, `mock_source`, `kafka_destination`, `api_destination`, `console_destination`, `fan_out`), `secret`, `RetryConfig`/`JobRetryConfig`, `ExecutionSummary`/`run_pipeline`, and the errors (`PermanentDestinationError`, `SecretError`, `SourceRoundTripError`, `SqlTemplateError`, …). `s3_source` (optional boto3) and `run_pipeline` (pulls in the manager's database layer) load on first use through a module `__getattr__`, with `TYPE_CHECKING` imports so they stay typed; `tests/unit/test_top_level_exports.py` checks every `__all__` name resolves.
+**Top-level exports.** Everything a pipeline author touches is importable from `reflowfy`: connectors (`elastic_source`, `sql_source`, `s3_source`, `id_based_api_source`, `mock_source`, `kafka_destination`, `api_destination`, `console_destination`, `fan_out`), `secret`, `RetryConfig`/`JobRetryConfig`, `ExecutionSummary`/`run_pipeline`, and the errors (`PermanentDestinationError`, `SecretError`, `SourceRoundTripError`, `SourceContractError`, `SqlTemplateError`, …), and `AsyncSource` beside `BaseSource`. `s3_source` (optional boto3) and `run_pipeline` (pulls in the manager's database layer) load on first use through a module `__getattr__`, with `TYPE_CHECKING` imports so they stay typed; `tests/unit/test_top_level_exports.py` checks every `__all__` name resolves.
 
 They are aliases, not a second generic parameter. The framework's own signatures stay `List[Any]` because a source may yield non-dict records (raw S3 text, scalars), and `List[Any]` accepts a `Records`-annotated override — so `AbstractPipeline` did **not** need an `R` TypeVar next to `P`.
 
@@ -244,7 +244,21 @@ Steps stay sequential (re-resolution reads what earlier steps wrote to `runtime_
 concurrent records of one step share `runtime_params`: read it, don't write it. Retries and rate
 limits on remote calls are the author's job; the framework only caps concurrency and the
 per-record timeout. Don't keep async clients at module level: `reflowfy test` and local mode use
-a new loop per job. Sources stay sync (an async `fetch` is a possible follow-up).
+a new loop per job. A source may be async too: `AsyncSource.fetch_async` (see "Custom sources").
+
+**Async pipeline hooks.** `define_transformations`, `define_destination` and
+`should_apply_transformation` may be `async def`: `core/async_utils.call_hook` awaits a
+coroutine function and runs anything else in a thread (and awaits an awaitable a sync
+wrapper returns), at every call site — the transformation runner, `job_runner`, the
+worker's re-resolution after dedup, `reflowfy.testing`'s step instrumentation (which keeps
+an async hook async), and `get_transformation_names` (`call_hook_sync`). The base
+signatures return `X | Awaitable[X]` so an async override type-checks. The other hooks
+(`SYNC_ONLY_HOOKS`: `define_source`, `define_jobs`, `define_parameters`,
+`define_rate_limit`, `on_execution_*`) are called synchronously, so `PipelineMeta` raises
+`TypeError` at class definition for an `async def` one. Before this an async
+`should_apply_transformation` returning False was ignored (`bool` of a coroutine is True)
+and the other two failed with unrelated `TypeError`s. Tests:
+`tests/unit/test_source_and_hook_contracts.py`; E2E `tests/e2e/test_streaming_source.py`.
 
 Observability: `AppliedStep.mode` / `.concurrency` (worker debug log, `reflowfy test -v`);
 per-step durations stay in `JobStats.transformation_times`. Running a step async adds no job
@@ -437,7 +451,14 @@ missing-field modes of `e2e_kafka_headers_test`, topic `e2e-kafka-headers`).
 concurrency=None, timeout=None)` turns a function `(record, runtime_params, **options) -> BaseDestination`
 (sync or `async def`) into a `RecordDestination` subclass (`destinations/record.py`) that
 `define_destination` returns (`return stt_engines()`; kwargs become `options`). It is for
-records of one job going to different topics/clusters/credentials.
+records of one job going to different topics/clusters/credentials. Options are bound
+against the function's signature when the destination is built (`core/options.py`
+`option_binder`, shared with `@transformation`), so a typo raises `TypeError` in
+`define_destination` — it used to fail every record at route time, and with
+`on_error="skip"` skipped them all while the job completed. `RecordDestinationFn` is
+`Callable[Concatenate[Any, Any, ...], DestinationOrList | Awaitable[DestinationOrList]]`, so
+pyright rejects a one-argument function or one returning `None`. A hand-written
+`RecordDestination` subclass (no `_bind_options`) still takes any options.
 
 - **Routing is a step of the job runner**, not of the send: `run_job_records_async` calls
   `RecordDestination.route()` right after `define_destination`, so every record has its
@@ -524,7 +545,7 @@ the job; an optional one is logged and counted — `destinations_failed_optional
 destination is not a low-cardinality label, and the job's own outcome is still `completed`.
 Like any record destination it is **not** re-resolved after dedup drops records, so an
 `api_destination` whose body carries the records belongs in `per_record=True` mode there.
-`fan_out` / `PermanentDestinationError` are not exported from `reflowfy` yet (import them from
+`fan_out` and `PermanentDestinationError` are exported from `reflowfy` (also importable from
 `reflowfy.destinations.fan_out` / `.base`). Tests: `tests/unit/test_fan_out.py`.
 
 ### Connection pool per worker
@@ -589,7 +610,18 @@ A `BaseSource` subclass in the user's project runs on workers like a built-in on
 concrete subclass registers itself in `SourceFactory` under its class name when the class is
 defined (`BaseSource.__init_subclass__`; abstract ones are skipped), and discovery imports the
 module on every service. A source needs `fetch` and `health_check`, and usually `split`
-(default: one job). The legacy `split_jobs` (manager-side fetch) was removed; a user
+(default: one job). `fetch` may return a list, a tuple, `None` (an empty slice) or any
+iterable — a generator that `yield`s rows works — and `materialize_fetch`
+(`sources/base.py`) consumes it into a list in the worker thread
+(`job_runner.fetch_records`); anything else (a dict, a str, a coroutine) raises
+`SourceContractError` (a `TypeError`, so `job_retry` never retries it). It used to go
+through `to_json_safe`, which `str()`-ed it: a generator or an `async def fetch` sent the
+characters of its repr, one per record, and the job succeeded. An async source subclasses
+`AsyncSource` and implements `async def fetch_async` (awaited on the job's loop; its sync
+`fetch` runs it via `run_coroutine_sync`, for callers that are not async); `split` stays
+sync. `reflowfy.testing`'s cassette wraps both `fetch` and `fetch_async`, materializes
+before storing what the job's own source returned, and keeps its re-entrancy flags in
+`ContextVar`s (an async fetch awaits while other tasks run on the thread). The legacy `split_jobs` (manager-side fetch) was removed; a user
 source that still defines it keeps working, but it is never called. The worker rebuilds each job's slice with the classmethod
 `from_config(config)`: `cls(**config)` by default, `cls(config)` when `__init__` keeps
 `BaseSource`'s `(self, config)` signature, or an override. `SourceFactory.serialize` proves

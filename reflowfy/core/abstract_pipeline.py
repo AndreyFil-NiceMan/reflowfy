@@ -26,6 +26,7 @@ Example:
     ...         return [MyTransformation()]
 """
 
+import inspect
 import logging
 import re
 import typing
@@ -36,6 +37,7 @@ from typing import (
     TYPE_CHECKING,
     Annotated,
     Any,
+    Awaitable,
     Callable,
     Dict,
     Generic,
@@ -56,6 +58,7 @@ from typing import (
 import typing_extensions
 from croniter import croniter
 
+from reflowfy.core.async_utils import call_hook_sync
 from reflowfy.core.exceptions import pipeline_step
 from reflowfy.core.execution_summary import ExecutionSummary
 from reflowfy.core.job_retry import JobRetryConfig
@@ -86,6 +89,25 @@ class ScheduledRun:
     name: str
     cron: str
     params: Dict[str, Any] = field(default_factory=lambda: cast(Dict[str, Any], {}))
+
+
+SYNC_ONLY_HOOKS: Tuple[str, ...] = (
+    "define_source",
+    "define_jobs",
+    "define_parameters",
+    "define_rate_limit",
+    "on_execution_complete",
+    "on_execution_failed",
+    "on_execution_cancelled",
+)
+"""Pipeline hooks that may not be ``async def`` (checked at class definition)."""
+
+ASYNC_CAPABLE_HOOKS: Tuple[str, ...] = (
+    "define_transformations",
+    "define_destination",
+    "should_apply_transformation",
+)
+"""Pipeline hooks that may be ``async def``: the job runner awaits them."""
 
 
 def _validate_schedules(schedules: List["ScheduledRun"], pipeline_name: str) -> None:
@@ -144,6 +166,15 @@ class PipelineMeta(ABCMeta):
 
             # Validate schedules at class-definition time (before instantiation)
             _validate_schedules(namespace.get("schedules") or [], namespace.get("name", name))
+
+            # Hooks the framework calls synchronously: an `async def` one would return a
+            # coroutine that nothing awaits. Say so now rather than misbehave at run time.
+            for hook in SYNC_ONLY_HOOKS:
+                if inspect.iscoroutinefunction(namespace.get(hook)):
+                    raise TypeError(
+                        f"{name}.{hook} must be a regular def: it is called synchronously. "
+                        f"Only {', '.join(ASYNC_CAPABLE_HOOKS)} may be async def."
+                    )
 
             # Check if this is a concrete pipeline with a name
             if "name" in namespace and namespace["name"]:
@@ -665,9 +696,13 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
         return self.define_source(runtime_params)
 
     @abstractmethod
-    def define_destination(self, records: List[Any], runtime_params: P) -> "BaseDestination":
+    def define_destination(
+        self, records: List[Any], runtime_params: P
+    ) -> "BaseDestination | Awaitable[BaseDestination]":
         """
         Define the destination to use based on post-transformation records and runtime params.
+
+        May be ``async def`` (awaited on the worker's loop); a regular def runs in a thread.
 
         Args:
             records: Post-transformation records for the current job/batch
@@ -687,9 +722,11 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
     @abstractmethod
     def define_transformations(
         self, records: List[Any], runtime_params: P
-    ) -> Sequence["BaseTransformation"]:
+    ) -> "Sequence[BaseTransformation] | Awaitable[Sequence[BaseTransformation]]":
         """
         Define list of transformations to apply based on records and runtime parameters.
+
+        May be ``async def`` (awaited on the worker's loop); a regular def runs in a thread.
 
         Args:
             records: Current records for this job/batch (before transformations)
@@ -800,11 +837,12 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
 
     def should_apply_transformation(
         self, transformation: "BaseTransformation", runtime_params: P, records: List[Any]
-    ) -> bool:
+    ) -> "bool | Awaitable[bool]":
         """
         Determine if a transformation should be applied at runtime.
 
-        Override to conditionally skip transformations based on runtime state.
+        Override to conditionally skip transformations based on runtime state. May be
+        ``async def`` (awaited on the worker's loop); a regular def runs in a thread.
         Default implementation returns True (apply all transformations).
 
         Args:
@@ -880,7 +918,7 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
         here means "not listable", not a broken pipeline.
         """
         try:
-            return [t.name for t in self.define_transformations([], cast(P, {}))]
+            return [t.name for t in call_hook_sync(self.define_transformations, [], cast(P, {}))]
         except Exception as exc:
             logger.debug(
                 "%s: transformation names not listable without records (%s)",

@@ -32,7 +32,7 @@ from reflowfy.transformations.base import (
     TransformationError,
     Transformations,
 )
-from reflowfy.sources.base import BaseSource
+from reflowfy.sources.base import AsyncSource, BaseSource, SourceContractError
 from reflowfy.destinations.base import BaseDestination
 from reflowfy.sources.base import SourceError
 from reflowfy.destinations.base import DestinationError, PermanentDestinationError, RetryConfig
@@ -87,7 +87,7 @@ def __getattr__(name: str) -> Any:
     return value
 
 
-__version__ = "1.1.5"
+__version__ = "1.1.6"
 
 __all__ = [
     "load_query",
@@ -108,6 +108,8 @@ __all__ = [
     # A record with a known shape, {"data": T}; also what record_type checks.
     "TypedRecord",
     "BaseSource",
+    # A source whose fetch is a coroutine: implement `async def fetch_async`.
+    "AsyncSource",
     "BaseDestination",
     "Param",
     "pipeline_registry",
@@ -134,6 +136,7 @@ __all__ = [
     "PermanentDestinationError",
     "SecretError",
     "SourceRoundTripError",
+    "SourceContractError",
     "SqlTemplateError",
     # Retry knobs: in-job destination sends, and whole jobs re-run (opt-in).
     "RetryConfig",

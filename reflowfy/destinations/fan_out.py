@@ -20,12 +20,10 @@ A ``@record_destination`` function may return ``fan_out(...)`` (or a list) as we
 a per-record multicast.
 """
 
-from typing import Any, ClassVar, Iterable, List, Sequence, Union, cast
+from typing import Any, ClassVar, Iterable, List, Sequence, cast
 
 from reflowfy.destinations.base import BaseDestination
-from reflowfy.destinations.record import RecordDestination, is_routable
-
-DestinationOrList = Union[BaseDestination, Sequence[BaseDestination]]
+from reflowfy.destinations.record import DestinationOrList, RecordDestination, is_routable
 
 
 class FanOut(RecordDestination):

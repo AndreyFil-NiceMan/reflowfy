@@ -16,6 +16,7 @@ import time
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple, cast
 
 from reflowfy.core.abstract_pipeline import AbstractPipeline
+from reflowfy.core.async_utils import call_hook
 from reflowfy.core.exceptions import SkipJob, SkipRecord
 from reflowfy.core.record_validation import describe_invalid, find_invalid_records
 from reflowfy.observability.logging import get_logger
@@ -185,9 +186,9 @@ async def _should_apply(
 ) -> bool:
     """Ask the pipeline whether to run this step; its failure fails the job, naming the step."""
     try:
-        # User code: in a thread, like define_transformations and a sync apply.
+        # User code: in a thread like a sync apply, or awaited if it is an async def.
         return bool(
-            await asyncio.to_thread(
+            await call_hook(
                 pipeline.should_apply_transformation, transformation, runtime_params, records
             )
         )
@@ -246,11 +247,13 @@ async def apply_transformations_iteratively_async(
     applied_count = 0
     decides_steps = _decides_steps(pipeline)
 
-    def resolve() -> List[Any]:
-        return list(pipeline.define_transformations(original_records, runtime_params))
+    async def resolve() -> List[Any]:
+        return list(
+            await call_hook(pipeline.define_transformations, original_records, runtime_params)
+        )
 
     while True:
-        current = await asyncio.to_thread(resolve)
+        current = await resolve()
         if len(current) <= applied_count:
             break
 

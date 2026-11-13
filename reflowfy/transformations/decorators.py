@@ -200,16 +200,10 @@ def _make_class(
     func: Callable[..., Any], name: str, base: type, methods: Dict[str, Any]
 ) -> "type[DecoratedTransformation]":
     """Create (and so auto-register) the transformation class for ``func``."""
-    signature = inspect.signature(func)
-
+    from reflowfy.core.options import option_binder
     from reflowfy.transformations.base import DecoratedTransformation
 
-    def bind_options(options: Dict[str, Any]) -> None:
-        try:
-            # Two placeholders stand for (records, runtime_params).
-            signature.bind(None, None, **options)
-        except TypeError as exc:
-            raise TypeError(f"transformation {name!r} ({func.__name__}): {exc}") from None
+    bind_options = option_binder(func, f"transformation {name!r}")
 
     cls = type(
         func.__name__,
