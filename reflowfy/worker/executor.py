@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple, cast
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 
+from reflowfy.core.async_utils import call_hook
 from reflowfy.core.exceptions import pipeline_step
 from reflowfy.core.execution_context import build_flat_runtime_params_from_metadata
 from reflowfy.core.job_retry import ERROR_HISTORY_MAX, JobRetryConfig, describe_error
@@ -22,6 +23,7 @@ from reflowfy.execution.content_dedup import (
     release_record_hashes,
 )
 from reflowfy.destinations.base import DestinationError
+from reflowfy.destinations.fan_out import as_destination
 from reflowfy.destinations.record import RecordDestination
 from reflowfy.execution.job_runner import (
     log_job_dropped,
@@ -445,8 +447,8 @@ class WorkerExecutor:
                         await destination.close()
                         with pipeline_step("define_destination", pipeline_name):
                             # User code: off the loop, like the first call (job_runner).
-                            destination = await asyncio.to_thread(
-                                pipeline.define_destination, kept, runtime_params
+                            destination = as_destination(
+                                await call_hook(pipeline.define_destination, kept, runtime_params)
                             )
                 transformed_records = kept
                 stats.records_output = len(kept)

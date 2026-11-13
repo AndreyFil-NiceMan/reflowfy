@@ -8,6 +8,7 @@ in-memory capture, and the network is answered by mocks or a recorded fixture.
 """
 
 import copy
+import inspect
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Set, Union
 
@@ -171,10 +172,8 @@ def _instrument(
     """
     original = fork.define_transformations
 
-    def define_transformations(records: List[Any], runtime_params: Any) -> List[Any]:
-        session.in_job = True
-        session.current_step = None
-        steps: List[Any] = list(original(records, runtime_params))
+    def swap(resolved: Any) -> List[Any]:
+        steps: List[Any] = list(resolved)
         position = progress.resolutions
         progress.resolutions += 1
         if position < len(steps):
@@ -192,6 +191,27 @@ def _instrument(
                 )
             session.current_step = name
         return steps
+
+    def start() -> None:
+        session.in_job = True
+        session.current_step = None
+
+    define_transformations: Callable[..., Any]
+    if inspect.iscoroutinefunction(original):
+        # An async hook stays async, so the runner awaits it on the job's loop.
+
+        async def define_transformations_async(records: List[Any], runtime_params: Any) -> List[Any]:
+            start()
+            return swap(await original(records, runtime_params))
+
+        define_transformations = define_transformations_async
+    else:
+
+        def define_transformations_sync(records: List[Any], runtime_params: Any) -> List[Any]:
+            start()
+            return swap(original(records, runtime_params))
+
+        define_transformations = define_transformations_sync
 
     setattr(fork, "define_transformations", define_transformations)
 

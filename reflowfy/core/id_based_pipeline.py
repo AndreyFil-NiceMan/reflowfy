@@ -70,6 +70,7 @@ already what ``ids_batch_size = 1`` (the default) does.
 import logging
 from typing import TYPE_CHECKING, Any, Dict, Iterator, List, cast
 
+from reflowfy.core.async_utils import call_hook_sync
 from reflowfy.core.abstract_pipeline import AbstractPipeline, PipelineParameter
 from reflowfy.core.runtime_params import P
 
@@ -246,7 +247,8 @@ class IdBasedPipeline(AbstractPipeline[P]):
         try:
             return [
                 t.name
-                for t in self.define_transformations(
+                for t in call_hook_sync(
+                    self.define_transformations,
                     [],
                     cast(P, {"current_ids": ["__discovery__"], "current_id": "__discovery__"}),
                 )
