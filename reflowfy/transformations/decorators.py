@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, cast
 
 if TYPE_CHECKING:
     from reflowfy.transformations.base import DecoratedTransformation
-    from typing import Awaitable, Mapping
+    from typing import Awaitable, Mapping, Sequence, Union
 
     from typing_extensions import Concatenate
 
@@ -53,12 +53,17 @@ if TYPE_CHECKING:
     keyword-only options that follow.
     """
 
-    RecordTransformFn = Callable[Concatenate[Any, Any, ...], Awaitable[Optional[Mapping[str, Any]]]]
-    """``async (record, runtime_params, **options) -> Record | None``.
+    RecordTransformFn = Callable[
+        Concatenate[Any, Any, ...],
+        Awaitable[Union[Mapping[str, Any], Sequence[Mapping[str, Any]], None]],
+    ]
+    """``async (record, runtime_params, **options) -> Record | List[Record] | None``.
 
     `Mapping[str, Any]` rather than `Record` (`Dict[str, Any]`) so a function
     annotated with a TypedDict record (`-> TaxedOrder | None`) is accepted: a
-    TypedDict is a Mapping but not a Dict.
+    TypedDict is a Mapping but not a Dict. `Sequence` rather than `List` for the
+    same reason: `List[TaxedOrder]` is not a `List[Mapping]` (invariance), but it
+    is a `Sequence[Mapping]`. At runtime only a `list` is accepted.
     """
 
 
@@ -129,11 +134,12 @@ def record_transformation(
         async def my_step(record: Record, runtime_params: RuntimeParams) -> Record | None
 
     Up to ``concurrency`` records are in flight at once, and the output keeps the
-    input order. Returning ``None`` drops that record. The first record that raises
+    input order. Returning ``None`` drops that record; returning a list of records
+    replaces it with those records, in place (``[]`` drops it). The first record that raises
     fails the job, naming its index (or, with ``on_error="skip"``, is dropped with
     the exception's type name as the reason); ``SkipJob`` from any record drops the
-    job. The function returns one record (a ``dict``) or ``None``: anything else
-    fails the job whatever ``on_error`` says. Options work as for ``@transformation``.
+    job. The function returns one record (a ``dict``), a ``list`` of records, or
+    ``None``: anything else fails the job whatever ``on_error`` says. Options work as for ``@transformation``.
 
     Args:
         name: Unique name for this transformation
@@ -153,6 +159,10 @@ def record_transformation(
                 return None
             resp.raise_for_status()
             return {**record, "user": resp.json()}
+
+        @record_transformation("explode_items")
+        async def explode_items(record: Record, runtime_params: RuntimeParams) -> List[Record]:
+            return [{**record, "item": item} for item in record["items"]]
     """
     if concurrency is not None and concurrency < 1:
         raise ValueError(f"record_transformation {name!r}: concurrency must be >= 1")
