@@ -57,7 +57,7 @@ class TestTransformations:
         reasons = [j["stats"]["record_skip_reasons"] for j in manager.jobs(execution)]
         assert reasons and all(r == {"ValueError": 2} or r == {"ValueError": 3} for r in reasons)
 
-    def test_the_one_record_contract_fails_jobs(
+    def test_the_per_record_return_contract_fails_jobs(
         self, manager: Manager, sink: Sink, channel: str, params: Params
     ):
         execution = manager.run("dist_gaps_transform", params(total=10, per_job=5, scenario="contract"))
@@ -65,7 +65,7 @@ class TestTransformations:
 
         assert stats["state"] == "failed", stats
         assert sink.ids(channel) == []
-        assert all("one record or None" in (j["error_message"] or "") for j in manager.jobs(execution))
+        assert all("a record, a list of records, or None" in (j["error_message"] or "") for j in manager.jobs(execution))
 
 
 class TestDestinations:

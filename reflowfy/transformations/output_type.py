@@ -5,6 +5,7 @@ Read from an explicit ``output_type`` class attribute, or from a ``@transformati
 output against it with :mod:`reflowfy.core.record_validation`.
 """
 
+import collections.abc
 import types
 from typing import Any, Dict, List, Optional, Sequence, Union, get_args, get_origin, get_type_hints
 
@@ -21,14 +22,35 @@ def _is_checkable(record_type: Any) -> bool:
     return (get_origin(record_type) or record_type) is not dict
 
 
-def _strip_none(annotation: Any) -> Any:
-    """``OrderRecord | None`` -> ``OrderRecord``: a per-record step may return None to drop."""
-    if get_origin(annotation) not in (Union, types.UnionType):
-        return annotation
-    rest = [arg for arg in get_args(annotation) if arg is not type(None)]
-    if len(rest) == 1:
-        return rest[0]
-    return Union[tuple(rest)]
+_LIST_ORIGINS = (list, List, Sequence, collections.abc.Sequence)
+
+
+def _per_record_type(annotation: Any) -> Any:
+    """The record type a per-record step's return annotation promises.
+
+    ``X | None`` -> ``X`` (None drops the record); ``List[X]`` -> ``X`` (a list of
+    records replaces it); ``X | List[X] | None`` -> ``X``. A bare ``list`` promises
+    nothing about its records, so it reads as ``Any``.
+    """
+    members = (
+        get_args(annotation)
+        if get_origin(annotation) in (Union, types.UnionType)
+        else (annotation,)
+    )
+    record_types: List[Any] = []
+    for member in members:
+        if member is type(None):
+            continue
+        if (get_origin(member) or member) in _LIST_ORIGINS:
+            args = get_args(member)
+            member = args[0] if args else Any
+        if member not in record_types:
+            record_types.append(member)
+    if not record_types:
+        return None
+    if len(record_types) == 1:
+        return record_types[0]
+    return Union[tuple(record_types)]
 
 
 def _record_type_of(transformation_class: type) -> Any:
@@ -46,8 +68,8 @@ def _record_type_of(transformation_class: type) -> Any:
     if returned is None:
         return None
     if issubclass(transformation_class, RecordTransformation):
-        return _strip_none(returned)
-    if (get_origin(returned) or returned) not in (list, List, Sequence, tuple):
+        return _per_record_type(returned)
+    if (get_origin(returned) or returned) not in (*_LIST_ORIGINS, tuple):
         return None
     args = get_args(returned)
     return args[0] if args else None

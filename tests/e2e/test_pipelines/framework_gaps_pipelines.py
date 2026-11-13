@@ -117,9 +117,9 @@ async def gaps_skip_odd(record: Dict[str, Any], runtime_params: Any) -> Dict[str
     return record
 
 
-@record_transformation("gaps_returns_list")
-async def gaps_returns_list(record: Dict[str, Any], runtime_params: Any) -> Any:
-    return [record, record]  # breaks the contract: one record or None
+@record_transformation("gaps_returns_tuple")
+async def gaps_returns_tuple(record: Dict[str, Any], runtime_params: Any) -> Any:
+    return (record, record)  # breaks the contract: a record, a list of records, or None
 
 
 class TransformParams(RuntimeParams, total=False):
@@ -138,7 +138,7 @@ class GapsTransformPipeline(AbstractPipeline[TransformParams]):
     ) -> List[Any]:
         steps: List[Any] = [gaps_label(label="opt"), gaps_declined(), gaps_skip_odd()]
         if runtime_params.get("scenario") == "contract":
-            steps.append(gaps_returns_list())
+            steps.append(gaps_returns_tuple())
         return steps
 
     def should_apply_transformation(

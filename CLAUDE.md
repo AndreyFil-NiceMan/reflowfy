@@ -221,17 +221,22 @@ already running, e.g. inside FastAPI). Three kinds of step, freely mixed in one 
   `AsyncTransformation.apply` still works for sync callers. It is a separate method name
   because overriding sync `apply` with an `async def` is an LSP error.
 - **per_record** (`RecordTransformation.apply_record`, or `@record_transformation(name,
-  concurrency=, timeout=, on_error=)` on an `async def f(record, params) -> record | None`): every record
+  concurrency=, timeout=, on_error=)` on an `async def f(record, params) -> record | list[record] | None`): every record
   awaited, `concurrency` at a time (default `TRANSFORM_CONCURRENCY`, 16) by a fixed pool of
   workers, not a task per record. Order is kept, `None` drops the record, the first failure
   cancels the rest and raises `TransformationError` with the exact `culprit_index` (via
   `RecordFailure`) — or, with `on_error="skip"`, drops that record instead (see "Dropping a
   record") — `SkipJob` from any record drops the job, and `raise SkipRecord("why")`
   drops just that record *with* a reason (see below). It must return **one record (a `dict`,
-  so `Record`/`TypedRecord`) or `None`**: a list, tuple, string or scalar fails the job with
-  `record N: RecordContractError: returned list; a per-record step returns one record or None`
-  — a contract error, so `on_error="skip"` does not hide it (it used to pass a list on as one
-  "record"). Subclass it for a client shared by
+  so `Record`/`TypedRecord`), a `list` of records, or `None`**. A list replaces the record
+  in place with those records (one in, many out: explode an order into its items; `[]` drops
+  it like `None`; `records_out` counts them all), and `validate_steps` reads `-> List[X]` /
+  `-> X | List[X] | None` as record type `X`. A tuple, string, scalar or a list holding a
+  non-dict fails the job with `record N: RecordContractError: returned tuple; a per-record
+  step returns a record, a list of records, or None` (`returned list with str at position 2;
+  …` for a bad element) — a contract error, so `on_error="skip"` does not hide it. (Until
+  2026-11 a list failed the job too; the type checker still sees `Sequence[Mapping]` in
+  `RecordTransformFn`, so `-> List[TaxedOrder]` type-checks.) Subclass it for a client shared by
   the step's records: `setup()` / `teardown()` run once around them. An `httpx.AsyncClient`
   costs ~40 ms of CPU to build, so one per record is slow *and* stalls the loop.
 
