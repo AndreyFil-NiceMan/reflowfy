@@ -162,13 +162,13 @@ class TestTransformations:
         assert job_stats["records_skipped"] == 3
         assert job_stats["record_skip_reasons"] == {"ValueError": 3}
 
-    def test_a_per_record_step_returning_a_list_fails_the_job(self, manager):
+    def test_a_per_record_step_returning_a_tuple_fails_the_job(self, manager):
         run = _run_key("tfcontract")
         execution_id = _start(manager, "e2e_gaps_transform", {"run": run, "scenario": "contract"})
         stats = _wait(manager, execution_id)
         assert stats["state"] == "failed", stats
         job = _jobs(manager, execution_id)[0]
-        assert "one record or None" in (job["error_message"] or ""), job["error_message"]
+        assert "a record, a list of records, or None" in (job["error_message"] or ""), job["error_message"]
         assert _requests(run, "out") == []
 
 

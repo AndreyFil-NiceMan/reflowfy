@@ -4,7 +4,7 @@ The same TypedDict a pipeline annotates its hooks with is checked against the
 real records with pydantic (strict, validate-only). See core/record_validation.py.
 """
 
-from typing import Annotated, Any, Dict, List, Optional, Tuple, Union
+from typing import Annotated, Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import pytest
 from typing_extensions import NotRequired, TypedDict
@@ -164,6 +164,33 @@ async def per_record_plain(record: Any, params: RuntimeParams) -> Order:
     return record
 
 
+@record_transformation("rv_per_record_list")
+async def per_record_list(record: Any, params: RuntimeParams) -> List[Item]:
+    return [record]
+
+
+@record_transformation("rv_per_record_one_or_many")
+async def per_record_one_or_many(
+    record: Any, params: RuntimeParams
+) -> "Item | Sequence[Item] | None":
+    return record
+
+
+@record_transformation("rv_per_record_list_records")
+async def per_record_list_records(record: Any, params: RuntimeParams) -> Records:
+    return [record]
+
+
+@record_transformation("rv_per_record_returns_none")
+async def per_record_returns_none(record: Any, params: RuntimeParams) -> None:
+    return None
+
+
+@record_transformation("rv_per_record_bare_list")
+async def per_record_bare_list(record: Any, params: RuntimeParams) -> list:  # type: ignore[type-arg]
+    return [record]
+
+
 class Explicit(BaseTransformation):
     name = "rv_explicit"
     output_type = Order
@@ -195,6 +222,8 @@ class Undeclared(BaseTransformation):
         (per_record_optional, TaxedOrder),
         (per_record_union, Union[Order, Item]),
         (per_record_plain, Order),
+        (per_record_list, Item),
+        (per_record_one_or_many, Item),
         (Explicit, Order),
     ],
 )
@@ -211,6 +240,9 @@ def test_the_promised_record_type_is_read_from_the_step(step: Any, expected: Any
         batch_not_a_list,
         batch_unannotated,
         batch_unresolvable,
+        per_record_list_records,
+        per_record_bare_list,
+        per_record_returns_none,
         ExplicitDict,
         Undeclared,
     ],
