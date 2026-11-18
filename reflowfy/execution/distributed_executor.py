@@ -103,7 +103,6 @@ class DistributedExecutor:
         runtime_params: Dict[str, Any],
         execution_id: Optional[str] = None,
         rate_limit_override: Optional[float] = None,
-        callback_url: Optional[str] = None,
         mode: Optional[str] = None,
     ) -> ExecutionStatus:
         """
@@ -121,8 +120,6 @@ class DistributedExecutor:
             runtime_params: Runtime parameters
             execution_id: Optional execution ID
             rate_limit_override: Optional jobs-per-minute override (e.g., 600)
-            callback_url: Optional http(s) URL the manager POSTs the execution
-                summary to when the run ends; validated by the manager
 
         Returns:
             ExecutionStatus (initial - jobs dispatched but processing async)
@@ -161,8 +158,6 @@ class DistributedExecutor:
                 "rate_limit": rate_limit,
                 "mode": mode or self.mode,
             }
-            if callback_url is not None:
-                run_request["callback_url"] = callback_url
             run_response = client.post(f"{self.reflow_manager_url}/run", json=run_request)
 
             # Handle errors

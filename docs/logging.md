@@ -60,7 +60,7 @@ Every log line is one ECS-shaped JSON object (`LOG_JSON=false` gives text with t
 - `reflow_manager/dlq_routes.py`: `dlq_cancel_rejected`, `dlq_cancelled`, `dlq_dispatch_empty`, `dlq_dispatch_error`, `dlq_dispatch_rejected`, `dlq_dispatch_requested`, `dlq_schedule_rejected`, `dlq_scheduled`
 - `reflow_manager/dlq_scheduler.py`: `dlq_archived`, `dlq_dispatch_error`, `dlq_dispatched`, `dlq_due`, `dlq_job_due`, `dlq_poll_error`, `dlq_process`, `dlq_rescheduled`
 - `reflow_manager/execution.py`: `terminal_listener_error`
-- `reflow_manager/lifecycle.py`: `callback_failed`, `callback_sent`, `execution_chained`, `hook_failed`, `hook_fired`, `hooks_already_fired`, `rate_bucket_cleanup_error`
+- `reflow_manager/lifecycle.py`: `execution_chained`, `hook_failed`, `hook_fired`, `hooks_already_fired`, `rate_bucket_cleanup_error`
 - `reflow_manager/local_dispatcher.py`: `local_dispatch_error`, `rate_limit_wait`
 - `reflow_manager/manager.py`: `manager_init`
 - `reflow_manager/periodic.py`: `scheduler_already_running`, `scheduler_start`, `scheduler_stopped`, `scheduler_stopping`

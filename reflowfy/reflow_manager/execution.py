@@ -44,7 +44,6 @@ class ExecutionManager:
         runtime_params: Optional[Dict[str, Any]] = None,
         rate_limit: Optional[float] = None,
         parent_execution_id: Optional[str] = None,
-        callback_url: Optional[str] = None,
     ) -> Execution:
         """
         Create new execution record.
@@ -55,7 +54,6 @@ class ExecutionManager:
             runtime_params: Runtime parameters for the pipeline
             rate_limit: The request's rate_limit override, if any (jobs/min)
             parent_execution_id: The execution whose hook started this one, if any
-            callback_url: URL POSTed the execution summary once it ends, if any
 
         Returns:
             Created Execution object
@@ -68,7 +66,6 @@ class ExecutionManager:
             rate_limit=rate_limit,
             plan_complete=False,
             parent_execution_id=parent_execution_id,
-            callback_url=callback_url,
         )
 
         self.db.add(execution)
@@ -244,7 +241,7 @@ class ExecutionManager:
         return claimed == 1
 
     def set_hook_error(self, execution_id: str, error: Optional[str]) -> None:
-        """Record what failed in a hook or the callback (never touches ``state``)."""
+        """Record what failed in a hook (never touches ``state``)."""
         self.db.query(Execution).filter(Execution.execution_id == execution_id).update(
             {"hook_error": error}, synchronize_session=False
         )

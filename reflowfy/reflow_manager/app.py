@@ -473,7 +473,6 @@ async def run_pipeline(
             pipeline_name=request.pipeline_name,
             runtime_params=request.runtime_params or {},
             rate_limit=request.rate_limit,
-            callback_url=request.callback_url,
         )
 
         # Reset cron schedule timer if this pipeline is scheduled,
@@ -646,7 +645,7 @@ async def _startup() -> None:
             extra={"event": "config_ignored", "setting": "MAX_JOBS_PER_MINUTE"},
         )
 
-    # Lifecycle hooks and /run callbacks fire on every terminal transition from here on
+    # Lifecycle hooks fire on every terminal transition from here on
     # (before recovery, which can settle executions).
     lifecycle.install()
 

@@ -60,16 +60,13 @@ class Execution(Base):
     # every job is saved.
     plan_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # Lifecycle hooks: when they were fired (exactly once per terminal state, claimed by
-    # setting this), and what went wrong in them or the callback. Never changes `state`.
+    # setting this), and what went wrong in them. Never changes `state`.
     hooks_fired_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     hook_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # The execution whose hook started this one (run_pipeline from a hook), if any.
     parent_execution_id: Mapped[Optional[str]] = mapped_column(
         String(255), nullable=True, index=True
     )
-    # /run callback_url: POSTed the execution summary once it ends. Not in to_dict (a URL
-    # may carry a token).
-    callback_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Relationship to jobs
     jobs: Mapped[List["Job"]] = relationship(
