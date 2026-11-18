@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -32,7 +32,7 @@ router = APIRouter(prefix="/dlq", tags=["DLQ"])
 async def schedule_dlq_job(
     request: ScheduleDLQJobRequest,
     db: Session = Depends(get_db),
-):
+) -> Dict[str, Any]:
     """
     Schedule a job for DLQ processing.
 
@@ -102,7 +102,7 @@ async def list_dlq_jobs(
     limit: int = 100,
     offset: int = 0,
     db: Session = Depends(get_db),
-):
+) -> Dict[str, Any]:
     """List DLQ jobs with optional filters."""
     query = db.query(DLQJob)
 
@@ -124,7 +124,7 @@ async def list_dlq_jobs(
 async def get_dlq_job(
     job_id: int,
     db: Session = Depends(get_db),
-):
+) -> Dict[str, Any]:
     """Get a specific DLQ job by ID."""
     job = db.query(DLQJob).filter(DLQJob.id == job_id).first()
 
@@ -142,7 +142,7 @@ async def get_dlq_job(
 def cancel_dlq_job(
     job_id: int,
     db: Session = Depends(get_db),
-):
+) -> Dict[str, Any]:
     """Cancel a pending DLQ job.
 
     One conditional ``UPDATE … WHERE status = 'pending'``: a scheduler poll holding the
@@ -194,7 +194,7 @@ def cancel_dlq_job(
 def dispatch_dlq_job(
     job_id: int,
     db: Session = Depends(get_db),
-):
+) -> Dict[str, Any]:
     """Dispatch a specific DLQ job immediately (bypass scheduler)."""
     scheduler = get_dlq_scheduler()
 
@@ -252,7 +252,7 @@ def dispatch_dlq_job(
 def dispatch_pipeline_dlq_jobs(
     pipeline_name: str,
     db: Session = Depends(get_db),
-):
+) -> Dict[str, Any]:
     """Dispatch all pending DLQ jobs for a pipeline immediately."""
     scheduler = get_dlq_scheduler()
 

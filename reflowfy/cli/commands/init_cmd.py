@@ -71,7 +71,7 @@ def _lock(target_dir: Path) -> None:
         )
 
 
-def register(app: typer.Typer):
+def register(app: typer.Typer) -> None:
     """Register the init command."""
 
     @app.command()
@@ -81,7 +81,7 @@ def register(app: typer.Typer):
         lock: bool = typer.Option(
             True, "--lock/--no-lock", help="Run `uv lock` to create uv.lock (needs uv)"
         ),
-    ):
+    ) -> None:
         """
         Initialize a new Reflowfy project with sources, destinations,
         transformations, and a sample pipeline.

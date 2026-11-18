@@ -132,8 +132,9 @@ class IDBasedAPISource(BaseSource):
         plain AbstractPipeline names its own list (see api_example_pipeline).
         """
         if self.config["ids"]:
-            return self.config["ids"]
-        return runtime_params.get("input_ids") or runtime_params.get("ids", [])
+            return cast(List[Union[str, int]], self.config["ids"])
+        ids = runtime_params.get("input_ids") or runtime_params.get("ids", [])
+        return cast(List[Union[str, int]], ids)
 
     def _extract_records(self, data: Any) -> List[Any]:
         """Extract records list from a response using ``response_key``."""

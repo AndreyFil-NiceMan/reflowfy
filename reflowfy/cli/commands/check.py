@@ -7,11 +7,11 @@ from reflowfy.cli.project import RELEASE
 from reflowfy.cli.utils import console
 
 
-def register(app: typer.Typer):
+def register(app: typer.Typer) -> None:
     """Register the check command."""
 
     @app.command()
-    def check():
+    def check() -> None:
         """
         Verify deployment health.
         """

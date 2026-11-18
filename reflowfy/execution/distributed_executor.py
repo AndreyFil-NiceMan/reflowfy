@@ -285,7 +285,7 @@ class DistributedExecutor:
             return False
         return None
 
-    def close(self):
+    def close(self) -> None:
         """Close HTTP client."""
         if self._client:
             self._client.close()

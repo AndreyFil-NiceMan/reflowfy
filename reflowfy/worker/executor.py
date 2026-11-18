@@ -56,7 +56,7 @@ def _carries_job_retry(job_payload: Dict[str, Any]) -> bool:
 class JobStats:
     """Statistics for a job execution."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize job statistics."""
         self.start_time = time.time()
         self.end_time: Optional[float] = None
@@ -1056,7 +1056,7 @@ class WorkerExecutor:
                 await db.rollback()
                 raise
 
-    async def close(self):
+    async def close(self) -> None:
         """Close database connections."""
         if self._engine:
             await self._engine.dispose()

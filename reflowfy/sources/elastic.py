@@ -304,8 +304,7 @@ class ElasticSource(BaseSource):
                     if search_after is not None:
                         page_body["search_after"] = search_after
                     page_body.setdefault("sort", ["_shard_doc"])
-                    resp = client.search(body=page_body, size=resolved_config["size"])
-                    resp = _body(resp)
+                    resp = _body(client.search(body=page_body, size=resolved_config["size"]))
                     hits = resp["hits"]["hits"]
                     if not hits:
                         break
@@ -682,7 +681,7 @@ class ElasticSource(BaseSource):
         if count == 0:
             return
 
-        docs_per_job = resolved.get("docs_per_job")
+        docs_per_job = int(resolved.get("docs_per_job") or 0)
         if docs_per_job and resolved.get("window_mode") == WINDOW_RANGE:
             yield from self._split_range_windows(client, resolved, count)
             return

@@ -10,7 +10,7 @@ This is a slim coordinator that composes the following modules:
 """
 
 import logging
-from typing import Any, Dict, List, NamedTuple, Optional
+from typing import Any, Dict, List, NamedTuple, Optional, Union
 from sqlalchemy.orm import Session
 
 from reflowfy.store.models import Execution
@@ -81,7 +81,9 @@ class ReflowManager:
                 "ReflowManager initialized in LOCAL mode (in-process dispatch)",
                 extra={"event": "manager_init"},
             )
-            self.dispatcher = LocalDispatcher(self.rate_limiter, db_session)
+            self.dispatcher: Union[LocalDispatcher, KafkaDispatcher] = LocalDispatcher(
+                self.rate_limiter, db_session
+            )
         else:
             logger.debug(
                 "ReflowManager initialized in DISTRIBUTED mode (Kafka: %s)",

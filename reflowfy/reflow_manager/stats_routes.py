@@ -18,7 +18,7 @@ router = APIRouter(prefix="/stats", tags=["Stats"])
 
 
 @router.get("/overview")
-async def get_overview_stats(db: Session = Depends(get_db)):
+async def get_overview_stats(db: Session = Depends(get_db)) -> Dict[str, Any]:
     """
     Global dashboard statistics across all pipelines.
 
@@ -90,7 +90,7 @@ async def get_overview_stats(db: Session = Depends(get_db)):
 
 
 @router.get("/pipelines")
-async def get_pipeline_stats(db: Session = Depends(get_db)):
+async def get_pipeline_stats(db: Session = Depends(get_db)) -> Dict[str, Any]:
     """
     Statistics grouped by pipeline name.
 
@@ -304,7 +304,7 @@ async def get_failure_stats(
     pipeline_name: Optional[str] = None,
     limit: int = 20,
     db: Session = Depends(get_db),
-):
+) -> Dict[str, Any]:
     """
     Recent failures across all (or a specific) pipeline.
 
@@ -358,7 +358,7 @@ async def get_failure_stats(
 async def get_dlq_stats(
     pipeline_name: Optional[str] = None,
     db: Session = Depends(get_db),
-):
+) -> Dict[str, Any]:
     """
     DLQ statistics with per-pipeline breakdown.
 
@@ -439,11 +439,11 @@ async def get_dlq_stats(
         archive_pipeline_rows = archive_pipeline_rows.filter(
             DLQJobArchive.pipeline_name == pipeline_name,
         )
-    archive_pipeline_rows = archive_pipeline_rows.group_by(
+    archived_by_pipeline = archive_pipeline_rows.group_by(
         DLQJobArchive.pipeline_name,
     ).all()
 
-    for pname, count in archive_pipeline_rows:
+    for pname, count in archived_by_pipeline:
         if pname in pipeline_map:
             pipeline_map[pname]["archived"] = count
         else:

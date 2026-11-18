@@ -32,7 +32,7 @@ def _masked(cmd: List[str]) -> List[str]:
     return shown
 
 
-def register(app: typer.Typer):
+def register(app: typer.Typer) -> None:
     """Register the deploy command."""
 
     @app.command()
@@ -63,7 +63,7 @@ def register(app: typer.Typer):
         elastic_log_url: Optional[str] = typer.Option(None, "--elastic-log-url", envvar="ELASTIC_LOG_URL", help="Elasticsearch URL for log shipping (or set ELASTIC_LOG_URL in .env)"),
         elastic_log_username: Optional[str] = typer.Option(None, "--elastic-log-username", envvar="ELASTIC_LOG_USERNAME", help="Elasticsearch username (or set ELASTIC_LOG_USERNAME in .env)"),
         elastic_log_password: Optional[str] = typer.Option(None, "--elastic-log-password", envvar="ELASTIC_LOG_PASSWORD", help="Elasticsearch password (or set ELASTIC_LOG_PASSWORD in .env)"),
-    ):
+    ) -> None:
         """
         Deploy Reflowfy to Kubernetes/OpenShift using Helm.
 

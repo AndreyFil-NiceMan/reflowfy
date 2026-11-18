@@ -628,7 +628,7 @@ def collect_params(
 # ---------------------------------------------------------------------------
 
 
-def register(app: typer.Typer):
+def register(app: typer.Typer) -> None:
     """Register the test command."""
 
     @app.command()
@@ -700,7 +700,7 @@ def register(app: typer.Typer):
         max_body_kb: int = typer.Option(
             256, "--max-body-kb", help="With --save-fixture: largest HTTP response stored"
         ),
-    ):
+    ) -> None:
         """
         Test a pipeline locally without Docker.
 

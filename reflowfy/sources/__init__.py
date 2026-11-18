@@ -15,8 +15,8 @@ try:
 
     _s3_available = True
 except ImportError:
-    S3Source = None
-    s3_source = None
+    S3Source = None  # type: ignore[assignment,misc]
+    s3_source = None  # type: ignore[assignment]
     _s3_available = False
 
 __all__ = [

@@ -17,7 +17,7 @@ uv sync --all-extras
 uv run pytest tests/unit/ -v
 uv run pytest tests/unit/ --cov     # line+branch; fails under [tool.coverage.report]
                                     # fail_under (99) — CI (.github/workflows/tests.yml)
-                                    # runs ruff, pyright and this on every PR
+                                    # runs ruff, pyright, mypy and this on every PR
 uv run pytest tests/unit/test_api_destination.py::TestClassName::test_name -v   # single test
 
 # E2E tests (build wheel, spin up full Docker stack, run, teardown)
@@ -30,9 +30,9 @@ uv run pytest tests/unit/test_api_destination.py::TestClassName::test_name -v   
 # Lint / format / type-check (line-length 100; mypy strict; pyright strict)
 uv run ruff check reflowfy/
 uv run black reflowfy/
-uv run mypy reflowfy/       # NOT clean: ~99 pre-existing errors, mostly no-untyped-def.
-                            # The bar for a change is "the count does not go up".
-                            # `redundant-cast` is disabled in [tool.mypy]: mypy and
+uv run mypy reflowfy/       # CLEAN (0 errors, strict) since 2026-11-18, and run by CI.
+                            # Keep it at zero. aiokafka/nest_asyncio have no types
+                            # ([[tool.mypy.overrides]]). `redundant-cast` is disabled in [tool.mypy]: mypy and
                             # pyright disagree about isinstance-narrowed Any, and the
                             # casts are load-bearing for pyright.
 uv run pyright              # config in [tool.pyright]; covers reflowfy/, pipelines/

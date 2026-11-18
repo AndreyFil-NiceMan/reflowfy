@@ -33,7 +33,7 @@ class TransformationMeta(ABCMeta):
     Inherits from ABCMeta to be compatible with ABC.
     """
 
-    def __new__(mcs, name: str, bases: Tuple[type, ...], namespace: Dict[str, Any]):
+    def __new__(mcs, name: str, bases: Tuple[type, ...], namespace: Dict[str, Any]) -> type:
         cls = super().__new__(mcs, name, bases, namespace)
 
         # Only register concrete transformations (not the base class)

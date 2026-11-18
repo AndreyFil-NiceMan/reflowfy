@@ -136,7 +136,7 @@ def _register(
     )
 
 
-def _param_annotation(p: Any):
+def _param_annotation(p: Any) -> Any:
     """Return the type annotation for a PipelineParameter.
 
     Parameters with `choices` become a Literal type so that
@@ -236,7 +236,7 @@ def _create_run_route(app: FastAPI, pipeline: Any, client: Any, params: Any) -> 
         rate_limit: Optional[float] = None,
         body: Any = None,
         **kwargs: Any,
-    ):
+    ) -> PipelineRunResponse:
         """Execute pipeline. List/dict params come from the JSON body; scalars from the query string."""
         runtime_params = dict(kwargs)
         if body is not None:

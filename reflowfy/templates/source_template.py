@@ -7,12 +7,12 @@ pipeline. No decorator needed.
 
 from typing import Any
 import os
-from reflowfy import elastic_source, get_logger
+from reflowfy import BaseSource, elastic_source, get_logger
 
 logger = get_logger(__name__)
 
 
-def example_elastic(**overrides: Any):
+def example_elastic(**overrides: Any) -> BaseSource:
     """
     Example Elasticsearch source configuration.
 

@@ -50,6 +50,10 @@ jobs:
         # Must stay at 0 errors (CLAUDE.md).
         run: uv run --locked --no-build --no-sync pyright
 
+      - name: Type check (mypy)
+        # Also at 0 errors since 2026-11-18; keep it there.
+        run: uv run --locked --no-build --no-sync mypy reflowfy/
+
       - name: Unit tests with coverage
         # fail_under in [tool.coverage.report] is the gate. --timeout fails a hung test
         # and dumps every thread's stack, so the log shows where it stuck.

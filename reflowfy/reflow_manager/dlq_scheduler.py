@@ -65,7 +65,7 @@ class DLQScheduler(PeriodicTask):
     def tick(self) -> None:
         self._poll_and_process()
 
-    def _poll_and_process(self):
+    def _poll_and_process(self) -> None:
         """Poll for due jobs and process them."""
         db = SessionLocal()
         try:
@@ -219,7 +219,7 @@ class DLQScheduler(PeriodicTask):
         for execution_id, pipeline_name, runtime_params in staged:
             start_in_background(factory, execution_id, pipeline_name, runtime_params, log=logger)
 
-    def _handle_job_failure(self, db: Session, job: DLQJob, error_msg: str):
+    def _handle_job_failure(self, db: Session, job: DLQJob, error_msg: str) -> None:
         """Handle a failed DLQ job - retry or archive."""
         job.retry_count += 1
         job.error_message = error_msg
@@ -264,9 +264,9 @@ class DLQScheduler(PeriodicTask):
 
         Backoff: 5, 10, 20, 40, 80 minutes for retries 1-5
         """
-        return 5 * (2 ** (retry_count - 1))
+        return int(5 * 2 ** (retry_count - 1))
 
-    def _archive_job(self, db: Session, job: DLQJob):
+    def _archive_job(self, db: Session, job: DLQJob) -> None:
         """Move a permanently failed job to the archive table."""
         archive = DLQJobArchive(
             id=job.id,
@@ -449,7 +449,7 @@ def init_dlq_scheduler(pipeline_runner_factory: Callable[..., Any]) -> DLQSchedu
     return _scheduler
 
 
-def stop_dlq_scheduler():
+def stop_dlq_scheduler() -> None:
     """Stop the global DLQ scheduler."""
     global _scheduler
     if _scheduler:

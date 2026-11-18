@@ -59,7 +59,9 @@ class KafkaJobConsumer:
         """
         # Handle comma-separated string for bootstrap_servers
         if isinstance(bootstrap_servers, str) and "," in bootstrap_servers:
-            self.bootstrap_servers = [s.strip() for s in bootstrap_servers.split(",") if s.strip()]
+            self.bootstrap_servers: Union[str, List[str]] = [
+                s.strip() for s in bootstrap_servers.split(",") if s.strip()
+            ]
         else:
             self.bootstrap_servers = bootstrap_servers
 
@@ -78,7 +80,7 @@ class KafkaJobConsumer:
         self._running = False
         self._stop_requested = False
 
-    async def start(self):
+    async def start(self) -> None:
         """Start consuming and processing jobs asynchronously."""
         consumer_kwargs: dict[str, Any] = {
             "bootstrap_servers": self.bootstrap_servers,

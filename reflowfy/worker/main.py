@@ -22,7 +22,7 @@ from reflowfy.store.leases import JobLeases
 logger = logging.getLogger("reflowfy.worker.main")
 
 
-def main():
+def main() -> None:
     """Worker main entry point."""
     import asyncio
 

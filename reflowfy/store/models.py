@@ -14,9 +14,10 @@ from sqlalchemy import (
     Text,
 )
 from reflowfy.store.states import DLQStatus, ScheduleEnabled
-from sqlalchemy.orm import declarative_base, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-Base = declarative_base()
+class Base(DeclarativeBase):
+    """The declarative base every table derives from."""
 
 
 class Execution(Base):
@@ -295,7 +296,7 @@ class DLQJobArchive(Base):
         }
 
 
-class ProcessedRecord(Base):  # type: ignore[valid-type,misc]  # untyped Base
+class ProcessedRecord(Base):
     """Per-record ledger for worker-side deduplication.
 
     One row per record sent with enable_duplicate_jobs=False, keyed by the raw

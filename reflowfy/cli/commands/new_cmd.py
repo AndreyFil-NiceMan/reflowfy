@@ -59,7 +59,7 @@ def test_{name}_on_sample_records():
 '''
 
 
-def register(app: typer.Typer):
+def register(app: typer.Typer) -> None:
     """Register the new command."""
 
     new_app = typer.Typer(help="Scaffold new Reflowfy components.")
@@ -68,7 +68,7 @@ def register(app: typer.Typer):
     @new_app.command()
     def pipeline(
         name: str = typer.Argument(help="Name of the pipeline (snake_case)"),
-    ):
+    ) -> None:
         """Create a new pipeline file."""
         from rich.console import Console
 
@@ -178,7 +178,7 @@ class {class_name}(AbstractPipeline[{class_name}Params]):
     @new_app.command(name="source")
     def source_(
         name: str = typer.Argument(help="Name of the reusable source (snake_case)"),
-    ):
+    ) -> None:
         """Create a new reusable source configuration."""
         from rich.console import Console
 
@@ -218,7 +218,7 @@ def {name}(**overrides):
     @new_app.command(name="destination")
     def destination_(
         name: str = typer.Argument(help="Name of the reusable destination (snake_case)"),
-    ):
+    ) -> None:
         """Create a new reusable destination configuration."""
         from rich.console import Console
 
@@ -259,7 +259,7 @@ def {name}(**overrides):
     @new_app.command(name="transformation")
     def transformation_(
         name: str = typer.Argument(help="Name of the transformation (snake_case)"),
-    ):
+    ) -> None:
         """Create a new reusable transformation."""
         from rich.console import Console
 

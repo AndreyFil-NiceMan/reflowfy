@@ -15,14 +15,14 @@ router = APIRouter()
 
 
 @router.get("/schedules")
-def list_schedules(db: Session = Depends(get_db)):
+def list_schedules(db: Session = Depends(get_db)) -> Dict[str, Any]:
     """List all pipeline schedule entries."""
     rows = db.query(PipelineSchedule).order_by(PipelineSchedule.pipeline_name).all()
     return {"schedules": [public_row(r) for r in rows], "total": len(rows)}
 
 
 @router.get("/schedules/{pipeline_name}")
-def get_schedule(pipeline_name: str, db: Session = Depends(get_db)):
+def get_schedule(pipeline_name: str, db: Session = Depends(get_db)) -> Dict[str, Any]:
     """Get all named schedules for a pipeline, each with last-execution enrichment."""
     rows = (
         db.query(PipelineSchedule)
@@ -50,7 +50,7 @@ def get_schedule(pipeline_name: str, db: Session = Depends(get_db)):
 
 
 @router.get("/schedules/{pipeline_name}/stats")
-def get_schedule_stats(pipeline_name: str, db: Session = Depends(get_db)):
+def get_schedule_stats(pipeline_name: str, db: Session = Depends(get_db)) -> Dict[str, Any]:
     """Execution history stats for a scheduled pipeline, across all its named schedules."""
     rows = (
         db.query(PipelineSchedule)
@@ -111,7 +111,7 @@ def list_archived_jobs(
     limit: int = 100,
     offset: int = 0,
     db: Session = Depends(get_db),
-):
+) -> Dict[str, Any]:
     """List permanently failed DLQ jobs from the archive (exceeded max_retries)."""
     limit = min(limit, 500)
     query = db.query(DLQJobArchive)
@@ -128,7 +128,7 @@ def list_archived_jobs(
 
 
 @router.get("/archive/jobs/{job_id}")
-def get_archived_job(job_id: int, db: Session = Depends(get_db)):
+def get_archived_job(job_id: int, db: Session = Depends(get_db)) -> Dict[str, Any]:
     """Get a single archived (permanently failed) DLQ job by ID."""
     job = db.query(DLQJobArchive).filter(DLQJobArchive.id == job_id).first()
     if not job:

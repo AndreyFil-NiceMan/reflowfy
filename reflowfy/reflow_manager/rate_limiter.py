@@ -118,6 +118,8 @@ class RateLimiter:
         locked_state = self.db.query(RateLimitState).filter(
             RateLimitState.pipeline_name == pipeline_name
         ).with_for_update().first()
+        if locked_state is None:  # created just above; only a concurrent delete gets here
+            raise RuntimeError(f"rate limit state for {pipeline_name!r} vanished")
 
         return locked_state
 

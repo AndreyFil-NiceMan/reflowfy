@@ -256,7 +256,7 @@ class JobManager:
 
         Commits immediately to ensure the update is persisted.
         """
-        update_data: Dict[str, Any] = {
+        update_data: Dict[Any, Any] = {
             "state": state,
             "updated_at": datetime.now(timezone.utc).replace(tzinfo=None),
         }
