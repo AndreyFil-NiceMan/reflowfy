@@ -1,18 +1,17 @@
 """
 Example reusable source configuration.
 
-Use the @source decorator to create named source configurations
-that can be reused across multiple pipelines.
+A plain function that returns a configured source: import it from any
+pipeline. No decorator needed.
 """
 
 from typing import Any
 import os
-from reflowfy import source, elastic_source, get_logger
+from reflowfy import elastic_source, get_logger
 
 logger = get_logger(__name__)
 
 
-@source("example_elastic")
 def example_elastic(**overrides: Any):
     """
     Example Elasticsearch source configuration.

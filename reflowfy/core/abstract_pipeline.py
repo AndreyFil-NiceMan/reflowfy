@@ -45,7 +45,6 @@ from typing import (
     List,
     Literal,
     Optional,
-    Sequence,
     Set,
     Tuple,
     Union,
@@ -70,7 +69,7 @@ from reflowfy.core.registry import pipeline_registry
 if TYPE_CHECKING:
     from reflowfy.destinations.base import BaseDestination
     from reflowfy.sources.base import BaseSource
-    from reflowfy.transformations.base import BaseTransformation
+    from reflowfy.transformations.base import BaseTransformation, Transformations
 
 logger = logging.getLogger(__name__)
 
@@ -698,11 +697,13 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
     @abstractmethod
     def define_destination(
         self, records: List[Any], runtime_params: P
-    ) -> "BaseDestination | Awaitable[BaseDestination]":
+    ) -> "BaseDestination | type[BaseDestination] | Awaitable[BaseDestination]":
         """
         Define the destination to use based on post-transformation records and runtime params.
 
         May be ``async def`` (awaited on the worker's loop); a regular def runs in a thread.
+        A ``@destination(per_record=True)`` without options may be returned bare
+        (``return route_by_region``) or called (``route_by_region()``).
 
         Args:
             records: Post-transformation records for the current job/batch
@@ -722,7 +723,7 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
     @abstractmethod
     def define_transformations(
         self, records: List[Any], runtime_params: P
-    ) -> "Sequence[BaseTransformation] | Awaitable[Sequence[BaseTransformation]]":
+    ) -> "Transformations | Awaitable[Transformations]":
         """
         Define list of transformations to apply based on records and runtime parameters.
 
@@ -733,7 +734,8 @@ class AbstractPipeline(QueryLoaderMixin, Generic[P], metaclass=PipelineMeta):
             runtime_params: Parameters provided by the user at runtime
 
         Returns:
-            List of BaseTransformation instances to apply in order
+            The steps to apply, in order: instances (``multiply(factor=2)``) or, for a
+            decorated step without options, the decorated name itself (``add_tax``).
 
         Example:
             >>> def define_transformations(self, records, params):

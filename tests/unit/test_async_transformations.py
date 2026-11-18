@@ -20,7 +20,6 @@ from reflowfy import (
     SkipJob,
     SkipRecord,
     TransformationError,
-    record_transformation,
     transformation,
 )
 from reflowfy.core.async_utils import run_coroutine_sync
@@ -209,7 +208,7 @@ async def test_skip_job_from_an_async_transformation_drops_the_job():
 
 
 def test_a_record_transformation_is_built_from_an_async_function():
-    @record_transformation("ut_rec_identity", concurrency=4, timeout=2.5)
+    @transformation("ut_rec_identity", per_record=True, concurrency=4, timeout=2.5)
     async def identity(record: Any, runtime_params: Any) -> Any:
         return record
 
@@ -220,7 +219,7 @@ def test_a_record_transformation_is_built_from_an_async_function():
 
 
 async def test_per_record_keeps_input_order_and_none_drops_a_record():
-    @record_transformation("ut_rec_order", concurrency=8)
+    @transformation("ut_rec_order", per_record=True, concurrency=8)
     async def slow_first(record: Any, runtime_params: Any) -> Any:
         # Earlier records finish last, so completion order is the reverse of input.
         await asyncio.sleep(0.002 * (10 - record["id"]))
@@ -244,7 +243,7 @@ async def test_per_record_keeps_input_order_and_none_drops_a_record():
 async def test_per_record_never_exceeds_its_concurrency(cap: int):
     flight = _InFlight()
 
-    @record_transformation(f"ut_rec_cap_{cap}", concurrency=cap)
+    @transformation(f"ut_rec_cap_{cap}", per_record=True, concurrency=cap)
     async def held(record: Any, runtime_params: Any) -> Any:
         await flight.hold(0.01)
         return record
@@ -258,7 +257,7 @@ async def test_per_record_never_exceeds_its_concurrency(cap: int):
 
 
 async def test_per_record_runs_concurrently_rather_than_one_by_one():
-    @record_transformation("ut_rec_fast", concurrency=20)
+    @transformation("ut_rec_fast", per_record=True, concurrency=20)
     async def wait(record: Any, runtime_params: Any) -> Any:
         await asyncio.sleep(0.05)
         return record
@@ -271,7 +270,7 @@ async def test_per_record_runs_concurrently_rather_than_one_by_one():
 async def test_the_first_failing_record_fails_the_step_naming_it_and_cancels_the_rest():
     cancelled: List[int] = []
 
-    @record_transformation("ut_rec_fail", concurrency=4)
+    @transformation("ut_rec_fail", per_record=True, concurrency=4)
     async def fail_on_2(record: Any, runtime_params: Any) -> Any:
         await asyncio.sleep(0)  # let the whole first batch start
         if record["id"] == 2:
@@ -301,7 +300,7 @@ async def test_the_first_failing_record_fails_the_step_naming_it_and_cancels_the
 
 
 async def test_skip_job_from_one_record_drops_the_whole_job():
-    @record_transformation("ut_rec_skip", concurrency=2)
+    @transformation("ut_rec_skip", per_record=True, concurrency=2)
     async def skip_on_1(record: Any, runtime_params: Any) -> Any:
         if record["id"] == 1:
             raise SkipJob("record 1 is not ready")
@@ -316,7 +315,7 @@ async def test_skip_job_from_one_record_drops_the_whole_job():
     assert params["skip_reason"] == "record 1 is not ready"
 
 
-@record_transformation("ut_rec_skip_record", concurrency=4)
+@transformation("ut_rec_skip_record", per_record=True, concurrency=4)
 async def skip_odd(record: Any, runtime_params: Any) -> Any:
     if record["id"] % 2:
         raise SkipRecord("odd id")
@@ -340,7 +339,7 @@ async def test_skip_record_drops_only_that_record_and_keeps_why():
 
 
 async def test_none_still_drops_silently_without_a_reason():
-    @record_transformation("ut_rec_none_drop")
+    @transformation("ut_rec_none_drop", per_record=True)
     async def drop_all(record: Any, runtime_params: Any) -> Any:
         return None
 
@@ -368,7 +367,7 @@ async def test_skip_record_from_a_batch_step_fails_the_job_saying_why(kind: str)
     with pytest.raises(TransformationError) as info:
         await apply_transformations_iteratively_async(_Pipeline([step]), _records(2), {})
     assert f"raised from a {kind} transformation" in str(info.value)
-    assert "@record_transformation" in str(info.value)
+    assert "@transformation(per_record=True)" in str(info.value)
     assert isinstance(info.value.original_error, SkipRecord)
 
 
@@ -390,7 +389,7 @@ def test_top_reasons_names_the_most_frequent():
 
 
 async def test_a_record_that_exceeds_its_timeout_fails_the_job():
-    @record_transformation("ut_rec_timeout", timeout=0.05)
+    @transformation("ut_rec_timeout", per_record=True, timeout=0.05)
     async def hang_on_2(record: Any, runtime_params: Any) -> Any:
         if record["id"] == 2:
             await asyncio.sleep(10)
@@ -404,7 +403,7 @@ async def test_a_record_that_exceeds_its_timeout_fails_the_job():
 
 
 async def test_a_timeout_raised_by_the_authors_own_code_keeps_its_message():
-    @record_transformation("ut_rec_own_timeout")
+    @transformation("ut_rec_own_timeout", per_record=True)
     async def own_timeout(record: Any, runtime_params: Any) -> Any:
         raise asyncio.TimeoutError("upstream gave up")
 
@@ -460,7 +459,7 @@ async def test_teardown_runs_when_a_record_fails():
 
 
 async def test_the_default_hooks_do_nothing():
-    @record_transformation("ut_rec_hooks")
+    @transformation("ut_rec_hooks", per_record=True)
     async def identity(record: Any, runtime_params: Any) -> Any:
         return record
 
@@ -470,10 +469,11 @@ async def test_the_default_hooks_do_nothing():
     await step.teardown()
 
 
-def test_a_record_transformation_needs_an_async_function():
+def test_a_sync_per_record_step_rejects_concurrency():
+    # A plain `def` per record runs one record at a time in a thread.
     with pytest.raises(TypeError, match="needs an `async def`"):
 
-        @record_transformation("ut_rec_sync")
+        @transformation("ut_rec_sync", per_record=True, concurrency=4)
         def not_async(record: Any, runtime_params: Any) -> Any:
             return record
 
@@ -484,11 +484,11 @@ def test_a_record_transformation_needs_an_async_function():
 )
 def test_record_transformation_rejects_bad_limits(kwargs: Dict[str, Any], message: str):
     with pytest.raises(ValueError, match=message):
-        record_transformation("ut_rec_bad", **kwargs)
+        transformation("ut_rec_bad", per_record=True, **kwargs)
 
 
 def test_concurrency_defaults_to_the_environment(monkeypatch: pytest.MonkeyPatch):
-    @record_transformation("ut_rec_env")
+    @transformation("ut_rec_env", per_record=True)
     async def identity(record: Any, runtime_params: Any) -> Any:
         return record
 
@@ -613,7 +613,7 @@ def _payload(records: List[Any]) -> Dict[str, Any]:
     }
 
 
-@record_transformation("ut_rec_worker", concurrency=5)
+@transformation("ut_rec_worker", per_record=True, concurrency=5)
 async def enrich(record: Any, runtime_params: Any) -> Any:
     if record.get("fail"):
         raise RuntimeError("users API answered 500")

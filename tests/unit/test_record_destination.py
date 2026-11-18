@@ -7,6 +7,7 @@ send, per-group retries, health/close, the job runner's reporting step, and the
 worker (per-record dedup identity, stats, skip metrics and logs).
 """
 
+from reflowfy.destinations.decorators import destination
 import asyncio
 from typing import Any, Dict, List, Optional
 
@@ -93,17 +94,17 @@ def reset_sink():
     Sink.order = []
 
 
-@record_destination("rd_by_topic")
+@destination("rd_by_topic", per_record=True)
 def by_topic(record: Any, params: Any) -> Sink:
     return Sink(topic=f"{params.get('env', 'dev')}.{record['engine']}")
 
 
-@record_destination("rd_by_topic_serial", concurrency=1)
+@destination("rd_by_topic_serial", per_record=True, concurrency=1)
 def by_topic_serial(record: Any, params: Any) -> Sink:
     return Sink(topic=f"dev.{record['engine']}")
 
 
-@record_destination("rd_by_topic_skip", on_error="skip")
+@destination("rd_by_topic_skip", per_record=True, on_error="skip")
 def by_topic_skip(record: Any, params: Any) -> Sink:
     topics = {"whisper": "t.whisper", "google": "t.google"}
     if record.get("engine") == "ignored":
@@ -139,15 +140,15 @@ class TestDecorator:
 
     def test_bad_on_error_is_rejected(self):
         with pytest.raises(ValueError, match="on_error must be 'fail' or 'skip'"):
-            record_destination("x", on_error="ignore")  # type: ignore[arg-type]
+            destination("x", per_record=True, on_error="ignore")  # type: ignore[arg-type]
 
     @pytest.mark.parametrize("concurrency", [0, -1, True, 1.5])
     def test_bad_concurrency_is_rejected(self, concurrency):
         with pytest.raises(ValueError, match="concurrency must be an integer >= 1"):
-            record_destination("x", concurrency=concurrency)
+            destination("x", per_record=True, concurrency=concurrency)
 
     def test_docstring_and_module_follow_the_function(self):
-        @record_destination("rd_doc")
+        @destination("rd_doc", per_record=True)
         def documented(record: Any, params: Any) -> Sink:
             """Routes by engine."""
             return Sink("t")
@@ -157,7 +158,7 @@ class TestDecorator:
         assert documented.__name__ == "documented"
 
     async def test_options_are_passed_to_every_call(self):
-        @record_destination("rd_options")
+        @destination("rd_options", per_record=True)
         def with_options(record: Any, params: Any, prefix: str = "none") -> Sink:
             return Sink(f"{prefix}.{record['engine']}")
 
@@ -202,7 +203,7 @@ class TestRouting:
         assert len(Sink.ledger["dev.a"]) == 50
 
     async def test_destinations_differing_in_credentials_are_kept_apart(self):
-        @record_destination("rd_creds")
+        @destination("rd_creds", per_record=True)
         def creds(record: Any, params: Any) -> Sink:
             return Sink("same", password=record["pw"])
 
@@ -211,7 +212,7 @@ class TestRouting:
         assert len(dest.destinations) == 2
 
     async def test_real_kafka_destinations_group_by_config(self):
-        @record_destination("rd_kafka")
+        @destination("rd_kafka", per_record=True)
         def kafka(record: Any, params: Any) -> BaseDestination:
             return kafka_destination(bootstrap_servers="k:9092", topic=f"t.{record['engine']}")
 
@@ -223,7 +224,7 @@ class TestRouting:
         in_flight = 0
         peak = 0
 
-        @record_destination("rd_async", concurrency=4)
+        @destination("rd_async", per_record=True, concurrency=4)
         async def lookup(record: Any, params: Any) -> Sink:
             nonlocal in_flight, peak
             in_flight += 1
@@ -243,7 +244,7 @@ class TestRouting:
     async def test_sync_function_runs_off_the_event_loop(self):
         loops: List[bool] = []
 
-        @record_destination("rd_thread")
+        @destination("rd_thread", per_record=True)
         def where(record: Any, params: Any) -> Sink:
             try:
                 asyncio.get_running_loop()
@@ -294,7 +295,7 @@ class TestSkipsAndFailures:
         assert result.skip_reasons == {"KeyError": 2}
 
     async def test_skip_record_works_with_on_error_fail_too(self):
-        @record_destination("rd_skip_fail")
+        @destination("rd_skip_fail", per_record=True)
         def strict(record: Any, params: Any) -> Sink:
             if record["engine"] == "x":
                 raise SkipRecord("x unsupported")
@@ -304,7 +305,7 @@ class TestSkipsAndFailures:
         assert result.skip_reasons == {"x unsupported": 1}
 
     async def test_on_error_fail_fails_naming_the_position_and_nothing_is_sent(self):
-        @record_destination("rd_strict")
+        @destination("rd_strict", per_record=True)
         def strict(record: Any, params: Any) -> Sink:
             return Sink({"whisper": "t.whisper"}[record["engine"]])
 
@@ -317,7 +318,7 @@ class TestSkipsAndFailures:
         assert Sink.ledger == {}
 
     async def test_async_failure_fails_too(self):
-        @record_destination("rd_async_fail", concurrency=2)
+        @destination("rd_async_fail", per_record=True, concurrency=2)
         async def boom(record: Any, params: Any) -> Sink:
             if record["id"] == 2:
                 raise ValueError("bad")
@@ -328,7 +329,7 @@ class TestSkipsAndFailures:
 
     @pytest.mark.parametrize("on_error", ["fail", "skip"])
     async def test_a_return_that_is_not_a_destination_always_fails(self, on_error):
-        @record_destination(f"rd_bad_return_{on_error}", on_error=on_error)
+        @destination(f"rd_bad_return_{on_error}", per_record=True, on_error=on_error)
         def bad(record: Any, params: Any) -> Any:
             return None
 
@@ -336,7 +337,7 @@ class TestSkipsAndFailures:
             await bad().route([{"a": 1}], {})
 
     async def test_returning_a_record_destination_fails(self):
-        @record_destination("rd_nested")
+        @destination("rd_nested", per_record=True)
         def nested(record: Any, params: Any) -> Any:
             return by_topic()
 
@@ -345,7 +346,7 @@ class TestSkipsAndFailures:
 
     @pytest.mark.parametrize("on_error", ["fail", "skip"])
     async def test_skip_job_drops_the_job(self, on_error):
-        @record_destination(f"rd_skipjob_{on_error}", on_error=on_error)
+        @destination(f"rd_skipjob_{on_error}", per_record=True, on_error=on_error)
         def drop(record: Any, params: Any) -> Sink:
             raise SkipJob("not today")
 
@@ -412,7 +413,7 @@ class TestSendHealthClose:
                 await super().close()
                 raise RuntimeError(f"close {self.config['topic']}")
 
-        @record_destination("rd_fragile")
+        @destination("rd_fragile", per_record=True)
         def fragile(record: Any, params: Any) -> Sink:
             return Fragile(record["engine"])
 
@@ -443,7 +444,7 @@ class TestConcurrency:
         assert {t: len(r) for t, r in Sink.ledger.items()} == {f"dev.{c}": 1 for c in "abcde"}
 
     async def test_concurrency_caps_destinations_in_flight(self):
-        @record_destination("rd_conc_two", concurrency=2)
+        @destination("rd_conc_two", per_record=True, concurrency=2)
         def two(record: Any, params: Any) -> Sink:
             return Sink(record["engine"])
 
@@ -482,7 +483,7 @@ class TestConcurrency:
                 await asyncio.sleep(5)  # cancelled long before this ends
                 await super().send(records, metadata)
 
-        @record_destination("rd_cancel")
+        @destination("rd_cancel", per_record=True)
         def cancel(record: Any, params: Any) -> Sink:
             return Slow(record["engine"])
 
@@ -505,7 +506,7 @@ class TestConcurrency:
                 in_flight -= 1
                 return self.config["topic"] != "sick"
 
-        @record_destination("rd_health_conc")
+        @destination("rd_health_conc", per_record=True)
         def slow_health(record: Any, params: Any) -> Sink:
             return SlowHealth(record["engine"])
 
@@ -519,7 +520,7 @@ class TestConcurrency:
 class TestTimeout:
     @staticmethod
     def _slow(name: str, **kw: Any) -> Any:
-        @record_destination(name, timeout=0.05, **kw)
+        @destination(name, per_record=True, timeout=0.05, **kw)
         async def slow(record: Any, params: Any) -> Sink:
             if record["engine"] == "slow":
                 await asyncio.sleep(5)
@@ -548,14 +549,14 @@ class TestTimeout:
     def test_timeout_needs_an_async_function(self):
         with pytest.raises(TypeError, match="timeout needs an `async def` function"):
 
-            @record_destination("rd_timeout_sync", timeout=1)
+            @destination("rd_timeout_sync", per_record=True, timeout=1)
             def sync(record: Any, params: Any) -> Sink:
                 return Sink("t")
 
     @pytest.mark.parametrize("timeout", [0, -1])
     def test_bad_timeout_is_rejected(self, timeout):
         with pytest.raises(ValueError, match="timeout must be > 0"):
-            record_destination("x", timeout=timeout)
+            destination("x", per_record=True, timeout=timeout)
 
 
 # ---------------------------------------------------------------- the job runner
@@ -598,7 +599,7 @@ class TestJobRunner:
     async def test_async_function_reports_its_concurrency(self, monkeypatch):
         monkeypatch.setenv("TRANSFORM_CONCURRENCY", "7")
 
-        @record_destination("rd_async_conc")
+        @destination("rd_async_conc", per_record=True)
         async def route(record: Any, params: Any) -> Sink:
             return Sink("t")
 
@@ -614,7 +615,7 @@ class TestJobRunner:
         assert applied[-1].skip_reasons is None
 
     async def test_skip_job_from_routing_drops_the_job(self):
-        @record_destination("rd_runner_skipjob")
+        @destination("rd_runner_skipjob", per_record=True)
         def drop(record: Any, params: Any) -> Sink:
             raise SkipJob("engine offline")
 
@@ -668,7 +669,7 @@ class TestWorker:
     async def test_a_routing_failure_fails_the_job_with_nothing_sent(
         self, register, stub_worker  # noqa: F811
     ):
-        @record_destination("rd_worker_strict")
+        @destination("rd_worker_strict", per_record=True)
         def strict(record: Any, params: Any) -> Sink:
             return Sink({"a": "t.a"}[record["engine"]])
 
@@ -745,7 +746,7 @@ class TestWorkerDedup:
         register(_Pipeline("rd-dedup-topic", by_topic))
         await self._run(dedup_worker, "rd-dedup-topic", "a", [{"id": 1, "engine": "x"}])
 
-        @record_destination("rd_dedup_other_topic")
+        @destination("rd_dedup_other_topic", per_record=True)
         def other(record: Any, params: Any) -> Sink:
             return Sink("elsewhere")
 

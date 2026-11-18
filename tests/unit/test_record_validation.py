@@ -17,7 +17,6 @@ from reflowfy import (
     RuntimeParams,
     StepOutputError,
     TypedRecord,
-    record_transformation,
     transformation,
 )
 from reflowfy.core.record_validation import (
@@ -149,44 +148,44 @@ def batch_unresolvable(records: Any, runtime_params: Any) -> "List[DoesNotExist]
     return records
 
 
-@record_transformation("rv_per_record_optional")
+@transformation("rv_per_record_optional", per_record=True)
 async def per_record_optional(record: TaxedOrder, params: RuntimeParams) -> Optional[TaxedOrder]:
     return record
 
 
-@record_transformation("rv_per_record_union")
+@transformation("rv_per_record_union", per_record=True)
 async def per_record_union(record: Any, params: RuntimeParams) -> "Order | Item | None":
     return record
 
 
-@record_transformation("rv_per_record_plain")
+@transformation("rv_per_record_plain", per_record=True)
 async def per_record_plain(record: Any, params: RuntimeParams) -> Order:
     return record
 
 
-@record_transformation("rv_per_record_list")
+@transformation("rv_per_record_list", per_record=True)
 async def per_record_list(record: Any, params: RuntimeParams) -> List[Item]:
     return [record]
 
 
-@record_transformation("rv_per_record_one_or_many")
+@transformation("rv_per_record_one_or_many", per_record=True)
 async def per_record_one_or_many(
     record: Any, params: RuntimeParams
 ) -> "Item | Sequence[Item] | None":
     return record
 
 
-@record_transformation("rv_per_record_list_records")
+@transformation("rv_per_record_list_records", per_record=True)
 async def per_record_list_records(record: Any, params: RuntimeParams) -> Records:
     return [record]
 
 
-@record_transformation("rv_per_record_returns_none")
+@transformation("rv_per_record_returns_none", per_record=True)
 async def per_record_returns_none(record: Any, params: RuntimeParams) -> None:
     return None
 
 
-@record_transformation("rv_per_record_bare_list")
+@transformation("rv_per_record_bare_list", per_record=True)
 async def per_record_bare_list(record: Any, params: RuntimeParams) -> list:  # type: ignore[type-arg]
     return [record]
 
@@ -338,7 +337,7 @@ def breaks_its_promise(
     return records
 
 
-@record_transformation("rv_per_record_breaks")
+@transformation("rv_per_record_breaks", per_record=True)
 async def per_record_breaks(record: Any, params: RuntimeParams) -> Optional[Order]:
     return {"order_id": record["data"]["order_id"]}  # type: ignore[typeddict-item]
 

@@ -6,6 +6,7 @@ delivery goes to the sink's ledger, so a test proves what arrived over Kafka and
 workers. Copied into a project with ``sync_pipelines.sh``.
 """
 
+from reflowfy import destination
 from typing import Any, Dict, Iterator, List, Optional
 
 import httpx
@@ -22,8 +23,6 @@ from reflowfy import (
     api_destination,
     chunk,
     fan_out,
-    record_destination,
-    record_transformation,
     run_pipeline,
     secret,
     transformation,
@@ -131,14 +130,14 @@ def dist_gaps_declined(records: List[Any], runtime_params: Any) -> List[Any]:
     return [{**r, "declined_ran": True} for r in records]
 
 
-@record_transformation("dist_gaps_skip_odd", on_error="skip")
+@transformation("dist_gaps_skip_odd", per_record=True, on_error="skip")
 async def dist_gaps_skip_odd(record: Dict[str, Any], runtime_params: Any) -> Dict[str, Any]:
     if record["id"] % 2:
         raise ValueError("odd")
     return record
 
 
-@record_transformation("dist_gaps_returns_tuple")
+@transformation("dist_gaps_returns_tuple", per_record=True)
 async def dist_gaps_returns_tuple(record: Dict[str, Any], runtime_params: Any) -> Any:
     return (record,)  # breaks the contract: a record, a list of records, or None
 
@@ -173,7 +172,7 @@ class DistGapsTransform(AbstractPipeline[GapsParams]):
 # --------------------------------------------------------------------------------
 
 
-@record_destination("dist_gaps_multicast")
+@destination("dist_gaps_multicast", per_record=True)
 def dist_gaps_multicast(record: Dict[str, Any], runtime_params: Any) -> Any:
     run = runtime_params["run"]
     if record["id"] % 2 == 0:

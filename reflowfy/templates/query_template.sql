@@ -9,7 +9,6 @@
 -- {{ table_name | ident }} (letters, digits, _ and . only).
 --
 -- Usage in a pipeline:
---   @source("my_sql_source")
 --   def my_sql_source(**overrides):
 --       from reflowfy import sql_source
 --       from pathlib import Path

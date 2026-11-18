@@ -33,7 +33,7 @@ from reflowfy import (
 from reflowfy.destinations.console import console_destination
 from reflowfy.sources.mock import generate_sample_data, mock_source
 
-# Logging: works from anywhere — transformations, @source functions, plain helpers.
+# Logging: works from anywhere — transformations, source factory functions, plain helpers.
 # No `self` needed. execution_id / job_id / pipeline_name are attached automatically.
 logger = get_logger(__name__)
 

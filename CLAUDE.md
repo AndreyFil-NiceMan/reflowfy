@@ -111,7 +111,7 @@ HTTP POST /run → API (FastAPI) ──┐
 - **`reflowfy/core/`** — the user-facing pipeline model and the bottom of the import stack. `abstract_pipeline.py` defines `AbstractPipeline` (with `define_source` / `define_transformations` / `define_destination` / `define_parameters` hooks). `id_based_pipeline.py` is a specialization for ID-range sharding. `execution_context.py` carries runtime params/metadata through a run. Also the shared pieces everything above uses: the error hierarchy (`exceptions.py`, including `SourceError`/`DestinationError`/`TransformationError`, re-exported from their old modules), `record_steps.py` (record concurrency, skip-reason counting), `kafka_settings.py` (the one builder of aiokafka connection arguments + `KafkaSettings.from_env()`), `planning.py` (`chunk`).
 - **Import direction** (`tests/unit/test_layering.py`): `core` imports no connector or service; `sources`/`destinations`/`transformations` import no service and not each other; `store` imports no connector or service; `execution` and `worker` never import `reflow_manager`. There are no exceptions; a new upward import fails that test.
 - **`reflowfy/cli/`** — `typer` app (`main.py`); each subcommand registers itself from `commands/` (`init`, `new`, `run`, `build`, `check`, `deploy`, `test`).
-- **`reflowfy/sources/`, `destinations/`, `transformations/`** — built-in connectors plus the `@source`, `@destination`, `@transformation` decorators. `factories/` builds connector instances from serialized config.
+- **`reflowfy/sources/`, `destinations/`, `transformations/`** — built-in connectors plus the `@transformation` and `@destination(per_record=True)` decorators (see "Decorators" below; `@source`/`@record_*` are deprecated). `factories/` builds connector instances from serialized config.
 - **`reflowfy/execution/`** — the per-job core shared by the worker and `reflowfy test` (`job_runner.py`, `transformation_runner.py`), content dedup, and `DistributedExecutor` (the API's one client for the manager's `/run`: every route shares it and each call names its `mode`; `local` makes the manager use `LocalDispatcher`; its result is an `ExecutionStatus` with `store.states` string states).
 - **`reflowfy/helm/`** — packaged Helm charts (api / reflow-manager / worker) used by `reflowfy deploy` for OpenShift/Kubernetes (KEDA-autoscaled workers).
 
@@ -200,10 +200,39 @@ class OrdersPipeline(AbstractPipeline[OrderParams]):
 
 - **Validate only, strict.** Records are never replaced by pydantic's output: it would coerce (`"3.5"` → float) and silently drop undeclared keys. Strict means what passes is what the annotated code sees; an `int` still passes as `float`. Undeclared keys do not fail. One `TypeAdapter(List[T])` per type, cached; ~2.7 µs per record.
 - **After fetch** (`job_runner.check_record_type`): runs before `define_transformations`, which then sees only the kept records. `"fail"` raises `RecordValidationError` (a `PipelineError`): `record 3 of 50 does not match TypedRecord[Order]: data.amount: missing`. `"skip"` drops them the way `SkipRecord` does, reason `invalid data.amount: missing`. The check is reported as an `AppliedStep` named `record_type` with `mode="validate"`, so the worker and `reflowfy test` show its time and skips with no extra code.
-- **After each step** (`validate_steps`, `transformation_runner._check_step_output`): the promised type comes from `step_output_type` — an explicit `output_type` class attribute (a record type, not a list; how a `BaseTransformation` subclass declares one), else the `@transformation` function's `-> List[X]` (or `Tuple[X, ...]`) or the `@record_transformation` function's `-> X | None`. `-> Records`, `List[Any]`, a `dict` type, no annotation or an unresolvable forward reference: unchecked. A mismatch is a bug in that step, so it **always** fails the job with `StepOutputError` (a `TransformationError` naming the step and `culprit_index`), whatever `on_invalid_record` says.
+- **After each step** (`validate_steps`, `transformation_runner._check_step_output`): the promised type comes from `step_output_type` — an explicit `output_type` class attribute (a record type, not a list; how a `BaseTransformation` subclass declares one), else the `@transformation` function's `-> List[X]` (or `Tuple[X, ...]`) or the per-record function's `-> X | None`. `-> Records`, `List[Any]`, a `dict` type, no annotation or an unresolvable forward reference: unchecked. A mismatch is a bug in that step, so it **always** fails the job with `StepOutputError` (a `TransformationError` naming the step and `culprit_index`), whatever `on_invalid_record` says.
 - Reasons and messages name a field path and pydantic's error type, never a value; list positions inside a record become `[]` (`data.items[].price: float_type`) so reasons group.
 
 Observability: a skip is the existing record-skip path — `records_skipped`/`record_skip_reasons` in the job's `stats`, the `… skipped N records` log line, `reflowfy_records_skipped_total{transformation="record_type"}`. A failure is an ordinary `failed` job whose `error_type` (stats and `reflowfy_jobs_failed_total`) is `RecordValidationError` (bad source data) or `StepOutputError` (a step broke its contract), so the two are told apart from each other and from other failures. Worked example: `pipelines/typed_records_pipeline.py` (`reflowfy test typed_records`); tests: `tests/unit/test_record_validation.py`.
+
+### Decorators (the authoring surface)
+
+Two decorators, granularity as a keyword (the same word `api_destination(per_record=True)` uses):
+`@transformation` (batch) / `@transformation(per_record=True)` (`transformations/decorators.py`)
+and `@destination(per_record=True)` (`destinations/decorators.py`). Both work bare or called; the
+name defaults to the function's `__name__` (it is the metric label and must stay unique — the
+registry raises on a duplicate). Knobs are keyword-only and the same everywhere: `name`,
+`per_record`, `concurrency`, `timeout`, `on_error`; ones that cannot apply raise `TypeError` at
+decoration (per-record knobs on a batch step; `concurrency`/`timeout` on a per-record `def`;
+`timeout` on a sync router). Typing is `@overload`s on `per_record: Literal[...]`.
+
+- A per-record **`def`** builds a `SyncRecordTransformation` (`transformations/base.py`, a
+  `RecordTransformation`): records in order in one `asyncio.to_thread`, every per-record rule
+  (None/list/SkipRecord/on_error/contract) via the shared `_raised`/`_returned`; reported
+  `mode="per_record"`, `concurrency=None`. A per-record `async def` is the concurrent
+  `RecordTransformation` as before.
+- **Bare steps.** `define_transformations` may list a decorated class (`[add_tax, mul(factor=2)]`)
+  and `define_destination` may return a `RecordDestination` class: `as_transformations` (runner
+  `resolve()` and `testing/runner._instrument`) / `fan_out.as_destination` build them, so a missing
+  required option raises there. `Transformations` is `Sequence[BaseTransformation |
+  type[BaseTransformation]]`. Any new consumer of `define_transformations` output must go through
+  `as_transformations`.
+- **Deprecated, still working, `DeprecationWarning` at the caller's line:** `@record_transformation`
+  (now also accepts `def`), `@record_destination` (both delegate to the new path), and
+  `@source("x")` / `@destination("x")` without `per_record` — factory registries
+  (`source_registry`/`destination_registry`) nothing reads; a plain function does the same.
+  Scaffolding (`reflowfy init`/`new`) writes plain functions. Removal is for 2.0.
+- No new job state or metric: a pure API change. Tests: `tests/unit/test_decorator_api.py`.
 
 ### Async transformations
 
@@ -220,8 +249,9 @@ already running, e.g. inside FastAPI). Three kinds of step, freely mixed in one 
 - **async** (`AsyncTransformation.apply_async`, or `@transformation` on an `async def`): awaited.
   `AsyncTransformation.apply` still works for sync callers. It is a separate method name
   because overriding sync `apply` with an `async def` is an LSP error.
-- **per_record** (`RecordTransformation.apply_record`, or `@record_transformation(name,
-  concurrency=, timeout=, on_error=)` on an `async def f(record, params) -> record | list[record] | None`): every record
+- **per_record** (`RecordTransformation.apply_record`, or `@transformation(per_record=True,
+  concurrency=, timeout=, on_error=)` on an `async def f(record, params) -> record | list[record] | None`;
+  on a plain `def` it is `SyncRecordTransformation`, records in order in one thread, see "Decorators"): every record
   awaited, `concurrency` at a time (default `TRANSFORM_CONCURRENCY`, 16) by a fixed pool of
   workers, not a task per record. Order is kept, `None` drops the record, the first failure
   cancels the rest and raises `TransformationError` with the exact `culprit_index` (via
@@ -269,15 +299,15 @@ state or metric: its outcomes are the existing ones (the one new counter is for 
 
 ### Authoring transformations: options and `should_apply_transformation`
 
-**Options.** A `@transformation` / `@record_transformation` function's parameters after
+**Options.** A `@transformation` function's parameters after
 `(records|record, runtime_params)` are options, given as keyword arguments when the step is
 built and passed to every call: `def multiply(records, params, *, factor)` is used as
 `multiply(factor=2)`. The constructor binds them against the function's signature
 (`inspect.signature(...).bind`, signature taken once at decoration), so an unknown or missing
 option raises `TypeError` naming the transformation inside `define_transformations`, not
 mid-job; they are kept on the instance as `.options`. `TransformFn` is
-`Callable[Concatenate[Any, Any, ...], Any]` (the per-record one returns
-`Awaitable[Mapping[str, Any] | None]`, `Mapping` so a TypedDict return is accepted): it still
+`Callable[Concatenate[Any, Any, ...], Any]` (the per-record one returns `X | Awaitable[X]` with X =
+`Mapping | Sequence[Mapping] | None`, `Mapping` so a TypedDict return is accepted): it still
 rejects a function with fewer than two positional parameters, and admits the options.
 `validate_steps` keeps reading the function's return annotation (`_transform_fn`).
 
@@ -301,12 +331,12 @@ job's outcome is unchanged. Tests: `tests/unit/test_transformation_authoring.py`
 on. Returning `None` drops it silently (a filter); `SkipRecord` keeps the reason. The step
 returns its skips beside its records (`RecordTransformation.apply_records` → `RecordResults`), so
 nothing is stored on the shared transformation instance. Raised from a sync or whole-batch async
-step it fails the job saying to use `@record_transformation` (there is no "current record"
-there). `@record_transformation(..., on_error="skip")` (subclass form: `on_error = "skip"` class
+step it fails the job saying to use `@transformation(per_record=True)` (there is no "current record"
+there). `@transformation(per_record=True, on_error="skip")` (subclass form: `on_error = "skip"` class
 attribute, checked at class definition; the decorator checks its value at decoration) drops a
 record whose call raised — a timeout included — through the same path, reason
 `type(exc).__name__` (never the message: it can carry record values, and reasons are counted),
-the same semantics as `@record_destination`'s `on_error`. `"fail"` is the default; `SkipJob` and
+the same semantics as `@destination(per_record=True)`'s `on_error`. `"fail"` is the default; `SkipJob` and
 `SkipRecord` keep their meaning either way, and a wrong return type still fails. Observability: `AppliedStep.skip_reasons`; the worker logs `Job <id>: <step> skipped N
 records ('reason' xN, …)`, stores `records_skipped` and `record_skip_reasons` in the job's
 `stats`, and counts `reflowfy_records_skipped_total{pipeline, transformation}` — a new counter,
@@ -410,12 +440,12 @@ broker (1000 messages, 3 topics): 27–38 ms batched vs 259–725 ms at the old 
 ack at a time, and faster than the old `concurrency=16` (42–46 ms). Passing `concurrency=`
 raises a `TypeError` saying so (it would otherwise fall into `**producer_config`). A
 per-record `api_destination` keeps `send_concurrency` requests in flight — set by a
-`@record_destination`, else `default_record_concurrency()` (`TRANSFORM_CONCURRENCY`, 16) —
+`@destination(per_record=True)`, else `default_record_concurrency()` (`TRANSFORM_CONCURRENCY`, 16) —
 through `core/async_utils.for_each_concurrently`, so requests may land out of order. Tests:
 `tests/unit/test_destination_concurrency.py`; E2E
 `tests/e2e/destinations/test_api_destination_per_record.py` (the mock webhook's
 `/items/<run>/<id>` counts requests open per job; the pipeline's `concurrency` param wraps the
-destination in a `@record_destination` with that limit) and `test_kafka_destination_concurrency.py`
+destination in a `@destination(per_record=True)` with that limit) and `test_kafka_destination_concurrency.py`
 (real broker: exactly-once and each job's order with batching); distributed
 `tests/e2e_distributed/test_destination_concurrency.py` (`dist_per_record`, sink `PUT /record/…`).
 
@@ -445,12 +475,12 @@ Tests: `tests/unit/test_kafka_destination_send.py::TestHeaders`; E2E
 `tests/e2e/destinations/test_kafka_destination_headers.py` (real broker: static, function and
 missing-field modes of `e2e_kafka_headers_test`, topic `e2e-kafka-headers`).
 
-### A destination per record: `@record_destination`
+### A destination per record: `@destination(per_record=True)`
 
-`define_destination` runs once per job; `@record_destination("name", on_error="fail"|"skip",
-concurrency=None, timeout=None)` turns a function `(record, runtime_params, **options) -> BaseDestination`
+`define_destination` runs once per job; `@destination(name=None, per_record=True,
+on_error="fail"|"skip", concurrency=None, timeout=None)` (old spelling `@record_destination`) turns a function `(record, runtime_params, **options) -> BaseDestination`
 (sync or `async def`) into a `RecordDestination` subclass (`destinations/record.py`) that
-`define_destination` returns (`return stt_engines()`; kwargs become `options`). It is for
+`define_destination` returns (`return stt_engines`, or `stt_engines(region=...)`; kwargs become `options`). It is for
 records of one job going to different topics/clusters/credentials. Options are bound
 against the function's signature when the destination is built (`core/options.py`
 `option_binder`, shared with `@transformation`), so a typo raises `TypeError` in
@@ -505,7 +535,7 @@ pyright rejects a one-argument function or one returning `None`. A hand-written
   re-send the ones already written; the first failure cancels the sends in flight.
   `health_check` (every group healthy) and `close` (all closed, first error raised after) run
   through the same pool.
-- **Concurrency/timeout, as `@record_transformation`:** `effective_concurrency()` (the
+- **Concurrency/timeout, as `@transformation(per_record=True)`:** `effective_concurrency()` (the
   decorator's `concurrency`, else `TRANSFORM_CONCURRENCY`, 16) is the request budget above, the
   groups in flight and, for an `async def` function, records routed at once
   (`AppliedStep.concurrency` reports the latter; `None` for a sync function, which routes

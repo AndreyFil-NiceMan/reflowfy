@@ -46,8 +46,8 @@ def apply_transformation(
 ) -> StepResult:
     """Run one transformation the way the worker runs it, and return its output.
 
-    ``transformation`` is an instance, or the class a ``@transformation`` /
-    ``@record_transformation`` decorator returns (it is instantiated for you). Sync,
+    ``transformation`` is an instance, or the class ``@transformation`` returns
+    (it is instantiated for you). Sync,
     async and per-record steps all work: a per-record step runs with its real
     concurrency, ``None`` drops a record and ``SkipRecord`` drops it with a reason.
 

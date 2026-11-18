@@ -13,6 +13,7 @@
   ``on_error="skip"`` skipped them all while the job completed.
 """
 
+from reflowfy.destinations.decorators import destination
 import asyncio
 from typing import Any, Dict, Iterator, List, Optional
 
@@ -24,7 +25,6 @@ from reflowfy.core.exceptions import PipelineError
 from reflowfy.core.id_based_pipeline import IdBasedPipeline
 from reflowfy.core.job_retry import JobRetryConfig
 from reflowfy.destinations.base import BaseDestination
-from reflowfy.destinations.decorators import record_destination
 from reflowfy.destinations.fan_out import fan_out
 from reflowfy.destinations.kafka import kafka_destination
 from reflowfy.destinations.record import RecordDestination
@@ -423,7 +423,7 @@ class TestAsyncHooks:
 # ---------------------------------------------------------------- record destination options
 
 
-@record_destination("contracts_by_region", on_error="skip")
+@destination("contracts_by_region", per_record=True, on_error="skip")
 def by_region(record: Any, runtime_params: Any, *, region: str) -> BaseDestination:
     return kafka_destination(bootstrap_servers="k:9092", topic=f"orders-{region}")
 

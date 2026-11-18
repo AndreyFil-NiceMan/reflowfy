@@ -16,7 +16,7 @@ others), connections are shared, content dedup hashes each (record, destination)
 destination that fails fails the job; an ``optional`` one is logged and counted
 (``destinations_failed_optional`` in the job's stats) and the job completes.
 
-A ``@record_destination`` function may return ``fan_out(...)`` (or a list) as well, for
+A ``@destination(per_record=True)`` function may return ``fan_out(...)`` (or a list) as well, for
 a per-record multicast.
 """
 
@@ -44,7 +44,7 @@ class FanOut(RecordDestination):
                 raise TypeError(
                     f"fan_out: {type(destination).__name__} is not a destination it can send "
                     "to; give destinations such as kafka_destination(...) (not another "
-                    "fan_out or @record_destination)"
+                    "fan_out or @destination(per_record=True))"
                 )
         self._targets: List[BaseDestination] = list(destinations)
         target_ids = {id(d) for d in self._targets}
@@ -81,7 +81,18 @@ def fan_out(
 
 
 def as_destination(produced: Any) -> Any:
-    """What ``define_destination`` returned, with a list or tuple made a :func:`fan_out`."""
+    """What ``define_destination`` returned, with a list or tuple made a :func:`fan_out`.
+
+    A bare ``@destination(per_record=True)`` class (no options) is built here.
+    """
+    if isinstance(produced, type):
+        if issubclass(produced, RecordDestination):
+            built: RecordDestination = produced()
+            return built
+        raise TypeError(
+            f"define_destination returned the class {produced!r}, not a "
+            "destination: call it with its arguments"
+        )
     if isinstance(produced, (list, tuple)):
         return fan_out(*cast(Sequence[BaseDestination], produced))
     return produced

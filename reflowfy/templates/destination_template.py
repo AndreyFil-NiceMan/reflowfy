@@ -1,18 +1,18 @@
 """
 Example reusable destination configuration.
 
-Use the @destination decorator to create named destination configurations
-that can be reused across multiple pipelines.
+A plain function that returns a configured destination: import it from any
+pipeline. No decorator needed. (To send each record to its own destination, use
+@destination(per_record=True) — see the README.)
 """
 
 from typing import Any
 import os
-from reflowfy import destination, kafka_destination, get_logger
+from reflowfy import kafka_destination, get_logger
 
 logger = get_logger(__name__)
 
 
-@destination("example_kafka")
 def example_kafka(**overrides: Any):
     """
     Example Kafka destination configuration.

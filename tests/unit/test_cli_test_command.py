@@ -1,5 +1,6 @@
 """`reflowfy test`, driven through the real typer app with CliRunner."""
 
+from reflowfy import transformation
 import json
 import logging
 import sys
@@ -21,7 +22,6 @@ from reflowfy import (
     SkipJob,
     SkipRecord,
     pipeline_registry,
-    record_transformation,
 )
 from reflowfy.cli.commands import test as test_cmd
 from reflowfy.cli.main import app
@@ -119,7 +119,7 @@ class Explode(BaseTransformation):
 RECORDS = [{"id": 1, "name": "alice"}, {"id": 2, "name": "bob"}, {"id": 3, "name": "carol"}]
 
 
-@record_transformation("skip_odd")
+@transformation("skip_odd", per_record=True)
 async def skip_odd(record: Any, runtime_params: Any) -> Any:
     if record["data"]["id"] % 2:
         raise SkipRecord("odd id")

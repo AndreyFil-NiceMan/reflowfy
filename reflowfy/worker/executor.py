@@ -78,7 +78,7 @@ class JobStats:
         self.redelivered = False
         # The execution was cancelled before this job started; the message was skipped.
         self.cancelled = False
-        # Distinct destinations a @record_destination (or fan_out) sent this job's
+        # Distinct destinations a @destination(per_record=True) (or fan_out) sent this job's
         # records to, and how many of its optional ones failed without failing the job.
         self.destinations: Optional[int] = None
         self.destinations_failed_optional: Optional[int] = None
@@ -156,7 +156,7 @@ class JobStats:
             # The exception class of a failed job (never its message): what tells a
             # RecordValidationError or PermanentDestinationError apart from other failures.
             **({"error_type": self.error_type} if self.error_type else {}),
-            # Only for a @record_destination, so other jobs' stats keep their shape.
+            # Only for a @destination(per_record=True), so other jobs' stats keep their shape.
             **({"destinations": self.destinations} if self.destinations is not None else {}),
             **(
                 {"destinations_failed_optional": self.destinations_failed_optional}
@@ -586,7 +586,7 @@ class WorkerExecutor:
 
         Returns (records to send, claimed). A pair whose hash another job holds was
         already written there and is dropped, as is a second record with the same
-        identity within this job. A record destination (``@record_destination``,
+        identity within this job. A record destination (``@destination(per_record=True)``,
         ``fan_out``) writes each record somewhere of its own, maybe several places:
         each is hashed, so the same record sent to two topics is two writes, and a
         record already in one is still sent to the other (``keep_only``). A record

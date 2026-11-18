@@ -14,6 +14,7 @@ writes to three topics. ``scenario`` picks the destination function:
 The test consumes the three topics and checks where each record landed.
 """
 
+from reflowfy import destination
 import os
 from typing import Literal
 
@@ -27,7 +28,6 @@ from reflowfy import (
     Records,
     RuntimeParams,
     Transformations,
-    record_destination,
     transformation,
 )
 from reflowfy.destinations.kafka import kafka_destination
@@ -71,12 +71,12 @@ def _engine_destination(record: Record) -> BaseDestination:
     )
 
 
-@record_destination("e2e_engine_topics")
+@destination("e2e_engine_topics", per_record=True)
 def engine_topics(record: Record, runtime_params: RecordDestinationParams) -> BaseDestination:
     return _engine_destination(record)
 
 
-@record_destination("e2e_engine_topics_skip", on_error="skip")
+@destination("e2e_engine_topics_skip", per_record=True, on_error="skip")
 def engine_topics_skip(
     record: Record, runtime_params: RecordDestinationParams
 ) -> BaseDestination:

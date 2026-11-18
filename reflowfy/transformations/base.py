@@ -2,7 +2,20 @@
 
 import asyncio
 from abc import ABCMeta, abstractmethod
-from typing import Any, ClassVar, Dict, List, Literal, NamedTuple, Optional, Sequence, Tuple, cast
+from typing import (
+    Any,
+    ClassVar,
+    Dict,
+    List,
+    Literal,
+    NamedTuple,
+    Optional,
+    Sequence,
+    Tuple,
+    Type,
+    Union,
+    cast,
+)
 
 from reflowfy.core.exceptions import SkipJob, SkipRecord
 from reflowfy.core.query_loader import QueryLoaderMixin
@@ -69,7 +82,7 @@ class BaseTransformation(QueryLoaderMixin, metaclass=TransformationMeta):
 
     # The record type apply() returns (a record, not a list: e.g. TaxedOrder), checked
     # when the pipeline sets validate_steps. None = unchecked. A @transformation or
-    # @record_transformation reads it from the function's return annotation instead.
+    # A @transformation function's return annotation is read instead.
     output_type: Any = None
 
     @abstractmethod
@@ -121,8 +134,30 @@ class BaseTransformation(QueryLoaderMixin, metaclass=TransformationMeta):
         return f"{self.__class__.__name__}(name='{self.name}')"
 
 
-Transformations = Sequence[BaseTransformation]
-"""What ``define_transformations`` returns."""
+Transformations = Sequence[Union[BaseTransformation, Type[BaseTransformation]]]
+"""What ``define_transformations`` returns.
+
+A step is an instance (``multiply(factor=2)``) or, when it takes no options, the
+decorated class itself (``add_tax``): :func:`as_transformations` builds it.
+"""
+
+
+def as_transformation(step: Any) -> Any:
+    """A step as ``define_transformations`` returned it, built if it is a class.
+
+    ``[add_tax, multiply(factor=2)]``: the bare ``add_tax`` is a decorated class that
+    takes no options, so it is built here. One with required options raises the
+    ``TypeError`` naming them, inside ``define_transformations``'s resolution.
+    """
+    if isinstance(step, type) and issubclass(step, BaseTransformation):
+        built: BaseTransformation = step()
+        return built
+    return cast(Any, step)
+
+
+def as_transformations(steps: Any) -> List[Any]:
+    """Every step of a ``define_transformations`` result, classes built (:func:`as_transformation`)."""
+    return [as_transformation(step) for step in steps]
 
 
 class AsyncTransformation(BaseTransformation):
@@ -131,7 +166,7 @@ class AsyncTransformation(BaseTransformation):
     The worker awaits it on its own event loop, so it can call HTTP APIs or
     databases without blocking (``@transformation`` on an ``async def`` builds one
     of these). Steps still run one after another; for many awaits per job, one
-    per record, use :class:`RecordTransformation` / ``@record_transformation``.
+    per record, use :class:`RecordTransformation` / ``@transformation(per_record=True)``.
 
     Example:
         >>> class Geocode(AsyncTransformation):
@@ -245,7 +280,7 @@ class RecordTransformation(AsyncTransformation):
     the step, not a bad record.
 
     The concurrent calls share one ``runtime_params``: read it, don't write it.
-    Usually built with ``@record_transformation``; subclass it to share one client
+    Usually built with ``@transformation(per_record=True)``; subclass it to share one client
     across the records of a step, opened in :meth:`setup` and closed in
     :meth:`teardown` (creating an ``httpx.AsyncClient`` costs tens of milliseconds,
     so one per record is slow)::
@@ -308,13 +343,22 @@ class RecordTransformation(AsyncTransformation):
             result = await self._call_one(record, runtime_params)
         except SkipJob:
             raise
-        except SkipRecord as exc:
-            return _Skipped(str(exc))
         except Exception as exc:
-            if self.on_error == "skip":
-                return _Skipped(type(exc).__name__)
-            raise RecordFailure(index, record, exc) from exc
-        # Outside the try: a wrong return type is the step's bug, never skipped.
+            return self._raised(index, record, exc)
+        return self._returned(index, record, result)
+
+    def _raised(self, index: int, record: Any, exc: Exception) -> "_Skipped":
+        """A record's call raised: skip it (``SkipRecord``, ``on_error="skip"``) or fail."""
+        if isinstance(exc, SkipRecord):
+            return _Skipped(str(exc))
+        if self.on_error == "skip":
+            return _Skipped(type(exc).__name__)
+        raise RecordFailure(index, record, exc) from exc
+
+    @staticmethod
+    def _returned(index: int, record: Any, result: Any) -> Any:
+        """A record's call returned: check the contract. A wrong type is the step's bug,
+        never skipped, whatever ``on_error`` says."""
         try:
             check_record_result(result)
         except RecordContractError as exc:
@@ -371,8 +415,61 @@ class RecordTransformation(AsyncTransformation):
         return results
 
 
+class SyncRecordTransformation(RecordTransformation):
+    """A per-record step whose function is plain ``def``: implement :meth:`apply_record_sync`.
+
+    The records run one after another, in order, in one worker thread (the event
+    loop stays free). Running them concurrently would only help code that awaits,
+    so ``concurrency`` and ``timeout`` do not apply: a running sync call cannot be
+    interrupted. Everything else is :class:`RecordTransformation`'s: ``None`` drops
+    a record, a list replaces it, ``SkipRecord``/``on_error`` skip it, ``SkipJob``
+    drops the job. Usually built with ``@transformation(per_record=True)`` on a
+    ``def``::
+
+        @transformation(per_record=True)
+        def drop_free(record: TaxedOrder, runtime_params: RuntimeParams) -> TaxedOrder | None:
+            return record if record["data"]["amount"] > 0 else None
+    """
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        for knob in ("concurrency", "timeout"):
+            if getattr(cls, knob) is not None:
+                raise TypeError(
+                    f"{cls.__name__}.{knob}: a sync per-record step runs its records one "
+                    f"at a time in a thread, so {knob} does not apply. Use `async def` "
+                    "(RecordTransformation) for concurrent or time-limited records."
+                )
+
+    @abstractmethod
+    def apply_record_sync(self, record: Any, runtime_params: Dict[str, Any]) -> Any:
+        """Transform one record; return the new record, a list of records, or ``None``."""
+
+    async def apply_record(self, record: Any, runtime_params: Dict[str, Any]) -> Any:
+        return self.apply_record_sync(record, runtime_params)
+
+    def effective_concurrency(self) -> int:
+        return 1
+
+    async def _apply_all(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
+        return await asyncio.to_thread(self._apply_all_sync, records, runtime_params)
+
+    def _apply_all_sync(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
+        results: List[Any] = []
+        for index, record in enumerate(records):
+            try:
+                result = self.apply_record_sync(record, runtime_params)
+            except SkipJob:
+                raise
+            except Exception as exc:
+                results.append(self._raised(index, record, exc))
+                continue
+            results.append(self._returned(index, record, result))
+        return results
+
+
 class DecoratedTransformation(BaseTransformation):
-    """What ``@transformation`` / ``@record_transformation`` turn a function into.
+    """What ``@transformation`` turn a function into.
 
     Its constructor takes the function's options as keyword arguments
     (``multiply(factor=2)``), checked against the function's signature at once, so

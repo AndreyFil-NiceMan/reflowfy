@@ -314,12 +314,8 @@ class TestNew:
     @pytest.mark.parametrize(
         "kind, folder, expected",
         [
-            ("source", "sources", '@source("orders_db")\ndef orders_db(**overrides):'),
-            (
-                "destination",
-                "destinations",
-                '@destination("orders_db")\ndef orders_db(**overrides):',
-            ),
+            ("source", "sources", "\n\ndef orders_db(**overrides):"),
+            ("destination", "destinations", "\n\ndef orders_db(**overrides):"),
             ("transformation", "transformations", "class OrdersDb(BaseTransformation):"),
         ],
     )

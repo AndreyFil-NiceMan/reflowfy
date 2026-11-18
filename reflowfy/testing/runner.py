@@ -42,7 +42,11 @@ from reflowfy.testing.cassette import (
 from reflowfy.testing.destinations import CaptureDestination
 from reflowfy.testing.result import JobResult, PipelineResult
 from reflowfy.testing.transforms import run_step
-from reflowfy.transformations.base import BaseTransformation, TransformationError
+from reflowfy.transformations.base import (
+    BaseTransformation,
+    TransformationError,
+    as_transformations,
+)
 
 logger = get_logger("testing")
 
@@ -173,7 +177,7 @@ def _instrument(
     original = fork.define_transformations
 
     def swap(resolved: Any) -> List[Any]:
-        steps: List[Any] = list(resolved)
+        steps: List[Any] = as_transformations(resolved)
         position = progress.resolutions
         progress.resolutions += 1
         if position < len(steps):

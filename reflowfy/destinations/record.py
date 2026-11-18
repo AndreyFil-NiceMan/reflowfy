@@ -1,16 +1,16 @@
-"""A destination chosen per record: ``@record_destination``.
+"""A destination chosen per record: ``@destination(per_record=True)``.
 
-``@destination`` builds one destination per job. ``@record_destination`` calls a
-function once per record and sends each record to the destination it returned, so
+``define_destination`` builds one destination per job. ``@destination(per_record=True)``
+calls a function once per record and sends each record to the destination it returned, so
 one job can write to many topics, clusters or URLs::
 
-    @record_destination("stt_engines", on_error="skip")
+    @destination("stt_engines", per_record=True, on_error="skip")
     def stt_engines(record, runtime_params):
         topic = Settings.KAFKA.topics[record["engine"]][runtime_params["env"]]
         return kafka_destination(bootstrap_servers=..., topic=topic.name, ...)
 
     def define_destination(self, records, runtime_params):
-        return stt_engines()
+        return stt_engines  # or stt_engines(option=...) with options
 
 How a job runs (``execution/job_runner.py`` calls :meth:`RecordDestination.route`
 right after ``define_destination``):
@@ -29,7 +29,7 @@ right after ``define_destination``):
    failed group does not re-send the groups already written. Order is kept within a
    group, not across groups. The first group that fails cancels the rest.
    ``concurrency`` (default ``TRANSFORM_CONCURRENCY``, 16, as for
-   ``@record_transformation``) is the job's one limit: groups sent at once, and
+   ``@transformation(per_record=True)``) is the job's one limit: groups sent at once, and
    per-record requests in flight across *all* groups together. A Kafka group is one
    batch, which needs no limit.
 
@@ -99,7 +99,7 @@ is accepted (``List`` is invariant)."""
 
 
 class RecordDestinationError(PipelineError):
-    """The function of a ``@record_destination`` failed on a record, or returned no destination.
+    """The function of a ``@destination(per_record=True)`` failed on a record, or returned no destination.
 
     Names the destination, the record's position and the exception type — never the
     record's contents. ``original_error`` holds the exception the function raised.
@@ -129,7 +129,7 @@ _Targets = List[Tuple[BaseDestination, bool]]
 class RecordDestination(BaseDestination):
     """Sends each record to the destination :meth:`destination_for_record` returns for it.
 
-    Usually built with ``@record_destination``. Subclass it and override
+    Usually built with ``@destination(per_record=True)``. Subclass it and override
     :meth:`destination_for_record` (sync or ``async def``) for anything the decorator
     does not cover. One instance serves one job: ``define_destination`` builds a new one
     each time.
@@ -142,7 +142,7 @@ class RecordDestination(BaseDestination):
     per-record ``api_destination``; a Kafka group is one batch), destinations sent to,
     health-checked and closed at once, and records routed at once when the function is
     ``async def``. Default ``TRANSFORM_CONCURRENCY`` (16), as for
-    ``@record_transformation``. A sync function routes its records one after another,
+    ``@transformation(per_record=True)``. A sync function routes its records one after another,
     in a thread."""
     timeout: ClassVar[Optional[float]] = None
     """Seconds allowed per record for an ``async def`` function; ``None`` means no
@@ -553,7 +553,7 @@ def make_record_destination(
     concurrency: Optional[int],
     timeout: Optional[float] = None,
 ) -> "type[RecordDestination]":
-    """The :class:`RecordDestination` subclass ``@record_destination`` builds for ``func``.
+    """The :class:`RecordDestination` subclass ``@destination(per_record=True)`` builds for ``func``.
 
     Instances take keyword options, passed on to every call:
     ``stt_engines(region="eu")`` calls ``func(record, runtime_params, region="eu")``.
