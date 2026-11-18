@@ -28,7 +28,6 @@ from reflowfy import (
     SkipRecord,
     TransformationError,
     TypedRecord,
-    record_transformation,
     transformation,
 )
 from reflowfy.transformations.output_type import step_output_type
@@ -80,7 +79,7 @@ async def add_async(records: List[Any], runtime_params: Any, *, by: int = 1) -> 
     return [{**r, "v": r["v"] + by} for r in records]
 
 
-@record_transformation("ut_opt_label")
+@transformation("ut_opt_label", per_record=True)
 async def label(record: Any, runtime_params: Any, *, prefix: str) -> Optional[Dict[str, Any]]:
     return {**record, "label": f"{prefix}{record['id']}"}
 
@@ -96,7 +95,7 @@ def typed_with_option(
     return records if keep else []
 
 
-@record_transformation("ut_opt_typed_record")
+@transformation("ut_opt_typed_record", per_record=True)
 async def typed_record_with_option(
     record: Any, runtime_params: Any, *, tag: str
 ) -> Optional[TypedRecord[Order]]:
@@ -187,14 +186,14 @@ class TestOptions:
 # ---------------------------------------------------------------------------
 
 
-@record_transformation("ut_onerr_skip", on_error="skip", concurrency=2)
+@transformation("ut_onerr_skip", per_record=True, on_error="skip", concurrency=2)
 async def fails_on_odd(record: Any, runtime_params: Any) -> Any:
     if record["id"] % 2:
         raise ValueError(f"secret value {record['v']}")
     return record
 
 
-@record_transformation("ut_onerr_fail")
+@transformation("ut_onerr_fail", per_record=True)
 async def fails_on_odd_default(record: Any, runtime_params: Any) -> Any:
     if record["id"] % 2:
         raise ValueError("boom")
@@ -222,7 +221,7 @@ class TestOnError:
         assert info.value.culprit_index == 1
 
     async def test_skip_counts_a_timeout_as_raising(self):
-        @record_transformation("ut_onerr_timeout", on_error="skip", timeout=0.05)
+        @transformation("ut_onerr_timeout", per_record=True, on_error="skip", timeout=0.05)
         async def hang_on_1(record: Any, runtime_params: Any) -> Any:
             if record["id"] == 1:
                 await asyncio.sleep(10)
@@ -235,7 +234,7 @@ class TestOnError:
         assert applied[0].skip_reasons == {"TimeoutError": 1}
 
     async def test_skip_record_keeps_its_own_reason(self):
-        @record_transformation("ut_onerr_skiprecord", on_error="skip")
+        @transformation("ut_onerr_skiprecord", per_record=True, on_error="skip")
         async def skipper(record: Any, runtime_params: Any) -> Any:
             if record["id"] == 0:
                 raise SkipRecord("not wanted")
@@ -250,7 +249,7 @@ class TestOnError:
         assert applied[0].skip_reasons == {"not wanted": 1, "KeyError": 1}
 
     async def test_skip_job_still_drops_the_job(self):
-        @record_transformation("ut_onerr_skipjob", on_error="skip")
+        @transformation("ut_onerr_skipjob", per_record=True, on_error="skip")
         async def drop(record: Any, runtime_params: Any) -> Any:
             raise SkipJob("nothing today")
 
@@ -259,7 +258,7 @@ class TestOnError:
 
     def test_an_unknown_value_fails_at_decoration(self):
         with pytest.raises(ValueError, match="on_error must be 'fail' or 'skip'"):
-            record_transformation("ut_onerr_bad", on_error="ignore")  # type: ignore[arg-type]
+            transformation("ut_onerr_bad", per_record=True, on_error="ignore")  # type: ignore[arg-type]
 
     async def test_the_subclass_form(self):
         class Lenient(RecordTransformation):
@@ -361,7 +360,7 @@ class TestPerRecordStepContract:
         assert [r["id"] for r in out] == [0, 2]
 
     async def test_the_decorated_form_explodes_in_order_with_concurrency(self):
-        @record_transformation("ut_contract_decorated", concurrency=4)
+        @transformation("ut_contract_decorated", per_record=True, concurrency=4)
         async def explode(record: Dict[str, Any], runtime_params: Any) -> List[Dict[str, Any]]:
             await asyncio.sleep(0.001 * (5 - record["id"]))  # finish out of order
             return [{**record, "copy": n} for n in range(record["id"])]
@@ -372,7 +371,7 @@ class TestPerRecordStepContract:
         assert [(r["id"], r["copy"]) for r in out] == [(1, 0), (2, 0), (2, 1), (3, 0), (3, 1), (3, 2)]
 
     async def test_the_decorated_form_is_checked_too(self):
-        @record_transformation("ut_contract_decorated_bad")
+        @transformation("ut_contract_decorated_bad", per_record=True)
         async def explode(record: Any, runtime_params: Any) -> Any:
             return (record, record)
 
@@ -478,7 +477,7 @@ class TestShouldApplyTransformation:
     def test_a_declined_per_record_step_does_not_run(self):
         calls: List[int] = []
 
-        @record_transformation("ut_decl_per_record")
+        @transformation("ut_decl_per_record", per_record=True)
         async def count(record: Any, runtime_params: Any) -> Any:
             calls.append(record["id"])  # pragma: no cover
             return record  # pragma: no cover

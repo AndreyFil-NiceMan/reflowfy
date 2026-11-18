@@ -24,6 +24,7 @@ a test makes a failure that it later "fixes" before retry-failed), ``drop_even``
 ``expand``, ``slow_s``, ``pad_kb``, ``volatile``.
 """
 
+from reflowfy import destination
 import time
 from typing import Any, Dict, Iterator, List, Optional, Set
 
@@ -47,7 +48,6 @@ from reflowfy import (
     Transformations,
     chunk,
     job,
-    record_destination,
     transformation,
 )
 from reflowfy.destinations.api import api_destination
@@ -287,7 +287,7 @@ def _per_record_route(record: Record, runtime_params: DistPerRecordParams) -> Ba
 
 # A @record_destination's limit is fixed where it is declared: one per value tested.
 PER_RECORD_LIMITED: Dict[int, "type[RecordDestination]"] = {
-    n: record_destination(f"dist_per_record_c{n}", concurrency=n)(_per_record_route)
+    n: destination(f"dist_per_record_c{n}", per_record=True, concurrency=n)(_per_record_route)
     for n in (1, 4, 5, 8)
 }
 

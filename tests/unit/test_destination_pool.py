@@ -6,6 +6,7 @@ Kafka is a fake producer; HTTP is a real httpx client on a MockTransport, so the
 requests, headers and connections counted are the ones httpx would send.
 """
 
+from reflowfy import destination
 import asyncio
 import json
 import logging
@@ -17,7 +18,6 @@ import pytest
 
 import reflowfy.destinations.kafka as kafka_mod
 import reflowfy.destinations.record as record_mod
-from reflowfy import record_destination
 from reflowfy.destinations.api import api_destination
 from reflowfy.destinations.base import ConnectionPool
 from reflowfy.destinations.kafka import KafkaDestination, kafka_destination
@@ -141,7 +141,7 @@ def _engines(n: int, *engines: str) -> List[Dict[str, Any]]:
 
 class TestKafkaSharedProducer:
     async def test_topics_on_one_cluster_share_one_producer(self, producers):
-        @record_destination("pool_topics")
+        @destination("pool_topics", per_record=True)
         def route(record: Any, params: Any) -> KafkaDestination:
             return kafka_destination(bootstrap_servers="k:9092", topic=f"t.{record['engine']}")
 
@@ -162,7 +162,7 @@ class TestKafkaSharedProducer:
         }
 
     async def test_each_cluster_or_credential_gets_its_own(self, producers):
-        @record_destination("pool_clusters")
+        @destination("pool_clusters", per_record=True)
         def route(record: Any, params: Any) -> KafkaDestination:
             cluster = {"a": "k1:9092", "b": "k2:9092", "c": "k2:9092"}[record["engine"]]
             user = "u2" if record["engine"] == "c" else "u1"
@@ -184,7 +184,7 @@ class TestKafkaSharedProducer:
 
         monkeypatch.setattr(KafkaDestination, "health_check", counting)
 
-        @record_destination("pool_health_kafka")
+        @destination("pool_health_kafka", per_record=True)
         def route(record: Any, params: Any) -> KafkaDestination:
             return kafka_destination(bootstrap_servers="k:9092", topic=f"t.{record['engine']}")
 
@@ -230,7 +230,7 @@ class TestKafkaSharedProducer:
 
 class TestApiSharedClient:
     async def test_a_destination_per_record_still_shares_one_client_and_one_probe(self, http):
-        @record_destination("pool_api_bad")
+        @destination("pool_api_bad", per_record=True)
         def route(record: Any, params: Any) -> Any:
             # Per-record values in the config: a destination per record.
             return api_destination(url=f"https://api.example.com/u/{record['id']}", body=record)
@@ -245,7 +245,7 @@ class TestApiSharedClient:
         assert http.clients[0].is_closed
 
     async def test_one_client_and_probe_per_host(self, http):
-        @record_destination("pool_api_hosts")
+        @destination("pool_api_hosts", per_record=True)
         def route(record: Any, params: Any) -> Any:
             return api_destination(
                 url=f"https://{record['engine']}.example.com/u/{{id}}", per_record=True
@@ -264,7 +264,7 @@ class TestApiSharedClient:
         assert all(c.is_closed for c in http.clients)
 
     async def test_different_credentials_on_one_host_do_not_share(self, http):
-        @record_destination("pool_api_creds")
+        @destination("pool_api_creds", per_record=True)
         def route(record: Any, params: Any) -> Any:
             return api_destination(
                 url="https://api.example.com/u/{id}",
@@ -281,7 +281,7 @@ class TestApiSharedClient:
     async def test_the_budget_covers_every_destination_together(self, http):
         http.delay = 0.01
 
-        @record_destination("pool_api_budget", concurrency=4)
+        @destination("pool_api_budget", per_record=True, concurrency=4)
         def route(record: Any, params: Any) -> Any:
             return api_destination(
                 url=f"https://{record['engine']}.example.com/u/{{id}}", per_record=True
@@ -373,7 +373,7 @@ class TestPerRecordHeaders:
 
 class TestDestinationPerRecordAdvice:
     async def test_warns_once_when_every_record_has_its_own_destination(self, http):
-        @record_destination("advice_bad")
+        @destination("advice_bad", per_record=True)
         def route(record: Any, params: Any) -> Any:
             return api_destination(url=f"https://api.example.com/u/{record['id']}", body=record)
 
@@ -389,11 +389,11 @@ class TestDestinationPerRecordAdvice:
         ]
 
     async def test_quiet_for_small_jobs_and_grouped_records(self, http):
-        @record_destination("advice_small")
+        @destination("advice_small", per_record=True)
         def small(record: Any, params: Any) -> Any:
             return api_destination(url=f"https://api.example.com/u/{record['id']}", body=record)
 
-        @record_destination("advice_grouped")
+        @destination("advice_grouped", per_record=True)
         def grouped(record: Any, params: Any) -> Any:
             return api_destination(url="https://api.example.com/u/{id}", per_record=True)
 
@@ -449,7 +449,7 @@ class TestConnectionPool:
         assert pool.requests is pool.requests  # one semaphore for the job
 
     async def test_a_record_destination_reports_a_pool_close_error(self, producers, monkeypatch):
-        @record_destination("pool_close_error")
+        @destination("pool_close_error", per_record=True)
         def route(record: Any, params: Any) -> KafkaDestination:
             return kafka_destination(bootstrap_servers="k:9092", topic="t")
 

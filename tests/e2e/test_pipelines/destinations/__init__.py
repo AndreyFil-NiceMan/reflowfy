@@ -1,18 +1,16 @@
 """
 Reusable destination configurations for E2E test pipelines.
 
-All destinations use the @destination decorator and are importable as factory functions.
+Plain factory functions: import them from any test pipeline.
 """
 
 import os
 from typing import Dict, Optional
 
-from reflowfy import destination
 from reflowfy.destinations.api import api_destination
 from reflowfy.destinations.console import console_destination
 
 
-@destination("e2e_http")
 def e2e_http(
     url: str = os.getenv("MOCK_HTTP_URL", "http://localhost:8091/webhook"),
     method: str = "POST",
@@ -34,7 +32,6 @@ def e2e_http(
     )
 
 
-@destination("e2e_http_runtime_params")
 def e2e_http_runtime_params(
     url: str = os.getenv("MOCK_HTTP_URL", "http://localhost:8091/webhook"),
     method: str = "POST",
@@ -60,7 +57,6 @@ def e2e_http_runtime_params(
     )
 
 
-@destination("e2e_console")
 def e2e_console(
     pretty_print: bool = True,
     max_records_display: int = 5,
@@ -72,7 +68,6 @@ def e2e_console(
     )
 
 
-@destination("e2e_kafka")
 def e2e_kafka(
     bootstrap_servers: str = os.getenv(
         "KAFKA_BOOTSTRAP_SERVERS",

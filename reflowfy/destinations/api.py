@@ -65,7 +65,7 @@ class ApiDestination(BaseDestination):
     in ``record["query"]`` over ``params`` (and leaves that field out of the
     body), and so are headers: ``{field}`` in a ``headers`` value, or a function
     of the record. Up to 16 requests are in flight at once (``TRANSFORM_CONCURRENCY``,
-    or a ``@record_destination``'s ``concurrency``).
+    or a ``@destination(per_record=True)``'s ``concurrency``).
 
     Supports:
     - Configurable authentication (Bearer, API key, Basic)
@@ -551,7 +551,7 @@ def api_destination(
 
     Per-record mode needs no ``dedup_identity``: the records are not part of the
     config. Up to 16 requests are in flight at once (``TRANSFORM_CONCURRENCY``; inside a
-    ``@record_destination`` its ``concurrency``), so they may land out of order, and a
+    ``@destination(per_record=True)`` its ``concurrency``), so they may land out of order, and a
     retry (``retry_config``) re-sends the whole job, records already accepted included —
     make the endpoint idempotent (PUT/upsert) when that matters.
 

@@ -6,7 +6,7 @@ Reflowfy enables you to build pipelines that fetch data from sources, apply cust
 
 ## 🎯 Key Features
 
-- **Modern DX**: Define reusable components with `@source`, `@destination`, and `@transformation` decorators.
+- **Modern DX**: Two decorators — `@transformation` (whole batch, or `per_record=True`) and `@destination(per_record=True)` — and plain functions for reusable sources and destinations.
 - **Auto-Discovery**: Pipelines and components are automatically discovered and registered — no manual `__init__.py` tracking required.
 - **Horizontally Scalable**: Process millions of records in parallel using Apache Kafka.
 - **Kubernetes-Native**: KEDA autoscaling from 0 to N workers based on queue lag.
@@ -62,8 +62,8 @@ This generates a standard project structure:
 my_project/
 ├── src/
 │   ├── pipelines/      # Define pipelines here
-│   ├── sources/        # Reusable @source configs
-│   ├── destinations/   # Reusable @destination configs
+│   ├── sources/        # Reusable source factories (plain functions)
+│   ├── destinations/   # Reusable destination factories, per-record routers
 │   ├── transformations/ # Reusable @transformation logic
 │   └── queries/        # Query templates
 ├── pyproject.toml      # Project dependencies (uv)
@@ -193,18 +193,26 @@ reflowfy deploy
 
 ## 🧠 Core Concepts: The Modern DX
 
-Reflowfy uses a modular, decorator-driven architecture for defining reusable components.
+Reflowfy keeps its authoring surface small:
+
+| You write | How |
+|---|---|
+| A reusable source or destination configuration | a plain function returning `elastic_source(...)`, `kafka_destination(...)`, … |
+| A step over the whole batch | `@transformation` |
+| A step over each record (filter, map, explode, enrich) | `@transformation(per_record=True)` |
+| A destination chosen per record | `@destination(per_record=True)` |
+| A step or destination with its own state (a client, a cache) | subclass `BaseTransformation` / `RecordTransformation` / `RecordDestination` |
 
 ### 1. Define Reusable Sources and Destinations
 
-Use the `@source` and `@destination` decorators to pre-configure connectors. These can be placed in your `sources/` and `destinations/` directories and reused across multiple pipelines.
+A plain function that returns a configured connector is all it takes. Put it in your
+`sources/` or `destinations/` directory and import it from any pipeline.
 
 ```python
 # sources/prod_elastic.py
 import os
-from reflowfy import source, elastic_source
+from reflowfy import elastic_source
 
-@source("prod_elastic")
 def prod_elastic(**overrides):
     return elastic_source(
         url=os.getenv("ELASTIC_URL"),
@@ -213,9 +221,8 @@ def prod_elastic(**overrides):
     )
 
 # destinations/prod_kafka.py
-from reflowfy import destination, kafka_destination
+from reflowfy import kafka_destination
 
-@destination("prod_kafka")
 def prod_kafka(**overrides):
     return kafka_destination(
         bootstrap_servers="kafka:9092",
@@ -223,6 +230,9 @@ def prod_kafka(**overrides):
         **overrides
     )
 ```
+
+(`@source("name")` and `@destination("name")` used to register these functions in a
+registry nothing read; they still work, with a `DeprecationWarning`.)
 
 #### Choosing a destination
 
@@ -232,9 +242,9 @@ def prod_kafka(**overrides):
 | One request per job, a body you build | `api_destination(url=..., body=...)` |
 | One endpoint, one request per record | `api_destination(url=".../{id}", per_record=True)` |
 | What a message holds varies per record | `{field}` templates or functions (below) |
-| *Where* it goes varies per record — topic, cluster, region, credentials | `@record_destination` returning one of the above |
+| *Where* it goes varies per record — topic, cluster, region, credentials | `@destination(per_record=True)` returning one of the above |
 
-The rule: **`@record_destination` decides where a record goes; templates decide what each
+The rule: **`@destination(per_record=True)` decides where a record goes; templates decide what each
 message looks like.**
 
 #### Per-record values: one template syntax everywhere
@@ -267,9 +277,9 @@ api_destination(
 - A per-record `api_destination` keeps **16 requests in flight** per job
   (`TRANSFORM_CONCURRENCY`), so they may land out of order; make the endpoint idempotent.
 - Neither destination takes `concurrency=` any more (removed in 1.1.4): to set a limit, use
-  `@record_destination(concurrency=N)`.
+  `@destination(per_record=True, concurrency=N)`.
 
-#### A destination per record: `@record_destination`
+#### A destination per record: `@destination(per_record=True)`
 
 When the records of one job go to different places — another topic, another cluster, other
 credentials — choose the destination per record. The function is called once for every record
@@ -278,9 +288,9 @@ build one today:
 
 ```python
 # destinations/by_region.py
-from reflowfy import kafka_destination, record_destination
+from reflowfy import destination, kafka_destination
 
-@record_destination("by_region", on_error="skip")
+@destination(per_record=True, on_error="skip")
 def by_region(record, runtime_params):
     topic = KAFKA_SETTINGS.topics[record["engine"]][runtime_params["env"]]
     return kafka_destination(
@@ -292,7 +302,7 @@ def by_region(record, runtime_params):
 
 # in the pipeline
 def define_destination(self, records, runtime_params):
-    return by_region()
+    return by_region
 ```
 
 - **Connections are shared per job.** Records whose destinations have the same class and
@@ -317,28 +327,60 @@ def define_destination(self, records, runtime_params):
   per-record values in templates — `api_destination(url=f"https://{record['region']}.api.com/users/{{id}}", per_record=True)`
   groups by region and URL-encodes the id. A job that builds a destination per record logs a
   one-time warning saying so.
+- The destination's name (in logs, metrics and errors) is the function's;
+  `@destination("other_name", per_record=True)` sets another.
 - Keyword arguments given in `define_destination` — `by_region(region="eu")` — are passed
-  on to every call. Filter records in a transformation, not here: returning anything but a
+  on to every call; a function without options can be returned bare (`return by_region`).
+  `@record_destination("name", ...)` is the old spelling and warns. Filter records in a transformation, not here: returning anything but a
   destination fails the job.
 
 ### 2. Create Reusable Transformations
 
-Transformations process batches of records. Use the `@transformation` decorator in your `transformations/` directory:
+One decorator, `@transformation`, in your `transformations/` directory. By default the
+function gets the whole batch; with `per_record=True` it gets one record at a time.
 
 ```python
 # transformations/clean_names.py
-from reflowfy import Records, RuntimeParams, transformation
+from typing import List, Optional
 
-@transformation("clean_names")
+from reflowfy import Record, Records, RuntimeParams, SkipRecord, transformation
+
+@transformation
 def clean_names(records: Records, runtime_params: RuntimeParams) -> Records:
     """Normalize user names."""
     for record in records:
         if "name" in record:
             record["name"] = record["name"].strip().title()
     return records
+
+@transformation(per_record=True)
+def active_only(record: Record, runtime_params: RuntimeParams) -> Optional[Record]:
+    return record if record.get("active") else None          # None drops the record
+
+@transformation(per_record=True)
+def one_per_item(record: Record, runtime_params: RuntimeParams) -> List[Record]:
+    return [{**record, "item": i} for i in record["items"]]  # a list replaces it
+
+@transformation(per_record=True, concurrency=32, timeout=10, on_error="skip")
+async def enrich(record: Record, runtime_params: RuntimeParams, *, region: str) -> Record:
+    if record.get("test"):
+        raise SkipRecord("test account")                     # dropped, reason counted
+    return {**record, "profile": await lookup(region, record["user_id"])}  # your own async call
 ```
 
-_(You can also subclass `BaseTransformation` for more complex stateful transformations)._
+- The step's name (logs, metrics, `reflowfy test`) is the function's;
+  `@transformation("other_name")` sets another. Names are unique.
+- `def` or `async def`, either way. A per-record `def` runs its records in order in a thread;
+  a per-record `async def` runs `concurrency` of them at once (default
+  `TRANSFORM_CONCURRENCY`, 16), each bounded by `timeout`. `concurrency`, `timeout` and
+  `on_error` exist only per record, and `concurrency`/`timeout` only for `async def` —
+  anything else fails when the module is imported, saying why.
+- Parameters after `(records|record, runtime_params)` are options: `enrich(region="eu")`.
+  A step without options is listed bare (`clean_names`) or called (`clean_names()`).
+- `@record_transformation("name", ...)` is the old spelling of `per_record=True` and warns.
+
+_(Subclass `BaseTransformation`, `RecordTransformation` or `SyncRecordTransformation` for
+a step with its own state — say, an HTTP client opened once per job in `setup()`)._
 
 ### 3. Build a Pipeline
 
@@ -374,8 +416,8 @@ class UserSyncPipeline(AbstractPipeline[RuntimeParams]):
     def define_transformations(
         self, records: Records, runtime_params: RuntimeParams
     ) -> Transformations:
-        # Instantiate and return transformations
-        return [clean_names()]
+        # Steps without options are listed bare; others are called with them
+        return [clean_names, active_only]
 
     def define_destination(
         self, records: Records, runtime_params: RuntimeParams
@@ -387,7 +429,7 @@ class UserSyncPipeline(AbstractPipeline[RuntimeParams]):
 
 ### 4. Logging and Errors
 
-**Logging.** Get a logger at module level with `get_logger(__name__)`. There is no `self` to reach for — it works the same in a transformation, a `@source` function, or a plain helper:
+**Logging.** Get a logger at module level with `get_logger(__name__)`. There is no `self` to reach for — it works the same in a transformation, a source factory, or a plain helper:
 
 ```python
 # transformations/clean_names.py
@@ -395,7 +437,7 @@ from reflowfy import transformation, get_logger
 
 logger = get_logger(__name__)
 
-@transformation("clean_names")
+@transformation
 def clean_names(records, context):
     logger.info("Normalizing %d names", len(records))
     return records

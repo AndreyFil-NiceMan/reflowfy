@@ -62,10 +62,10 @@ class BaseDestination(ABC):
         self.retry_config = retry_config or RetryConfig()
         # What identifies this destination for content dedup; None = the whole config.
         self.dedup_identity: Optional[Any] = None
-        # Set by a @record_destination: connections shared with the job's other
+        # Set by a @destination(per_record=True): connections shared with the job's other
         # destinations. None: this destination opens and closes its own.
         self.connection_pool: Optional[ConnectionPool] = None
-        # Set by a @record_destination: requests in flight at once, for destinations
+        # Set by a @destination(per_record=True): requests in flight at once, for destinations
         # that send one request per record. None: the destination's default.
         self.send_concurrency: Optional[int] = None
         # The pool this destination took a connection from, released by close().
@@ -130,7 +130,7 @@ class BaseDestination(ABC):
     def health_key(self) -> Optional[str]:
         """Destinations with the same key share one health check per job; None: its own.
 
-        A ``@record_destination`` checks each distinct key once — one probe per host or
+        A ``@destination(per_record=True)`` checks each distinct key once — one probe per host or
         cluster, not one per routed destination.
         """
         return None

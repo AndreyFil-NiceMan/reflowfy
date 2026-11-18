@@ -1,6 +1,6 @@
 """Options of a decorated per-job or per-record function, checked when the step is built.
 
-``@transformation``, ``@record_transformation`` and ``@record_destination`` turn a
+``@transformation`` and ``@destination(per_record=True)`` turn a
 function ``(records_or_record, runtime_params, **options)`` into a class whose
 constructor takes the options. They are bound against the function's signature right
 there, so a typo or a missing option fails where the step is built

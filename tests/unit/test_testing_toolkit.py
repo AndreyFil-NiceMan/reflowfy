@@ -21,7 +21,6 @@ from reflowfy import (
     api_destination,
     job,
     pipeline_registry,
-    record_transformation,
     transformation,
 )
 from reflowfy.destinations.base import DestinationError
@@ -61,7 +60,7 @@ def add_tax(records: List[Any], params: Dict[str, Any]) -> List[Any]:
     return [{**r, "tax": round(r["data"]["amount"] * rate, 2)} for r in records]
 
 
-@record_transformation("tk_drop_small")
+@transformation("tk_drop_small", per_record=True)
 async def drop_small(rec: Any, params: Dict[str, Any]) -> Any:
     if rec["data"]["amount"] < 1:
         raise SkipRecord("too small")
@@ -338,7 +337,7 @@ class TestNetwork:
         class Lookup(MockSource):
             pass
 
-        @record_transformation("tk_lookup")
+        @transformation("tk_lookup", per_record=True)
         async def lookup(rec, params):
             async with httpx.AsyncClient() as client:
                 rec["tier"] = (await client.get("https://crm.internal/tier")).json()["tier"]

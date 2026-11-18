@@ -69,7 +69,7 @@ class SkipRecord(PipelineError):
     (``records_skipped`` / ``record_skip_reasons``) and counted as
     ``reflowfy_records_skipped_total``::
 
-        @record_transformation("enrich_user")
+        @transformation("enrich_user", per_record=True)
         async def enrich_user(record, runtime_params):
             user = await fetch_user(record["user_id"])
             if not user["active"]:
