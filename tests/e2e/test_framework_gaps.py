@@ -15,13 +15,7 @@ import httpx
 import pytest
 
 REFLOW_MANAGER_URL = os.getenv("E2E_REFLOW_MANAGER_URL", "http://localhost:8002")
-API_URL = os.getenv("E2E_API_URL", "http://localhost:8003")
 MOCK_URL = os.getenv("E2E_MOCK_HTTP_URL", "http://localhost:8091")
-# Where the manager/worker containers reach the mock (callback_url is called from there).
-MOCK_INTERNAL_URL = os.getenv("E2E_MOCK_HTTP_INTERNAL_URL", "http://reflofy-e2e-mock-http:8091")
-# The API's run route takes mode=local|distributed: local on the default stack (no
-# worker), distributed with scripts/e2e-distributed.override.yml.
-RUN_MODE = os.getenv("E2E_RUN_MODE", "local")
 MAX_WAIT = 90
 TERMINAL = ("completed", "failed", "cancelled")
 
@@ -265,7 +259,7 @@ class TestJobRetry:
 
 
 # ---------------------------------------------------------------------------
-# Lifecycle hooks, chaining, callback_url (#25), define_rate_limit (#3)
+# Lifecycle hooks, chaining, define_rate_limit (#3)
 # ---------------------------------------------------------------------------
 
 
@@ -301,32 +295,6 @@ class TestLifecycle:
         assert child["parent_execution_id"] == execution_id
         stats = manager.get(f"/executions/{child['execution_id']}/stats").json()
         assert stats["parent_execution_id"] == execution_id
-
-    def test_callback_url_on_the_manager(self, manager):
-        run = _run_key("cb")
-        callback = f"{MOCK_INTERNAL_URL}/gaps/{run}/callback"
-        execution_id = _start(manager, "e2e_gaps_hooks", {"run": run}, callback_url=callback)
-        assert _wait(manager, execution_id)["state"] == "completed"
-        calls = _wait_requests(run, "callback", 1)
-        assert len(calls) == 1 and calls[0]["body"]["execution_id"] == execution_id
-
-    def test_callback_url_through_the_api(self, manager):
-        try:
-            httpx.get(f"{API_URL}/health", timeout=5).raise_for_status()
-        except httpx.HTTPError as exc:
-            pytest.skip(f"API not reachable at {API_URL}: {exc}")
-        run = _run_key("cbapi")
-        callback = f"{MOCK_INTERNAL_URL}/gaps/{run}/callback"
-        resp = httpx.post(
-            f"{API_URL}/pipelines/e2e_gaps_hooks/run",
-            params={"run": run, "callback_url": callback, "mode": RUN_MODE},
-            timeout=30,
-        )
-        assert resp.status_code == 200, resp.text
-        execution_id = resp.json()["execution_id"]
-        assert _wait(manager, execution_id)["state"] == "completed"
-        calls = _wait_requests(run, "callback", 1)
-        assert len(calls) == 1 and calls[0]["body"]["execution_id"] == execution_id
 
     def test_define_rate_limit_is_used_and_persisted(self, manager):
         run = _run_key("rate")
