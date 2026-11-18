@@ -68,7 +68,6 @@ class _HookPipeline(AbstractPipeline[RuntimeParams]):
             raise CALLS.raise_error
         if CALLS.chain is not None:
             CALLS.chain["child"] = lifecycle.run_pipeline(PIPE, {"step": 2})
-            CALLS.chain["current"] = lifecycle.current_execution_id()
 
     def on_execution_complete(self, summary: ExecutionSummary, runtime_params: Any) -> None:
         self._record("complete", summary, runtime_params)
@@ -366,7 +365,6 @@ def test_run_pipeline_from_a_hook_records_the_parent(db, engine, monkeypatch) ->
     lifecycle.fire_execution_hooks(engine, "e")
 
     child_id = CALLS.chain["child"]
-    assert CALLS.chain["current"] == "e"
     child = _row(db, child_id)
     assert child.parent_execution_id == "e"
     assert child.state == "pending" and child.runtime_params == {"step": 2}
@@ -374,7 +372,6 @@ def test_run_pipeline_from_a_hook_records_the_parent(db, engine, monkeypatch) ->
     # second, which a loaded machine (coverage, a busy CI runner) overran.
     assert started.wait(timeout=30)
     assert driven[0][1:] == (child_id, PIPE, {"step": 2}, None, None)
-    assert lifecycle.current_execution_id() is None  # only inside the hook
 
 
 def test_run_pipeline_rejects_unknown_pipelines_and_bad_params() -> None:

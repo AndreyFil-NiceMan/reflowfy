@@ -526,7 +526,7 @@ pyright rejects a one-argument function or one returning `None`. A hand-written
   logs a warning once per record destination per process (`destination_per_record`): per-record
   values belong in templates (encoding, grouping).
 - **Worker:** dedup hashes each record against **its own** destination
-  (`destination_identity(destination.destination_for(record))`), so one record to two topics is
+  (`destination_identity(d)` for each `d` in `destination.destinations_for(record)`), so one record to two topics is
   two writes; after dedup the destination is **not** re-resolved for a `RecordDestination`
   (each was built from its own record, and re-routing would count skips twice).
   `send_with_retry` sends the groups through `for_each_concurrently` (the record

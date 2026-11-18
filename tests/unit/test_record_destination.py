@@ -255,9 +255,9 @@ class TestRouting:
         await where().route([{"a": 1}], {})
         assert loops == [False]
 
-    async def test_destination_for_an_unrouted_record_raises(self):
+    async def test_destinations_for_an_unrouted_record_raises(self):
         with pytest.raises(KeyError, match="record was not routed"):
-            by_topic().destination_for({"region": "a"})
+            by_topic().destinations_for({"region": "a"})
 
     async def test_routing_logs_the_destination_count(self):
         with capture_logs("reflowfy.destinations.record") as logs:

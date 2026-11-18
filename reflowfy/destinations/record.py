@@ -193,10 +193,6 @@ class RecordDestination(BaseDestination):
         """The distinct destinations the routed records go to, in first-seen order."""
         return list(self._groups)
 
-    def destination_for(self, record: Any) -> BaseDestination:
-        """The (first) destination a routed ``record`` (the same object) goes to."""
-        return self.destinations_for(record)[0]
-
     def destinations_for(self, record: Any) -> List[BaseDestination]:
         """Every destination a routed ``record`` (the same object) goes to."""
         try:
@@ -371,10 +367,6 @@ class RecordDestination(BaseDestination):
         elif not optional:
             self._group_required[index] = True
         return index
-
-    def is_optional(self, destination: BaseDestination) -> bool:
-        """True when only ``optional=`` records chose this routed destination."""
-        return not self._group_required[self._groups.index(destination)]
 
     def _buckets(self, records: List[Any]) -> List[Tuple[int, List[Any]]]:
         by_group: Dict[int, List[Any]] = {}

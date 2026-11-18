@@ -123,7 +123,6 @@ def test_a_source_lists_the_parameters_its_templates_use() -> None:
 
 
 def test_source_factory_lists_the_builtin_types() -> None:
-    types = SourceFactory.list_types()
-    assert {"StaticSource", "MockSource", "ElasticSource", "IDBasedAPISource"} <= set(types)
-    assert SourceFactory.is_registered("StaticSource")
-    assert not SourceFactory.is_registered("NoSuchSource")
+    types = set(SourceFactory._registry)
+    assert {"StaticSource", "MockSource", "ElasticSource", "IDBasedAPISource"} <= types
+    assert "NoSuchSource" not in types

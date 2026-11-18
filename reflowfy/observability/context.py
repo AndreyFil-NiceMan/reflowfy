@@ -71,11 +71,6 @@ def log_context(**fields: Any) -> Generator[None, None, None]:
         _ctx.reset(token)
 
 
-def get_log_context() -> Dict[str, Any]:
-    """The fields currently bound by log_context() (a copy)."""
-    return dict(_ctx.get())
-
-
 def bind_log_context(*names: str) -> Callable[[F], F]:
     """Decorator: bind the named arguments of the wrapped function as log context.
 

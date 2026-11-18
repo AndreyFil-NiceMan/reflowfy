@@ -9,7 +9,7 @@ the module on every service, and the worker looks the job's ``source.type`` up h
 import json
 import logging
 import threading
-from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple, Type
+from typing import Any, Dict, FrozenSet, Optional, Set, Tuple, Type
 
 from reflowfy.core.secrets import (
     decode_secret_refs,
@@ -178,16 +178,6 @@ class SourceFactory:
         redacted: Dict[str, Any] = {k: redact_config(v) for k, v in descriptor.items()}
         redacted["config"] = redact_config(descriptor.get("config"), fields)
         return redacted
-
-    @classmethod
-    def list_types(cls) -> List[str]:
-        """List all registered source types."""
-        return list(cls._registry.keys())
-
-    @classmethod
-    def is_registered(cls, type_name: str) -> bool:
-        """Check if a source type is registered."""
-        return type_name in cls._registry
 
 
 def _register_builtin_sources() -> None:

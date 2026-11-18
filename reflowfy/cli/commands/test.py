@@ -71,7 +71,6 @@ class BatchReport:
     """What one batch did. The unit both pipeline shapes report in."""
 
     label: Optional[str] = None
-    source_repr: str = ""
     fetched: int = 0
     transformed: List[Any] = field(default_factory=lambda: [])
     applied: List[AppliedStep] = field(default_factory=lambda: [])
@@ -383,7 +382,7 @@ def run_batch(
     from reflowfy.testing.cassette import Session, activate, current_session
     from reflowfy.testing.runner import execute, private_copy
 
-    report = BatchReport(label=label, source_repr=repr(source))
+    report = BatchReport(label=label)
 
     def send(destination: Any, records: List[Any], job_params: Dict[str, Any]) -> None:
         _send_job(destination, records, job_params, opts, report, indent)

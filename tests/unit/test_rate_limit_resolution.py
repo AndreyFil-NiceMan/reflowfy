@@ -169,7 +169,6 @@ def test_no_rate_is_unlimited_and_touches_no_bucket(db) -> None:
     limiter = RateLimiter(db)
     assert limiter.acquire_token("k", None, max_wait=0)
     assert limiter.consume_tokens("k", 1, None)
-    assert limiter.can_dispatch("k", 1, None)
     assert db.query(RateLimitState).count() == 0
 
 

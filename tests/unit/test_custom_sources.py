@@ -79,13 +79,13 @@ class AbstractFamily(BaseSource):
 
 def test_concrete_subclasses_register_themselves() -> None:
     assert SourceFactory._registry["PagesSource"] is PagesSource
-    assert SourceFactory.is_registered("ConfigDictSource")
-    assert not SourceFactory.is_registered("AbstractFamily")
+    assert "ConfigDictSource" in SourceFactory._registry
+    assert "AbstractFamily" not in SourceFactory._registry
 
 
 def test_builtins_are_registered() -> None:
     for name in ("StaticSource", "MockSource", "SqlSource", "IDBasedAPISource"):
-        assert SourceFactory.is_registered(name)
+        assert name in SourceFactory._registry
 
 
 def test_plan_serialize_and_rebuild_on_the_worker() -> None:
