@@ -16,12 +16,12 @@ import os
 import time
 import pytest
 import httpx
+from tests.e2e.polling import POLL_INTERVAL
 
 # Configuration
 REFLOW_MANAGER_URL = os.getenv("E2E_REFLOW_MANAGER_URL", "http://localhost:8002")
 MOCK_HTTP_URL = os.getenv("MOCK_HTTP_URL", "http://localhost:8091")
 TIMEOUT = 60.0
-POLL_INTERVAL = 2
 
 
 @pytest.fixture(scope="module")

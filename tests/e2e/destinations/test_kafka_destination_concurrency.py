@@ -23,6 +23,7 @@ from typing import Any, Dict, List
 import httpx
 import pytest
 from aiokafka import AIOKafkaConsumer
+from tests.e2e.polling import POLL_INTERVAL
 
 REFLOW_MANAGER_URL = os.getenv("E2E_REFLOW_MANAGER_URL", "http://localhost:8002")
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("E2E_KAFKA_SERVERS", "127.0.0.1:9095")
@@ -47,7 +48,7 @@ def _run_and_wait(manager: httpx.Client, params: Dict[str, Any]) -> Dict[str, An
         stats = manager.get(f"/executions/{execution_id}/stats").json()
         if stats.get("state") in ("completed", "failed"):
             return stats
-        time.sleep(1)
+        time.sleep(POLL_INTERVAL)
     return stats
 
 

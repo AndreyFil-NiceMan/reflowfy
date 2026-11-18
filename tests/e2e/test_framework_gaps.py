@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 import pytest
+from tests.e2e.polling import POLL_INTERVAL
 
 REFLOW_MANAGER_URL = os.getenv("E2E_REFLOW_MANAGER_URL", "http://localhost:8002")
 MOCK_URL = os.getenv("E2E_MOCK_HTTP_URL", "http://localhost:8091")
@@ -49,7 +50,7 @@ def _wait(manager: httpx.Client, execution_id: str, timeout: float = MAX_WAIT) -
         stats = manager.get(f"/executions/{execution_id}/stats").json()
         if stats.get("state") in TERMINAL:
             return stats
-        time.sleep(1)
+        time.sleep(POLL_INTERVAL)
     raise TimeoutError(f"{execution_id} did not finish in {timeout}s")
 
 
@@ -67,7 +68,7 @@ def _wait_requests(run: str, name: str, count: int, timeout: float = 30) -> List
         got = _requests(run, name)
         if len(got) >= count:
             return got
-        time.sleep(0.5)
+        time.sleep(POLL_INTERVAL)
     return _requests(run, name)
 
 

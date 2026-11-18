@@ -11,10 +11,10 @@ import time
 
 import httpx
 import pytest
+from tests.e2e.polling import POLL_INTERVAL
 
 REFLOW_MANAGER_URL = os.getenv("E2E_REFLOW_MANAGER_URL", "http://localhost:8002")
 MOCK_URL = os.getenv("E2E_MOCK_HTTP_URL", "http://localhost:8091")
-POLL_INTERVAL = 2
 MAX_WAIT = 60
 
 

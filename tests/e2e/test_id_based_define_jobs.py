@@ -21,6 +21,7 @@ import time
 
 import httpx
 import pytest
+from tests.e2e.polling import POLL_INTERVAL
 
 BASE_URL = os.getenv("E2E_REFLOW_MANAGER_URL", "http://localhost:8002")
 MOCK_URL = os.getenv("MOCK_HTTP_BASE_URL", "http://localhost:8091")
@@ -49,7 +50,7 @@ def _wait(execution_id: str, timeout: int = 120) -> dict:
         data = httpx.get(f"{BASE_URL}/executions/{execution_id}/stats", timeout=10).json()
         if data.get("state") in ("completed", "failed"):
             return data
-        time.sleep(2)
+        time.sleep(POLL_INTERVAL)
     raise TimeoutError(f"Execution {execution_id} did not complete in {timeout}s")
 
 
