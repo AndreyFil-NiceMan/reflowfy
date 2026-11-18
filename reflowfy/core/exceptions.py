@@ -58,7 +58,18 @@ class SkipJob(PipelineError):
         def define_destination(self, records, runtime_params):
             if not [r for r in records if r["status"] == "ready"]:
                 raise SkipJob("nothing ready yet")
+
+    Attributes (filled in by the framework, not by the raiser):
+        applied_steps: The steps that ran before the job was dropped, so records
+            they skipped (``SkipRecord``) are still reported beside the drop.
+        step_skip_reasons: ``SkipRecord`` reasons of records that finished in the
+            per-record step the ``SkipJob`` came from, before it stopped that step.
     """
+
+    def __init__(self, message: str, original_error: Optional[Exception] = None) -> None:
+        super().__init__(message, original_error)
+        self.applied_steps: List[Any] = []
+        self.step_skip_reasons: Dict[str, int] = {}
 
 
 class SkipRecord(PipelineError):
