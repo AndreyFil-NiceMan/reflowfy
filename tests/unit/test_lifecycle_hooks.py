@@ -234,6 +234,25 @@ def test_a_pipeline_without_hooks_is_only_marked(db, engine) -> None:
     assert lifecycle.fire_execution_hooks(engine, "e2") is True
 
 
+def test_a_pipeline_object_without_apply_defaults_gets_the_stored_params(
+    db, engine, monkeypatch
+) -> None:
+    """A registered object that is not an AbstractPipeline (no apply_defaults) still
+    has its hook run, with the execution's params as stored."""
+    seen: List[Any] = []
+
+    class DuckPipeline:
+        name = "duck"
+
+        def on_execution_complete(self, summary: ExecutionSummary, params: Any) -> None:
+            seen.append((summary.execution_id, params))
+
+    monkeypatch.setattr(pipeline_registry, "get", lambda name: DuckPipeline())
+    _execution(db, "completed", pipeline="duck", runtime_params={"raw": 1})
+    assert lifecycle.fire_execution_hooks(engine, "e") is True
+    assert seen == [("e", {"raw": 1})]
+
+
 def test_a_failing_hook_is_stored_and_never_changes_the_state(db, engine, caplog) -> None:
     CALLS.raise_error = RuntimeError("warehouse down")
     _execution(db, "completed")
@@ -483,6 +502,8 @@ async def test_startup_installs_the_hooks(
 ) -> None:
     from reflowfy.reflow_manager.execution import _terminal_listeners
 
+    # The removed MAX_JOBS_PER_MINUTE setting is not read, and not warned about.
+    monkeypatch.setenv("MAX_JOBS_PER_MINUTE", "6000")
     monkeypatch.setattr(app_module, "init_db", lambda: None)
     monkeypatch.setattr(app_module, "setup_logging", lambda **kw: None)
     monkeypatch.setattr(
@@ -502,6 +523,7 @@ async def test_startup_installs_the_hooks(
     await app_module._startup()
 
     assert lifecycle.on_terminal in _terminal_listeners
+    assert "MAX_JOBS_PER_MINUTE" not in caplog.text
 
 
 async def test_shutdown_waits_for_hooks_in_flight(monkeypatch, caplog) -> None:

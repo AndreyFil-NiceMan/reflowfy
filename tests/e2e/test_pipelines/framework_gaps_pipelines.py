@@ -68,6 +68,7 @@ class SqlParams(RuntimeParams, total=False):
     table: Annotated[NotRequired[str], Param(default="test_events")]
     semicolon: Annotated[NotRequired[bool], Param(default=False)]
     use_secret: Annotated[NotRequired[bool], Param(default=False)]
+    quoted: Annotated[NotRequired[bool], Param(default=False)]
 
 
 class GapsSqlPipeline(AbstractPipeline[SqlParams]):
@@ -77,9 +78,11 @@ class GapsSqlPipeline(AbstractPipeline[SqlParams]):
     name = "e2e_gaps_sql"
 
     def define_source(self, runtime_params: SqlParams) -> Any:
+        # quoted: the form removed after 1.1.6 ('{{ x }}'), which must fail the run.
+        value = "'{{ status }}'" if runtime_params.get("quoted") else "{{ status }}"
         query = (
             "SELECT id, status FROM {{ table | ident }} "
-            "WHERE status = {{ status }} ORDER BY id LIMIT 5"
+            f"WHERE status = {value} ORDER BY id LIMIT 5"
         )
         if runtime_params.get("semicolon"):
             query += ";"
