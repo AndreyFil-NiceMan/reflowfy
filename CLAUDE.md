@@ -313,7 +313,7 @@ rejects a function with fewer than two positional parameters, and admits the opt
 **`should_apply_transformation(transformation, runtime_params, records)`** (a pipeline method,
 default yes) is asked before each step, in a thread like other sync user code, with the records
 as they are at that point. A declined step keeps its position — it counts as applied, so
-re-resolution never offers it again (append-only rule) — and is reported as an `AppliedStep`
+re-resolution never offers it again (append-only rule, enforced: a re-resolution that drops or renames a step that already ran fails the job with a `TransformationError`) — and is reported as an `AppliedStep`
 with `mode="skipped"` (`SKIPPED_MODE`), `records_in == records_out`, `duration` = the hook's
 time; it is not run and not validated. The hook is not called at all when the pipeline does
 not override it (no thread hop). If it raises, the job fails with a `TransformationError`

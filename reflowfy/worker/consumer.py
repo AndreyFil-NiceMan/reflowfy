@@ -235,8 +235,9 @@ class KafkaJobConsumer:
             success = await self.executor.execute_job(job_payload)
 
             # Commit whether the job succeeded or failed. Kafka does not own
-            # retries here — the failure is already recorded in Postgres and the
-            # DLQ (POST /dlq/schedule) owns re-runs. Not committing would not
+            # retries here — the failure is already recorded in Postgres, and a
+            # re-run is the pipeline's job_retry (scheduled by this worker) or
+            # POST /executions/{id}/retry-failed. Not committing would not
             # actually retry: arg-less commit() advances the whole partition, so
             # the next successful message commits past this offset regardless,
             # while risking a duplicate reprocess of a deterministic failure on

@@ -254,6 +254,36 @@ async def apply_transformations_iteratively_async(
         raise
 
 
+def _check_append_only(pipeline: Any, current: List[Any], applied: List[AppliedStep]) -> None:
+    """Re-resolution may only grow the list: a step that already ran must still be at
+    its position, under the same name.
+
+    The runner applies ``current[len(applied)]`` next, so a list that dropped or
+    replaced an earlier step used to shift every later one silently: a step ran twice
+    or never, depending on where the change was.
+    """
+    if len(current) < len(applied):
+        raise TransformationError(
+            transformation_name=getattr(pipeline, "name", "<unknown>"),
+            message=(
+                f"define_transformations returned {len(current)} step(s) after "
+                f"{len(applied)} had run; the list may only grow (append steps, don't "
+                "remove them)"
+            ),
+        )
+    for index, step in enumerate(applied):
+        now = step_name(current[index])
+        if now != step.name:
+            raise TransformationError(
+                transformation_name=getattr(pipeline, "name", "<unknown>"),
+                message=(
+                    f"define_transformations changed step {index + 1} from {step.name!r} to "
+                    f"{now!r} after it had run; the list may only grow (append steps, "
+                    "don't replace or reorder them)"
+                ),
+            )
+
+
 async def _apply_steps(
     pipeline: Any,
     original_records: List[Any],
@@ -272,6 +302,7 @@ async def _apply_steps(
 
     while True:
         current = await resolve()
+        _check_append_only(pipeline, current, applied)
         if len(current) <= applied_count:
             break
 

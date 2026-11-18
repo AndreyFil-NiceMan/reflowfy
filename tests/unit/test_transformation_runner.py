@@ -119,9 +119,9 @@ def test_runaway_append_raises():
     assert "max_steps" in str(exc.value)
 
 
-def test_prefix_change_is_ignored():
-    # On the second pass the element at index 0 differs, but index 0 is already
-    # applied, so it must not be re-applied; only the appended tail runs.
+def test_a_changed_step_that_already_ran_fails_the_job():
+    """The list is append-only: replacing a step that ran used to be ignored, and
+    every later position silently shifted."""
     calls = {"n": 0}
 
     def define(records, params):
@@ -131,8 +131,29 @@ def test_prefix_change_is_ignored():
         return [Marker2(), Marker3()]  # index 0 changed AppendMarker->Marker2
 
     pipeline = FakePipeline(define)
-    result, applied = apply_transformations_iteratively(pipeline, [], {})
-    # First applied is the original index-0 (append_marker); then the new tail (marker3).
+    with pytest.raises(TransformationError, match="changed step 1 from 'append_marker' to 'marker2'"):
+        apply_transformations_iteratively(pipeline, [], {})
+
+
+def test_a_list_that_shrinks_below_the_steps_run_fails_the_job():
+    calls = {"n": 0}
+
+    def define(records, params):
+        calls["n"] += 1
+        return [AppendMarker(), Marker2()] if calls["n"] <= 2 else [AppendMarker()]
+
+    with pytest.raises(TransformationError, match="returned 1 step\\(s\\) after 2 had run"):
+        apply_transformations_iteratively(FakePipeline(define), [], {})
+
+
+def test_appending_after_the_steps_run_is_fine():
+    calls = {"n": 0}
+
+    def define(records, params):
+        calls["n"] += 1
+        return [AppendMarker()] if calls["n"] == 1 else [AppendMarker(), Marker3()]
+
+    _, applied = apply_transformations_iteratively(FakePipeline(define), [], {})
     assert [step.name for step in applied] == ["append_marker", "marker3"]
 
 

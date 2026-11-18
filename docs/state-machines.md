@@ -294,8 +294,8 @@ one clears the entry. Loop pool (10b): opened by the worker, `LocalDispatcher` a
 that `define_transformations` re-resolves after every step. States per position:
 unapplied → applied (`sync`/`async`/`per_record`) or declined (`skipped`). The loop ends
 when the re-resolved list is no longer than the cursor; `max_steps` caps runaway growth.
-The documented invariant (the list is append-only) is not checked: if re-resolution
-changes an already-applied position, nobody notices.
+The list is append-only, and `_check_append_only` enforces it: a re-resolution that
+drops or renames an already-applied position fails the job with a `TransformationError`.
 
 ## 12. SQL template scanner
 
@@ -315,7 +315,9 @@ which shutdown waits on.
 
 `execution/distributed_executor.py`: the API builds an `ExecutionStatus` in `running`
 before it posts `/run`, keeps `running` on a 2xx (the manager row is `pending` at that
-point), and turns it into `failed` on any HTTP error.
+point), and turns it into `failed` on an HTTP error — except that after a timeout, a
+dropped connection or a 5xx it first asks the manager whether the execution exists
+(`_was_accepted`), and reports it accepted if so.
 
 ---
 
@@ -445,7 +447,16 @@ execution already started.
 and the schedule `enabled` strings. A `DLQStatus` class beside the other two, and the
 counts dict built from `JobState.ALL`, would make a new state a one-place change.
 
-### F6. Smaller ones
+### F6. Smaller ones — fixed
+
+**Fixed (2026-11-18):** `completed_at` is set for every finished job state;
+`release_drivers_on_host` frees `plan:`/`recover:` leases too; the runner raises a
+`TransformationError` when re-resolution drops or replaces a step that already ran;
+the API asks the manager (`GET /executions/{id}/stats`) before reporting a `/run` that
+timed out or got a 5xx as failed (accepted → `running`, `confirmed_after_error`; no
+answer → 502 with `outcome_unknown` and a pointer to `/executions/{id}/status`); the
+consumer's comment names `job_retry` / `/retry-failed`. The duplicated `break` was
+already gone. As found:
 
 - `JobManager.update_job_state` is a generic, unguarded setter; its only caller is
   `on_unsendable` (`pending → failed`). It sets `completed_at` for `completed`/`failed`

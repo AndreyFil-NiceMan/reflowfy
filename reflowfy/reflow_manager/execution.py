@@ -375,15 +375,24 @@ class ExecutionManager:
         return alive == 1
 
     def release_drivers_on_host(self, hostname: str) -> int:
-        """Free every lease whose driver ran on ``hostname`` (``<host>:<pid>:<rand>``).
+        """Free every lease held on ``hostname``: a dispatch loop's (``<host>:<pid>:<rand>``),
+        a planner's (``plan:<host>:…``) and a recovery's (``recover:<host>:…``).
 
-        Called once at manager startup: such drivers belonged to a previous process
+        Called once at manager startup: such holders belonged to a previous process
         on this host and are dead. Two live managers sharing a hostname would only
         hand an execution over — the old loop's next heartbeat fails and it stops.
+        A planner lease used to be left to expire, so an execution whose planning
+        the restart cut short waited ``DRIVER_LEASE_SECONDS`` before recovery failed it.
         """
         released = (
             self.db.query(Execution)
-            .filter(Execution.driver_id.like(f"{hostname}:%"))
+            .filter(
+                or_(
+                    Execution.driver_id.like(f"{hostname}:%"),
+                    Execution.driver_id.like(f"plan:{hostname}:%"),
+                    Execution.driver_id.like(f"recover:{hostname}:%"),
+                )
+            )
             .update({"driver_id": None, "driver_heartbeat_at": None}, synchronize_session=False)
         )
         self.db.commit()

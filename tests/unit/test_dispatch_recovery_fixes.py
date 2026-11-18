@@ -482,6 +482,26 @@ def test_release_drivers_on_host_frees_only_that_hosts_leases(db):
     assert owners == {"e": None, "e2": "pod-b:7:ef01"}
 
 
+def test_release_drivers_on_host_frees_planner_and_recovery_leases_too(db):
+    """A planner killed by a container restart left its lease to expire, so recovery
+    waited DRIVER_LEASE_SECONDS for nothing."""
+    for eid, owner in (("e", "plan:pod-a:12:ab"), ("e2", "recover:pod-a:3:cd"),
+                       ("e3", "plan:pod-b:1:ef"), ("e4", "pod-a2:9:aa")):
+        if eid != "e":
+            db.add(Execution(execution_id=eid, pipeline_name="p", state="pending"))
+        db.commit()
+        db.query(Execution).filter(Execution.execution_id == eid).update(
+            {"driver_id": owner, "driver_heartbeat_at": _now()}
+        )
+    db.commit()
+
+    assert ExecutionManager(db).release_drivers_on_host("pod-a") == 2
+
+    db.expire_all()
+    owners = {e.execution_id: e.driver_id for e in db.query(Execution).all()}
+    assert owners == {"e": None, "e2": None, "e3": "plan:pod-b:1:ef", "e4": "pod-a2:9:aa"}
+
+
 # ----- worker heartbeat ----------------------------------------------------------
 
 

@@ -261,7 +261,7 @@ class JobManager:
             "updated_at": datetime.now(timezone.utc).replace(tzinfo=None),
         }
 
-        if state in (JobState.COMPLETED, JobState.FAILED):
+        if state in JobState.FINISHED:  # deduplicated is finished too
             update_data["completed_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
         if processed_records is not None:
             update_data["processed_records"] = processed_records
