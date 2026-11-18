@@ -480,7 +480,7 @@ missing-field modes of `e2e_kafka_headers_test`, topic `e2e-kafka-headers`).
 `define_destination` runs once per job; `@destination(name=None, per_record=True,
 on_error="fail"|"skip", concurrency=None, timeout=None)` (old spelling `@record_destination`) turns a function `(record, runtime_params, **options) -> BaseDestination`
 (sync or `async def`) into a `RecordDestination` subclass (`destinations/record.py`) that
-`define_destination` returns (`return by_region`, or `by_region(region=...)`; kwargs become `options`). It is for
+`define_destination` returns (`return by_region`, or `by_region(env=...)`; kwargs become `options`). It is for
 records of one job going to different topics/clusters/credentials. Options are bound
 against the function's signature when the destination is built (`core/options.py`
 `option_binder`, shared with `@transformation`), so a typo raises `TypeError` in

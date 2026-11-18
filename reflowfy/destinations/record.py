@@ -4,10 +4,9 @@
 calls a function once per record and sends each record to the destination it returned, so
 one job can write to many topics, clusters or URLs::
 
-    @destination("by_region", per_record=True, on_error="skip")
+    @destination(per_record=True, on_error="skip")
     def by_region(record, runtime_params):
-        topic = KAFKA_SETTINGS.topics[record["engine"]][runtime_params["env"]]
-        return kafka_destination(bootstrap_servers=..., topic=topic.name, ...)
+        return kafka_destination(bootstrap_servers=..., topic=f"orders-{record['region']}")
 
     def define_destination(self, records, runtime_params):
         return by_region  # or by_region(option=...) with options
@@ -556,7 +555,7 @@ def make_record_destination(
     """The :class:`RecordDestination` subclass ``@destination(per_record=True)`` builds for ``func``.
 
     Instances take keyword options, passed on to every call:
-    ``by_region(region="eu")`` calls ``func(record, runtime_params, region="eu")``.
+    ``by_region(env="prod")`` calls ``func(record, runtime_params, env="prod")``.
     """
     if inspect.iscoroutinefunction(func):
 

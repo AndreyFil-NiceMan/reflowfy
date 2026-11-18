@@ -288,16 +288,19 @@ build one today:
 
 ```python
 # destinations/by_region.py
-from reflowfy import destination, kafka_destination
+import os
+from reflowfy import destination, kafka_destination, secret
+
+CLUSTERS = {"eu": "kafka-eu:9092", "us": "kafka-us:9092"}
 
 @destination(per_record=True, on_error="skip")
 def by_region(record, runtime_params):
-    topic = KAFKA_SETTINGS.topics[record["engine"]][runtime_params["env"]]
+    region = record["region"]
     return kafka_destination(
-        bootstrap_servers=KAFKA_SETTINGS.clusters[topic.cluster].hosts,
-        topic=topic.name,
-        sasl_username=topic.username,
-        sasl_password=topic.password,
+        bootstrap_servers=CLUSTERS[region],
+        topic=f"orders-{region}-{runtime_params.get('env', 'dev')}",
+        sasl_username=os.environ["KAFKA_USER"],
+        sasl_password=secret(f"KAFKA_PASSWORD_{region.upper()}"),
     )
 
 # in the pipeline
@@ -316,7 +319,7 @@ def define_destination(self, records, runtime_params):
 - Every record is routed before anything is sent. A failing record fails the job with nothing
   written (`record_destination 'by_region' failed on record 37 of 200: KeyError`) — unless
   `on_error="skip"`, which skips it with the exception's type as the reason.
-  `raise SkipRecord("unknown engine")` skips a record either way; `SkipJob` drops the job.
+  `raise SkipRecord("unknown region")` skips a record either way; `SkipJob` drops the job.
   `timeout=` bounds each record of an `async def` function and follows `on_error`.
 - Skips are reported like a per-record transformation's: the job's `records_skipped` /
   `record_skip_reasons`, `reflowfy_records_skipped_total{transformation="by_region"}`, and a
@@ -329,7 +332,7 @@ def define_destination(self, records, runtime_params):
   one-time warning saying so.
 - The destination's name (in logs, metrics and errors) is the function's;
   `@destination("other_name", per_record=True)` sets another.
-- Keyword arguments given in `define_destination` — `by_region(region="eu")` — are passed
+- Keyword arguments given in `define_destination` — `by_region(env="prod")` — are passed
   on to every call; a function without options can be returned bare (`return by_region`).
   `@record_destination("name", ...)` is the old spelling and warns. Filter records in a transformation, not here: returning anything but a
   destination fails the job.
