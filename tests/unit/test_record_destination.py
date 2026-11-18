@@ -96,24 +96,24 @@ def reset_sink():
 
 @destination("rd_by_topic", per_record=True)
 def by_topic(record: Any, params: Any) -> Sink:
-    return Sink(topic=f"{params.get('env', 'dev')}.{record['engine']}")
+    return Sink(topic=f"{params.get('env', 'dev')}.{record['region']}")
 
 
 @destination("rd_by_topic_serial", per_record=True, concurrency=1)
 def by_topic_serial(record: Any, params: Any) -> Sink:
-    return Sink(topic=f"dev.{record['engine']}")
+    return Sink(topic=f"dev.{record['region']}")
 
 
 @destination("rd_by_topic_skip", per_record=True, on_error="skip")
 def by_topic_skip(record: Any, params: Any) -> Sink:
-    topics = {"whisper": "t.whisper", "google": "t.google"}
-    if record.get("engine") == "ignored":
-        raise SkipRecord("engine ignored")
-    return Sink(topic=topics[record["engine"]])
+    topics = {"eu": "t.eu", "us": "t.us"}
+    if record.get("region") == "ignored":
+        raise SkipRecord("region ignored")
+    return Sink(topic=topics[record["region"]])
 
 
-def _records(*engines: str) -> List[Dict[str, Any]]:
-    return [{"id": i, "engine": e} for i, e in enumerate(engines, 1)]
+def _records(*regions: str) -> List[Dict[str, Any]]:
+    return [{"id": i, "region": e} for i, e in enumerate(regions, 1)]
 
 
 async def _route_and_send(dest: RecordDestination, records: List[Any], params: Any = None) -> Any:
@@ -150,17 +150,17 @@ class TestDecorator:
     def test_docstring_and_module_follow_the_function(self):
         @destination("rd_doc", per_record=True)
         def documented(record: Any, params: Any) -> Sink:
-            """Routes by engine."""
+            """Routes by region."""
             return Sink("t")
 
-        assert documented.__doc__ == "Routes by engine."
+        assert documented.__doc__ == "Routes by region."
         assert documented.__module__ == __name__
         assert documented.__name__ == "documented"
 
     async def test_options_are_passed_to_every_call(self):
         @destination("rd_options", per_record=True)
         def with_options(record: Any, params: Any, prefix: str = "none") -> Sink:
-            return Sink(f"{prefix}.{record['engine']}")
+            return Sink(f"{prefix}.{record['region']}")
 
         await _route_and_send(with_options(prefix="eu"), _records("a", "b"))
         assert sorted(Sink.ledger) == ["eu.a", "eu.b"]
@@ -179,17 +179,17 @@ class TestDecorator:
 class TestRouting:
     async def test_each_record_goes_to_its_own_topic(self):
         dest = by_topic()
-        records = _records("whisper", "google", "whisper", "azure", "google")
+        records = _records("eu", "us", "eu", "apac", "us")
         result = await _route_and_send(dest, records, {"env": "prod"})
 
         assert result.records == records and result.skip_reasons == {}
-        assert [r["id"] for r in Sink.ledger["prod.whisper"]] == [1, 3]
-        assert [r["id"] for r in Sink.ledger["prod.google"]] == [2, 5]
-        assert [r["id"] for r in Sink.ledger["prod.azure"]] == [4]
+        assert [r["id"] for r in Sink.ledger["prod.eu"]] == [1, 3]
+        assert [r["id"] for r in Sink.ledger["prod.us"]] == [2, 5]
+        assert [r["id"] for r in Sink.ledger["prod.apac"]] == [4]
 
     async def test_records_with_the_same_destination_share_one(self):
         dest = by_topic()
-        await dest.route(_records(*["whisper"] * 100, *["google"] * 100), {})
+        await dest.route(_records(*["eu"] * 100, *["us"] * 100), {})
 
         assert Sink.built == 200  # the function ran per record...
         assert len(dest.destinations) == 2  # ...but only two destinations are used
@@ -214,7 +214,7 @@ class TestRouting:
     async def test_real_kafka_destinations_group_by_config(self):
         @destination("rd_kafka", per_record=True)
         def kafka(record: Any, params: Any) -> BaseDestination:
-            return kafka_destination(bootstrap_servers="k:9092", topic=f"t.{record['engine']}")
+            return kafka_destination(bootstrap_servers="k:9092", topic=f"t.{record['region']}")
 
         dest = kafka()
         await dest.route(_records("a", "b", "a"), {})
@@ -258,7 +258,7 @@ class TestRouting:
 
     async def test_destination_for_an_unrouted_record_raises(self):
         with pytest.raises(KeyError, match="record was not routed"):
-            by_topic().destination_for({"engine": "a"})
+            by_topic().destination_for({"region": "a"})
 
     async def test_routing_logs_the_destination_count(self):
         with capture_logs("reflowfy.destinations.record") as logs:
@@ -282,22 +282,22 @@ class TestRouting:
 class TestSkipsAndFailures:
     async def test_skip_record_drops_that_record_with_its_reason(self):
         dest = by_topic_skip()
-        records = _records("whisper", "ignored", "google", "ignored")
+        records = _records("eu", "ignored", "us", "ignored")
         result = await _route_and_send(dest, records)
         assert [r["id"] for r in result.records] == [1, 3]
-        assert result.skip_reasons == {"engine ignored": 2}
-        assert sorted(Sink.ledger) == ["t.google", "t.whisper"]
+        assert result.skip_reasons == {"region ignored": 2}
+        assert sorted(Sink.ledger) == ["t.eu", "t.us"]
 
     async def test_on_error_skip_uses_the_exception_type_never_the_message(self):
         dest = by_topic_skip()
-        result = await _route_and_send(dest, _records("whisper", "secret-engine", "nope"))
+        result = await _route_and_send(dest, _records("eu", "secret-region", "nope"))
         assert [r["id"] for r in result.records] == [1]
         assert result.skip_reasons == {"KeyError": 2}
 
     async def test_skip_record_works_with_on_error_fail_too(self):
         @destination("rd_skip_fail", per_record=True)
         def strict(record: Any, params: Any) -> Sink:
-            if record["engine"] == "x":
+            if record["region"] == "x":
                 raise SkipRecord("x unsupported")
             return Sink("t")
 
@@ -307,13 +307,13 @@ class TestSkipsAndFailures:
     async def test_on_error_fail_fails_naming_the_position_and_nothing_is_sent(self):
         @destination("rd_strict", per_record=True)
         def strict(record: Any, params: Any) -> Sink:
-            return Sink({"whisper": "t.whisper"}[record["engine"]])
+            return Sink({"eu": "t.eu"}[record["region"]])
 
         with pytest.raises(RecordDestinationError) as excinfo:
-            await strict().route(_records("whisper", "whisper", "secret-engine"), {})
+            await strict().route(_records("eu", "eu", "secret-region"), {})
         msg = str(excinfo.value)
         assert msg == "record_destination 'rd_strict' failed on record 3 of 3: KeyError"
-        assert "secret-engine" not in msg
+        assert "secret-region" not in msg
         assert isinstance(excinfo.value.original_error, KeyError)
         assert Sink.ledger == {}
 
@@ -367,9 +367,9 @@ class TestSkipsAndFailures:
     async def test_skips_at_send_time_are_logged(self):
         dest = by_topic_skip()
         with capture_logs("reflowfy.destinations.record") as logs:
-            await dest.send(_records("whisper", "nope"), {})
+            await dest.send(_records("eu", "nope"), {})
         assert "rd_by_topic_skip skipped 1 records at send time" in logs
-        assert [r["id"] for r in Sink.ledger["t.whisper"]] == [1]
+        assert [r["id"] for r in Sink.ledger["t.eu"]] == [1]
 
 
 # ---------------------------------------------------------------- sending, health, close
@@ -415,7 +415,7 @@ class TestSendHealthClose:
 
         @destination("rd_fragile", per_record=True)
         def fragile(record: Any, params: Any) -> Sink:
-            return Fragile(record["engine"])
+            return Fragile(record["region"])
 
         dest = fragile()
         await dest.route(_records("a", "b"), {})
@@ -446,7 +446,7 @@ class TestConcurrency:
     async def test_concurrency_caps_destinations_in_flight(self):
         @destination("rd_conc_two", per_record=True, concurrency=2)
         def two(record: Any, params: Any) -> Sink:
-            return Sink(record["engine"])
+            return Sink(record["region"])
 
         Sink.send_delay = 0.02
         await _route_and_send(two(), _records(*"abcde"))
@@ -485,7 +485,7 @@ class TestConcurrency:
 
         @destination("rd_cancel", per_record=True)
         def cancel(record: Any, params: Any) -> Sink:
-            return Slow(record["engine"])
+            return Slow(record["region"])
 
         dest = cancel()
         result = await dest.route(_records("slow1", "boom", "slow2"), {})
@@ -508,7 +508,7 @@ class TestConcurrency:
 
         @destination("rd_health_conc", per_record=True)
         def slow_health(record: Any, params: Any) -> Sink:
-            return SlowHealth(record["engine"])
+            return SlowHealth(record["region"])
 
         dest = slow_health()
         await dest.route(_records("a", "b", "c"), {})
@@ -522,9 +522,9 @@ class TestTimeout:
     def _slow(name: str, **kw: Any) -> Any:
         @destination(name, per_record=True, timeout=0.05, **kw)
         async def slow(record: Any, params: Any) -> Sink:
-            if record["engine"] == "slow":
+            if record["region"] == "slow":
                 await asyncio.sleep(5)
-            return Sink(record["engine"])
+            return Sink(record["region"])
 
         return slow
 
@@ -579,7 +579,7 @@ class _Pipeline:
 
 class TestJobRunner:
     async def test_routing_is_reported_as_a_step_with_its_skips(self):
-        source = StaticSource(_records("whisper", "nope", "ignored", "google"))
+        source = StaticSource(_records("eu", "nope", "ignored", "us"))
         records, sent, applied, dest = await run_job_records_async(
             source, _Pipeline("rd-runner", by_topic_skip), {}
         )
@@ -593,7 +593,7 @@ class TestJobRunner:
             4,
             2,
         )
-        assert step.skip_reasons == {"KeyError": 1, "engine ignored": 1}
+        assert step.skip_reasons == {"KeyError": 1, "region ignored": 1}
         assert step.concurrency is None  # a sync function
 
     async def test_async_function_reports_its_concurrency(self, monkeypatch):
@@ -617,14 +617,14 @@ class TestJobRunner:
     async def test_skip_job_from_routing_drops_the_job(self):
         @destination("rd_runner_skipjob", per_record=True)
         def drop(record: Any, params: Any) -> Sink:
-            raise SkipJob("engine offline")
+            raise SkipJob("region offline")
 
         params: Dict[str, Any] = {}
         result = await run_job_records_async(
             StaticSource(_records("a")), _Pipeline("rd-skipjob", drop), params
         )
         assert result == ([], [], [], None)
-        assert params["skip_reason"] == "engine offline"
+        assert params["skip_reason"] == "region offline"
 
 
 # ---------------------------------------------------------------- the worker
@@ -647,7 +647,7 @@ class TestWorker:
 
         with capture_logs() as logs:
             ok = await stub_worker.execute_job(
-                _payload("rd-worker", records=_records("whisper", "nope", "google", "whisper"))
+                _payload("rd-worker", records=_records("eu", "nope", "us", "eu"))
             )
 
         assert ok
@@ -660,8 +660,8 @@ class TestWorker:
         assert "rd_by_topic_skip skipped 1 records ('KeyError' x1)" in logs
         assert skipped_records("rd-worker", "rd_by_topic_skip") == before_skips + 1
         assert processed("rd-worker", "completed") == before_done + 1
-        assert [r["id"] for r in Sink.ledger["t.whisper"]] == [1, 4]
-        assert sorted(Sink.closed) == ["t.google", "t.whisper"]
+        assert [r["id"] for r in Sink.ledger["t.eu"]] == [1, 4]
+        assert sorted(Sink.closed) == ["t.eu", "t.us"]
 
     async def test_other_jobs_stats_have_no_destinations_key(self):
         assert "destinations" not in JobStats().to_dict()
@@ -671,7 +671,7 @@ class TestWorker:
     ):
         @destination("rd_worker_strict", per_record=True)
         def strict(record: Any, params: Any) -> Sink:
-            return Sink({"a": "t.a"}[record["engine"]])
+            return Sink({"a": "t.a"}[record["region"]])
 
         register(_Pipeline("rd-worker-fail", strict))
         ok = await stub_worker.execute_job(_payload("rd-worker-fail", records=_records("a", "b")))
@@ -744,14 +744,14 @@ class TestWorkerDedup:
         self, register, dedup_worker  # noqa: F811
     ):
         register(_Pipeline("rd-dedup-topic", by_topic))
-        await self._run(dedup_worker, "rd-dedup-topic", "a", [{"id": 1, "engine": "x"}])
+        await self._run(dedup_worker, "rd-dedup-topic", "a", [{"id": 1, "region": "x"}])
 
         @destination("rd_dedup_other_topic", per_record=True)
         def other(record: Any, params: Any) -> Sink:
             return Sink("elsewhere")
 
         register(_Pipeline("rd-dedup-topic", other))
-        again = await self._run(dedup_worker, "rd-dedup-topic", "b", [{"id": 1, "engine": "x"}])
+        again = await self._run(dedup_worker, "rd-dedup-topic", "b", [{"id": 1, "region": "x"}])
         assert again.records_output == 1 and not again.deduplicated
         assert set(Sink.ledger) == {"dev.x", "elsewhere"}
 

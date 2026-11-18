@@ -132,8 +132,8 @@ async def run_job(dest: Any, records: List[Any]) -> None:
         await dest.close()
 
 
-def _engines(n: int, *engines: str) -> List[Dict[str, Any]]:
-    return [{"id": i, "engine": engines[i % len(engines)]} for i in range(n)]
+def _regions(n: int, *regions: str) -> List[Dict[str, Any]]:
+    return [{"id": i, "region": regions[i % len(regions)]} for i in range(n)]
 
 
 # ---------------------------------------------------------------- kafka
@@ -143,10 +143,10 @@ class TestKafkaSharedProducer:
     async def test_topics_on_one_cluster_share_one_producer(self, producers):
         @destination("pool_topics", per_record=True)
         def route(record: Any, params: Any) -> KafkaDestination:
-            return kafka_destination(bootstrap_servers="k:9092", topic=f"t.{record['engine']}")
+            return kafka_destination(bootstrap_servers="k:9092", topic=f"t.{record['region']}")
 
         dest = route()
-        await run_job(dest, _engines(30, "a", "b", "c"))
+        await run_job(dest, _regions(30, "a", "b", "c"))
 
         assert len(dest.destinations) == 3  # three topics...
         assert len(producers) == 1  # ...one producer
@@ -164,13 +164,13 @@ class TestKafkaSharedProducer:
     async def test_each_cluster_or_credential_gets_its_own(self, producers):
         @destination("pool_clusters", per_record=True)
         def route(record: Any, params: Any) -> KafkaDestination:
-            cluster = {"a": "k1:9092", "b": "k2:9092", "c": "k2:9092"}[record["engine"]]
-            user = "u2" if record["engine"] == "c" else "u1"
+            cluster = {"a": "k1:9092", "b": "k2:9092", "c": "k2:9092"}[record["region"]]
+            user = "u2" if record["region"] == "c" else "u1"
             return kafka_destination(
                 bootstrap_servers=cluster, topic="t", sasl_username=user, sasl_password="p"
             )
 
-        await run_job(route(), _engines(9, "a", "b", "c"))
+        await run_job(route(), _regions(9, "a", "b", "c"))
         assert len(producers) == 3
         assert all(p.stopped == 1 for p in producers)
 
@@ -186,9 +186,9 @@ class TestKafkaSharedProducer:
 
         @destination("pool_health_kafka", per_record=True)
         def route(record: Any, params: Any) -> KafkaDestination:
-            return kafka_destination(bootstrap_servers="k:9092", topic=f"t.{record['engine']}")
+            return kafka_destination(bootstrap_servers="k:9092", topic=f"t.{record['region']}")
 
-        await run_job(route(), _engines(9, "a", "b", "c"))
+        await run_job(route(), _regions(9, "a", "b", "c"))
         assert len(checked) == 1
 
     def test_health_key_is_per_topic_and_group_when_it_measures_lag(self):
@@ -236,7 +236,7 @@ class TestApiSharedClient:
             return api_destination(url=f"https://api.example.com/u/{record['id']}", body=record)
 
         dest = route()
-        await run_job(dest, _engines(30, "a"))
+        await run_job(dest, _regions(30, "a"))
 
         assert len(dest.destinations) == 30
         assert len(http.clients) == 1
@@ -248,10 +248,10 @@ class TestApiSharedClient:
         @destination("pool_api_hosts", per_record=True)
         def route(record: Any, params: Any) -> Any:
             return api_destination(
-                url=f"https://{record['engine']}.example.com/u/{{id}}", per_record=True
+                url=f"https://{record['region']}.example.com/u/{{id}}", per_record=True
             )
 
-        await run_job(route(), _engines(30, "eu", "us", "ap"))
+        await run_job(route(), _regions(30, "eu", "us", "ap"))
         assert len(http.clients) == 3
         assert sorted(http.heads) == [
             "https://ap.example.com/u/",
@@ -270,10 +270,10 @@ class TestApiSharedClient:
                 url="https://api.example.com/u/{id}",
                 per_record=True,
                 auth_type="bearer",
-                auth_token=f"token-{record['engine']}",
+                auth_token=f"token-{record['region']}",
             )
 
-        await run_job(route(), _engines(6, "a", "b"))
+        await run_job(route(), _regions(6, "a", "b"))
         assert len(http.clients) == 2
         tokens = {r.headers["Authorization"] for r in http.requests}
         assert tokens == {"Bearer token-a", "Bearer token-b"}
@@ -284,10 +284,10 @@ class TestApiSharedClient:
         @destination("pool_api_budget", per_record=True, concurrency=4)
         def route(record: Any, params: Any) -> Any:
             return api_destination(
-                url=f"https://{record['engine']}.example.com/u/{{id}}", per_record=True
+                url=f"https://{record['region']}.example.com/u/{{id}}", per_record=True
             )
 
-        await run_job(route(), _engines(40, "a", "b", "c"))
+        await run_job(route(), _regions(40, "a", "b", "c"))
         assert http.peak == 4  # not 4 per destination
         assert len(http.requests) == 40
 
@@ -378,8 +378,8 @@ class TestDestinationPerRecordAdvice:
             return api_destination(url=f"https://api.example.com/u/{record['id']}", body=record)
 
         with capture("reflowfy.destinations.record") as logs:
-            await route().route(_engines(12, "a"), {})
-            await route().route(_engines(12, "a"), {})  # a second job: no repeat
+            await route().route(_regions(12, "a"), {})
+            await route().route(_regions(12, "a"), {})  # a second job: no repeat
         advice = [m for m in logs if "built a destination per record" in m]
         assert advice == [
             "advice_bad built a destination per record (12/12): put per-record values in "
@@ -398,8 +398,8 @@ class TestDestinationPerRecordAdvice:
             return api_destination(url="https://api.example.com/u/{id}", per_record=True)
 
         with capture("reflowfy.destinations.record") as logs:
-            await small().route(_engines(5, "a"), {})
-            await grouped().route(_engines(50, "a"), {})
+            await small().route(_regions(5, "a"), {})
+            await grouped().route(_regions(50, "a"), {})
         assert not [m for m in logs if "built a destination per record" in m]
 
 

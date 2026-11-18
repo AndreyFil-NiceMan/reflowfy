@@ -494,7 +494,7 @@ if [ "$SKIP_DOCKER" = false ]; then
         --replication-factor 1 --partitions 1 \
         --if-not-exists 2>/dev/null || log_warning "Topic e2e-kafka-headers might already exist"
     # @record_destination: one job writes to all three (tests/e2e/destinations/test_record_destination.py).
-    for rd_topic in e2e-rd-whisper e2e-rd-google e2e-rd-azure; do
+    for rd_topic in e2e-rd-eu e2e-rd-us e2e-rd-apac; do
         docker exec reflofy-e2e-kafka kafka-topics --create \
             --topic "$rd_topic" \
             --bootstrap-server localhost:29092 \

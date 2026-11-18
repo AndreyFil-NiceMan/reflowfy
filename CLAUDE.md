@@ -560,7 +560,7 @@ pyright rejects a one-argument function or one returning `None`. A hand-written
 - Tests: `tests/unit/test_record_destination.py`, `test_destination_pool.py`,
   `test_record_templates.py`, `test_fan_out.py`; E2E
   `tests/e2e/destinations/test_record_destination.py` (`e2e_record_destination_test`, one job to
-  topics `e2e-rd-whisper`/`-google`/`-azure`, in route, skip and fail modes).
+  topics `e2e-rd-eu`/`-us`/`-apac`, in route, skip and fail modes).
 
 ### Several destinations: a list or `fan_out`
 

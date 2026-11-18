@@ -148,12 +148,12 @@ class TestFanOut:
 
 @destination("fo_multicast", per_record=True)
 def multicast(record: Any, params: Any) -> Any:
-    if record["engine"] == "both":
+    if record["region"] == "both":
         return [Sink("t.a"), Sink("t.b")]
-    if record["engine"] == "maybe":
+    if record["region"] == "maybe":
         audit = Sink("t.audit")
         return fan_out(Sink("t.a"), audit, optional=[audit])
-    return Sink(f"t.{record['engine']}")
+    return Sink(f"t.{record['region']}")
 
 
 class TestMulticast:
@@ -174,7 +174,7 @@ class TestMulticast:
 
         @destination("fo_audit_required", per_record=True)
         def audit_required(record: Any, params: Any) -> Any:
-            if record["engine"] == "maybe":
+            if record["region"] == "maybe":
                 audit = Sink("t.audit")
                 return fan_out(Sink("t.a"), audit, optional=[audit])
             return [Sink("t.a"), Sink("t.audit")]  # this record needs the audit
