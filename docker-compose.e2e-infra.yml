@@ -47,11 +47,9 @@ services:
   # ============================================================================
 
   e2e-mock-http:
-    build:
-      context: .
-      dockerfile: Dockerfile.worker
-      args:
-        REFLOWFY_BASE_IMAGE: ${REFLOWFY_BASE_IMAGE:-reflowfy-base:local}
+    # The base image already has fastapi/uvicorn and the tests are mounted below, so
+    # no image of its own: building one from Dockerfile.worker cost a build per run.
+    image: ${REFLOWFY_BASE_IMAGE:-reflowfy-base:local}
     container_name: reflofy-e2e-mock-http
     command: python -m tests.e2e.destinations.mock_api_server
     ports:
@@ -75,11 +73,9 @@ services:
   # ============================================================================
 
   e2e-mock-api:
-    build:
-      context: .
-      dockerfile: Dockerfile.worker
-      args:
-        REFLOWFY_BASE_IMAGE: ${REFLOWFY_BASE_IMAGE:-reflowfy-base:local}
+    # The base image already has fastapi/uvicorn and the tests are mounted below, so
+    # no image of its own: building one from Dockerfile.worker cost a build per run.
+    image: ${REFLOWFY_BASE_IMAGE:-reflowfy-base:local}
     container_name: reflofy-e2e-mock-api
     command: python -m uvicorn tests.e2e.sources.mock_api_server:app --host 0.0.0.0 --port 8092
     ports:

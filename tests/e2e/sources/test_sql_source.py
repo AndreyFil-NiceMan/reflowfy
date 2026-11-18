@@ -17,12 +17,12 @@ import os
 import time
 import pytest
 import httpx
+from tests.e2e.polling import POLL_INTERVAL
 
 # Configuration
 REFLOW_MANAGER_URL = os.getenv("E2E_REFLOW_MANAGER_URL", "http://localhost:8002")
 SQL_CONNECTION_URL = os.getenv("SQL_CONNECTION_URL", "postgresql://reflowfy:reflowfy@localhost:5433/reflowfy_e2e")
 TIMEOUT = 60.0
-POLL_INTERVAL = 2
 
 
 @pytest.fixture(scope="module")

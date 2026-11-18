@@ -10,6 +10,7 @@ import pytest
 import httpx
 import time
 from datetime import datetime, timedelta, timezone
+from tests.e2e.polling import POLL_INTERVAL
 
 
 # Configuration from environment (same as conftest.py)
@@ -384,7 +385,7 @@ class TestDLQSchedulerBehavior:
             if status in ["completed", "failed"]:
                 break
             
-            time.sleep(5)
+            time.sleep(POLL_INTERVAL)
         
         # Assert
         final_response = dlq_client.get(f"/dlq/jobs/{job_id}")

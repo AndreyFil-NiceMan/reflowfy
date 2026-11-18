@@ -20,9 +20,13 @@ This script will:
 1. Build the Reflowfy package.
 2. Install the package in the current environment (or venv).
 3. Initialize a temporary test workspace.
-4. Start all services using `reflowfy run --build`.
+4. Build the images once (cached) and start all services with `reflowfy run --detach`,
+   while Kafka and Elasticsearch boot.
 5. Run the tests.
 6. Cleanup the workspace and build artifacts.
+
+Wait loops in the tests poll every `E2E_POLL_INTERVAL` seconds (default 0.25,
+`tests/e2e/polling.py`); the manager's scheduler polls every 2 s in E2E.
 
 ## Test Structure
 

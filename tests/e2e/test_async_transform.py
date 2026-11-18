@@ -19,6 +19,7 @@ from typing import Any, Dict, List
 
 import httpx
 import pytest
+from tests.e2e.polling import POLL_INTERVAL
 
 REFLOW_MANAGER_URL = os.getenv("E2E_REFLOW_MANAGER_URL", "http://localhost:8002")
 MOCK_HTTP_URL = os.getenv("E2E_MOCK_HTTP_URL", "http://localhost:8091")
@@ -32,7 +33,6 @@ SKIPPED_RECORDS_METRIC = re.compile(
     r'reflowfy_records_skipped_total\{[^}]*pipeline="e2e_async_transform"[^}]*'
     r'transformation="e2e_enrich_slow_user"[^}]*\}\s+([0-9.e+]+)'
 )
-POLL_INTERVAL = 1
 MAX_WAIT = 90
 
 
