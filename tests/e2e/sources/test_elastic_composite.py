@@ -22,12 +22,12 @@ from tests.e2e.test_pipelines.elastic_composite_pipelines import (
     GROUP_SCRIPT,
     PAGE,
 )
+from tests.e2e.polling import POLL_INTERVAL
 
 REFLOW_MANAGER_URL = os.getenv("E2E_REFLOW_MANAGER_URL", "http://localhost:8002")
 ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://localhost:9201")
 MOCK_HTTP_URL = os.getenv("MOCK_HTTP_URL", "http://localhost:8091").replace("/webhook", "")
 INDEX = "e2e-test-events"
-POLL_INTERVAL = 2
 
 
 @pytest.fixture(scope="module")
@@ -104,7 +104,7 @@ def _delivered(expected: int) -> List[Dict[str, Any]]:
         records = [r["data"] for r in body.get("records", [])]
         if len(records) >= expected:
             break
-        time.sleep(1)
+        time.sleep(POLL_INTERVAL)
     return records
 
 

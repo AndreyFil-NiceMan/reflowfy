@@ -15,6 +15,7 @@ import uuid
 
 import httpx
 import pytest
+from tests.e2e.polling import POLL_INTERVAL
 
 
 TIMEOUT = 30.0
@@ -61,7 +62,7 @@ def _wait_for_new_execution(
         entry = _get_named_schedule(client, pipeline_name, schedule_name)
         if entry and entry.get("last_execution_id") and entry["last_execution_id"] != prior_execution_id:
             return entry["last_execution_id"]
-        time.sleep(5)
+        time.sleep(POLL_INTERVAL)
     raise TimeoutError(
         f"'{pipeline_name}' schedule '{schedule_name}' did not auto-fire within {max_wait}s"
     )
@@ -75,7 +76,7 @@ def _wait_for_execution(client: httpx.Client, execution_id: str, max_wait: int =
             stats = resp.json()
             if stats.get("state") in ("completed", "failed"):
                 return stats
-        time.sleep(2)
+        time.sleep(POLL_INTERVAL)
     raise TimeoutError(f"Execution {execution_id} did not finish within {max_wait}s")
 
 
@@ -181,7 +182,7 @@ class TestManualTriggerResetsSchedule:
             entry = _get_schedule(reflow_client, SCHEDULED_PIPELINE)
             if entry and entry.get("last_triggered_at"):
                 break
-            time.sleep(0.5)
+            time.sleep(POLL_INTERVAL)
 
         assert entry is not None
         assert entry.get("last_triggered_at") is not None, (
@@ -262,7 +263,7 @@ class TestSchedulerAutoTrigger:
             if entry and entry.get("last_execution_id") != last_exec_before:
                 new_execution_id = entry["last_execution_id"]
                 break
-            time.sleep(5)
+            time.sleep(POLL_INTERVAL)
 
         assert new_execution_id is not None, (
             f"Scheduler did not auto-fire '{SCHEDULED_PIPELINE}' within {max_wait}s. "
@@ -285,7 +286,7 @@ class TestSchedulerAutoTrigger:
                     "next_run_at should advance forward after auto-fire"
                 )
                 return
-            time.sleep(5)
+            time.sleep(POLL_INTERVAL)
 
         pytest.skip(
             "Scheduler did not auto-fire within the wait window; skipping next_run_at advance check"

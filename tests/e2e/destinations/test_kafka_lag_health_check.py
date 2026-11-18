@@ -24,6 +24,7 @@ from typing import Any, Dict
 import httpx
 import pytest
 from aiokafka import AIOKafkaProducer
+from tests.e2e.polling import POLL_INTERVAL
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -38,7 +39,6 @@ LAG_TEST_TOPIC = os.getenv("E2E_LAG_TEST_TOPIC", "e2e-lag-health-check")
 LAG_TEST_GROUP = os.getenv("E2E_LAG_TEST_GROUP", "e2e-lag-test-consumer-group")
 
 TIMEOUT = 90.0
-POLL_INTERVAL = 2
 
 
 # ── Shared aiokafka connection kwargs ─────────────────────────────────────────

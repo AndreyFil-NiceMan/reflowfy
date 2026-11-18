@@ -16,18 +16,36 @@ import time
 import uuid
 import pytest
 import httpx
+from tests.e2e.polling import POLL_INTERVAL
 
 # Configuration
 REFLOW_MANAGER_URL = os.getenv("E2E_REFLOW_MANAGER_URL", "http://localhost:8002")
 TIMEOUT = 60.0
-POLL_INTERVAL = 2
 
 
 @pytest.fixture
 def client(check_reflow_manager):
-    """HTTP client for ReflowManager API."""
-    with httpx.Client(base_url=REFLOW_MANAGER_URL, timeout=TIMEOUT) as client:
+    """HTTP client for ReflowManager API.
+
+    Cancels every execution the test started that is still open when it ends. These
+    tests start throttled runs of crash_recovery_test (up to ~3 min at 18 jobs/min) and
+    stop watching once paused/resumed/progressing; left alone, those runs kept writing
+    into the shared mock sink and showed up as stray records in later tests.
+    """
+    started: list[str] = []
+
+    def remember_run(response: httpx.Response) -> None:
+        if response.request.url.path == "/run" and response.status_code == 202:
+            response.read()
+            started.append(response.json()["execution_id"])
+
+    with httpx.Client(
+        base_url=REFLOW_MANAGER_URL, timeout=TIMEOUT, event_hooks={"response": [remember_run]}
+    ) as client:
         yield client
+        for execution_id in started:
+            # 409: already finished. Anything else is not this test's concern.
+            client.post(f"/executions/{execution_id}/cancel")
 
 
 def _start_slow_pipeline(client):

@@ -16,6 +16,7 @@ import httpx
 import pytest
 
 from tests.e2e.test_pipelines.elastic_hits_pipelines import AFTER_ID
+from tests.e2e.polling import POLL_INTERVAL
 
 REFLOW_MANAGER_URL = os.getenv("E2E_REFLOW_MANAGER_URL", "http://localhost:8002")
 ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://localhost:9201")
@@ -62,7 +63,7 @@ def _run(client: httpx.Client, pipeline: str) -> Dict[str, Any]:
         stats = client.get(f"/executions/{execution_id}/stats").json()
         if stats.get("state") in ("completed", "failed"):
             break
-        time.sleep(2)
+        time.sleep(POLL_INTERVAL)
     assert stats.get("state") == "completed", f"{pipeline}: {stats}"
     assert stats["jobs_failed"] == 0
     return stats
@@ -76,7 +77,7 @@ def _delivered(expected: int) -> List[Dict[str, Any]]:
         records = body.get("records", [])
         if len(records) >= expected:
             break
-        time.sleep(1)
+        time.sleep(POLL_INTERVAL)
     return records
 
 

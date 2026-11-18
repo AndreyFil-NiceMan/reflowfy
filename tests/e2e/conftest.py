@@ -6,6 +6,8 @@ Provides fixtures and configuration for E2E tests.
 
 import os
 import pytest
+from tests.e2e.polling import POLL_INTERVAL
+
 
 # ============================================================================
 # Configuration
@@ -247,7 +249,7 @@ def wait_for_pipeline_completion():
     import time
     import httpx
     
-    def _wait(execution_id: str, max_wait: int = 120, poll_interval: int = 2):
+    def _wait(execution_id: str, max_wait: int = 120, poll_interval: float = POLL_INTERVAL):
         """Wait for pipeline to complete and return final stats."""
         with httpx.Client(base_url=REFLOW_MANAGER_URL, timeout=60.0) as client:
             start = time.time()
