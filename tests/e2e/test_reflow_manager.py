@@ -16,11 +16,11 @@ import uuid
 
 import httpx
 import pytest
+from tests.e2e.polling import POLL_INTERVAL
 
 # Configuration
 REFLOW_MANAGER_URL = os.getenv("REFLOW_MANAGER_URL", "http://localhost:8002")
 TIMEOUT = 60.0
-POLL_INTERVAL = 2
 
 
 @pytest.fixture
@@ -145,7 +145,7 @@ class TestCrashRecovery:
         pipeline_state = None
 
         while time.time() - start < max_wait:
-            time.sleep(1)
+            time.sleep(POLL_INTERVAL)
             try:
                 stats = client.get(f"/executions/{execution_id}/stats").json()
                 pipeline_state = stats.get("state")

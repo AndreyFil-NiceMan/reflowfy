@@ -19,6 +19,7 @@ import asyncio
 import pytest
 import httpx
 from aiokafka import AIOKafkaConsumer
+from tests.e2e.polling import POLL_INTERVAL
 
 # Configuration
 REFLOW_MANAGER_URL = os.getenv("E2E_REFLOW_MANAGER_URL", "http://localhost:8002")
@@ -31,7 +32,6 @@ KAFKA_SASL_USERNAME = os.getenv("KAFKA_SASL_USERNAME", "admin")
 KAFKA_SASL_PASSWORD = os.getenv("KAFKA_SASL_PASSWORD", "admin-secret")
 
 TIMEOUT = 60.0
-POLL_INTERVAL = 2
 
 
 @pytest.fixture(scope="module")
@@ -83,7 +83,7 @@ class TestKafkaDestinationPipeline:
             topics = await kafka_consumer.topics()
             if KAFKA_TOPIC in topics:
                 break
-            await asyncio.sleep(1)
+            await asyncio.sleep(POLL_INTERVAL)
             
         assert KAFKA_TOPIC in topics, f"Topic {KAFKA_TOPIC} not found. Found: {topics}"
     
@@ -165,7 +165,7 @@ class TestKafkaDestinationPipeline:
             if stats.get("state") == "failed":
                 pytest.fail("Pipeline failed execution")
             
-            await asyncio.sleep(1)
+            await asyncio.sleep(POLL_INTERVAL)
         
         # Verify we received messages
         assert len(messages) > 0, "Expected messages in Kafka topic"
