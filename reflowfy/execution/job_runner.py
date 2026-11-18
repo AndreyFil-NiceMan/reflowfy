@@ -276,9 +276,12 @@ async def run_job_records_async(
 
     Returns ``(records, transformed_records, applied, destination)`` where
     ``applied`` is the list of :class:`AppliedStep` from the
-    transformation runner.
+    transformation runner. A job dropped with ``SkipJob`` returns
+    ``([], [], applied, None)``: ``applied`` holds the steps that ran before the
+    drop, so records they skipped are still reported.
     """
     name = getattr(pipeline, "name", "<unknown>")
+    steps: List[AppliedStep] = []  # what ran so far, reported even if the job is dropped
     try:
         with pipeline_step("source fetch", name):
             records = await fetch_records(source, runtime_params)
@@ -294,10 +297,12 @@ async def run_job_records_async(
         if getattr(pipeline, "record_type", None) is not None:
             checked, check = await asyncio.to_thread(check_record_type, pipeline, records)
             checks.append(check)
+        steps = checks
         transformed_records, applied = await apply_transformations_iteratively_async(
             pipeline, checked, runtime_params
         )
         applied = checks + applied
+        steps = applied
         with pipeline_step("define_destination", name):
             # A list is several destinations: fan_out(...) sends every record to each.
             destination = as_destination(
@@ -332,5 +337,7 @@ async def run_job_records_async(
             exc,
             extra={"event": "skipjob_raised", "pipeline_name": name, "skip_reason": str(exc)},
         )
-        return [], [], [], None
+        # Steps that ran before the drop (and the records they skipped) are still
+        # reported: a SkipRecord followed by a SkipJob must show both, not just the drop.
+        return [], [], steps + exc.applied_steps, None
     return records, transformed_records, applied, destination

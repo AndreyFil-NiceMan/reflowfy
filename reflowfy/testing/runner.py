@@ -237,11 +237,14 @@ def _setup_problem(exc: Optional[BaseException]) -> Optional[BaseException]:
 
 
 def _log_job(job: JobResult, logger: Any = logger) -> None:
-    """The worker's ``job_dropped`` / ``records_skipped`` lines, so ``caplog`` sees them."""
-    if job.skip_reason:
-        log_job_dropped(logger, str(job.skip_reason))
+    """The worker's ``records_skipped`` / ``job_dropped`` lines, so ``caplog`` sees them.
+
+    In the worker's order: records skipped before a ``SkipJob``, then the drop.
+    """
     for step in job.steps:
         log_skipped_records(logger, step)
+    if job.skip_reason:
+        log_job_dropped(logger, str(job.skip_reason))
 
 
 async def _send(target: BaseDestination, records: List[Any], params: Dict[str, Any]) -> None:

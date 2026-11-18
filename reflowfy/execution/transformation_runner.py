@@ -242,8 +242,25 @@ async def apply_transformations_iteratively_async(
         TransformationError: If a transformation fails validation/apply, or if
             ``max_steps`` is exceeded.
     """
-    transformed = original_records
     applied: List[AppliedStep] = []
+    try:
+        return await _apply_steps(pipeline, original_records, runtime_params, max_steps, applied)
+    except SkipJob as exc:
+        # The job is dropped, but what ran before it did happen: hand those steps
+        # (and their SkipRecord reasons) to the caller, which reports them beside
+        # the drop instead of only the drop.
+        exc.applied_steps = list(applied)
+        raise
+
+
+async def _apply_steps(
+    pipeline: Any,
+    original_records: List[Any],
+    runtime_params: Dict[str, Any],
+    max_steps: int,
+    applied: List[AppliedStep],
+) -> Tuple[List[Any], List[AppliedStep]]:
+    transformed = original_records
     applied_count = 0
     decides_steps = _decides_steps(pipeline)
 
@@ -325,7 +342,23 @@ async def apply_transformations_iteratively_async(
                 await asyncio.to_thread(
                     _check_step_output, transformation, transformed, applied_count, applied
                 )
-        except (TransformationError, SkipJob):
+        except SkipJob as exc:
+            if exc.step_skip_reasons:
+                # A per-record step stopped part way: the records it had already
+                # skipped are reported; the job is dropped, so nothing came out.
+                applied.append(
+                    AppliedStep(
+                        name=step_name(transformation),
+                        duration=time.time() - start,
+                        records_in=records_in,
+                        records_out=0,
+                        mode=mode,
+                        concurrency=concurrency,
+                        skip_reasons=dict(exc.step_skip_reasons),
+                    )
+                )
+            raise
+        except TransformationError:
             raise
         except SkipRecord as exc:
             # Only a per-record step knows which record it is working on.

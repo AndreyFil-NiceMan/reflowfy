@@ -597,6 +597,14 @@ JSON, and counts it as `reflowfy_jobs_processed_total{status="skipped"}` — so 
 is not silently indistinguishable from an ordinary completed job. `reflowfy test`
 logs the same reason.
 
+**Skips before the drop are kept.** A drop still returns the steps that ran before it
+(`run_job_records` → `([], [], applied, None)`; the runner hangs them on
+`SkipJob.applied_steps`, and a per-record step cut short by a sibling record's `SkipJob`
+contributes the `SkipRecord`s already finished via `SkipJob.step_skip_reasons`). So a
+`SkipRecord` followed by a `SkipJob` logs `records_skipped` *then* `job_dropped`, and the
+job's stats carry both `record_skip_reasons` and `skip_reason`. Until 2026-11 the drop
+discarded the steps and only `job_dropped` appeared. Tests: `tests/unit/test_skip_job.py`.
+
 ### Elasticsearch window modes
 
 `elastic_source(..., docs_per_job=N)` plans `ceil(count / N)` jobs (capped by `max_slices`) after one `search_after` pre-scan of the sort keys. `window_mode` decides what a job reads from:
