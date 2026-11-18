@@ -88,7 +88,7 @@ def test_reflowfy_new_source(temp_workspace):
     with open("src/sources/my_custom_api.py") as f:
         content = f.read()
         assert "def my_custom_api(**overrides):" in content
-        assert "@source" not in content
+        assert not [line for line in content.splitlines() if line.startswith("@")]
 
 
 def test_reflowfy_new_destination(temp_workspace):
@@ -103,7 +103,8 @@ def test_reflowfy_new_destination(temp_workspace):
     with open("src/destinations/my_custom_db.py") as f:
         content = f.read()
         assert "def my_custom_db(**overrides):" in content
-        assert "@destination" not in content
+        # A plain function: no decorator line (the docstring may mention one).
+        assert not [line for line in content.splitlines() if line.startswith("@")]
 
 
 def test_reflowfy_new_transformation(temp_workspace):
