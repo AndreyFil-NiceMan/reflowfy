@@ -7,6 +7,7 @@ all start executions. Each used to check the pipeline and its params in its own 
 """
 
 import logging
+import threading
 from typing import Any, Callable, Dict
 
 from sqlalchemy.orm import Session
@@ -43,6 +44,82 @@ def check_runnable(pipeline_name: str, runtime_params: Dict[str, Any]) -> Any:
     if errors:
         raise InvalidParametersError(f"Invalid parameters: {'; '.join(errors)}")
     return pipeline
+
+
+def stage_execution(
+    db: Session, execution_id: str, pipeline_name: str, runtime_params: Dict[str, Any]
+) -> None:
+    """Check the pipeline can run, then add its execution to ``db``'s transaction.
+
+    Nothing is committed. The caller commits it together with its own record of the
+    start (the DLQ job marked ``completed``, the schedule's ``next_run_at`` advanced)
+    and only then calls :func:`start_in_background`. So a crash or a failed commit in
+    between can no longer leave an execution running while the DLQ job or schedule
+    still looks due (a second run on the next poll): either both are saved or
+    neither. An execution saved but never started is ``pending`` with no plan, which
+    startup recovery fails with "the manager stopped while planning".
+    """
+    check_runnable(pipeline_name, runtime_params)
+    ExecutionManager(db).create_execution(
+        execution_id=execution_id,
+        pipeline_name=pipeline_name,
+        runtime_params=runtime_params,
+        commit=False,
+    )
+
+
+def start_in_background(
+    new_runner: Callable[[], Any],
+    execution_id: str,
+    pipeline_name: str,
+    runtime_params: Dict[str, Any],
+    *,
+    log: logging.Logger = logger,
+) -> None:
+    """Plan and drive a committed execution on a daemon thread of its own.
+
+    ``new_runner()`` builds the runner the thread uses (with its own database session:
+    the caller's belongs to the caller's thread).
+    """
+
+    def drive() -> None:
+        try:
+            runner = new_runner()
+        except Exception as exc:
+            log.exception(
+                "Building the runner failed",
+                extra={"event": "dispatch_failed", "execution_id": execution_id},
+            )
+            _fail_unstarted(execution_id, str(exc), log)
+            return
+        drive_execution(
+            runner.execution_manager.db,
+            lambda _db: runner,
+            execution_id,
+            pipeline_name,
+            runtime_params,
+            log=log,
+        )
+
+    threading.Thread(target=drive, name=f"run-{execution_id[:12]}", daemon=True).start()
+
+
+def _fail_unstarted(execution_id: str, message: str, log: logging.Logger) -> None:
+    from reflowfy.reflow_manager.database import SessionLocal
+
+    try:
+        db = SessionLocal()
+        try:
+            ExecutionManager(db).update_execution_state(
+                execution_id, ExecutionState.FAILED, error_message=message
+            )
+        finally:
+            db.close()
+    except Exception:
+        log.exception(
+            "Failed to mark execution as failed",
+            extra={"event": "execution_mark_failed_error", "execution_id": execution_id},
+        )
 
 
 def drive_execution(

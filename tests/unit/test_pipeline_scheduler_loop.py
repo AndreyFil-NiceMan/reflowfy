@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import reflowfy.reflow_manager.pipeline_scheduler as ps_mod
+import reflowfy.reflow_manager.start as start_mod
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.store.models import Base, Execution, PipelineSchedule
 from reflowfy.reflow_manager.pipeline_scheduler import PipelineScheduler
@@ -124,13 +125,13 @@ def sync_threads(monkeypatch):
     """Run the scheduler's dispatch thread inline, so its outcome is visible at once."""
 
     class _InlineThread:
-        def __init__(self, target, daemon=None):
+        def __init__(self, target, name=None, daemon=None):
             self._target = target
 
         def start(self):
             self._target()
 
-    monkeypatch.setattr(ps_mod.threading, "Thread", _InlineThread)
+    monkeypatch.setattr(start_mod.threading, "Thread", _InlineThread)
 
 
 # ----- _poll_and_trigger ----------------------------------------------------------
@@ -240,26 +241,61 @@ def test_trigger_without_a_runner_factory_still_advances_the_timer(sessions, cap
     )
 
 
-def test_trigger_whose_execution_cannot_be_created_advances_and_dispatches_nothing(sessions):
+def test_trigger_whose_execution_cannot_be_created_advances_and_dispatches_nothing(
+    sessions, monkeypatch
+):
     db = sessions()
     _schedule(db, "due")
     ran: List[Dict[str, Any]] = []
 
-    class _Broken(_Runner):
-        def __init__(self) -> None:
-            super().__init__(sessions, ran)
+    def refuse(*_args: Any) -> None:
+        raise RuntimeError("insert failed")
 
-            def refuse(**_kwargs):
-                raise RuntimeError("insert failed")
-
-            self.execution_manager.create_execution = refuse  # type: ignore[method-assign]
-
-    PipelineScheduler(pipeline_runner_factory=_Broken)._poll_and_trigger()
+    monkeypatch.setattr(ps_mod, "stage_execution", refuse)
+    PipelineScheduler(pipeline_runner_factory=lambda: _Runner(sessions, ran))._poll_and_trigger()
 
     row = _rows(db)["due/default"]
     assert row.last_execution_id is None
     assert row.next_run_at > _now()
     assert ran == []
+
+
+def test_the_run_starts_only_after_the_poll_commits(sessions, monkeypatch):
+    """F4: the execution and the advanced timer are one commit, and the run starts
+    after it. A commit that fails leaves the schedule due and starts nothing."""
+    db = sessions()
+    _schedule(db, "due")
+    before = _rows(db)["due/default"].next_run_at
+    started: List[str] = []
+    monkeypatch.setattr(ps_mod, "start_in_background", lambda f, e, *a, **k: started.append(e))
+    real = Session.commit
+
+    def failing_commit(self: Session) -> None:
+        raise RuntimeError("commit lost")
+
+    monkeypatch.setattr(Session, "commit", failing_commit)
+    with pytest.raises(RuntimeError, match="commit lost"):
+        PipelineScheduler(pipeline_runner_factory=lambda: None)._poll_and_trigger()
+    monkeypatch.setattr(Session, "commit", real)
+
+    assert started == []
+    assert _rows(db)["due/default"].next_run_at == before
+    assert db.query(Execution).count() == 0
+
+    seen: List[str] = []
+
+    def check(factory: Any, execution_id: str, *_: Any, **__: Any) -> None:
+        other = sessions()
+        try:
+            row = other.query(PipelineSchedule).one()
+            execution = other.query(Execution).one()
+            seen.append(f"{row.last_execution_id == execution_id}:{execution.state}")
+        finally:
+            other.close()
+
+    monkeypatch.setattr(ps_mod, "start_in_background", check)
+    PipelineScheduler(pipeline_runner_factory=lambda: None)._poll_and_trigger()
+    assert seen == ["True:pending"]
 
 
 def test_a_new_tick_fires_while_the_previous_run_is_still_active(sessions, sync_threads):
@@ -319,18 +355,26 @@ def test_dispatch_thread_swallows_errors_while_recording_the_failure(sync_thread
     runner = SimpleNamespace(
         run_pipeline_jobs=broken,
         execution_manager=SimpleNamespace(
-            update_execution_state=broken, db=SimpleNamespace(close=broken)
+            update_execution_state=broken, db=SimpleNamespace(close=broken, rollback=broken)
         ),
     )
-    scheduler = PipelineScheduler(pipeline_runner_factory=lambda: runner)
 
-    scheduler._dispatch_async("p", "sched-x", {})  # must not raise
+    start_mod.start_in_background(lambda: runner, "sched-x", "p", {})  # must not raise
 
 
-@pytest.mark.parametrize("method", ["_create_execution", "_dispatch_async"])
-def test_helpers_refuse_without_a_runner_factory(method):
-    with pytest.raises(RuntimeError, match="factory not configured"):
-        getattr(PipelineScheduler(pipeline_runner_factory=None), method)("p", "e", {})
+def test_a_runner_that_cannot_be_built_fails_the_execution(sessions, sync_threads, monkeypatch):
+    db = sessions()
+    ExecutionManager(db).create_execution(execution_id="sched-y", pipeline_name="p")
+    monkeypatch.setattr("reflowfy.reflow_manager.database.SessionLocal", sessions)
+
+    def boom() -> Any:
+        raise RuntimeError("no database")
+
+    start_mod.start_in_background(boom, "sched-y", "p", {})
+
+    db.expire_all()
+    execution = db.query(Execution).one()
+    assert (execution.state, execution.error_message) == ("failed", "no database")
 
 
 # ----- lifecycle ------------------------------------------------------------------

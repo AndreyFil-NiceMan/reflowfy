@@ -44,9 +44,14 @@ class ExecutionManager:
         runtime_params: Optional[Dict[str, Any]] = None,
         rate_limit: Optional[float] = None,
         parent_execution_id: Optional[str] = None,
+        commit: bool = True,
     ) -> Execution:
         """
         Create new execution record.
+
+        With ``commit=False`` the row is only flushed into the caller's transaction, so
+        it is saved together with whatever else that transaction writes (see
+        ``start.stage_execution``).
 
         Args:
             execution_id: Unique execution identifier
@@ -54,6 +59,7 @@ class ExecutionManager:
             runtime_params: Runtime parameters for the pipeline
             rate_limit: The request's rate_limit override, if any (jobs/min)
             parent_execution_id: The execution whose hook started this one, if any
+            commit: Commit now (default) or leave it to the caller
 
         Returns:
             Created Execution object
@@ -69,6 +75,9 @@ class ExecutionManager:
         )
 
         self.db.add(execution)
+        if not commit:
+            self.db.flush()
+            return execution
         self.db.commit()
         self.db.refresh(execution)
 

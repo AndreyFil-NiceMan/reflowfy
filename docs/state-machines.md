@@ -413,7 +413,14 @@ Suggested fix: claim with `AND state IN TERMINAL`, and if exactly-once matters, 
 startup sweep for terminal executions with `hooks_fired_at IS NULL` (for the
 crash-before-claim window).
 
-### F4. DLQ and cron start an execution before their own transaction commits
+### F4. DLQ and cron start an execution before their own transaction commits — fixed
+
+**Fixed:** both schedulers stage the execution in the poll's own transaction
+(`start.stage_execution`) and start it after the commit (`start_in_background`), so the
+execution and the DLQ job / schedule advance are saved together or not at all; one saved
+but never started is failed by startup recovery. The DLQ's phantom `processing` status is
+gone (`DLQStatus`), and the cancel route is a conditional `UPDATE … WHERE status =
+'pending'`. What follows is the bug as found.
 
 `DLQScheduler._dispatch_jobs` and `PipelineScheduler._trigger_pipeline` create the
 execution in a separate session, commit it and start its thread, then mark the DLQ job

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from reflowfy.reflow_manager.redaction import public_row
 from reflowfy.reflow_manager.database import get_db
 from reflowfy.store.models import DLQJob
+from reflowfy.store.states import DLQStatus
 from reflowfy.reflow_manager.dlq_schemas import (
     ScheduleDLQJobRequest,
     DLQJobResponse,
@@ -70,7 +71,7 @@ async def schedule_dlq_job(
         pipeline_name=request.pipeline_name,
         delay_minutes=delay_minutes,
         scheduled_at=scheduled_at,
-        status="pending",
+        status=DLQStatus.PENDING,
         retry_count=0,
         max_retries=DLQ_MAX_RETRIES,
     )
@@ -136,12 +137,25 @@ async def get_dlq_job(
     return public_row(job)
 
 
+# Plain def: the UPDATE can wait on a poll's row lock, which must not block the loop.
 @router.delete("/jobs/{job_id}")
-async def cancel_dlq_job(
+def cancel_dlq_job(
     job_id: int,
     db: Session = Depends(get_db),
 ):
-    """Cancel a pending DLQ job."""
+    """Cancel a pending DLQ job.
+
+    One conditional ``UPDATE … WHERE status = 'pending'``: a scheduler poll holding the
+    row starts its run and commits first, and the cancel then finds it ``completed``
+    and answers 400. It used to read, then write: a cancel that read the row during
+    the poll overwrote ``completed`` with ``cancelled`` for a run that had started.
+    """
+    updated = (
+        db.query(DLQJob)
+        .filter(DLQJob.id == job_id, DLQJob.status == DLQStatus.PENDING)
+        .update({DLQJob.status: DLQStatus.CANCELLED}, synchronize_session=False)
+    )
+    db.commit()
     job = db.query(DLQJob).filter(DLQJob.id == job_id).first()
 
     if not job:
@@ -150,7 +164,7 @@ async def cancel_dlq_job(
             detail=f"DLQ job {job_id} not found",
         )
 
-    if job.status != "pending":
+    if not updated:
         logger.warning(
             "DLQ cancel rejected: job is %s",
             job.status,
@@ -166,8 +180,6 @@ async def cancel_dlq_job(
             detail=f"Cannot cancel job with status '{job.status}'",
         )
 
-    job.status = "cancelled"
-    db.commit()
     logger.info(
         "DLQ job cancelled",
         extra={"event": "dlq_cancelled", "dlq_job_id": job_id, "pipeline_name": job.pipeline_name},

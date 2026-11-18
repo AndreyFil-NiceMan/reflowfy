@@ -8,7 +8,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 
 from sqlalchemy.exc import DBAPIError
@@ -296,43 +296,6 @@ class PipelineRunner:
         self.execution_manager = execution_manager
         self.job_manager = job_manager
         self.dispatcher = dispatcher
-
-    def start_pipeline(
-        self,
-        pipeline_name: str,
-        runtime_params: Dict[str, Any],
-        execution_id: str,
-        background_runner: Callable[[], "PipelineRunner"],
-    ) -> None:
-        """Create an execution now, then plan and drive it on a thread of its own.
-
-        Raises ``ValueError`` here, before anything is created, when the pipeline is
-        not registered or the params are invalid. Anything that goes wrong later
-        (planning, dispatch) marks the execution ``failed``, as for ``/run``.
-
-        ``background_runner`` builds the runner the thread uses: it needs its own
-        database session, since this one belongs to the caller's thread.
-        """
-        from reflowfy.reflow_manager.start import check_runnable, drive_execution
-
-        check_runnable(pipeline_name, runtime_params)
-        self.execution_manager.create_execution(
-            execution_id=execution_id,
-            pipeline_name=pipeline_name,
-            runtime_params=runtime_params,
-        )
-
-        def drive() -> None:
-            runner = background_runner()
-            drive_execution(
-                runner.execution_manager.db,
-                lambda _db: runner,
-                execution_id,
-                pipeline_name,
-                runtime_params,
-            )
-
-        threading.Thread(target=drive, name=f"run-{execution_id[:12]}", daemon=True).start()
 
     @bind_log_context("execution_id")
     def resume_execution(

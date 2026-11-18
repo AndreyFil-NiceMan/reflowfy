@@ -1,7 +1,8 @@
 """DLQScheduler: the "run this pipeline later with these params" queue.
 
 Polling picks up due pending jobs only, groups them per pipeline and runs each group
-through ``PipelineRunner.start_pipeline``. A run that cannot be started reschedules its jobs with exponential backoff and
+through ``start.stage_execution`` (in the poll's transaction) and, once that commits,
+``start.start_in_background`` (both faked here). A run that cannot be started reschedules its jobs with exponential backoff and
 archives them once ``max_retries`` is reached. The on-demand ``process_*_immediately``
 paths behind ``/dlq/.../dispatch`` share that failure handling. All on SQLite.
 """
@@ -83,30 +84,48 @@ def _job(db: Session, job_id: int) -> Optional[DLQJob]:
     return db.query(DLQJob).filter(DLQJob.id == job_id).first()
 
 
-class _Runner:
-    execution_manager = SimpleNamespace(db=SimpleNamespace(close=lambda: None))
+class _Fake:
+    """Stands in for ``stage_execution`` / ``start_in_background`` in this module.
 
-    def __init__(self, calls: List[Dict[str, Any]], error: Optional[Exception] = None) -> None:
-        self.calls = calls
-        self.error = error
+    ``calls`` gets one entry per staged run; ``error`` (or ``fail_if(params)``) makes
+    staging raise; ``started`` lists the execution ids started after the commit."""
 
-    def start_pipeline(
-        self,
-        pipeline_name: str,
-        runtime_params: Dict[str, Any],
-        execution_id: str,
-        background_runner: Any = None,
-    ) -> Dict[str, Any]:
-        self.calls.append(
-            {"pipeline": pipeline_name, "params": runtime_params, "execution_id": execution_id}
-        )
+    def __init__(self) -> None:
+        self.calls: List[Dict[str, Any]] = []
+        self.error: Optional[Exception] = None
+        self.fail_if: Optional[Callable[[Dict[str, Any]], bool]] = None
+        self.started: List[str] = []
+        self.on_start: Optional[Callable[[str], None]] = None
+
+    def stage(self, db: Session, execution_id: str, pipeline_name: str, params: Dict[str, Any]):
+        self.calls.append({"pipeline": pipeline_name, "params": params, "execution_id": execution_id})
         if self.error:
             raise self.error
-        return {"execution_id": execution_id}
+        if self.fail_if and self.fail_if(params):
+            raise RuntimeError(f"failed for {params}")
+
+    def start(self, factory: Any, execution_id: str, pipeline_name: str, params: Any, **_: Any):
+        if self.on_start:
+            self.on_start(execution_id)
+        self.started.append(execution_id)
+
+
+_FAKE = _Fake()
+
+
+@pytest.fixture(autouse=True)
+def _fake_start(monkeypatch) -> _Fake:
+    global _FAKE
+    _FAKE = _Fake()
+    monkeypatch.setattr(dlq_mod, "stage_execution", lambda *a: _FAKE.stage(*a))
+    monkeypatch.setattr(dlq_mod, "start_in_background", lambda *a, **k: _FAKE.start(*a, **k))
+    return _FAKE
 
 
 def _scheduler(calls: List[Dict[str, Any]], error: Optional[Exception] = None) -> DLQScheduler:
-    return DLQScheduler(pipeline_runner_factory=lambda: _Runner(calls, error))
+    _FAKE.calls = calls
+    _FAKE.error = error
+    return DLQScheduler(pipeline_runner_factory=lambda: None)
 
 
 # ----- _poll_and_process ----------------------------------------------------------
@@ -218,7 +237,7 @@ def test_a_poll_error_rolls_back_and_propagates(db, monkeypatch, caplog):
 
     def crash(session, pipeline_name, jobs):
         for job in jobs:
-            job.status = "processing"
+            job.status = "completed"
         session.flush()
         raise RuntimeError("db went away")
 
@@ -228,7 +247,8 @@ def test_a_poll_error_rolls_back_and_propagates(db, monkeypatch, caplog):
         with pytest.raises(RuntimeError, match="db went away"):
             scheduler._poll_and_process()
 
-    assert _job(db, job_id).status == "pending"  # not stranded in "processing"
+    assert _job(db, job_id).status == "pending"  # rolled back
+    assert _FAKE.started == []
     assert any("DLQ poll error" in r.getMessage() for r in caplog.records)
 
 
@@ -261,7 +281,7 @@ def test_process_job_immediately_for_an_unknown_job_returns_none(db):
     assert calls == []
 
 
-@pytest.mark.parametrize("status", ["processing", "completed"])
+@pytest.mark.parametrize("status", ["cancelled", "completed"])
 def test_process_job_immediately_refuses_a_job_that_is_not_pending(db, status):
     job_id = _dlq(db, status=status)
     calls: List[Dict[str, Any]] = []
@@ -341,14 +361,8 @@ def test_process_pipeline_immediately_a_failed_group_does_not_cost_the_others(db
     ids = [_dlq(db, "a", k=1), _dlq(db, "a", k=2), _dlq(db, "a", k=3)]
     calls: List[Dict[str, Any]] = []
 
-    class _FailsOnTwo(_Runner):
-        def start_pipeline(self, pipeline_name, runtime_params, execution_id, background_runner):
-            super().start_pipeline(pipeline_name, runtime_params, execution_id)
-            if runtime_params["k"] == 2:
-                raise RuntimeError("k=2 exploded")
-            return {"execution_id": execution_id}
-
-    scheduler = DLQScheduler(pipeline_runner_factory=lambda: _FailsOnTwo(calls))
+    scheduler = _scheduler(calls)
+    _FAKE.fail_if = lambda params: params["k"] == 2
     count, execution_ids = scheduler.process_pipeline_immediately(db, "a")
 
     # The group after the failing one still ran, and is not charged a retry.
@@ -443,3 +457,75 @@ def test_the_module_singleton_starts_and_stops(monkeypatch):
     assert dlq_mod.get_dlq_scheduler() is None
     assert not scheduler._running
     dlq_mod.stop_dlq_scheduler()
+
+
+# ----- a run starts only after its DLQ job is committed (F4) -----------------------
+
+
+def test_the_run_starts_after_the_dlq_job_is_committed(db, sessions):
+    job_id = _dlq(db)
+    seen: List[str] = []
+
+    def check(execution_id: str) -> None:
+        other = sessions()  # another connection sees only committed rows
+        try:
+            row = other.query(DLQJob).filter(DLQJob.id == job_id).one()
+            seen.append(f"{row.status}:{row.execution_id == execution_id}")
+        finally:
+            other.close()
+
+    _FAKE.on_start = check
+    _scheduler([])._poll_and_process()
+
+    assert seen == ["completed:True"]
+
+
+def test_a_failed_commit_starts_nothing(db, monkeypatch):
+    job_id = _dlq(db)
+    real = Session.commit
+
+    def failing_commit(self: Session) -> None:
+        raise RuntimeError("commit lost")
+
+    monkeypatch.setattr(Session, "commit", failing_commit)
+    with pytest.raises(RuntimeError, match="commit lost"):
+        _scheduler([])._poll_and_process()
+    monkeypatch.setattr(Session, "commit", real)
+
+    assert _FAKE.started == []  # the next poll still finds the job due, and nothing ran
+    assert _job(db, job_id).status == "pending"
+
+
+def test_process_job_immediately_starts_after_commit(db, sessions):
+    job_id = _dlq(db, due=False)
+    seen: List[str] = []
+
+    def check(execution_id: str) -> None:
+        other = sessions()
+        try:
+            seen.append(other.query(DLQJob).filter(DLQJob.id == job_id).one().status)
+        finally:
+            other.close()
+
+    _FAKE.on_start = check
+    _scheduler([]).process_job_immediately(db, job_id)
+
+    assert seen == ["completed"]
+
+
+def test_stage_and_start_use_the_real_execution_row(db, sessions, monkeypatch):
+    """Unfaked staging: the execution row is written in the poll's transaction."""
+    from reflowfy.reflow_manager import start as start_mod
+    from reflowfy.store.models import Execution
+
+    monkeypatch.setattr(dlq_mod, "stage_execution", start_mod.stage_execution)
+    monkeypatch.setattr(start_mod, "check_runnable", lambda name, params: None)
+    job_id = _dlq(db, x=1)
+
+    _scheduler([])._poll_and_process()
+
+    db.expire_all()
+    execution = db.query(Execution).one()
+    assert execution.execution_id == _job(db, job_id).execution_id
+    assert (execution.state, execution.plan_complete) == ("pending", False)
+    assert _FAKE.started == [execution.execution_id]

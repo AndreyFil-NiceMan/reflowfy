@@ -1,7 +1,7 @@
 """`/dlq/*` routes (dlq_routes.py) against a real SQLite database.
 
 The DLQ is a "run this pipeline later with these params" queue: scheduling stores a row,
-dispatching hands its payload to `PipelineRunner.start_pipeline` (faked here) as runtime params.
+dispatching hands its payload to `start.stage_execution` (faked here) as runtime params.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 import reflowfy.reflow_manager.app as app_module
 import reflowfy.reflow_manager.dlq_routes as dlq_routes
+import reflowfy.reflow_manager.dlq_scheduler as dlq_scheduler_mod
 from reflowfy.reflow_manager.database import get_db
 from reflowfy.reflow_manager.dlq_scheduler import (
     DLQ_DEFAULT_DELAY_MINUTES,
@@ -79,35 +80,31 @@ def client(engine):
 
 
 class _Runner:
-    """Stands in for PipelineRunner: records each start_pipeline call."""
-
-    execution_manager = SimpleNamespace(db=SimpleNamespace(close=lambda: None))
-
+    """Stands in for staging and starting a run: records each staged run."""
 
     def __init__(self, fail: bool = False) -> None:
         self.calls: List[Dict[str, Any]] = []
+        self.started: List[str] = []
         self.fail = fail
 
-    def start_pipeline(
-        self,
-        pipeline_name: str,
-        runtime_params: Dict[str, Any],
-        execution_id: str,
-        background_runner: Any = None,
-    ):
+    def stage(self, db: Any, execution_id: str, pipeline_name: str, params: Dict[str, Any]):
         self.calls.append(
-            {"pipeline_name": pipeline_name, "params": runtime_params, "execution_id": execution_id}
+            {"pipeline_name": pipeline_name, "params": params, "execution_id": execution_id}
         )
         if self.fail:
             raise RuntimeError("source unreachable")
-        return {}
+
+    def start(self, factory: Any, execution_id: str, *_: Any, **__: Any) -> None:
+        self.started.append(execution_id)
 
 
 @pytest.fixture
 def runner(monkeypatch) -> _Runner:
     r = _Runner()
-    scheduler = DLQScheduler(pipeline_runner_factory=lambda: r)  # never started: no thread
+    scheduler = DLQScheduler(pipeline_runner_factory=lambda: None)  # never started: no thread
     monkeypatch.setattr(dlq_routes, "get_dlq_scheduler", lambda: scheduler)
+    monkeypatch.setattr(dlq_scheduler_mod, "stage_execution", r.stage)
+    monkeypatch.setattr(dlq_scheduler_mod, "start_in_background", r.start)
     return r
 
 

@@ -6,17 +6,17 @@ when a pipeline's next_run_at has elapsed.
 
 import logging
 import os
-import threading
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from croniter import croniter
 from sqlalchemy.orm import Session
 
 from reflowfy.store.models import PipelineSchedule
+from reflowfy.store.states import ScheduleEnabled
 from reflowfy.reflow_manager.database import SessionLocal
-from reflowfy.reflow_manager.start import check_runnable, drive_execution
+from reflowfy.reflow_manager.start import stage_execution, start_in_background
 from reflowfy.reflow_manager.periodic import PeriodicTask
 
 logger = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ class PipelineScheduler(PeriodicTask):
             due = (
                 db.query(PipelineSchedule)
                 .filter(
-                    PipelineSchedule.enabled == "true",
+                    PipelineSchedule.enabled == ScheduleEnabled.TRUE,
                     PipelineSchedule.next_run_at <= now,
                 )
                 .with_for_update(skip_locked=True)
@@ -75,10 +75,22 @@ class PipelineScheduler(PeriodicTask):
                 extra={"event": "schedule_due", "schedules_due": len(due)},
             )
 
+            staged: List[Tuple[str, str, Dict[str, Any]]] = []
             for schedule in due:
-                self._trigger_pipeline(db, schedule, now)
+                run = self._trigger_pipeline(db, schedule, now)
+                if run is not None:
+                    staged.append(run)
 
+            # The executions and the advanced timers are one commit; the runs start
+            # after it, so a crash or failed commit in between cannot leave a run going
+            # while its schedule still looks due (a second run on the next poll).
             db.commit()
+            factory = self.pipeline_runner_factory
+            if factory is not None:
+                for execution_id, pipeline_name, runtime_params in staged:
+                    start_in_background(
+                        factory, execution_id, pipeline_name, runtime_params, log=logger
+                    )
 
         except Exception:
             db.rollback()
@@ -91,15 +103,16 @@ class PipelineScheduler(PeriodicTask):
         finally:
             db.close()
 
-    def _trigger_pipeline(self, db: Session, schedule: PipelineSchedule, now: datetime) -> None:
-        """Fire an execution for a due scheduled pipeline and advance next_run_at.
+    def _trigger_pipeline(
+        self, db: Session, schedule: PipelineSchedule, now: datetime
+    ) -> Optional[Tuple[str, str, Dict[str, Any]]]:
+        """Stage an execution for a due scheduled pipeline and advance next_run_at.
 
-        The execution record is created synchronously so it exists immediately
-        and the schedule timer can advance, but the actual job split/dispatch
-        runs on a background thread. This keeps the poll loop from blocking on
-        a long-running (or hung) execution, so the cron cadence never stalls.
-        Overlap is allowed: a new tick fires even if a previous run of the same
-        pipeline is still in flight.
+        Returns ``(execution_id, pipeline_name, runtime_params)`` for the caller to
+        start once the poll has committed, or None when the run could not be staged.
+        The run itself goes on a background thread, so a long-running (or hung)
+        execution never stalls the cron cadence. Overlap is allowed: a new tick fires
+        even if a previous run of the same pipeline is still in flight.
         """
         pipeline_name = schedule.pipeline_name
         schedule_name = schedule.schedule_name
@@ -119,14 +132,14 @@ class PipelineScheduler(PeriodicTask):
             extra={**log_ctx, "event": "schedule_trigger", "cron": schedule.cron_expression},
         )
 
+        run: Optional[Tuple[str, str, Dict[str, Any]]] = None
         try:
             if not self.pipeline_runner_factory:
                 raise RuntimeError("Pipeline runner factory not configured")
 
             # What can never run is refused here, as /run does, not left to fail later.
-            check_runnable(pipeline_name, runtime_params)
-            self._create_execution(pipeline_name, execution_id, runtime_params)
-            self._dispatch_async(pipeline_name, execution_id, runtime_params)
+            stage_execution(db, execution_id, pipeline_name, runtime_params)
+            run = (execution_id, pipeline_name, runtime_params)
 
             schedule.last_execution_id = execution_id
             logger.info(
@@ -149,49 +162,7 @@ class PipelineScheduler(PeriodicTask):
             schedule.last_triggered_at = now
             schedule.next_run_at = self._compute_next_run(schedule.cron_expression, now)
             db.flush()
-
-    def _create_execution(
-        self, pipeline_name: str, execution_id: str, runtime_params: Dict[str, Any]
-    ) -> None:
-        """Create the execution record synchronously, in its own session."""
-        factory = self.pipeline_runner_factory
-        if factory is None:
-            raise RuntimeError("Pipeline runner factory not configured")
-        runner = factory()
-        try:
-            runner.execution_manager.create_execution(
-                execution_id=execution_id,
-                pipeline_name=pipeline_name,
-                runtime_params=runtime_params,
-            )
-            runner.execution_manager.db.commit()
-        finally:
-            runner.execution_manager.db.close()
-
-    def _dispatch_async(
-        self, pipeline_name: str, execution_id: str, runtime_params: Dict[str, Any]
-    ) -> None:
-        """Run the pipeline's jobs on a background daemon thread.
-
-        A fresh runner (own DB session) runs the existing execution through
-        ``drive_execution``, as ``/run`` does: on failure it is marked failed.
-        """
-        factory = self.pipeline_runner_factory
-        if factory is None:
-            raise RuntimeError("Pipeline runner factory not configured")
-
-        def _run() -> None:
-            runner = factory()
-            drive_execution(
-                runner.execution_manager.db,
-                lambda _db: runner,
-                execution_id,
-                pipeline_name,
-                runtime_params,
-                log=logger,
-            )
-
-        threading.Thread(target=_run, daemon=True).start()
+        return run
 
     @staticmethod
     def _compute_next_run(cron_expression: str, after: datetime) -> datetime:
@@ -237,7 +208,7 @@ class PipelineScheduler(PeriodicTask):
                         cron_expression=run.cron,
                         runtime_params=run.params,
                         next_run_at=self._compute_next_run(run.cron, now),
-                        enabled="true",
+                        enabled=ScheduleEnabled.TRUE,
                     )
                     db.add(row)
                     logger.info(
@@ -255,7 +226,7 @@ class PipelineScheduler(PeriodicTask):
 
                 else:
                     # Re-enable if it was previously disabled
-                    existing.enabled = "true"
+                    existing.enabled = ScheduleEnabled.TRUE
 
                     if existing.cron_expression != run.cron:
                         # Cron expression changed — recalculate next fire time
@@ -280,12 +251,12 @@ class PipelineScheduler(PeriodicTask):
 
         # Soft-disable schedules that are no longer declared by any pipeline
         all_schedule_rows = (
-            db.query(PipelineSchedule).filter(PipelineSchedule.enabled == "true").all()
+            db.query(PipelineSchedule).filter(PipelineSchedule.enabled == ScheduleEnabled.TRUE).all()
         )
 
         for row in all_schedule_rows:
             if (row.pipeline_name, row.schedule_name) not in scheduled_keys:
-                row.enabled = "false"
+                row.enabled = ScheduleEnabled.FALSE
                 logger.info(
                     "Disabled schedule '%s' for '%s' (no longer scheduled)",
                     row.schedule_name,
@@ -311,7 +282,7 @@ class PipelineScheduler(PeriodicTask):
             db.query(PipelineSchedule)
             .filter(
                 PipelineSchedule.pipeline_name == pipeline_name,
-                PipelineSchedule.enabled == "true",
+                PipelineSchedule.enabled == ScheduleEnabled.TRUE,
             )
             .all()
         )
