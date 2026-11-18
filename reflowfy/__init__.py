@@ -29,6 +29,7 @@ from reflowfy.transformations.base import (
     BaseTransformation,
     RecordTransformation,
     StepOutputError,
+    SyncRecordTransformation,
     TransformationError,
     Transformations,
 )
@@ -116,8 +117,8 @@ __all__ = [
     "chunk",
     "job",
     "BaseTransformation",
-    # Async transformations: `async def apply_async`, or one coroutine per record
-    # run concurrently (`@record_transformation`).
+    # Transformation classes, for a step with its own state: `apply`, `async def
+    # apply_async`, or per record (`async def apply_record` / `def apply_record_sync`).
     "AsyncTransformation",
     "RecordTransformation",
     # Logging — module-level, works anywhere (no `self` needed):
@@ -155,13 +156,18 @@ __all__ = [
     "fan_out",
     "api_destination",
     "console_destination",
-    # Decorators
-    "source",
-    "destination",
-    "record_destination",
-    "RecordDestination",
+    # Decorators: @transformation (batch, or per_record=True) and
+    # @destination(per_record=True). Steps are classes; subclass these for state.
     "transformation",
+    "destination",
+    "RecordDestination",
+    "SyncRecordTransformation",
+    # Deprecated spellings, kept working (they warn): @record_transformation /
+    # @record_destination (now per_record=True), and the @source("x") /
+    # @destination("x") factory registries nothing reads.
     "record_transformation",
+    "record_destination",
+    "source",
     "source_registry",
     "destination_registry",
 ]

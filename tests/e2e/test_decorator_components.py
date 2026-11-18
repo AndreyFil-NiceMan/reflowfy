@@ -1,8 +1,6 @@
 """
-E2E Tests for decorator components (@source, @destination, @transformation).
-
-Verifies that the decorator pattern works correctly for sharing
-and reusing configurations.
+E2E tests for reusable components: plain source/destination factory functions
+and @transformation.
 """
 
 import pytest
@@ -14,26 +12,12 @@ from tests.e2e.test_pipelines.shared_destinations import e2e_http, e2e_console
 pytestmark = [pytest.mark.e2e]
 
 
-def test_shared_source_registration():
-    """Verify shared sources are registered correctly."""
-    # Check registry
-    assert source_registry.get("e2e_elastic") is not None
-    assert source_registry.get("e2e_mock") is not None
-    
-    # Check that they are the same functions we imported
-    assert source_registry.get("e2e_elastic") == e2e_elastic
-    assert source_registry.get("e2e_mock") == e2e_mock
-
-
-def test_shared_destination_registration():
-    """Verify shared destinations are registered correctly."""
-    # Check registry
-    assert destination_registry.get("e2e_http") is not None
-    assert destination_registry.get("e2e_console") is not None
-    
-    # Check that they are the same functions we imported
-    assert destination_registry.get("e2e_http") == e2e_http
-    assert destination_registry.get("e2e_console") == e2e_console
+def test_shared_factories_are_plain_functions():
+    """Reusable sources/destinations are plain functions: no registry, no decorator."""
+    assert source_registry.get("e2e_elastic") is None
+    assert destination_registry.get("e2e_http") is None
+    assert callable(e2e_elastic) and callable(e2e_mock)
+    assert callable(e2e_http) and callable(e2e_console)
 
 
 def test_shared_source_invocation():
@@ -63,8 +47,8 @@ def test_dynamic_transformation_decorator():
     from reflowfy import transformation
     from reflowfy.transformations.registry import transformation_registry
     
-    @transformation("e2e_dynamic_transform")
-    def my_transform(records, runtime_params):
+    @transformation
+    def e2e_dynamic_transform(records, runtime_params):
         for r in records:
             r["dynamic"] = True
         return records

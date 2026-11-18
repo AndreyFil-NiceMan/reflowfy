@@ -7,12 +7,12 @@ group is sent and retried on its own, an optional one may fail without failing t
 every (record, destination) pair.
 """
 
+from reflowfy.destinations.decorators import destination
 from typing import Any, Dict, List, Optional
 
 import pytest
 
 from reflowfy.destinations.base import BaseDestination
-from reflowfy.destinations.decorators import record_destination
 from reflowfy.destinations.fan_out import FanOut, as_destination, fan_out
 from reflowfy.destinations.record import RecordDestination, RecordDestinationError
 from reflowfy.execution.job_runner import ROUTE_MODE, run_job_records_async
@@ -146,14 +146,14 @@ class TestFanOut:
 # ---------------------------------------------------------------- multicast per record
 
 
-@record_destination("fo_multicast")
+@destination("fo_multicast", per_record=True)
 def multicast(record: Any, params: Any) -> Any:
-    if record["engine"] == "both":
+    if record["region"] == "both":
         return [Sink("t.a"), Sink("t.b")]
-    if record["engine"] == "maybe":
+    if record["region"] == "maybe":
         audit = Sink("t.audit")
         return fan_out(Sink("t.a"), audit, optional=[audit])
-    return Sink(f"t.{record['engine']}")
+    return Sink(f"t.{record['region']}")
 
 
 class TestMulticast:
@@ -172,9 +172,9 @@ class TestMulticast:
         await _route_and_send(dest, _records("maybe", "a"))
         assert dest.failed_optional == ["Sink"] and "t.audit" not in Sink.ledger
 
-        @record_destination("fo_audit_required")
+        @destination("fo_audit_required", per_record=True)
         def audit_required(record: Any, params: Any) -> Any:
-            if record["engine"] == "maybe":
+            if record["region"] == "maybe":
                 audit = Sink("t.audit")
                 return fan_out(Sink("t.a"), audit, optional=[audit])
             return [Sink("t.a"), Sink("t.audit")]  # this record needs the audit
@@ -185,7 +185,7 @@ class TestMulticast:
 
     @pytest.mark.parametrize("produced", [[], [Sink("a"), "x"], ["x"]])
     async def test_a_bad_list_fails_the_job(self, produced: Any):
-        @record_destination("fo_bad_list")
+        @destination("fo_bad_list", per_record=True)
         def bad(record: Any, params: Any) -> Any:
             return produced
 

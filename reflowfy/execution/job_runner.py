@@ -40,7 +40,7 @@ RECORD_TYPE_STEP = "record_type"
 """Name of the :class:`AppliedStep` that reports the ``record_type`` check."""
 
 ROUTE_MODE = StepMode.ROUTE
-"""``AppliedStep.mode`` of a ``@record_destination`` choosing each record's destination.
+"""``AppliedStep.mode`` of a ``@destination(per_record=True)`` choosing each record's destination.
 
 Not a transformation: reported as a step so its time and skipped records show up
 wherever a transformation's do."""
@@ -272,7 +272,7 @@ async def run_job_records_async(
     Does NOT send — the caller owns sending, stats, and presentation.
 
     A ``define_destination`` that returns a list gets a :func:`fan_out` of it, routed
-    like any ``@record_destination`` (so the caller always gets one destination).
+    like any ``@destination(per_record=True)`` (so the caller always gets one destination).
 
     Returns ``(records, transformed_records, applied, destination)`` where
     ``applied`` is the list of :class:`AppliedStep` from the

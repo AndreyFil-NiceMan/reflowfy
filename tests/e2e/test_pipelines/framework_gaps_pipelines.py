@@ -9,6 +9,7 @@ They run unchanged in local mode and, with ``scripts/e2e-distributed.override.ym
 over Kafka with real workers.
 """
 
+from reflowfy import destination
 import os
 from typing import Any, Dict, List
 
@@ -25,8 +26,6 @@ from reflowfy import (
     api_destination,
     fan_out,
     job,
-    record_destination,
-    record_transformation,
     run_pipeline,
     secret,
     sql_source,
@@ -110,14 +109,14 @@ def gaps_declined(records: List[Any], runtime_params: Any) -> List[Any]:
     return [{**r, "declined_step_ran": True} for r in records]
 
 
-@record_transformation("gaps_skip_odd", on_error="skip")
+@transformation("gaps_skip_odd", per_record=True, on_error="skip")
 async def gaps_skip_odd(record: Dict[str, Any], runtime_params: Any) -> Dict[str, Any]:
     if record["id"] % 2:
         raise ValueError("odd ids are rejected")
     return record
 
 
-@record_transformation("gaps_returns_tuple")
+@transformation("gaps_returns_tuple", per_record=True)
 async def gaps_returns_tuple(record: Dict[str, Any], runtime_params: Any) -> Any:
     return (record, record)  # breaks the contract: a record, a list of records, or None
 
@@ -156,7 +155,7 @@ class GapsTransformPipeline(AbstractPipeline[TransformParams]):
 # ---------------------------------------------------------------------------
 
 
-@record_destination("gaps_multicast")
+@destination("gaps_multicast", per_record=True)
 def gaps_multicast(record: Dict[str, Any], runtime_params: Any) -> Any:
     run = runtime_params.get("run", "x")
     if record["id"] % 2 == 0:

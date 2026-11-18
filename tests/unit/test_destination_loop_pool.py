@@ -6,6 +6,7 @@ for DESTINATION_POOL_IDLE_SECONDS, when a destination saw it fail (evict and reb
 and when its scope ends (the worker drains). Different credentials never share.
 """
 
+from reflowfy.destinations.decorators import destination
 import asyncio
 from typing import Any, Dict, List
 
@@ -15,7 +16,6 @@ import pytest
 import reflowfy.destinations.pool as pool_mod
 from reflowfy.destinations.api import api_destination
 from reflowfy.destinations.base import DestinationError
-from reflowfy.destinations.decorators import record_destination
 from reflowfy.destinations.kafka import KafkaDestination, kafka_destination
 from reflowfy.destinations.pool import (
     DEFAULT_IDLE_SECONDS,
@@ -164,7 +164,7 @@ class TestSharing:
     async def test_a_record_destination_takes_its_connections_from_the_loop(
         self, producers  # noqa: F811
     ):
-        @record_destination("lp_by_topic")
+        @destination("lp_by_topic", per_record=True)
         def by_topic(record: Any, params: Any) -> KafkaDestination:
             return kafka_destination(bootstrap_servers="k:9092", topic=record["t"])
 

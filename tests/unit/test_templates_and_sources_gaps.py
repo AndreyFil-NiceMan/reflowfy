@@ -48,13 +48,13 @@ def _import(filename: str) -> Any:
 
 
 class TestSourceTemplate:
-    def test_registers_a_reusable_elastic_source_with_overrides(
+    def test_is_a_plain_reusable_elastic_source_with_overrides(
         self, isolated_component_registries: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("ELASTICSEARCH_URL", "http://es.internal:9200")
         module = _import("source_template.py")
 
-        assert source_registry.get("example_elastic") is module.example_elastic
+        assert source_registry.get("example_elastic") is None  # no deprecated decorator
         src = module.example_elastic(index="orders-*", size=50)
         assert isinstance(src, ElasticSource)
         assert src.config["url"] == "http://es.internal:9200"
@@ -63,7 +63,7 @@ class TestSourceTemplate:
 
 
 class TestDestinationTemplate:
-    def test_registers_a_reusable_kafka_destination_with_overrides(
+    def test_is_a_plain_reusable_kafka_destination_with_overrides(
         self, isolated_component_registries: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("KAFKA_SERVERS", raising=False)
@@ -72,7 +72,7 @@ class TestDestinationTemplate:
         monkeypatch.setenv("KAFKA_BOOTSTRAP_SERVERS", "ignored:9092")
         module = _import("destination_template.py")
 
-        assert destination_registry.get("example_kafka") is module.example_kafka
+        assert destination_registry.get("example_kafka") is None  # no deprecated decorator
         dest = module.example_kafka(topic="out-topic")
         assert isinstance(dest, KafkaDestination)
         assert dest.config["topic"] == "out-topic"

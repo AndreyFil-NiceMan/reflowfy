@@ -10,7 +10,7 @@ Two scopes use the same :class:`ConnectionPool`:
   and never share. In local mode the manager's dispatcher opens one per execution (the
   loop that drives it), and ``reflowfy test`` one per job send: a
   Kafka producer belongs to the loop that started it, so a pool never outlives its loop.
-- **A job's pool**, which a ``@record_destination`` gives its routed destinations. It
+- **A job's pool**, which a ``@destination(per_record=True)`` gives its routed destinations. It
   carries the job's request budget and takes its connections from the loop's pool when
   one is open (else keeps its own, closed with the job).
 
@@ -103,7 +103,7 @@ class ConnectionPool:
     """Connections keyed by a destination's ``_connection_key()``, shared by destinations.
 
     ``request_limit`` is a job's budget of requests in flight across all its
-    destinations (``@record_destination``); a loop's pool has none.
+    destinations (``@destination(per_record=True)``); a loop's pool has none.
     """
 
     def __init__(

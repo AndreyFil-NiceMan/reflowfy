@@ -1,7 +1,7 @@
 """What record type a transformation step promises to return (``validate_steps``).
 
-Read from an explicit ``output_type`` class attribute, or from a ``@transformation`` /
-``@record_transformation`` function's return annotation. The runner checks each step's
+Read from an explicit ``output_type`` class attribute, or from a ``@transformation``
+function's return annotation (batch or per record). The runner checks each step's
 output against it with :mod:`reflowfy.core.record_validation`.
 """
 
@@ -79,7 +79,7 @@ def step_output_type(transformation: object) -> Optional[Any]:
     """The record type ``transformation`` promises to return, or None if it promises none.
 
     An explicit ``output_type`` class attribute wins (the way a ``BaseTransformation``
-    subclass declares one); otherwise a ``@transformation``/``@record_transformation``
+    subclass declares one); otherwise a ``@transformation``
     function's return annotation is read. ``-> Records``, ``-> List[Any]`` and no
     annotation mean "no promise", so nothing is checked.
     """

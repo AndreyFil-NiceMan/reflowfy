@@ -55,7 +55,9 @@ class TransformationRegistry:
                 existing = self._transformations[name]
                 raise ValueError(
                     f"Transformation '{name}' is already registered by "
-                    f"{existing.__name__}. Cannot register {transformation_class.__name__}."
+                    f"{existing.__name__}. Cannot register {transformation_class.__name__}"
+                    ' — give one of them another name (@transformation("...") or the '
+                    "class's `name` attribute)."
                 )
 
             self._transformations[name] = transformation_class

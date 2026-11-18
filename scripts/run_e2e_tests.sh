@@ -509,11 +509,11 @@ if [ "$SKIP_DOCKER" = false ]; then
     # Create Kafka topics explicitly, all in one `docker exec` and in parallel: every
     # kafka-topics call starts a JVM, and seven of them one after another took ~12 s.
     # One partition each: the concurrency test checks that concurrency=1 keeps order;
-    # e2e-rd-*: one @record_destination job writes to all three
+    # e2e-rd-*: one @destination(per_record=True) job writes to all three
     # (tests/e2e/destinations/test_record_destination.py).
     log_info "Creating Kafka topics..."
     E2E_TOPICS=(reflow.jobs e2e-test-destination e2e-kafka-concurrency e2e-kafka-headers
-                e2e-rd-whisper e2e-rd-google e2e-rd-azure)
+                e2e-rd-eu e2e-rd-us e2e-rd-apac)
     docker exec reflofy-e2e-kafka bash -c '
         for topic in "$@"; do
             kafka-topics --create --topic "$topic" --bootstrap-server localhost:29092 \

@@ -8,6 +8,8 @@ Typed records: one TypedDict describes the records, for the type checker and at 
   ``on_invalid_record = "skip"`` drops the bad ones with a reason instead of
   failing the job.
 - ``validate_steps`` checks each step's output against its return annotation.
+- ``add_tax`` runs on the whole batch; ``drop_free_orders`` (``per_record=True``)
+  on one record at a time. Neither takes options, so both are listed bare.
 
 The mock data has one order without an ``amount``: ``reflowfy test typed_records``
 shows it skipped as ``invalid data.amount: missing``.
@@ -23,7 +25,6 @@ from reflowfy import (
     RuntimeParams,
     Transformations,
     TypedRecord,
-    record_transformation,
     transformation,
 )
 from reflowfy.destinations.console import console_destination
@@ -39,7 +40,7 @@ class TaxedOrder(TypedRecord[Order]):
     tax: NotRequired[float]
 
 
-@transformation("add_tax")
+@transformation
 def add_tax(records: List[TypedRecord[Order]], runtime_params: RuntimeParams) -> List[TaxedOrder]:
     taxed: List[TaxedOrder] = []
     for record in records:
@@ -47,8 +48,8 @@ def add_tax(records: List[TypedRecord[Order]], runtime_params: RuntimeParams) ->
     return taxed
 
 
-@record_transformation("drop_free_orders")
-async def drop_free_orders(record: TaxedOrder, runtime_params: RuntimeParams) -> TaxedOrder | None:
+@transformation(per_record=True)
+def drop_free_orders(record: TaxedOrder, runtime_params: RuntimeParams) -> TaxedOrder | None:
     return record if record["data"]["amount"] > 0 else None
 
 
@@ -71,7 +72,7 @@ class TypedRecordsPipeline(AbstractPipeline[RuntimeParams]):
     def define_transformations(
         self, records: List[TypedRecord[Order]], runtime_params: RuntimeParams
     ) -> Transformations:
-        return [add_tax(), drop_free_orders()]
+        return [add_tax, drop_free_orders]
 
     def define_destination(
         self, records: List[TaxedOrder], runtime_params: RuntimeParams

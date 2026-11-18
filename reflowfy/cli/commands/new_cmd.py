@@ -103,7 +103,7 @@ from reflowfy.sources.base import BaseSource
 # from typing_extensions import Annotated, NotRequired, Required
 # from reflowfy import Param
 
-# Works from anywhere — no `self` needed, so transformations, @source functions
+# Works from anywhere — no `self` needed, so transformations, source functions
 # and plain helpers can log too. execution_id / job_id / pipeline_name are
 # attached to every record automatically.
 logger = get_logger(__name__)
@@ -194,14 +194,12 @@ class {class_name}(AbstractPipeline[{class_name}Params]):
         target.write_text(f'''"""
 Reusable source: {name}
 
-Auto-discovered — just define and use in any pipeline.
+A plain function returning a configured source: import it in any pipeline.
 """
 
 import os
-from reflowfy import source
 
 
-@source("{name}")
 def {name}(**overrides):
     """
     Reusable source configuration.
@@ -236,14 +234,13 @@ def {name}(**overrides):
         target.write_text(f'''"""
 Reusable destination: {name}
 
-Auto-discovered — just define and use in any pipeline.
+A plain function returning a configured destination: import it in any pipeline.
+To send each record to its own destination, use @destination(per_record=True).
 """
 
 import os
-from reflowfy import destination
 
 
-@destination("{name}")
 def {name}(**overrides):
     """
     Reusable destination configuration.

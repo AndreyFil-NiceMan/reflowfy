@@ -1,6 +1,7 @@
-"""Decorator for registering reusable source configurations.
+"""Deprecated: ``@source("name")`` registered a source factory in a registry nothing reads.
 
-Users define reusable source factory functions with the @source decorator:
+A reusable source configuration is a plain function; drop the decorator. It still
+works, and warns (``DeprecationWarning``) where it is used. The old example:
 
 Example:
     @source("production_elastic")
@@ -18,6 +19,7 @@ Example:
 """
 
 import logging
+import warnings
 from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 logger = logging.getLogger(__name__)
@@ -57,7 +59,7 @@ source_registry = SourceRegistry()
 
 def source(name: str) -> Callable[[F], F]:
     """
-    Decorator to register a reusable source configuration.
+    Deprecated. Register a reusable source configuration (nothing reads the registry).
 
     Args:
         name: Unique name for this source configuration
@@ -70,6 +72,14 @@ def source(name: str) -> Callable[[F], F]:
         def production_elastic(**overrides):
             return elastic_source(url="http://prod:9200", **overrides)
     """
+
+    warnings.warn(
+        f"@source({name!r}) is deprecated: it only registered the function in a registry "
+        "nothing reads. Drop the decorator — a plain function returning a source does "
+        "the same.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
     def decorator(func: F) -> F:
         source_registry.register(name, func)

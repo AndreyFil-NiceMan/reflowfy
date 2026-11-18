@@ -26,6 +26,8 @@ from reflowfy.transformations.base import (
     RecordFailure,
     RecordResults,
     RecordTransformation,
+    SyncRecordTransformation,
+    as_transformations,
     StepOutputError,
     TransformationError,
 )
@@ -42,10 +44,10 @@ class StepMode:
 
     SYNC = "sync"  # a sync transformation, run in a thread
     ASYNC = "async"  # a whole-batch async transformation
-    PER_RECORD = "per_record"  # a @record_transformation, records awaited concurrently
+    PER_RECORD = "per_record"  # @transformation(per_record=True): one call per record
     SKIPPED = "skipped"  # should_apply_transformation declined it: it did not run
     VALIDATE = "validate"  # the pipeline's record_type check (job_runner.check_record_type)
-    ROUTE = "route"  # a @record_destination choosing each record's destination
+    ROUTE = "route"  # a @destination(per_record=True) choosing each record's destination
 
 
 SKIPPED_MODE = StepMode.SKIPPED
@@ -265,7 +267,7 @@ async def _apply_steps(
     decides_steps = _decides_steps(pipeline)
 
     async def resolve() -> List[Any]:
-        return list(
+        return as_transformations(
             await call_hook(pipeline.define_transformations, original_records, runtime_params)
         )
 
@@ -314,12 +316,16 @@ async def _apply_steps(
             continue
         try:
             if isinstance(transformation, RecordTransformation):
-                mode, concurrency = StepMode.PER_RECORD, transformation.effective_concurrency()
+                # A sync per-record step runs its records one at a time in a thread:
+                # no concurrency to report.
+                mode = StepMode.PER_RECORD
+                if not isinstance(transformation, SyncRecordTransformation):
+                    concurrency = transformation.effective_concurrency()
                 logger.debug(
-                    "Transformation %s: %d records, %d at a time",
+                    "Transformation %s: %d records, %s at a time",
                     step_name(transformation),
                     records_in,
-                    concurrency,
+                    concurrency or "one",
                     extra={
                         "event": "transform_per_record_start",
                         "transformation": step_name(transformation),
@@ -366,7 +372,7 @@ async def _apply_steps(
                 transformation_name=step_name(transformation),
                 message=(
                     f"SkipRecord({str(exc)!r}) raised from a {mode} transformation; it only "
-                    "works in a per-record one (@record_transformation). Filter the record "
+                    "works in a per-record one (@transformation(per_record=True)). Filter the record "
                     "out of the list instead, or raise SkipJob to drop the whole job."
                 ),
                 original_error=exc,

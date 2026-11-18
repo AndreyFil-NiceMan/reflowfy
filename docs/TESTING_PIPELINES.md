@@ -100,7 +100,7 @@ def test_add_tax():
     assert out[0]["tax"] == 2.0
 ```
 
-Pass an instance, or the class a `@transformation` / `@record_transformation`
+Pass an instance, or the class a `@transformation` (batch or `per_record=True`)
 decorator returns. A failure raises `TransformationError`, as in a job, with the
 cause on `.original_error`. `make_params("orders", region="us")` builds the
 `runtime_params` a job of that pipeline would see.

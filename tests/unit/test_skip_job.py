@@ -128,10 +128,10 @@ def test_skipped_job_is_its_own_metric_status():
 # --- SkipRecord before SkipJob: both are reported, not only the drop -------------
 
 
-from reflowfy import SkipRecord, record_transformation  # noqa: E402
+from reflowfy import SkipRecord, transformation  # noqa: E402
 
 
-@record_transformation("skip_job_test_skip_one", concurrency=1)
+@transformation("skip_job_test_skip_one", per_record=True, concurrency=1)
 async def _skip_one(record, params):
     if record["id"] == 1:
         raise SkipRecord("bad id")

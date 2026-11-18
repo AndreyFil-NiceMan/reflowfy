@@ -10,6 +10,7 @@ holds each request for ``delay_ms`` and counts how many of a job's requests were
 at once (the job is tagged by its first record id), so a test can check the cap.
 """
 
+from reflowfy import destination
 import os
 
 from typing_extensions import Annotated, NotRequired, Required
@@ -25,7 +26,6 @@ from reflowfy import (
     RecordDestination,
     RuntimeParams,
     Transformations,
-    record_destination,
     transformation,
 )
 from reflowfy.destinations.api import api_destination
@@ -86,7 +86,7 @@ def _routed(record: Record, runtime_params: ApiPerRecordParams, job: str = "") -
 
 # A @record_destination's limit is fixed where it is declared: one per value tested.
 LIMITED: Dict[int, "type[RecordDestination]"] = {
-    n: record_destination(f"e2e_api_per_record_c{n}", concurrency=n)(_routed)
+    n: destination(f"e2e_api_per_record_c{n}", per_record=True, concurrency=n)(_routed)
     for n in (1, 4, 8, 10)
 }
 

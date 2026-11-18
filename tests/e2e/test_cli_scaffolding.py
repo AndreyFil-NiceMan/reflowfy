@@ -87,7 +87,8 @@ def test_reflowfy_new_source(temp_workspace):
     
     with open("src/sources/my_custom_api.py") as f:
         content = f.read()
-        assert '@source("my_custom_api")' in content
+        assert "def my_custom_api(**overrides):" in content
+        assert "@source" not in content
 
 
 def test_reflowfy_new_destination(temp_workspace):
@@ -101,7 +102,8 @@ def test_reflowfy_new_destination(temp_workspace):
     
     with open("src/destinations/my_custom_db.py") as f:
         content = f.read()
-        assert '@destination("my_custom_db")' in content
+        assert "def my_custom_db(**overrides):" in content
+        assert "@destination" not in content
 
 
 def test_reflowfy_new_transformation(temp_workspace):

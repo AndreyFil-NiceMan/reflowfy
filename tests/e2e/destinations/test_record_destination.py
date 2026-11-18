@@ -2,8 +2,8 @@
 E2E tests for ``@record_destination`` against a real broker.
 
 Runs ``e2e_record_destination_test``, whose jobs each write to three topics (one per
-``engine``), and consumes all three: every record of this test's ``run`` must land
-exactly once, on its own engine's topic.
+``region``), and consumes all three: every record of this test's ``run`` must land
+exactly once, on its own region's topic.
 
 Prerequisites:
     - Kafka on localhost:9095 (SASL_PLAINTEXT, from docker-compose.e2e-infra.yml)
@@ -27,8 +27,8 @@ from tests.e2e.polling import POLL_INTERVAL
 REFLOW_MANAGER_URL = os.getenv("E2E_REFLOW_MANAGER_URL", "http://localhost:8002")
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("E2E_KAFKA_SERVERS", "127.0.0.1:9095")
 PIPELINE_NAME = "e2e_record_destination_test"
-ENGINES = ("whisper", "google", "azure")
-TOPICS = {f"e2e-rd-{engine}": engine for engine in ENGINES}
+REGIONS = ("eu", "us", "apac")
+TOPICS = {f"e2e-rd-{region}": region for region in REGIONS}
 MAX_WAIT = 120
 
 
@@ -92,7 +92,7 @@ async def _consume_run(run: str, expected: int, timeout: float = 60.0) -> List[T
     return found
 
 
-async def test_each_record_lands_once_on_its_engine_topic():
+async def test_each_record_lands_once_on_its_region_topic():
     run = f"rd-route-{uuid.uuid4().hex[:8]}"
     _, stats = _run_and_wait({"run": run, "scenario": "route", "count": 30, "batch_size": 15})
 
@@ -101,12 +101,12 @@ async def test_each_record_lands_once_on_its_engine_topic():
     found = await _consume_run(run, expected=30)
     assert sorted(r["id"] for _, r in found) == list(range(1, 31))  # exactly once
     for topic, record in found:
-        assert TOPICS[topic] == record["engine"]
+        assert TOPICS[topic] == record["region"]
     # Each job of 15 records wrote to all three topics.
     assert {topic for topic, _ in found} == set(TOPICS)
 
 
-async def test_unknown_engines_are_skipped_and_the_rest_is_sent():
+async def test_unknown_regions_are_skipped_and_the_rest_is_sent():
     run = f"rd-skip-{uuid.uuid4().hex[:8]}"
     execution_id, stats = _run_and_wait({"run": run, "scenario": "skip", "count": 30})
 
@@ -121,7 +121,7 @@ async def test_unknown_engines_are_skipped_and_the_rest_is_sent():
     assert all(s.get("destinations") == 3 for s in job_stats), job_stats
 
 
-async def test_unknown_engines_fail_the_job_with_nothing_written():
+async def test_unknown_regions_fail_the_job_with_nothing_written():
     run = f"rd-fail-{uuid.uuid4().hex[:8]}"
     _, stats = _run_and_wait({"run": run, "scenario": "fail", "count": 30})
 
