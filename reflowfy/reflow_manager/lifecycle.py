@@ -1,4 +1,4 @@
-"""Lifecycle hooks, the ``/run`` callback and chaining (``run_pipeline``).
+"""Lifecycle hooks and chaining (``run_pipeline``).
 
 When an execution reaches a terminal state (``completed``, ``failed``, ``cancelled``),
 :meth:`ExecutionManager.update_execution_state` tells its terminal listeners; the
@@ -13,11 +13,9 @@ The work then runs in a thread, off the caller (an HTTP request, the drive loop)
    hooks_fired_at IS NULL`` — so of any number of callers (two pods, a cancel racing
    the loop's end) exactly one goes on;
 3. the pipeline's ``on_execution_complete`` / ``_failed`` / ``_cancelled`` runs in its
-   own thread with ``HOOK_TIMEOUT_SECONDS`` (60) to finish;
-4. the ``callback_url`` given to ``/run``, if any, is POSTed the summary.
+   own thread with ``HOOK_TIMEOUT_SECONDS`` (60) to finish.
 
-A hook or callback that fails or times out is logged (``hook_failed`` /
-``callback_failed``) and stored in ``executions.hook_error``; it never changes the
+A hook that fails or times out is logged (``hook_failed``) and stored in ``executions.hook_error``; it never changes the
 execution's state. ``POST /executions/{id}/retry-failed`` clears ``hooks_fired_at``, so
 the retried run's end fires them again.
 """
@@ -29,8 +27,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, cast
-from urllib.parse import urlsplit
+from typing import Any, Callable, Dict, Optional, Set, Tuple, cast
 
 from sqlalchemy.orm import Session
 
@@ -71,11 +68,6 @@ _running_lock = threading.Lock()
 def hook_timeout_seconds() -> float:
     """How long a hook may run (env ``HOOK_TIMEOUT_SECONDS``, default 60)."""
     return float(os.getenv("HOOK_TIMEOUT_SECONDS", "60"))
-
-
-def callback_timeout_seconds() -> float:
-    """How long the ``callback_url`` POST may take (env ``CALLBACK_TIMEOUT_SECONDS``, 10)."""
-    return float(os.getenv("CALLBACK_TIMEOUT_SECONDS", "10"))
 
 
 def _short(text: str, limit: int) -> str:
@@ -234,42 +226,8 @@ def _run_hook(
     return None
 
 
-def _post_callback(url: str, summary: ExecutionSummary) -> Optional[str]:
-    """POST the summary to the run's ``callback_url``. The error, or None.
-
-    Only the host is logged: a callback URL may carry a token in its path or query.
-    """
-    import httpx
-
-    host = urlsplit(url).hostname or "?"
-    extra = {
-        "execution_id": summary.execution_id,
-        "pipeline_name": summary.pipeline_name,
-        "callback_host": host,
-    }
-    try:
-        response = httpx.post(url, json=summary.to_dict(), timeout=callback_timeout_seconds())
-        if response.status_code >= 400:
-            raise httpx.HTTPStatusError(
-                f"HTTP {response.status_code}", request=response.request, response=response
-            )
-    except Exception as exc:
-        logger.warning(
-            "Execution callback to %s failed: %s",
-            host,
-            type(exc).__name__,
-            extra={**extra, "event": "callback_failed", "error_type": type(exc).__name__},
-        )
-        detail = str(exc) if isinstance(exc, httpx.HTTPStatusError) else type(exc).__name__
-        return f"callback to {host} failed: {detail}"
-    logger.info(
-        "Execution callback sent to %s", host, extra={**extra, "event": "callback_sent"}
-    )
-    return None
-
-
 def fire_execution_hooks(bind: Any, execution_id: str) -> bool:
-    """Fire the hooks and the callback of an execution that has ended, at most once.
+    """Fire the hooks of an execution that has ended, at most once.
 
     Synchronous (the caller provides the thread). Returns True if this call claimed
     them, False if the execution is unknown, not finished, or already claimed.
@@ -290,29 +248,20 @@ def fire_execution_hooks(bind: Any, execution_id: str) -> bool:
         db.refresh(execution)
         pipeline = pipeline_registry.get(execution.pipeline_name)
         hook = _overridden_hook(pipeline, execution.state)
-        callback_url = execution.callback_url
-        if hook is None and not callback_url:
+        if hook is None:
             return True  # nothing to run: the claim only marks it done
 
         summary = build_summary(db, execution)
         runtime_params = dict(execution.runtime_params or {})
         state = execution.state
         db.commit()  # no transaction held open while the hook runs
-        errors: List[str] = []
-        if hook is not None:
-            params: Dict[str, Any] = runtime_params
-            apply_defaults: Any = getattr(pipeline, "apply_defaults", None)
-            if callable(apply_defaults):
-                params = cast(Dict[str, Any], apply_defaults(params))
-            error = _run_hook(hook, HOOK_NAMES[state], summary, params, bind)
-            if error:
-                errors.append(error)
-        if callback_url:
-            error = _post_callback(callback_url, summary)
-            if error:
-                errors.append(error)
-        if errors:
-            manager.set_hook_error(execution_id, _short("; ".join(errors), HOOK_ERROR_CHARS))
+        params: Dict[str, Any] = runtime_params
+        apply_defaults: Any = getattr(pipeline, "apply_defaults", None)
+        if callable(apply_defaults):
+            params = cast(Dict[str, Any], apply_defaults(params))
+        error = _run_hook(hook, HOOK_NAMES[state], summary, params, bind)
+        if error:
+            manager.set_hook_error(execution_id, _short(error, HOOK_ERROR_CHARS))
         return True
 
 
@@ -433,7 +382,6 @@ def run_pipeline(
     parent_execution_id: Optional[str] = None,
     rate_limit: Optional[float] = None,
     execution_id: Optional[str] = None,
-    callback_url: Optional[str] = None,
     mode: Optional[str] = None,
 ) -> str:
     """Start an execution of a registered pipeline, as ``POST /run`` does. Returns its id.
@@ -469,7 +417,6 @@ def run_pipeline(
             runtime_params=runtime_params,
             rate_limit=rate_limit,
             parent_execution_id=parent_execution_id,
-            callback_url=callback_url,
         )
         bind = bind if bind is not None else db.get_bind()
     finally:

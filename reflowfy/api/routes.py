@@ -39,7 +39,6 @@ def _run_body(
     runtime_params_dict: Dict[str, Any],
     mode: str,
     rate_limit: float | None,
-    callback_url: str | None = None,
 ) -> PipelineRunResponse:
     """Forward one run to the manager and answer with what it said."""
     pipeline_name = pipeline.name
@@ -65,7 +64,6 @@ def _run_body(
             pipeline=pipeline,
             runtime_params=runtime_params_dict,
             rate_limit_override=rate_limit,
-            callback_url=callback_url,
             mode=mode_label,
         )
     except Exception as e:
@@ -176,11 +174,11 @@ def _create_run_route(app: FastAPI, pipeline: Any, client: Any, params: Any) -> 
     body_params = [p for p in params if _is_body_param(p)]
     query_params = [p for p in params if not _is_body_param(p)]
 
-    reserved = {"mode", "rate_limit", "callback_url", "body"} & {p.name for p in params}
+    reserved = {"mode", "rate_limit", "body"} & {p.name for p in params}
     if reserved:
         raise ValueError(
             f"Pipeline '{pipeline_name}' declares parameter(s) {sorted(reserved)} that collide "
-            "with the run route's reserved names (mode, rate_limit, callback_url, body); "
+            "with the run route's reserved names (mode, rate_limit, body); "
             "rename them."
         )
 
@@ -196,19 +194,7 @@ def _create_run_route(app: FastAPI, pipeline: Any, client: Any, params: Any) -> 
         default=Query(None, description=_rate_limit_description(pipeline)),
         annotation=float,
     )
-    callback_url_param = Parameter(
-        "callback_url",
-        Parameter.KEYWORD_ONLY,
-        default=Query(
-            None,
-            description=(
-                "http(s) URL that receives a POST with the execution summary once the "
-                "run ends (completed, failed or cancelled)."
-            ),
-        ),
-        annotation=Optional[str],
-    )
-    sig_params = [mode_param, rate_limit_param, callback_url_param]
+    sig_params = [mode_param, rate_limit_param]
 
     if body_params:
         fields: Dict[str, Any] = {}
@@ -248,7 +234,6 @@ def _create_run_route(app: FastAPI, pipeline: Any, client: Any, params: Any) -> 
     async def run_pipeline(
         mode: str = "distributed",
         rate_limit: Optional[float] = None,
-        callback_url: Optional[str] = None,
         body: Any = None,
         **kwargs: Any,
     ):
@@ -262,7 +247,6 @@ def _create_run_route(app: FastAPI, pipeline: Any, client: Any, params: Any) -> 
             runtime_params_dict=runtime_params,
             mode=mode,
             rate_limit=rate_limit,
-            callback_url=callback_url,
         )
 
     setattr(run_pipeline, "__signature__", Signature(parameters=sig_params))

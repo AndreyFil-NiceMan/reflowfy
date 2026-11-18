@@ -138,7 +138,7 @@ lease was taken keeps planning until its once-a-second state check sees `failed`
 ### 1c. Lifecycle hooks (`hooks_fired_at`, `hook_error`)
 
 `NULL → set` by `claim_hooks` (CAS on `IS NULL`), from the terminal listener's thread.
-`set → NULL` by `reopen_execution`. `hook_error` is written after the hook or callback
+`set → NULL` by `reopen_execution`. `hook_error` is written after the hook
 fails.
 
 ### 1d. Rate-limit bucket (`rate_limit_state` row)
@@ -339,7 +339,7 @@ row, then write unconditionally; two writers (`_plan_and_dispatch`,
   the execution `pending`. A `/cancel` (or `/pause`) that lands before the background
   planner reaches `update_execution_state(RUNNING)` (`pipeline_runner.py:538`) is
   overwritten: the cancelled execution goes back to `running`, plans and dispatches
-  everything. `on_execution_cancelled` and the callback have already fired, and
+  everything. `on_execution_cancelled` has already fired, and
   `hooks_fired_at` is set, so `on_execution_complete` never fires for the run that
   actually happened. The planning window is at least `pipeline.resolve()` (defaults,
   validation, `define_source`, `define_jobs`), and longer for a DLQ or cron start, whose

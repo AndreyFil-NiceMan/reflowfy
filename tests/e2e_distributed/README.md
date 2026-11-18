@@ -14,7 +14,7 @@ proof that the data arrived.
 | Path | What |
 |---|---|
 | `pipelines/dist_pipelines.py` | The pipelines under test. Self-contained: they generate their own records (no external data) |
-| `pipelines/dist_gaps_pipelines.py`, `test_framework_gaps.py` | A user source rebuilt on workers with a `secret()`, transformation options / `should_apply_transformation` / `on_error="skip"` / the one-record contract, `fan_out` with an optional destination, a list from `define_destination`, `@record_destination` multicast, `JobRetryConfig`, a 404 not retried, lifecycle hooks, `run_pipeline` chaining, `callback_url`, `define_rate_limit` |
+| `pipelines/dist_gaps_pipelines.py`, `test_framework_gaps.py` | A user source rebuilt on workers with a `secret()`, transformation options / `should_apply_transformation` / `on_error="skip"` / the one-record contract, `fan_out` with an optional destination, a list from `define_destination`, `@record_destination` multicast, `JobRetryConfig`, a 404 not retried, lifecycle hooks, `run_pipeline` chaining, `define_rate_limit` |
 | `sink/server.py` | Stdlib-only HTTP server: delivery ledger, failure injection, and a mock users API |
 | `sink/deploy.sh`, `sink/k8s.yaml` | Deploy the sink next to Reflowfy (OpenShift / Kubernetes) |
 | `sync_pipelines.sh` | Copy the pipelines into a project so the next image build includes them |
