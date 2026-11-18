@@ -21,13 +21,13 @@ import httpx
 
 from tests.e2e.test_pipelines.elastic_docs_per_job_pipeline import DOCS_PER_JOB
 from tests.e2e.test_pipelines.elastic_one_doc_per_job_pipeline import SUBSET_QUERY
+from tests.e2e.polling import POLL_INTERVAL
 
 # Configuration
 REFLOW_MANAGER_URL = os.getenv("E2E_REFLOW_MANAGER_URL", "http://localhost:8002")
 ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://localhost:9201")
 MOCK_HTTP_URL = os.getenv("MOCK_HTTP_URL", "http://localhost:8091").replace("/webhook", "")
 TIMEOUT = 60.0
-POLL_INTERVAL = 2
 
 
 @pytest.fixture(scope="module")
@@ -312,7 +312,7 @@ class TestElasticOneDocPerJob:
             mock = httpx.get(f"{MOCK_HTTP_URL}/stats", timeout=10.0).json()
             if mock.get("total_records", 0) >= expected:
                 break
-            time.sleep(1)
+            time.sleep(POLL_INTERVAL)
 
         assert mock["total_records"] == expected, (
             f"expected {expected} records delivered exactly once, got {mock['total_records']}"
@@ -372,7 +372,7 @@ class TestElasticRangeWindows:
             mock = httpx.get(f"{MOCK_HTTP_URL}/stats", timeout=10.0).json()
             if mock.get("total_records", 0) >= expected:
                 break
-            time.sleep(1)
+            time.sleep(POLL_INTERVAL)
 
         assert mock["total_records"] == expected, (
             f"expected {expected} records exactly once, got {mock['total_records']}"

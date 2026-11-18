@@ -15,13 +15,13 @@ import time
 
 import httpx
 import pytest
+from tests.e2e.polling import POLL_INTERVAL
 
 REFLOW_MANAGER_URL = os.getenv("E2E_REFLOW_MANAGER_URL", "http://localhost:8002")
 MOCK_URL = os.getenv("E2E_MOCK_HTTP_URL", "http://localhost:8091")
 # In distributed mode the worker drops the job, so the counter is in the worker's
 # registry (scripts/e2e-distributed.override.yml publishes it here). Not up in local mode.
 WORKER_METRICS_URL = os.getenv("E2E_WORKER_METRICS_URL", "http://localhost:9102/metrics")
-POLL_INTERVAL = 2
 MAX_WAIT = 60
 
 SKIPPED_METRIC = re.compile(

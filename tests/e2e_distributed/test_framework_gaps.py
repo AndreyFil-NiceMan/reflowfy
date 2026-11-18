@@ -166,22 +166,6 @@ class TestLifecycle:
         finally:
             sink.reset(f"{channel}-hook")
 
-    def test_callback_url(self, manager: Manager, sink: Sink, channel: str, params: Params):
-        from .conftest import SINK_INTERNAL_URL
-
-        callback = f"{SINK_INTERNAL_URL}/ingest/{channel}-cb"
-        execution = manager.run("dist_gaps_hooks", params(total=5, per_job=5), callback_url=callback)
-        try:
-            assert manager.wait(execution)["state"] == "completed"
-            deadline = time.time() + 30
-            while time.time() < deadline and not sink.batches(f"{channel}-cb"):
-                time.sleep(0.5)
-            batches = sink.batches(f"{channel}-cb")
-            assert len(batches) == 1, batches
-            assert batches[0]["meta"]["execution_id"] == execution
-        finally:
-            sink.reset(f"{channel}-cb")
-
     def test_define_rate_limit_is_persisted(
         self, manager: Manager, sink: Sink, channel: str, params: Params
     ):

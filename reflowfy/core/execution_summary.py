@@ -1,7 +1,7 @@
 """What a finished execution did — passed to a pipeline's lifecycle hooks.
 
 ``on_execution_complete(summary, params)`` / ``on_execution_failed`` /
-``on_execution_cancelled`` receive one, and a ``/run`` ``callback_url`` gets it as JSON.
+``on_execution_cancelled`` receive one.
 """
 
 from dataclasses import asdict, dataclass, field
@@ -62,5 +62,5 @@ class ExecutionSummary:
         return self.state == "completed"
 
     def to_dict(self) -> Dict[str, Any]:
-        """JSON-ready form (the body POSTed to a ``callback_url``)."""
+        """JSON-ready form."""
         return asdict(self)
