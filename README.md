@@ -642,12 +642,14 @@ Reflowfy natively supports OpenShift/Kubernetes via `reflowfy deploy`.
 ```bash
 uv sync --all-extras
 uv run pytest tests/unit --cov            # unit tests (CI requires 99% coverage)
-uv run ruff check reflowfy/ && uv run pyright
+uv run ruff check reflowfy/ && uv run pyright && uv run mypy reflowfy/
 ./scripts/run_e2e_tests.sh                # end to end on a Docker stack (local mode)
 ```
 
 `tests/e2e_distributed/` runs the same kind of tests over Kafka and real workers, against a
-deployment or the local Docker stack; see its README.
+deployment or the local Docker stack; see its README. The `E2E (nightly)` workflow
+(`.github/workflows/e2e-nightly.yml`) runs both suites, the Elasticsearch and chaos tests
+included, every night and on demand.
 
 ## 📝 License
 
