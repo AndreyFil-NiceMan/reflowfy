@@ -122,7 +122,3 @@ class TestMessageKey:
         assert "key" not in dest._producer_kwargs()
         assert "value_field" not in dest._producer_kwargs()
 
-
-def test_concurrency_was_removed():
-    with pytest.raises(TypeError, match="concurrency= was removed in 1.1.4"):
-        kafka_destination(bootstrap_servers="k:9092", topic="t", concurrency=8)

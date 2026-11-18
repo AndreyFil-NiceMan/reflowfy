@@ -93,44 +93,6 @@ class RateLimiter:
 
         return state
 
-    def _refill_tokens(self, state: RateLimitState) -> None:
-        """Refill tokens based on elapsed time."""
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        elapsed = (now - state.last_update).total_seconds()
-
-        # Add tokens based on refill rate
-        new_tokens = state.tokens + (elapsed * state.refill_rate)
-        state.tokens = min(new_tokens, state.max_tokens)
-        state.last_update = now
-
-        self.db.commit()
-
-    def can_dispatch(
-        self,
-        pipeline_name: str,
-        count: int = 1,
-        rate_limit: Optional[float] = None,
-    ) -> bool:
-        """
-        Check if we can dispatch jobs based on rate limit.
-
-        Args:
-            pipeline_name: Pipeline name
-            count: Number of jobs to dispatch
-            rate_limit: Optional override rate limit (jobs per minute)
-
-        Returns:
-            True if dispatch is allowed, False otherwise
-        """
-        effective_rate = rate_limit if rate_limit is not None else self.default_rate
-        if effective_rate is None:
-            return True  # unlimited
-        state = self._get_or_create_state(pipeline_name, effective_rate)
-
-        self._refill_tokens(state)
-
-        return state.tokens >= count
-
     def _get_state_with_lock(
         self,
         pipeline_name: str,

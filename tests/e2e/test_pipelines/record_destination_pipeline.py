@@ -1,5 +1,5 @@
 """
-Kafka destination chosen per record, with ``@record_destination``.
+Kafka destination chosen per record, with ``@destination(per_record=True)``.
 
 Generated records, each stamped with the test's ``run`` key and a ``region``
 (``eu`` / ``us`` / ``apac`` by id), go to one topic per region: one job
@@ -84,7 +84,7 @@ def region_topics_skip(
 
 
 class E2ERecordDestinationPipeline(AbstractPipeline[RecordDestinationParams]):
-    """E2E pipeline for ``@record_destination``: one job, many topics."""
+    """E2E pipeline for ``@destination(per_record=True)``: one job, many topics."""
 
     name = "e2e_record_destination_test"
     rate_limit = 6000  # jobs per minute

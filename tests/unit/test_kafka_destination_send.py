@@ -17,7 +17,8 @@ from aiokafka.errors import KafkaConnectionError, KafkaError
 from aiokafka.structs import TopicPartition
 
 import reflowfy.destinations.kafka as kafka_mod
-from reflowfy.destinations.base import DestinationError, RetryConfig
+from reflowfy.destinations.base import RetryConfig
+from reflowfy.core.exceptions import DestinationError
 from reflowfy.destinations.kafka import KafkaDestination, kafka_destination
 
 

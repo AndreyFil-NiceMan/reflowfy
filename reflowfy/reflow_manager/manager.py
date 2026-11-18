@@ -5,7 +5,7 @@ This is a slim coordinator that composes the following modules:
 - ExecutionManager: Execution records management
 - JobManager: Job payload and checkpoint tracking (unified)
 - RateLimiter: Token bucket rate limiting
-- JobDispatcher: Kafka job dispatch
+- BaseDispatcher: job dispatch (Kafka or local)
 - PipelineRunner: Pipeline execution
 """
 

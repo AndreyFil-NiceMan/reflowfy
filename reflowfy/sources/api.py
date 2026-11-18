@@ -8,7 +8,8 @@ from reflowfy.core.http_errors import describe_response, log_response_body
 from reflowfy.core.types import Records, wrap_as_record
 from reflowfy.http_auth import build_auth_headers
 from reflowfy.observability.logging import get_logger
-from reflowfy.sources.base import BaseSource, SourceError
+from reflowfy.sources.base import BaseSource
+from reflowfy.core.exceptions import SourceError
 from reflowfy.core.health import log_unhealthy
 
 logger = get_logger(__name__)

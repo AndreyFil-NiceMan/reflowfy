@@ -68,7 +68,6 @@ class _HookPipeline(AbstractPipeline[RuntimeParams]):
             raise CALLS.raise_error
         if CALLS.chain is not None:
             CALLS.chain["child"] = lifecycle.run_pipeline(PIPE, {"step": 2})
-            CALLS.chain["current"] = lifecycle.current_execution_id()
 
     def on_execution_complete(self, summary: ExecutionSummary, runtime_params: Any) -> None:
         self._record("complete", summary, runtime_params)
@@ -366,7 +365,6 @@ def test_run_pipeline_from_a_hook_records_the_parent(db, engine, monkeypatch) ->
     lifecycle.fire_execution_hooks(engine, "e")
 
     child_id = CALLS.chain["child"]
-    assert CALLS.chain["current"] == "e"
     child = _row(db, child_id)
     assert child.parent_execution_id == "e"
     assert child.state == "pending" and child.runtime_params == {"step": 2}
@@ -374,7 +372,6 @@ def test_run_pipeline_from_a_hook_records_the_parent(db, engine, monkeypatch) ->
     # second, which a loaded machine (coverage, a busy CI runner) overran.
     assert started.wait(timeout=30)
     assert driven[0][1:] == (child_id, PIPE, {"step": 2}, None, None)
-    assert lifecycle.current_execution_id() is None  # only inside the hook
 
 
 def test_run_pipeline_rejects_unknown_pipelines_and_bad_params() -> None:
@@ -481,12 +478,11 @@ def test_execution_stats_report_the_hooks(db) -> None:
     assert as_dict["hook_error"]
 
 
-async def test_startup_installs_the_hooks_and_warns_about_max_jobs_per_minute(
+async def test_startup_installs_the_hooks(
     monkeypatch, caplog
 ) -> None:
     from reflowfy.reflow_manager.execution import _terminal_listeners
 
-    monkeypatch.setenv("MAX_JOBS_PER_MINUTE", "6000")
     monkeypatch.setattr(app_module, "init_db", lambda: None)
     monkeypatch.setattr(app_module, "setup_logging", lambda **kw: None)
     monkeypatch.setattr(
@@ -506,7 +502,6 @@ async def test_startup_installs_the_hooks_and_warns_about_max_jobs_per_minute(
     await app_module._startup()
 
     assert lifecycle.on_terminal in _terminal_listeners
-    assert "MAX_JOBS_PER_MINUTE is no longer applied" in caplog.text
 
 
 async def test_shutdown_waits_for_hooks_in_flight(monkeypatch, caplog) -> None:

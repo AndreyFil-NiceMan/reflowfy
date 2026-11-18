@@ -38,7 +38,8 @@ from reflowfy.execution.job_runner import preview_runtime_params
 from reflowfy.execution.transformation_runner import SKIPPED_MODE, AppliedStep
 from reflowfy.sources.static import StaticSource
 from reflowfy.observability.logging import get_logger, setup_logging
-from reflowfy.transformations.base import TransformationError, top_skip_reasons
+from reflowfy.core.exceptions import TransformationError
+from reflowfy.core.record_steps import top_skip_reasons
 
 logger = get_logger("cli.test")
 
@@ -70,7 +71,6 @@ class BatchReport:
     """What one batch did. The unit both pipeline shapes report in."""
 
     label: Optional[str] = None
-    source_repr: str = ""
     fetched: int = 0
     transformed: List[Any] = field(default_factory=lambda: [])
     applied: List[AppliedStep] = field(default_factory=lambda: [])
@@ -382,7 +382,7 @@ def run_batch(
     from reflowfy.testing.cassette import Session, activate, current_session
     from reflowfy.testing.runner import execute, private_copy
 
-    report = BatchReport(label=label, source_repr=repr(source))
+    report = BatchReport(label=label)
 
     def send(destination: Any, records: List[Any], job_params: Dict[str, Any]) -> None:
         _send_job(destination, records, job_params, opts, report, indent)

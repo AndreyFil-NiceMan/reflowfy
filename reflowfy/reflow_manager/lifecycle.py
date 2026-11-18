@@ -339,12 +339,6 @@ def wait_for_hooks(timeout: Optional[float] = None) -> bool:
 # ----- chaining --------------------------------------------------------------------
 
 
-def current_execution_id() -> Optional[str]:
-    """The execution whose hook is running in this thread, or None outside a hook."""
-    context = _hook_context.get()
-    return context[1] if context is not None else None
-
-
 def _open_session(bind: Any) -> Session:
     if bind is not None:
         return Session(bind=bind)

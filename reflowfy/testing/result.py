@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from reflowfy.execution.transformation_runner import AppliedStep
-from reflowfy.transformations.base import count_skip_reason
+from reflowfy.core.record_steps import count_skip_reason
 
 
 @dataclass

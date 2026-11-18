@@ -483,7 +483,10 @@ def test_text_formatter_shows_context():
 def test_bind_log_context_sync_async_and_kwargs():
     import asyncio
 
-    from reflowfy.observability.context import bind_log_context, get_log_context
+    from reflowfy.observability.context import _ctx, bind_log_context
+
+    def get_log_context() -> dict:
+        return dict(_ctx.get())
 
     @bind_log_context("execution_id", "pipeline_name", "missing")
     def sync(execution_id, pipeline_name=None):

@@ -8,7 +8,7 @@
   ``should_apply_transformation`` may be ``async def``. An async
   ``should_apply_transformation`` returning False used to be ignored (``bool`` of a
   coroutine is True). The other hooks are checked to be sync at class definition.
-- ``@record_destination`` options are bound when the destination is built, like a
+- ``@destination(per_record=True)`` options are bound when the destination is built, like a
   transformation's. A typo used to fail every record at route time, and with
   ``on_error="skip"`` skipped them all while the job completed.
 """
@@ -430,7 +430,7 @@ def by_region(record: Any, runtime_params: Any, *, region: str) -> BaseDestinati
 
 class TestRecordDestinationOptions:
     def test_a_typo_fails_when_the_destination_is_built(self) -> None:
-        with pytest.raises(TypeError, match="record_destination 'contracts_by_region'.*'region'"):
+        with pytest.raises(TypeError, match="destination 'contracts_by_region'.*'region'"):
             by_region(regoin="eu")
 
     def test_an_unknown_option_is_named(self) -> None:

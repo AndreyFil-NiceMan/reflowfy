@@ -1,16 +1,8 @@
 """Pydantic schemas for ReflowManager API."""
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 
 from pydantic import BaseModel
-
-
-class CreateExecutionRequest(BaseModel):
-    """Request to create a new execution."""
-
-    execution_id: str
-    pipeline_name: str
-    runtime_params: Optional[Dict[str, Any]] = None
 
 
 class UpdateExecutionStateRequest(BaseModel):
@@ -18,15 +10,6 @@ class UpdateExecutionStateRequest(BaseModel):
 
     state: str
     error_message: Optional[str] = None
-
-
-class DispatchJobsRequest(BaseModel):
-    """Request to dispatch jobs."""
-
-    execution_id: str
-    pipeline_name: str
-    jobs: List[Dict[str, Any]]
-    rate_limit: Optional[float] = None  # jobs per minute
 
 
 class RunPipelineRequest(BaseModel):
@@ -40,10 +23,3 @@ class RunPipelineRequest(BaseModel):
     enable_duplicate_jobs: Optional[bool] = (
         None  # None = use pipeline default; True = allow duplicates; False = each unique job runs at most once
     )
-
-
-class DestinationConfig(BaseModel):
-    """Destination configuration in job payload."""
-
-    type: str
-    config: Dict[str, Any] = {}

@@ -15,7 +15,7 @@ import pytest
 
 import reflowfy.destinations.pool as pool_mod
 from reflowfy.destinations.api import api_destination
-from reflowfy.destinations.base import DestinationError
+from reflowfy.core.exceptions import DestinationError
 from reflowfy.destinations.kafka import KafkaDestination, kafka_destination
 from reflowfy.destinations.pool import (
     DEFAULT_IDLE_SECONDS,

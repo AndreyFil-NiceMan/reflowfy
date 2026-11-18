@@ -14,11 +14,8 @@ from aiokafka import AIOKafkaProducer
 from aiokafka.errors import KafkaError
 from reflowfy.core.kafka_settings import connection_kwargs
 from reflowfy.core.record_templates import fill
-from reflowfy.destinations.base import (
-    BaseDestination,
-    DestinationError,
-    RetryConfig,
-)
+from reflowfy.destinations.base import BaseDestination, RetryConfig
+from reflowfy.core.exceptions import DestinationError
 from reflowfy.core.health import log_unhealthy
 
 logger = logging.getLogger(__name__)
@@ -135,12 +132,6 @@ class KafkaDestination(BaseDestination):
                 that raises, fails the job before anything is sent.
             **producer_config: Additional producer configuration
         """
-        if "concurrency" in producer_config:
-            raise TypeError(
-                "kafka_destination: concurrency= was removed in 1.1.4 — every job's "
-                "messages are now sent as one batch, which is faster than any setting "
-                "of it. Remove the argument."
-            )
         headers_fn, static_headers = _check_headers(headers)
         key_fn, static_key = _check_key(key)
         config = {

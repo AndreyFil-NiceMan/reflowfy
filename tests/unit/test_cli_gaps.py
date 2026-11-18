@@ -24,7 +24,8 @@ from reflowfy.core.registry import pipeline_registry
 from reflowfy.core.runtime_params import RuntimeParams
 from reflowfy.execution.transformation_runner import AppliedStep
 from reflowfy.sources.mock import MockSource
-from reflowfy.transformations.base import BaseTransformation, TransformationError
+from reflowfy.transformations.base import BaseTransformation
+from reflowfy.core.exceptions import TransformationError
 from reflowfy.transformations.registry import transformation_registry
 from test_cli_deploy_unit import BASE, calls, deploy  # type: ignore[import-not-found]  # noqa: F401
 import reflowfy.cli.project as project_mod

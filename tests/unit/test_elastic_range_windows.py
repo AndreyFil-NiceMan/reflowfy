@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
-from reflowfy.sources.base import SourceError
+from reflowfy.core.exceptions import SourceError
 from reflowfy.sources.elastic import ElasticSource, _first_sort_key, _range_clause
 
 

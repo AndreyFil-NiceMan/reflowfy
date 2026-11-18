@@ -78,30 +78,6 @@ class TransformationRegistry:
         with self._registry_lock:
             return self._transformations.get(name)
 
-    def create_instance(self, name: str):
-        """
-        Create a new instance of a transformation by name.
-
-        Args:
-            name: Transformation name
-
-        Returns:
-            New transformation instance
-
-        Raises:
-            ValueError: If transformation not found
-        """
-        with self._registry_lock:
-            transformation_class = self._transformations.get(name)
-
-            if transformation_class is None:
-                raise ValueError(
-                    f"Transformation '{name}' not found. "
-                    f"Available: {list(self._transformations.keys())}"
-                )
-
-            return transformation_class()
-
     def list_all(self) -> List[str]:
         """
         Get all registered transformation names.

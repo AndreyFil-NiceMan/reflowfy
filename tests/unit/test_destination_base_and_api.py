@@ -7,7 +7,8 @@ import httpx
 import pytest
 
 from reflowfy.destinations.api import ApiDestination, api_destination
-from reflowfy.destinations.base import BaseDestination, DestinationError, RetryConfig
+from reflowfy.destinations.base import BaseDestination, RetryConfig
+from reflowfy.core.exceptions import DestinationError
 from reflowfy.destinations.console import console_destination
 from reflowfy.execution.content_dedup import destination_identity
 

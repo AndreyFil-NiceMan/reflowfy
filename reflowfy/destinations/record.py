@@ -68,7 +68,8 @@ from typing_extensions import Concatenate
 from reflowfy.core.async_utils import for_each_concurrently
 from reflowfy.core.options import option_binder
 from reflowfy.core.exceptions import PipelineError, SkipJob, SkipRecord
-from reflowfy.destinations.base import BaseDestination, ConnectionPool, DestinationError
+from reflowfy.destinations.base import BaseDestination, ConnectionPool
+from reflowfy.core.exceptions import DestinationError
 from reflowfy.observability.logging import get_logger
 from reflowfy.core.record_steps import count_skip_reason, default_record_concurrency
 
@@ -191,10 +192,6 @@ class RecordDestination(BaseDestination):
     def destinations(self) -> List[BaseDestination]:
         """The distinct destinations the routed records go to, in first-seen order."""
         return list(self._groups)
-
-    def destination_for(self, record: Any) -> BaseDestination:
-        """The (first) destination a routed ``record`` (the same object) goes to."""
-        return self.destinations_for(record)[0]
 
     def destinations_for(self, record: Any) -> List[BaseDestination]:
         """Every destination a routed ``record`` (the same object) goes to."""
@@ -370,10 +367,6 @@ class RecordDestination(BaseDestination):
         elif not optional:
             self._group_required[index] = True
         return index
-
-    def is_optional(self, destination: BaseDestination) -> bool:
-        """True when only ``optional=`` records chose this routed destination."""
-        return not self._group_required[self._groups.index(destination)]
 
     def _buckets(self, records: List[Any]) -> List[Tuple[int, List[Any]]]:
         by_group: Dict[int, List[Any]] = {}
@@ -584,7 +577,7 @@ def make_record_destination(
             "timeout": timeout,
             "destination_for_record": method,
             "_destination_fn": staticmethod(func),
-            "_bind_options": staticmethod(option_binder(func, f"record_destination {name!r}")),
+            "_bind_options": staticmethod(option_binder(func, f"destination {name!r}")),
             "__doc__": func.__doc__ or f"Record destination: {name}",
             "__module__": func.__module__,
         },

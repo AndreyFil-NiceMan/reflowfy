@@ -10,7 +10,8 @@ from elastic_transport import TransportError
 
 from reflowfy.core.types import Record, Records, wrap_as_record
 from reflowfy.observability.logging import get_logger
-from reflowfy.sources.base import BaseSource, SourceError
+from reflowfy.sources.base import BaseSource
+from reflowfy.core.exceptions import SourceError
 from reflowfy.core.health import log_unhealthy
 
 # The manager opens a PIT while planning; workers search it later, as the

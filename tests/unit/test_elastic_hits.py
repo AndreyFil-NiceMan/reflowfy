@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from reflowfy.sources.base import SourceError
+from reflowfy.core.exceptions import SourceError
 from reflowfy.sources.elastic import ElasticSource
 
 

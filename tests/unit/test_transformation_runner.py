@@ -8,7 +8,8 @@ from reflowfy.execution.transformation_runner import apply_transformations_itera
 
 def apply_transformations_iteratively(*args, **kwargs):
     return run_coroutine_sync(apply_transformations_iteratively_async(*args, **kwargs))
-from reflowfy.transformations.base import BaseTransformation, TransformationError
+from reflowfy.transformations.base import BaseTransformation
+from reflowfy.core.exceptions import TransformationError
 
 
 class AppendMarker(BaseTransformation):

@@ -201,10 +201,6 @@ class Job(Base):
         }
 
 
-# Backward compatibility alias
-Checkpoint = Job
-
-
 class DLQJob(Base):
     """
     Dead Letter Queue job for scheduled reflow.

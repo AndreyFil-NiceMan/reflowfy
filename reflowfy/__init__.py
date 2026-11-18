@@ -28,15 +28,15 @@ from reflowfy.transformations.base import (
     AsyncTransformation,
     BaseTransformation,
     RecordTransformation,
-    StepOutputError,
     SyncRecordTransformation,
-    TransformationError,
     Transformations,
 )
+from reflowfy.core.exceptions import StepOutputError, TransformationError
 from reflowfy.sources.base import AsyncSource, BaseSource, SourceContractError
 from reflowfy.destinations.base import BaseDestination
-from reflowfy.sources.base import SourceError
-from reflowfy.destinations.base import DestinationError, PermanentDestinationError, RetryConfig
+from reflowfy.core.exceptions import SourceError
+from reflowfy.destinations.base import RetryConfig
+from reflowfy.core.exceptions import DestinationError, PermanentDestinationError
 from reflowfy.factories.source_factory import SourceRoundTripError
 from reflowfy.sources.api import id_based_api_source
 from reflowfy.sources.elastic import elastic_source
@@ -47,15 +47,10 @@ from reflowfy.destinations.kafka import kafka_destination
 from reflowfy.destinations.api import api_destination
 from reflowfy.destinations.console import console_destination
 
-# Decorators for reusable components
-from reflowfy.sources.decorators import source, source_registry
-from reflowfy.destinations.decorators import (
-    destination,
-    destination_registry,
-    record_destination,
-)
+# Decorators
+from reflowfy.destinations.decorators import destination
 from reflowfy.destinations.record import RecordDestination, RecordDestinationError
-from reflowfy.transformations.decorators import record_transformation, transformation
+from reflowfy.transformations.decorators import transformation
 
 if TYPE_CHECKING:
     from reflowfy.reflow_manager.lifecycle import run_pipeline
@@ -162,12 +157,4 @@ __all__ = [
     "destination",
     "RecordDestination",
     "SyncRecordTransformation",
-    # Deprecated spellings, kept working (they warn): @record_transformation /
-    # @record_destination (now per_record=True), and the @source("x") /
-    # @destination("x") factory registries nothing reads.
-    "record_transformation",
-    "record_destination",
-    "source",
-    "source_registry",
-    "destination_registry",
 ]

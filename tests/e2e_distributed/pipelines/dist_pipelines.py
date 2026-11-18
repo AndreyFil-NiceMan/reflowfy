@@ -11,7 +11,7 @@ AbstractPipeline
     dist_async            dist_abstract plus a per-record async lookup against the mock users API
     dist_per_record       dist_abstract delivered one PUT per record (api_destination
                           per_record=True): 16 requests in flight per job, or
-                          ``dest_concurrency`` through a @record_destination
+                          ``dest_concurrency`` through a @destination(per_record=True)
 IdBasedPipeline
     dist_ids_b1 / _b7 / _b100   IDs are the records; ids_batch_size 1 / 7 / 100
     dist_ids_fanout             every input ID fans out into three jobs via define_jobs
@@ -261,7 +261,7 @@ class DistAsync(AbstractPipeline[DistAsyncParams]):
 class DistPerRecordParams(DistParams, total=False):
     dest_concurrency: Annotated[
         NotRequired[int],
-        Param("Requests in flight per job via @record_destination (0: the default, 16)", default=0),
+        Param("Requests in flight per job via @destination(per_record=True) (0: the default, 16)", default=0),
     ]
     use_body_field: Annotated[
         NotRequired[bool], Param("Send only record['payload'] (body_field)", default=False)
@@ -285,7 +285,7 @@ def _per_record_route(record: Record, runtime_params: DistPerRecordParams) -> Ba
     return _per_record_sink(runtime_params)
 
 
-# A @record_destination's limit is fixed where it is declared: one per value tested.
+# A @destination(per_record=True)'s limit is fixed where it is declared: one per value tested.
 PER_RECORD_LIMITED: Dict[int, "type[RecordDestination]"] = {
     n: destination(f"dist_per_record_c{n}", per_record=True, concurrency=n)(_per_record_route)
     for n in (1, 4, 5, 8)

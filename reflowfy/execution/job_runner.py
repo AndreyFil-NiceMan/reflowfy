@@ -21,7 +21,6 @@ from reflowfy.core.async_utils import call_hook, run_coroutine_sync
 from reflowfy.core.execution_context import ExecutionContext
 from reflowfy.core.exceptions import RecordValidationError, SkipJob, pipeline_step
 from reflowfy.core.planning import PlannedJob
-from reflowfy.core.planning import chunk as chunk  # its old home; kept importable
 from reflowfy.core.record_validation import describe_invalid, find_invalid_records
 from reflowfy.core.serialization import to_json_safe
 from reflowfy.destinations.fan_out import as_destination

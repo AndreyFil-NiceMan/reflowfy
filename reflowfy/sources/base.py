@@ -9,7 +9,6 @@ from typing import Any, ClassVar, Dict, Iterator, List, Optional, Tuple, Type, T
 
 from reflowfy.core.execution_context import parameter_resolver
 from reflowfy.core.types import Records
-from reflowfy.core.exceptions import SourceError as SourceError  # its old home
 
 logger = logging.getLogger(__name__)
 

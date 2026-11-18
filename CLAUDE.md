@@ -111,7 +111,7 @@ HTTP POST /run → API (FastAPI) ──┐
 - **`reflowfy/core/`** — the user-facing pipeline model and the bottom of the import stack. `abstract_pipeline.py` defines `AbstractPipeline` (with `define_source` / `define_transformations` / `define_destination` / `define_parameters` hooks). `id_based_pipeline.py` is a specialization for ID-range sharding. `execution_context.py` carries runtime params/metadata through a run. Also the shared pieces everything above uses: the error hierarchy (`exceptions.py`, including `SourceError`/`DestinationError`/`TransformationError`, re-exported from their old modules), `record_steps.py` (record concurrency, skip-reason counting), `kafka_settings.py` (the one builder of aiokafka connection arguments + `KafkaSettings.from_env()`), `planning.py` (`chunk`).
 - **Import direction** (`tests/unit/test_layering.py`): `core` imports no connector or service; `sources`/`destinations`/`transformations` import no service and not each other; `store` imports no connector or service; `execution` and `worker` never import `reflow_manager`. There are no exceptions; a new upward import fails that test.
 - **`reflowfy/cli/`** — `typer` app (`main.py`); each subcommand registers itself from `commands/` (`init`, `new`, `run`, `build`, `check`, `deploy`, `test`).
-- **`reflowfy/sources/`, `destinations/`, `transformations/`** — built-in connectors plus the `@transformation` and `@destination(per_record=True)` decorators (see "Decorators" below; `@source`/`@record_*` are deprecated). `factories/` builds connector instances from serialized config.
+- **`reflowfy/sources/`, `destinations/`, `transformations/`** — built-in connectors plus the `@transformation` and `@destination(per_record=True)` decorators (see "Decorators" below). `factories/` builds connector instances from serialized config.
 - **`reflowfy/execution/`** — the per-job core shared by the worker and `reflowfy test` (`job_runner.py`, `transformation_runner.py`), content dedup, and `DistributedExecutor` (the API's one client for the manager's `/run`: every route shares it and each call names its `mode`; `local` makes the manager use `LocalDispatcher`; its result is an `ExecutionStatus` with `store.states` string states).
 - **`reflowfy/helm/`** — packaged Helm charts (api / reflow-manager / worker) used by `reflowfy deploy` for OpenShift/Kubernetes (KEDA-autoscaled workers).
 
@@ -227,11 +227,10 @@ decoration (per-record knobs on a batch step; `concurrency`/`timeout` on a per-r
   required option raises there. `Transformations` is `Sequence[BaseTransformation |
   type[BaseTransformation]]`. Any new consumer of `define_transformations` output must go through
   `as_transformations`.
-- **Deprecated, still working, `DeprecationWarning` at the caller's line:** `@record_transformation`
-  (now also accepts `def`), `@record_destination` (both delegate to the new path), and
-  `@source("x")` / `@destination("x")` without `per_record` — factory registries
-  (`source_registry`/`destination_registry`) nothing reads; a plain function does the same.
-  Scaffolding (`reflowfy init`/`new`) writes plain functions. Removal is for 2.0.
+- **Removed (2026-11), no deprecation period:** `@record_transformation`, `@record_destination`,
+  `@source("x")`, `@destination("x")` without `per_record`, `source_registry`/`destination_registry`
+  and `reflowfy/sources/decorators.py`. A reusable source/destination config is a plain function;
+  `@destination` without `per_record=True` raises `TypeError`. Scaffolding writes plain functions.
 - No new job state or metric: a pure API change. Tests: `tests/unit/test_decorator_api.py`.
 
 ### Async transformations
@@ -437,8 +436,8 @@ partition is kept — aiokafka mutes a partition while its batch is in flight
 (`aiokafka/producer/sender.py`). A message refused on hand-over stops the loop; every future
 already handed over is still awaited; the error names `record N of M`. Measured on a local
 broker (1000 messages, 3 topics): 27–38 ms batched vs 259–725 ms at the old default of one
-ack at a time, and faster than the old `concurrency=16` (42–46 ms). Passing `concurrency=`
-raises a `TypeError` saying so (it would otherwise fall into `**producer_config`). A
+ack at a time, and faster than the old `concurrency=16` (42–46 ms). There is no guard for
+the old `concurrency=` argument any more: it falls into `**producer_config`. A
 per-record `api_destination` keeps `send_concurrency` requests in flight — set by a
 `@destination(per_record=True)`, else `default_record_concurrency()` (`TRANSFORM_CONCURRENCY`, 16) —
 through `core/async_utils.for_each_concurrently`, so requests may land out of order. Tests:
@@ -478,7 +477,7 @@ missing-field modes of `e2e_kafka_headers_test`, topic `e2e-kafka-headers`).
 ### A destination per record: `@destination(per_record=True)`
 
 `define_destination` runs once per job; `@destination(name=None, per_record=True,
-on_error="fail"|"skip", concurrency=None, timeout=None)` (old spelling `@record_destination`) turns a function `(record, runtime_params, **options) -> BaseDestination`
+on_error="fail"|"skip", concurrency=None, timeout=None)` turns a function `(record, runtime_params, **options) -> BaseDestination`
 (sync or `async def`) into a `RecordDestination` subclass (`destinations/record.py`) that
 `define_destination` returns (`return by_region`, or `by_region(env=...)`; kwargs become `options`). It is for
 records of one job going to different topics/clusters/credentials. Options are bound
@@ -527,7 +526,7 @@ pyright rejects a one-argument function or one returning `None`. A hand-written
   logs a warning once per record destination per process (`destination_per_record`): per-record
   values belong in templates (encoding, grouping).
 - **Worker:** dedup hashes each record against **its own** destination
-  (`destination_identity(destination.destination_for(record))`), so one record to two topics is
+  (`destination_identity(d)` for each `d` in `destination.destinations_for(record)`), so one record to two topics is
   two writes; after dedup the destination is **not** re-resolved for a `RecordDestination`
   (each was built from its own record, and re-routing would count skips twice).
   `send_with_retry` sends the groups through `for_each_concurrently` (the record
@@ -674,8 +673,9 @@ Tests: `tests/unit/test_custom_sources.py`; E2E `tests/e2e/test_custom_source.py
 
 `sql_source` query templates are rendered by `render_sql_template` (`sources/sql.py`), not the
 generic resolver: every `{{ expr }}` **value is a bind parameter** (`:reflowfy_p0`…), never
-spliced into the SQL. `'{{ x }}'` quoted on its own is bound in place of the literal (old
-templates keep working; a space keeps `::timestamp` after it parseable); a list/tuple is an
+spliced into the SQL. Values are written unquoted (`d >= {{ day }}::timestamp`; a space keeps
+the `::` cast parseable); a quoted `'{{ x }}'` raises like any value in a literal (the old
+quoted form was removed, 2026-11); a list/tuple is an
 expanding bind (`id IN {{ ids }}` or `IN ({{ ids }})`); a value in a comment is dropped; a
 missing parameter fails. **Identifiers need `{{ name | ident }}`** (validated
 `[A-Za-z_][A-Za-z0-9_.]*`): a plain `{{ }}` after `FROM`/`JOIN`/`INTO`/`UPDATE`/`TABLE`/`BY`/`AS`,
@@ -747,7 +747,7 @@ On SIGTERM the worker **drains**: it stops taking messages, lets the job in prog
 
 **Retrying failures by hand.** Without `job_retry` nothing retries a `failed` job by itself (the DLQ is not a failure sink). `POST /executions/{id}/retry-failed[?error_contains=text]` requeues the execution's failed jobs (attempts reset, error cleared), reopens the execution and restarts its loop; a retried job runs from scratch, so one that failed after a partial write sends those records again unless the run used `enable_duplicate_jobs=false`. A paused execution answers 409; a running one just picks the requeued jobs up. The route requeues first and then reopens (CAS from terminal), starting a loop only when the reopen won.
 
-**Rate limit.** `pipeline_runner.resolve_rate_limit`: the `/run` `rate_limit` override > the rate persisted on the execution > `pipeline.define_rate_limit(params)` > the `rate_limit` attribute (`define_rate_limit` returning None falls through). Nothing set = **unlimited** — there is no global default any more: `MAX_JOBS_PER_MINUTE` is ignored (startup warns if it is set; the chart, compose files and env example no longer set it). The result is persisted on the execution (`executions.rate_limit`) at planning and reused when a restarted manager resumes it. The token bucket is **per execution** (`rate_limit_state` row keyed `execution_bucket_key(pipeline, execution_id)` = `<pipeline>:<execution_id>`), so concurrent runs of one pipeline don't overwrite each other's rate; an unlimited execution writes no row, and the row is deleted when the execution ends (drive loop `finally`, and the terminal listener). Tests: `tests/unit/test_rate_limit_resolution.py`.
+**Rate limit.** `pipeline_runner.resolve_rate_limit`: the `/run` `rate_limit` override > the rate persisted on the execution > `pipeline.define_rate_limit(params)` > the `rate_limit` attribute (`define_rate_limit` returning None falls through). Nothing set = **unlimited**: there is no global default. The result is persisted on the execution (`executions.rate_limit`) at planning and reused when a restarted manager resumes it. The token bucket is **per execution** (`rate_limit_state` row keyed `execution_bucket_key(pipeline, execution_id)` = `<pipeline>:<execution_id>`), so concurrent runs of one pipeline don't overwrite each other's rate; an unlimited execution writes no row, and the row is deleted when the execution ends (drive loop `finally`, and the terminal listener). Tests: `tests/unit/test_rate_limit_resolution.py`.
 
 ### Lifecycle hooks
 

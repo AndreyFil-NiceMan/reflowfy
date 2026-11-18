@@ -37,9 +37,6 @@ def test_subclass_with_a_name_registers_itself() -> None:
     assert transformation_registry.get("unit_upper") is Upper
     assert transformation_registry.exists("unit_upper")
     assert "unit_upper" in transformation_registry.list_all()
-    instance = transformation_registry.create_instance("unit_upper")
-    assert isinstance(instance, Upper) and instance.apply(["a"], {}) == ["A"]
-    assert transformation_registry.create_instance("unit_upper") is not instance  # fresh each time
 
 
 def test_subclass_without_a_name_is_not_registered() -> None:
@@ -55,8 +52,6 @@ def test_subclass_without_a_name_is_not_registered() -> None:
 def test_unknown_name() -> None:
     assert transformation_registry.get("unit_nope") is None
     assert not transformation_registry.exists("unit_nope")
-    with pytest.raises(ValueError, match="Transformation 'unit_nope' not found. Available:"):
-        transformation_registry.create_instance("unit_nope")
 
 
 def test_re_registering_a_name_is_rejected_and_keeps_the_first() -> None:

@@ -103,7 +103,7 @@ def ctx_enrich(records: Records, runtime_params: Dict[str, Any]) -> Records:
 @transformation("ctx_maybe_fail")
 def ctx_maybe_fail(records: Records, runtime_params: Dict[str, Any]) -> Records:
     """Step 2 of 2: raises TransformationError only for id==999 (never in mock data)."""
-    from reflowfy.transformations.base import TransformationError
+    from reflowfy.core.exceptions import TransformationError
 
     for record in records:
         if record["data"].get("id") == 999:

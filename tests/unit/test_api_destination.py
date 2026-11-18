@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from reflowfy.destinations.api import ApiDestination, api_destination
-from reflowfy.destinations.base import DestinationError, PermanentDestinationError
+from reflowfy.core.exceptions import DestinationError, PermanentDestinationError
 
 
 class TestApiDestinationFactory:

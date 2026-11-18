@@ -1,4 +1,4 @@
-"""@record_destination: a destination chosen per record.
+"""@destination(per_record=True): a destination chosen per record.
 
 The function is called once per record and returns that record's destination;
 records whose destinations have the same class and config share one. Covered:
@@ -17,8 +17,8 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 import reflowfy
 from reflowfy import SkipJob, SkipRecord
-from reflowfy.destinations.base import BaseDestination, DestinationError, RetryConfig
-from reflowfy.destinations.decorators import destination_registry, record_destination
+from reflowfy.destinations.base import BaseDestination, RetryConfig
+from reflowfy.core.exceptions import DestinationError
 from reflowfy.destinations.kafka import kafka_destination
 from reflowfy.destinations.record import RecordDestination, RecordDestinationError
 from reflowfy.execution.job_runner import ROUTE_MODE, run_job_records_async
@@ -126,15 +126,14 @@ async def _route_and_send(dest: RecordDestination, records: List[Any], params: A
 
 
 class TestDecorator:
-    def test_builds_a_registered_destination_class(self):
+    def test_builds_a_destination_class(self):
         assert issubclass(by_topic, RecordDestination)
         assert by_topic.name == "rd_by_topic"
         assert by_topic.on_error == "fail"
-        assert destination_registry.get("rd_by_topic") is by_topic
         assert isinstance(by_topic(), BaseDestination)
 
     def test_is_exported_from_the_package(self):
-        assert reflowfy.record_destination is record_destination
+        assert reflowfy.destination is destination
         assert reflowfy.RecordDestination is RecordDestination
         assert reflowfy.RecordDestinationError is RecordDestinationError
 
@@ -256,9 +255,9 @@ class TestRouting:
         await where().route([{"a": 1}], {})
         assert loops == [False]
 
-    async def test_destination_for_an_unrouted_record_raises(self):
+    async def test_destinations_for_an_unrouted_record_raises(self):
         with pytest.raises(KeyError, match="record was not routed"):
-            by_topic().destination_for({"region": "a"})
+            by_topic().destinations_for({"region": "a"})
 
     async def test_routing_logs_the_destination_count(self):
         with capture_logs("reflowfy.destinations.record") as logs:

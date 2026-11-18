@@ -28,13 +28,9 @@ arguments when the step is built (``enrich(region="eu")``) and passed to every c
 They are bound against the function's signature right there, so a typo or a missing
 option fails inside ``define_transformations``, not mid-job. A step without options
 can be listed bare (``add_tax``) or called (``add_tax()``); both are the same.
-
-``@record_transformation`` is the old spelling of ``@transformation(per_record=True)``
-and is deprecated.
 """
 
 import inspect
-import warnings
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -181,28 +177,6 @@ def transformation(
         )
 
     return decorator
-
-
-def record_transformation(
-    name: str,
-    concurrency: Optional[int] = None,
-    timeout: Optional[float] = None,
-    on_error: "OnError" = "fail",
-) -> Callable[["RecordTransformFn"], "type[DecoratedTransformation]"]:
-    """Deprecated: ``@transformation(name, per_record=True, ...)`` does the same.
-
-    Kept so existing pipelines run unchanged; it warns (``DeprecationWarning``) where
-    it is used. It now also accepts a plain ``def``, as the new spelling does.
-    """
-    warnings.warn(
-        "@record_transformation is deprecated: use "
-        f"@transformation({name!r}, per_record=True, ...) instead",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return transformation(
-        name, per_record=True, concurrency=concurrency, timeout=timeout, on_error=on_error
-    )
 
 
 def _check_record_knobs(

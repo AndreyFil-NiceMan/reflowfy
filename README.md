@@ -231,8 +231,7 @@ def prod_kafka(**overrides):
     )
 ```
 
-(`@source("name")` and `@destination("name")` used to register these functions in a
-registry nothing read; they still work, with a `DeprecationWarning`.)
+No decorator is needed for this: a plain function is all it takes.
 
 #### Choosing a destination
 
@@ -334,7 +333,7 @@ def define_destination(self, records, runtime_params):
   `@destination("other_name", per_record=True)` sets another.
 - Keyword arguments given in `define_destination` — `by_region(env="prod")` — are passed
   on to every call; a function without options can be returned bare (`return by_region`).
-  `@record_destination("name", ...)` is the old spelling and warns. Filter records in a transformation, not here: returning anything but a
+  Filter records in a transformation, not here: returning anything but a
   destination fails the job.
 
 ### 2. Create Reusable Transformations
@@ -380,7 +379,6 @@ async def enrich(record: Record, runtime_params: RuntimeParams, *, region: str) 
   anything else fails when the module is imported, saying why.
 - Parameters after `(records|record, runtime_params)` are options: `enrich(region="eu")`.
   A step without options is listed bare (`clean_names`) or called (`clean_names()`).
-- `@record_transformation("name", ...)` is the old spelling of `per_record=True` and warns.
 
 _(Subclass `BaseTransformation`, `RecordTransformation` or `SyncRecordTransformation` for
 a step with its own state — say, an HTTP client opened once per job in `setup()`)._

@@ -9,7 +9,8 @@ import pytest
 from reflowfy.execution.transformation_runner import (
     find_culprit_record,
 )
-from reflowfy.transformations.base import BaseTransformation, TransformationError
+from reflowfy.transformations.base import BaseTransformation
+from reflowfy.core.exceptions import TransformationError
 from reflowfy.core.async_utils import run_coroutine_sync
 from reflowfy.execution.transformation_runner import apply_transformations_iteratively_async
 

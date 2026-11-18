@@ -1,17 +1,17 @@
 """The unified decorator API: ``@transformation`` (batch / ``per_record=True``) and
-``@destination(per_record=True)``, plus the deprecated spellings they replace.
+``@destination(per_record=True)``, and the removal of the old spellings.
 
 - ``@transformation`` works bare, names the step after the function, and a step
   without options can be listed bare in ``define_transformations``.
 - ``per_record=True`` accepts a plain ``def``: its records run in order in one
   thread, with every per-record rule (None, lists, SkipRecord, on_error, contract).
 - Knobs that cannot apply fail at decoration, saying why.
-- ``@record_transformation``, ``@record_destination``, ``@source("x")`` and
-  ``@destination("x")`` keep working and warn.
+- The old spellings (``@record_transformation``, ``@record_destination``,
+  ``@source("x")``, ``@destination("x")`` and their registries) are gone.
 """
 
+import importlib
 import threading
-import warnings
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -25,13 +25,9 @@ from reflowfy import (
     TransformationError,
     TypedRecord,
     destination,
-    record_destination,
-    record_transformation,
-    source,
     transformation,
 )
 from reflowfy.core.async_utils import run_coroutine_sync
-from reflowfy.destinations.decorators import destination_registry
 from reflowfy.destinations.fan_out import as_destination
 from reflowfy.destinations.record import RecordDestination
 from reflowfy.execution.transformation_runner import (
@@ -374,7 +370,7 @@ class TestDestination:
             destination(**kwargs)  # type: ignore[call-overload]
 
     def test_route_knobs_without_per_record_are_rejected(self):
-        with pytest.raises(TypeError, match="need per_record=True"):
+        with pytest.raises(TypeError, match="pass per_record=True"):
             destination("ut_dx_legacy_knobs", on_error="skip")  # type: ignore[call-overload]
 
     def test_timeout_needs_an_async_function(self):
@@ -389,68 +385,31 @@ class TestDestination:
             destination(3, per_record=True)  # type: ignore[call-overload]
 
 
+# The old spellings are gone
 # ---------------------------------------------------------------------------
-# Deprecated spellings: still work, and warn
-# ---------------------------------------------------------------------------
 
 
-class TestDeprecated:
-    def test_record_transformation_warns_and_builds_the_same_step(self):
-        with pytest.warns(DeprecationWarning, match=r"@transformation\('ut_dx_old_rt'"):
+class TestRemovedSpellings:
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "record_transformation",
+            "record_destination",
+            "source",
+            "source_registry",
+            "destination_registry",
+        ],
+    )
+    def test_is_no_longer_exported(self, name: str):
+        import reflowfy
 
-            @record_transformation("ut_dx_old_rt", concurrency=2)
-            async def old(record: Any, runtime_params: Any) -> Any:
-                return record
+        assert not hasattr(reflowfy, name)
+        assert name not in reflowfy.__all__
 
-        step = old()
-        assert isinstance(step, RecordTransformation) and step.concurrency == 2
-        assert step.name == "ut_dx_old_rt"
+    def test_the_source_decorator_module_is_gone(self):
+        with pytest.raises(ImportError):
+            importlib.import_module("reflowfy.sources.decorators")
 
-    def test_record_transformation_now_accepts_a_plain_def(self):
-        with pytest.warns(DeprecationWarning):
-
-            @record_transformation("ut_dx_old_rt_sync")
-            def old_sync(record: Any, runtime_params: Any) -> Any:
-                return record
-
-        assert isinstance(old_sync(), SyncRecordTransformation)
-
-    def test_record_destination_warns_and_builds_the_same_destination(self):
-        with pytest.warns(DeprecationWarning, match=r"@destination\('ut_dx_old_rd'"):
-
-            @record_destination("ut_dx_old_rd", on_error="skip")
-            def old(record: Any, runtime_params: Any) -> Any:
-                return CaptureDestination()
-
-        assert issubclass(old, RecordDestination) and old.on_error == "skip"
-
-    def test_record_destination_still_checks_its_knobs(self):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            with pytest.raises(ValueError, match="on_error must be"):
-                record_destination("x", on_error="ignore")  # type: ignore[arg-type]
-
-    def test_named_destination_warns_and_still_registers(self):
-        with pytest.warns(DeprecationWarning, match="plain function"):
-
-            @destination("ut_dx_legacy_dest")
-            def factory(**overrides: Any) -> Any:
-                return CaptureDestination()
-
-        assert factory() is not None
-        assert destination_registry.get("ut_dx_legacy_dest") is factory
-
-    def test_named_source_warns_and_returns_the_function(self):
-        with pytest.warns(DeprecationWarning, match="plain function"):
-
-            @source("ut_dx_legacy_source")
-            def factory(**overrides: Any) -> Any:
-                return MockSource(data=[])
-
-        assert isinstance(factory(), MockSource)
-
-    def test_the_warning_points_at_the_callers_line(self):
-        with pytest.warns(DeprecationWarning) as caught:
-            record_transformation("ut_dx_where")
-            destination("ut_dx_where_dest")
-        assert {w.filename for w in caught} == {__file__}
+    def test_a_named_destination_without_per_record_is_an_error(self):
+        with pytest.raises(TypeError, match="pass per_record=True"):
+            destination("ut_dx_old_named")

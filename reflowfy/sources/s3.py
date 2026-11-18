@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, cast
 import boto3
 from botocore.exceptions import ClientError
 from reflowfy.core.types import Records, wrap_as_record
-from reflowfy.sources.base import BaseSource, SourceError
+from reflowfy.sources.base import BaseSource
+from reflowfy.core.exceptions import SourceError
 from reflowfy.core.health import log_unhealthy
 from reflowfy.observability.logging import get_logger
 

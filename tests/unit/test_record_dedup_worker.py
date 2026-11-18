@@ -137,7 +137,7 @@ async def test_duplicates_within_one_job_are_sent_once(register, worker):  # noq
 
 
 async def test_a_failed_send_releases_the_claims_for_the_retry(register, worker):  # noqa: F811
-    from reflowfy.destinations.base import DestinationError
+    from reflowfy.core.exceptions import DestinationError
 
     failing = FakeDest(send_error=DestinationError("x", "down"))
     register(FakePipeline("rd-retry", failing))

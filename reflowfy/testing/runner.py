@@ -42,11 +42,8 @@ from reflowfy.testing.cassette import (
 from reflowfy.testing.destinations import CaptureDestination
 from reflowfy.testing.result import JobResult, PipelineResult
 from reflowfy.testing.transforms import run_step
-from reflowfy.transformations.base import (
-    BaseTransformation,
-    TransformationError,
-    as_transformations,
-)
+from reflowfy.transformations.base import BaseTransformation, as_transformations
+from reflowfy.core.exceptions import TransformationError
 
 logger = get_logger("testing")
 

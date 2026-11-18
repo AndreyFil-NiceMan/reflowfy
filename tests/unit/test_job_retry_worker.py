@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session, sessionmaker
 import reflowfy.reflow_manager.pipeline_runner as runner_mod
 from reflowfy.core.job_retry import JobRetryConfig
 from reflowfy.core.registry import pipeline_registry
-from reflowfy.destinations.base import DestinationError
+from reflowfy.core.exceptions import DestinationError
 from reflowfy.observability import metrics
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager

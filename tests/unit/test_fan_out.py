@@ -1,5 +1,5 @@
 """Several destinations: a list or fan_out(...) from define_destination, and a
-@record_destination function that returns several (a per-record multicast).
+@destination(per_record=True) function that returns several (a per-record multicast).
 
 Built on RecordDestination: every record joins each of its destinations' groups, each
 group is sent and retried on its own, an optional one may fail without failing the job
@@ -109,7 +109,7 @@ class TestFanOut:
             await _route_and_send(dest, _records("x", "y"))
         assert Sink.ledger == {"a": _records("x", "y")}
         assert dest.failed_optional == ["Sink"]
-        assert dest.is_optional(b) and not dest.is_optional(dest.destinations[0])
+        assert dest._group_required == [True, False]  # a required, b optional
         assert any(
             "optional destination Sink failed, 2 records not written there" in m
             and "broker down" in m
@@ -164,7 +164,6 @@ class TestMulticast:
         assert [r["id"] for r in Sink.ledger["t.a"]] == [1, 2]
         assert [r["id"] for r in Sink.ledger["t.b"]] == [1, 3]
         assert [d.config["topic"] for d in dest.destinations_for(records[0])] == ["t.a", "t.b"]
-        assert dest.destination_for(records[0]).config["topic"] == "t.a"
 
     async def test_a_group_is_required_once_any_record_requires_it(self):
         Sink.fail_topics = {"t.audit": 9}

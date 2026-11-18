@@ -215,7 +215,3 @@ class KafkaDispatcher(BaseDispatcher):
             await self._producer.stop()
             self._producer = None
             self._started = False
-
-
-# Backward compatibility alias
-JobDispatcher = BaseDispatcher
