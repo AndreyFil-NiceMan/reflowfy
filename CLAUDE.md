@@ -436,8 +436,9 @@ partition is kept — aiokafka mutes a partition while its batch is in flight
 (`aiokafka/producer/sender.py`). A message refused on hand-over stops the loop; every future
 already handed over is still awaited; the error names `record N of M`. Measured on a local
 broker (1000 messages, 3 topics): 27–38 ms batched vs 259–725 ms at the old default of one
-ack at a time, and faster than the old `concurrency=16` (42–46 ms). There is no guard for
-the old `concurrency=` argument any more: it falls into `**producer_config`. A
+ack at a time, and faster than the old `concurrency=16` (42–46 ms). There is no dedicated
+guard for the old `concurrency=` argument any more: like any setting AIOKafkaProducer does
+not take, it is dropped with a one-time `ignoring producer setting` warning. A
 per-record `api_destination` keeps `send_concurrency` requests in flight — set by a
 `@destination(per_record=True)`, else `default_record_concurrency()` (`TRANSFORM_CONCURRENCY`, 16) —
 through `core/async_utils.for_each_concurrently`, so requests may land out of order. Tests:

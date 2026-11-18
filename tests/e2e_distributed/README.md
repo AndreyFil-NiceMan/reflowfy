@@ -15,6 +15,7 @@ proof that the data arrived.
 |---|---|
 | `pipelines/dist_pipelines.py` | The pipelines under test. Self-contained: they generate their own records (no external data) |
 | `pipelines/dist_gaps_pipelines.py`, `test_framework_gaps.py` | A user source rebuilt on workers with a `secret()`, transformation options / `should_apply_transformation` / `on_error="skip"` / the one-record contract, `fan_out` with an optional destination, a list from `define_destination`, `@destination(per_record=True)` multicast, `JobRetryConfig`, a 404 not retried, lifecycle hooks, `run_pipeline` chaining, `define_rate_limit` |
+| `pipelines/dist_authoring_pipelines.py`, `test_authoring.py` | The authoring API changed after 1.1.6: bare `@transformation` steps named after the function, `per_record=True` on a plain `def` (`None` / list / `SkipRecord` / `on_error="skip"`), a bare `@destination(per_record=True)`, `SkipRecord` before `SkipJob` reported on the job, `callback_url` ignored |
 | `sink/server.py` | Stdlib-only HTTP server: delivery ledger, failure injection, and a mock users API |
 | `sink/deploy.sh`, `sink/k8s.yaml` | Deploy the sink next to Reflowfy (OpenShift / Kubernetes) |
 | `sync_pipelines.sh` | Copy the pipelines into a project so the next image build includes them |
@@ -25,7 +26,7 @@ proof that the data arrived.
 | `test_async_pipelines.py` | Async per-record transformations: delivery, the concurrency cap per job (counted by the sink), 404/5xx per record, retry-failed, a long async step that must not get the worker evicted, chaos |
 
 Pipelines: `dist_abstract`, `dist_abstract_es`, `dist_async`, `dist_per_record`, `dist_ids_b1`, `dist_ids_b7`, `dist_ids_b100`,
-`dist_ids_fanout`, `dist_ids_api`, `dist_ids_api_batch`.
+`dist_ids_fanout`, `dist_ids_api`, `dist_ids_api_batch`, `dist_authoring`.
 
 ## Running it
 

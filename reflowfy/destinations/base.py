@@ -17,8 +17,6 @@ from reflowfy.core.exceptions import DestinationError, PermanentDestinationError
 __all__ = [
     "BaseDestination",
     "ConnectionPool",
-    "DestinationError",
-    "PermanentDestinationError",
     "RetryConfig",
     "check_concurrency",
     "is_retryable",
