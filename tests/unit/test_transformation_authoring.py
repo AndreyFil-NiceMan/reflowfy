@@ -3,7 +3,7 @@
 
 - Options: keyword arguments given when a decorated step is built are bound against the
   function's signature right then and passed to every call.
-- ``@record_transformation(on_error="skip")`` / ``RecordTransformation.on_error``: a record
+- ``@transformation(per_record=True, on_error="skip")`` / ``RecordTransformation.on_error``: a record
   whose call raised is dropped, its exception type as the skip reason.
 - A per-record step returns one record (a ``dict``) or ``None``; anything else fails the
   job, whatever ``on_error`` says.
@@ -64,7 +64,7 @@ def _records(n: int) -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# #10 Options on @transformation / @record_transformation
+# #10 Options on @transformation (batch and per_record=True)
 # ---------------------------------------------------------------------------
 
 

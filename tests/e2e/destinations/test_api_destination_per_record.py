@@ -25,6 +25,7 @@ from typing import Any, Dict, List
 
 import httpx
 import pytest
+from tests.e2e.polling import POLL_INTERVAL
 
 REFLOW_MANAGER_URL = os.getenv("E2E_REFLOW_MANAGER_URL", "http://localhost:8002")
 MOCK_API_URL = os.getenv("MOCK_HTTP_URL", "http://localhost:8091").removesuffix("/webhook")
@@ -63,7 +64,7 @@ def _run_and_wait(manager: httpx.Client, params: Dict[str, Any]) -> Dict[str, An
         stats = manager.get(f"/executions/{execution_id}/stats").json()
         if stats.get("state") in ("completed", "failed"):
             break
-        time.sleep(1)
+        time.sleep(POLL_INTERVAL)
     stats["execution_id"] = execution_id
     return stats
 

@@ -2,7 +2,7 @@
 
 Covers the async core (``apply_transformations_iteratively_async`` /
 ``run_job_records_async``), its sync wrappers, ``AsyncTransformation``,
-``@transformation`` on an ``async def``, ``@record_transformation`` and the worker
+``@transformation`` on an ``async def``, ``@transformation(per_record=True)`` and the worker
 path through ``execute_job``.
 """
 

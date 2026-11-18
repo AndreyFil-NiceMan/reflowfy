@@ -81,5 +81,8 @@ docker save reflowfy-base:1.0.12 | gzip > reflowfy-base-1.0.12.tar.gz
 
 E2E tests run against **unreleased** code, so they cannot use the published base.
 `scripts/run_e2e_tests.sh` builds a local `reflowfy-base:local` from the freshly
-built wheel and points the service + mock builds at it via
-`REFLOWFY_BASE_IMAGE=reflowfy-base:local`.
+built wheel and points the service builds at it via
+`REFLOWFY_BASE_IMAGE=reflowfy-base:local`; the mock servers run that image as is.
+reflowfy's dependencies are installed from the repo's `uv.lock` in a layer of their
+own before the wheel is copied in, so a run reinstalls only the wheel and the
+dependency layer is rebuilt only when `uv.lock` changes.

@@ -102,8 +102,6 @@ def _apply_column_migrations() -> None:
         "ALTER TABLE executions ADD COLUMN IF NOT EXISTS hook_error TEXT",
         # Chaining: the execution whose hook started this one
         "ALTER TABLE executions ADD COLUMN IF NOT EXISTS parent_execution_id VARCHAR(255)",
-        # /run callback_url, POSTed the execution summary once it ends
-        "ALTER TABLE executions ADD COLUMN IF NOT EXISTS callback_url TEXT",
         "CREATE INDEX IF NOT EXISTS idx_executions_parent_execution_id "
         "ON executions(parent_execution_id)",
         # Retention sweeper filters on completed_at; partial index skips unfinished rows

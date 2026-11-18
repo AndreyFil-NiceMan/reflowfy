@@ -30,6 +30,7 @@ from reflowfy.execution.job_runner import (
     log_skipped_records,
     run_job_records_async,
 )
+from reflowfy.execution.transformation_runner import AppliedStep
 from reflowfy.factories.source_factory import SourceFactory
 from reflowfy.observability import metrics
 from reflowfy.observability.metrics import JobOutcome
@@ -172,6 +173,36 @@ class JobStats:
                 else {}
             ),
         }
+
+
+def _report_steps(applied: List[AppliedStep], stats: "JobStats", pipeline_name: str) -> None:
+    """Time, log and count each applied step; its skipped records go on ``stats``."""
+    for step in applied:
+        stats.transformation_times[step.name] = round(step.duration, 3)
+        logger.debug(
+            "Applied transformation %s (%s, %.3fs, %d -> %d records)",
+            step.name,
+            step.mode if step.concurrency is None else f"{step.mode} x{step.concurrency}",
+            step.duration,
+            step.records_in,
+            step.records_out,
+            extra={
+                "event": "transform_applied",
+                "transformation": step.name,
+                "mode": step.mode,
+                "concurrency": step.concurrency,
+                "records_in": step.records_in,
+                "records_out": step.records_out,
+            },
+        )
+        if step.records_skipped:
+            stats.records_skipped += step.records_skipped
+            for reason, times in (step.skip_reasons or {}).items():
+                count_skip_reason(stats.record_skip_reasons, reason, times)
+            log_skipped_records(logger, step)
+            metrics.records_skipped_total.labels(
+                pipeline=pipeline_name, transformation=step.name
+            ).inc(step.records_skipped)
 
 
 class WorkerExecutor:
@@ -357,7 +388,9 @@ class WorkerExecutor:
 
             if not records:
                 # SkipJob leaves its reason on runtime_params; without one this is
-                # just an empty slice.
+                # just an empty slice. Steps that ran before a SkipJob (and the
+                # records they skipped) are reported first, so both show.
+                _report_steps(applied, stats, pipeline_name)
                 stats.skip_reason = runtime_params.get("skip_reason")
                 if stats.skip_reason:
                     log_job_dropped(logger, stats.skip_reason)
@@ -374,32 +407,7 @@ class WorkerExecutor:
                 len(records),
                 extra={"event": "job_processing", "records_in": len(records)},
             )
-            for step in applied:
-                stats.transformation_times[step.name] = round(step.duration, 3)
-                logger.debug(
-                    "Applied transformation %s (%s, %.3fs, %d -> %d records)",
-                    step.name,
-                    step.mode if step.concurrency is None else f"{step.mode} x{step.concurrency}",
-                    step.duration,
-                    step.records_in,
-                    step.records_out,
-                    extra={
-                        "event": "transform_applied",
-                        "transformation": step.name,
-                        "mode": step.mode,
-                        "concurrency": step.concurrency,
-                        "records_in": step.records_in,
-                        "records_out": step.records_out,
-                    },
-                )
-                if step.records_skipped:
-                    stats.records_skipped += step.records_skipped
-                    for reason, times in (step.skip_reasons or {}).items():
-                        count_skip_reason(stats.record_skip_reasons, reason, times)
-                    log_skipped_records(logger, step)
-                    metrics.records_skipped_total.labels(
-                        pipeline=pipeline_name, transformation=step.name
-                    ).inc(step.records_skipped)
+            _report_steps(applied, stats, pipeline_name)
 
             stats.records_output = len(transformed_records)
 

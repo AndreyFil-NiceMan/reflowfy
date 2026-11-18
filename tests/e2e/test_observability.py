@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 from tests.e2e.conftest import ELASTICSEARCH_URL, REFLOW_MANAGER_URL
+from tests.e2e.polling import POLL_INTERVAL
 
 
 def test_metrics_endpoint_exposes_reflowfy_families(check_reflow_manager):
@@ -38,7 +39,7 @@ def test_pipeline_run_records_metrics(check_reflow_manager, reflow_client):
         after = httpx.get(f"{REFLOW_MANAGER_URL}/metrics", timeout=10.0).text
         if "reflowfy_pipeline_executions_total{" in after:
             break
-        time.sleep(1)
+        time.sleep(POLL_INTERVAL)
     # A concrete execution sample now exists (labelled series appears once used).
     assert "reflowfy_pipeline_executions_total{" in after
 
@@ -63,6 +64,6 @@ def test_logs_land_in_elastic(check_reflow_manager, check_elasticsearch, reflow_
         total = res["hits"]["total"]["value"]
         if total > 0:
             break
-        time.sleep(2)
+        time.sleep(POLL_INTERVAL)
 
     assert total > 0, "no reflowfy logs found in Elasticsearch (reflowfy-logs-*)"

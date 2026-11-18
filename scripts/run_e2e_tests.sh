@@ -180,14 +180,15 @@ wait_for_service() {
 
     log_info "Waiting for $name at $url..."
 
-    local waited=0
-    while [ $waited -lt $max_wait ]; do
+    # A deadline rather than a sum of sleeps, and a short sleep: the services come up
+    # while other steps run, so most of these checks pass on the first try or soon after.
+    local deadline=$((SECONDS + max_wait))
+    while [ $SECONDS -lt $deadline ]; do
         if curl -sf "$url" > /dev/null 2>&1; then
             log_success "$name is ready"
             return 0
         fi
-        sleep 2
-        waited=$((waited + 2))
+        sleep 0.5
         echo -n "."
     done
     echo ""
@@ -200,14 +201,14 @@ wait_for_kafka() {
     local max_wait=${1:-90}
     log_info "Waiting for Kafka to be healthy..."
 
-    local waited=0
-    while [ $waited -lt $max_wait ]; do
+    # Each probe starts a JVM (~2 s), so the probe itself is the pacing.
+    local deadline=$((SECONDS + max_wait))
+    while [ $SECONDS -lt $deadline ]; do
         if docker exec reflofy-e2e-kafka kafka-topics --list --bootstrap-server localhost:29092 > /dev/null 2>&1; then
             log_success "Kafka is ready"
             return 0
         fi
-        sleep 3
-        waited=$((waited + 3))
+        sleep 1
         echo -n "."
     done
     echo ""
@@ -357,7 +358,19 @@ export REFLOWFY_BASE_IMAGE=reflowfy-base:local
 log_info "Preparing local reflowfy base image (Dockerfile.base + local wheel)..."
 cp "$PROJECT_ROOT/Dockerfile.base" .
 # Swap the PyPI install for the local wheel (matches the templated RUN line).
-sed -i "s|^RUN \(.*\)uv pip install \"reflowfy.*|COPY $WHEEL_FILENAME /tmp/$WHEEL_FILENAME\nRUN \1uv pip install /tmp/$WHEEL_FILENAME|" Dockerfile.base
+#
+# reflowfy's dependencies go in a layer of their own, from the repo's uv.lock, BEFORE
+# the wheel is copied in. The wheel is new on every run, so with one combined layer
+# every run reinstalled and byte-compiled every dependency; now that layer is cached
+# until uv.lock changes and only the wheel itself is installed per run. The wheel is
+# installed with its dependencies resolved (not --no-deps), so a requirement the lock
+# does not satisfy is still installed rather than silently missing.
+uv export --project "$PROJECT_ROOT" --frozen --no-dev --no-emit-project --no-hashes \
+    --no-header --quiet -o e2e-requirements.txt || {
+    log_error "uv export failed (is uv.lock in sync with pyproject.toml?)"
+    exit 1
+}
+sed -i "s|^RUN \(.*\)uv pip install \"reflowfy.*|COPY e2e-requirements.txt /tmp/e2e-requirements.txt\nRUN \1uv pip install -r /tmp/e2e-requirements.txt\nCOPY $WHEEL_FILENAME /tmp/$WHEEL_FILENAME\nRUN \1uv pip install /tmp/$WHEEL_FILENAME|" Dockerfile.base
 grep -q "uv pip install /tmp/$WHEEL_FILENAME" Dockerfile.base || {
     log_error "Could not point Dockerfile.base at the local wheel (install line changed?)"
     exit 1
@@ -388,7 +401,7 @@ sed -i "s/'8000:8000'/'8003:8000'/g" docker-compose.yml
 sed -i "s/'5050:80'/'5051:80'/g" docker-compose.yml
 
 # Add environment variables for E2E test sources (elasticsearch, sql, mock servers)
-sed -i '/EXECUTION_MODE: local/a\      ELASTICSEARCH_URL: http://reflofy-e2e-elasticsearch:9200\n      SQL_CONNECTION_URL: postgresql://reflowfy:reflowfy@postgres:5432/reflowfy\n      MOCK_HTTP_URL: http://reflofy-e2e-mock-http:8091/webhook\n      MOCK_API_URL: http://reflofy-e2e-mock-api:8092\n      DLQ_POLL_INTERVAL_SECONDS: 5' docker-compose.yml
+sed -i '/EXECUTION_MODE: local/a\      ELASTICSEARCH_URL: http://reflofy-e2e-elasticsearch:9200\n      SQL_CONNECTION_URL: postgresql://reflowfy:reflowfy@postgres:5432/reflowfy\n      MOCK_HTTP_URL: http://reflofy-e2e-mock-http:8091/webhook\n      MOCK_API_URL: http://reflofy-e2e-mock-api:8092\n      DLQ_POLL_INTERVAL_SECONDS: 5\n      PIPELINE_SCHEDULER_POLL_INTERVAL_SECONDS: 2' docker-compose.yml
 
 # Ship logs to the e2e Elasticsearch so the observability suite can assert on them.
 # The generated docker-compose.yml forwards these from .env via ${VAR} interpolation,
@@ -443,8 +456,8 @@ if [ "$SKIP_DOCKER" = false ]; then
     docker compose -f docker-compose.e2e-infra.yml down --remove-orphans 2>/dev/null || true
     docker network rm e2e_workspace_reflowfy-network 2>/dev/null || true
 
-    # Build the local base image FIRST — every service AND the mock servers
-    # (which build from Dockerfile.worker) build FROM it.
+    # Build the local base image FIRST — every service builds FROM it, and the mock
+    # servers run it as is.
     log_info "Building local reflowfy base image (${REFLOWFY_BASE_IMAGE})..."
     ensure_workspace
     # E2E_PYTHON_IMAGE / E2E_UV_IMAGE swap the base's FROM images, e.g. for a runner
@@ -459,61 +472,64 @@ if [ "$SKIP_DOCKER" = false ]; then
     }
     log_success "Base image built"
 
-    # Start E2E infrastructure FIRST (creates the shared network, starts Kafka, ES, mocks)
+    # Start E2E infrastructure FIRST (creates the shared network, starts Kafka, ES,
+    # mocks). Nothing waits for it here: Kafka and Elasticsearch take the better part
+    # of a minute to boot, and the app images build and start in that time.
     log_info "Starting E2E test infrastructure..."
     ensure_workspace
-    docker compose -f docker-compose.e2e-infra.yml up -d --build || {
+    docker compose -f docker-compose.e2e-infra.yml up -d || {
         log_error "E2E infrastructure startup failed"
         exit 1
     }
 
-    # Wait for Kafka to be fully healthy before starting main services
-    wait_for_kafka 120 || exit 1
-
-    # Create Kafka topics explicitly
-    log_info "Creating Kafka topics..."
-    docker exec reflofy-e2e-kafka kafka-topics --create \
-        --topic reflow.jobs \
-        --bootstrap-server localhost:29092 \
-        --replication-factor 1 --partitions 1 \
-        --if-not-exists 2>/dev/null || log_warning "Topic reflow.jobs might already exist"
-    docker exec reflofy-e2e-kafka kafka-topics --create \
-        --topic e2e-test-destination \
-        --bootstrap-server localhost:29092 \
-        --replication-factor 1 --partitions 1 \
-        --if-not-exists 2>/dev/null || log_warning "Topic e2e-test-destination might already exist"
-    # One partition: the concurrency test checks that concurrency=1 keeps order.
-    docker exec reflofy-e2e-kafka kafka-topics --create \
-        --topic e2e-kafka-concurrency \
-        --bootstrap-server localhost:29092 \
-        --replication-factor 1 --partitions 1 \
-        --if-not-exists 2>/dev/null || log_warning "Topic e2e-kafka-concurrency might already exist"
-    docker exec reflofy-e2e-kafka kafka-topics --create \
-        --topic e2e-kafka-headers \
-        --bootstrap-server localhost:29092 \
-        --replication-factor 1 --partitions 1 \
-        --if-not-exists 2>/dev/null || log_warning "Topic e2e-kafka-headers might already exist"
-    # @record_destination: one job writes to all three (tests/e2e/destinations/test_record_destination.py).
-    for rd_topic in e2e-rd-eu e2e-rd-us e2e-rd-apac; do
-        docker exec reflofy-e2e-kafka kafka-topics --create \
-            --topic "$rd_topic" \
-            --bootstrap-server localhost:29092 \
-            --replication-factor 1 --partitions 1 \
-            --if-not-exists 2>/dev/null || log_warning "Topic $rd_topic might already exist"
-    done
-    log_success "Kafka topics created"
-
-    # Start main services (they join the existing network)
-    log_info "Building reflow-manager image (no-cache) to avoid stale transforms..."
+    # Build the app images once, with the layer cache. Every image layer that matters
+    # is keyed on its content (the new base image, src/, tests/), so a cached build
+    # cannot ship stale code. `reflowfy run --build` would rebuild everything with
+    # --no-cache, and this step used to also rebuild reflow-manager with --no-cache
+    # before it: three builds per run where one does.
+    log_info "Building Reflowfy service images..."
     ensure_workspace
-    docker compose build --no-cache reflow-manager || {
-        log_error "reflow-manager build failed"
+    docker compose build || {
+        log_error "Service image build failed"
         exit 1
     }
 
+    # Start the app (Postgres, manager, API) in the background: `compose up -d` waits
+    # for the healthchecks it depends on, which overlaps the Kafka wait below. In
+    # local mode the services do not need Kafka to start.
     log_info "Starting main Reflowfy services..."
     ensure_workspace
-    uv run python -m reflowfy.cli.main run --build --detach || {
+    uv run python -m reflowfy.cli.main run --detach &
+    RUN_PID=$!
+
+    # Kafka must be up before the topics can be created (the tests need them, the
+    # services do not).
+    wait_for_kafka 120 || exit 1
+
+    # Create Kafka topics explicitly, all in one `docker exec` and in parallel: every
+    # kafka-topics call starts a JVM, and seven of them one after another took ~12 s.
+    # One partition each: the concurrency test checks that concurrency=1 keeps order;
+    # e2e-rd-*: one @destination(per_record=True) job writes to all three
+    # (tests/e2e/destinations/test_record_destination.py).
+    log_info "Creating Kafka topics..."
+    E2E_TOPICS=(reflow.jobs e2e-test-destination e2e-kafka-concurrency e2e-kafka-headers
+                e2e-rd-eu e2e-rd-us e2e-rd-apac)
+    docker exec reflofy-e2e-kafka bash -c '
+        for topic in "$@"; do
+            kafka-topics --create --topic "$topic" --bootstrap-server localhost:29092 \
+                --replication-factor 1 --partitions 1 --if-not-exists > /dev/null 2>&1 &
+        done
+        wait' _ "${E2E_TOPICS[@]}"
+    existing_topics=$(docker exec reflofy-e2e-kafka kafka-topics --list --bootstrap-server localhost:29092 2>/dev/null)
+    for topic in "${E2E_TOPICS[@]}"; do
+        grep -qx "$topic" <<< "$existing_topics" || {
+            log_error "Kafka topic $topic was not created"
+            exit 1
+        }
+    done
+    log_success "Kafka topics created"
+
+    wait "$RUN_PID" || {
         log_error "reflowfy run failed"
         exit 1
     }
@@ -523,16 +539,16 @@ if [ "$SKIP_DOCKER" = false ]; then
 
     # Wait for PostgreSQL
     log_info "Waiting for PostgreSQL..."
-    for i in $(seq 1 30); do
+    for i in $(seq 1 120); do
         if docker exec reflofy-e2e-postgres pg_isready -U reflowfy > /dev/null 2>&1; then
             log_success "PostgreSQL is ready"
             break
         fi
-        if [ $i -eq 30 ]; then
+        if [ $i -eq 120 ]; then
             log_error "PostgreSQL not ready after 60s"
             exit 1
         fi
-        sleep 2
+        sleep 0.5
     done
 
     wait_for_service "http://localhost:9201/_cluster/health" "Elasticsearch" 90 || exit 1
