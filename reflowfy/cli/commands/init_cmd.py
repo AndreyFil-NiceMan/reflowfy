@@ -143,9 +143,7 @@ class {class_name}(AbstractPipeline):
                 conftest.write_text(conftest_template.read_text())
             test_file = tests_dir / f"test_{name}.py"
             if "SimpleTestPipeline" in sample_pipeline.read_text() and not test_file.exists():
-                test_file.write_text(
-                    test_template.read_text().replace("__PIPELINE_MODULE__", name)
-                )
+                test_file.write_text(test_template.read_text().replace("__PIPELINE_MODULE__", name))
                 console.print(f"  ✅ Created tests: tests/test_{name}.py", style="green")
         except Exception as e:
             console.print(f"  ⚠️ Could not create tests: {e}", style="yellow")
@@ -167,7 +165,8 @@ class {class_name}(AbstractPipeline):
             if template_path.exists():
                 dest_file.write_text(template_path.read_text())
                 console.print(
-                    "  ✅ Created destination: src/destinations/example_destination.py", style="green"
+                    "  ✅ Created destination: src/destinations/example_destination.py",
+                    style="green",
                 )
         except Exception as e:
             console.print(f"  ⚠️ Could not create example destination: {e}", style="yellow")

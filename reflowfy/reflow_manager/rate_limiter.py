@@ -2,8 +2,9 @@
 
 import time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Dict, Optional
 from sqlalchemy.orm import Session
+from reflowfy.core.exceptions import pipeline_step
 from reflowfy.store.models import RateLimitState
 
 SECONDS_PER_MINUTE = 60.0
@@ -212,3 +213,44 @@ class RateLimiter:
             sleep_time = min(wait_per_token, remaining_wait)
             time.sleep(sleep_time)
 
+
+# ----- which rate an execution runs at ----------------------------------------------
+
+
+def _rate_value(value: Any, where: str) -> Optional[float]:
+    """A rate limit (jobs/min) as a float; None (or 0, as before) means unlimited."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"{where} must be a number of jobs per minute or None, got {value!r}")
+    if value < 0:
+        raise ValueError(f"{where} must be positive (jobs per minute), got {value}")
+    return float(value) if value else None
+
+
+def resolve_rate_limit(
+    pipeline: Any,
+    runtime_params: Dict[str, Any],
+    override: Optional[float] = None,
+    persisted: Optional[float] = None,
+) -> Optional[float]:
+    """The rate (jobs/min) an execution runs at; None = unlimited.
+
+    Precedence: the ``/run`` override > the rate persisted on the execution (what an
+    earlier run of it resolved, reused on resume) > ``pipeline.define_rate_limit(params)``
+    > the ``rate_limit`` attribute. ``define_rate_limit`` returning None falls through to
+    the attribute. There is no global default: nothing set means unlimited.
+    """
+    if override is not None:
+        return _rate_value(override, "The /run rate_limit")
+    if persisted is not None:
+        return _rate_value(persisted, "The execution's rate_limit")
+    name = getattr(pipeline, "name", "?")
+    value: Any = None
+    define = getattr(pipeline, "define_rate_limit", None)
+    if callable(define):
+        with pipeline_step("define_rate_limit", name):
+            value = define(runtime_params)
+    if value is None:
+        value = getattr(pipeline, "rate_limit", None)
+    return _rate_value(value, f"The rate limit of pipeline '{name}'")

@@ -11,20 +11,15 @@ worker's per-job core (``reflowfy.execution.job_runner``). What you see here is
 what a test asserts and what production does; this module only presents it.
 """
 
-import importlib.util
 import inspect
 import json
 import logging
 import os
 import sys
-import traceback
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, TypeGuard, cast
 
 import typer
-
-import reflowfy
 
 if TYPE_CHECKING:  # Runtime imports stay lazy — these are only for annotations.
     from reflowfy.core.abstract_pipeline import AbstractPipeline
@@ -34,286 +29,28 @@ from reflowfy.core.exceptions import PipelineError
 from reflowfy.core.async_utils import run_coroutine_sync
 from reflowfy.core.planning import chunk
 from reflowfy.destinations.pool import loop_pool_scope
-from reflowfy.execution.job_runner import preview_runtime_params
-from reflowfy.execution.transformation_runner import SKIPPED_MODE, AppliedStep
 from reflowfy.sources.static import StaticSource
 from reflowfy.observability.logging import get_logger, setup_logging
 from reflowfy.core.exceptions import TransformationError
 from reflowfy.core.record_steps import top_skip_reasons
 
+from reflowfy.cli.commands.preview_inputs import (
+    build_flat_params,
+    collect_params,
+    parse_param_flags,
+    resolve_pipeline,
+    split_fields,
+)
+from reflowfy.cli.commands.preview_report import (
+    BatchReport,
+    TestOptions,
+    render_failure,
+    render_params,
+    report_batch,
+    summarize,
+)
+
 logger = get_logger("cli.test")
-
-# Repr length beyond which a source/destination is truncated at verbosity 0.
-# A mock source's repr embeds every record it holds; dumping that before the
-# run buries the output that matters.
-REPR_BUDGET = 160
-
-# Records shown in the sample block, by verbosity level.
-SAMPLE_SIZE = {0: 3, 1: 10}
-
-# Where the framework lives, so its frames can be dropped from tracebacks.
-FRAMEWORK_ROOT = str(Path(reflowfy.__file__).resolve().parent)
-
-
-@dataclass
-class TestOptions:
-    """Everything the flags control, so the renderers take one argument."""
-
-    limit: int = 100
-    dry_run: bool = False
-    verbose: int = 0
-    fail_fast: bool = False
-    as_json: bool = False
-
-
-@dataclass
-class BatchReport:
-    """What one batch did. The unit both pipeline shapes report in."""
-
-    label: Optional[str] = None
-    fetched: int = 0
-    transformed: List[Any] = field(default_factory=lambda: [])
-    applied: List[AppliedStep] = field(default_factory=lambda: [])
-    error: Optional[BaseException] = None
-    sent: bool = False
-    sent_count: int = 0
-    jobs_dropped: List[str] = field(default_factory=lambda: [])
-    """``SkipJob`` reasons, one per job the pipeline dropped."""
-
-    @property
-    def ok(self) -> bool:
-        return self.error is None
-
-    @property
-    def skipped(self) -> int:
-        """Records the batch's per-record steps dropped with ``SkipRecord``."""
-        return sum(s.records_skipped for s in self.applied)
-
-    def to_dict(self) -> Dict[str, Any]:
-        out: Dict[str, Any] = {
-            "label": self.label,
-            "records_fetched": self.fetched,
-            "records_out": len(self.transformed),
-            "records_skipped": self.skipped,
-            "sent": self.sent,
-            "sent_count": self.sent_count,
-            "jobs_dropped": list(self.jobs_dropped),
-            "steps": [
-                {
-                    "name": s.name,
-                    "records_in": s.records_in,
-                    "records_out": s.records_out,
-                    "mode": s.mode,
-                    "duration_ms": round(s.duration * 1000, 3),
-                    "records_skipped": s.records_skipped,
-                    "skip_reasons": dict(s.skip_reasons or {}),
-                }
-                for s in self.applied
-            ],
-            "ok": self.ok,
-        }
-        if self.error is not None:
-            out["error"] = describe_error(self.error)
-        return out
-
-
-# ---------------------------------------------------------------------------
-# Error description
-# ---------------------------------------------------------------------------
-
-
-def describe_error(exc: BaseException) -> Dict[str, Any]:
-    """Structured view of a failure, shared by the rich card and ``--json``."""
-    info: Dict[str, Any] = {
-        "type": type(exc).__name__,
-        "message": str(exc),
-    }
-    if isinstance(exc, TransformationError):
-        info["transformation"] = exc.transformation_name
-        info["step_index"] = exc.step_index
-        info["records_in"] = exc.records_in
-        info["culprit_index"] = exc.culprit_index
-        info["culprit_record"] = exc.culprit_record
-    if isinstance(exc, PipelineError) and exc.original_error is not None:
-        info["cause"] = f"{type(exc.original_error).__name__}: {exc.original_error}"
-    return info
-
-
-def root_cause(exc: BaseException) -> BaseException:
-    """The user's actual exception, unwrapping the framework's wrapper."""
-    original = getattr(exc, "original_error", None)
-    return original if isinstance(original, BaseException) else exc
-
-
-def user_frames(exc: BaseException) -> List[traceback.FrameSummary]:
-    """Traceback frames belonging to the user's code, framework frames dropped.
-
-    The framework sits between the CLI and the user's ``apply``, so an
-    unfiltered traceback is mostly reflowfy internals. If filtering leaves
-    nothing (the failure really was inside the framework), return everything
-    rather than an empty trace.
-    """
-    tb = root_cause(exc).__traceback__ or exc.__traceback__
-    if tb is None:
-        return []
-    frames = traceback.extract_tb(tb)
-    user = [f for f in frames if not str(Path(f.filename).resolve()).startswith(FRAMEWORK_ROOT)]
-    return user or list(frames)
-
-
-# ---------------------------------------------------------------------------
-# Rendering helpers
-# ---------------------------------------------------------------------------
-
-
-def summarize(value: Any, verbose: int) -> str:
-    """Repr of a source/destination, truncated unless the user asked for more."""
-    text = repr(value)
-    if verbose >= 1 or len(text) <= REPR_BUDGET:
-        return text
-    return f"{text[:REPR_BUDGET]}… [dim](+{len(text) - REPR_BUDGET} chars, -v for full)[/dim]"
-
-
-def render_steps(report: BatchReport, opts: TestOptions, indent: str = "") -> None:
-    """One line per transformation: real in/out counts, and timing under -v."""
-    for step in report.applied:
-        if step.mode == SKIPPED_MODE:
-            # Shown whatever the verbosity: "why didn't my step run?" is the question.
-            console.print(
-                f"{indent}  [dim]– {step.name}  not applied "
-                f"(should_apply_transformation declined it)[/dim]"
-            )
-            continue
-        delta = step.delta
-        if delta < 0:
-            change = f"[yellow]{delta}[/yellow]"
-        elif delta > 0:
-            change = f"[cyan]+{delta}[/cyan]"
-        else:
-            change = "[dim]±0[/dim]"
-
-        timing = ""
-        if opts.verbose >= 1:
-            mode = step.mode if step.concurrency is None else f"{step.mode} ×{step.concurrency}"
-            timing = f"  [dim]{step.duration * 1000:.1f}ms, {mode}[/dim]"
-        marker = "[green]✓[/green]"
-        line = (
-            f"{indent}  {marker} [bold]{step.name}[/bold]  "
-            f"{step.records_in} → {step.records_out} records  ({change}){timing}"
-        )
-        console.print(line)
-        for reason, times in sorted((step.skip_reasons or {}).items(), key=lambda kv: -kv[1]):
-            console.print(f"{indent}    [dim]skipped {times}: {reason}[/dim]")
-
-        # An empty batch after a step is the most common silent bug: everything
-        # downstream is a no-op and the run still "succeeds".
-        if step.records_out == 0 and step.records_in > 0:
-            console.print(
-                f"{indent}    [yellow]⚠️  this step emptied the batch — "
-                f"nothing downstream will run[/yellow]"
-            )
-    # The step that broke the chain, in the same shape as the ones that worked.
-    error = report.error
-    if isinstance(error, TransformationError):
-        received = f"{error.records_in} records in" if error.records_in is not None else ""
-        console.print(
-            f"{indent}  [red]✗[/red] [bold red]{error.transformation_name}[/bold red]  "
-            f"[red]{received} → failed[/red]"
-        )
-
-    if opts.verbose >= 1 and report.applied:
-        total = sum(s.duration for s in report.applied)
-        console.print(f"{indent}  [dim]total transform time: {total * 1000:.1f}ms[/dim]")
-
-
-def render_failure(exc: BaseException, opts: TestOptions, indent: str = "") -> None:
-    """The failure card: which step, which record, which line of user code."""
-    cause = root_cause(exc)
-
-    if isinstance(exc, TransformationError):
-        position = f"#{exc.step_index + 1} " if exc.step_index is not None else ""
-        console.print(
-            f"\n{indent}[bold red]❌ Transformation {position}failed:[/bold red] "
-            f"[bold]{exc.transformation_name}[/bold]"
-        )
-    elif isinstance(exc, PipelineError):
-        console.print(f"\n{indent}[bold red]❌ Pipeline step failed[/bold red]")
-    else:
-        console.print(f"\n{indent}[bold red]❌ Failed[/bold red]")
-
-    console.print(f"{indent}   [red]{type(cause).__name__}: {cause}[/red]")
-
-    if isinstance(exc, TransformationError):
-        if exc.records_in is not None:
-            console.print(f"{indent}   [dim]received {exc.records_in} records[/dim]")
-
-        if exc.culprit_record is not None:
-            where = f"index {exc.culprit_index}"
-            if exc.records_in:
-                where += f" of {exc.records_in}"
-            console.print(f"\n{indent}   [bold]Failing record[/bold] [dim]({where})[/dim]:")
-            rendered = json.dumps(exc.culprit_record, default=str, indent=2)
-            if opts.verbose == 0 and len(rendered) > 600:
-                rendered = rendered[:600] + "\n… (-v for the full record)"
-            for line in rendered.splitlines():
-                console.print(f"{indent}     [dim]{line}[/dim]")
-        elif isinstance(cause, KeyError):
-            console.print(
-                f"{indent}   [dim]no single record identified — the key may be "
-                f"missing from a nested value[/dim]"
-            )
-
-    frames = user_frames(exc)
-    if frames:
-        console.print(f"\n{indent}   [bold]Where[/bold]:")
-        shown = frames if opts.verbose >= 1 else frames[-3:]
-        for frame in shown:
-            console.print(
-                f"{indent}     [cyan]{frame.filename}:{frame.lineno}[/cyan] in {frame.name}"
-            )
-            if frame.line:
-                console.print(f"{indent}       [dim]{frame.line.strip()}[/dim]")
-        if opts.verbose == 0 and len(frames) > len(shown):
-            console.print(f"{indent}     [dim](-v for the full traceback)[/dim]")
-
-    if opts.verbose >= 2:
-        console.print(f"\n{indent}   [dim]--- full traceback ---[/dim]")
-        console.print(
-            "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
-            style="dim",
-        )
-
-
-def render_records(report: BatchReport, opts: TestOptions, indent: str = "") -> None:
-    """Sample of the transformed records."""
-    if not report.transformed:
-        return
-    count = SAMPLE_SIZE.get(opts.verbose, len(report.transformed))
-    shown = report.transformed[: min(count, len(report.transformed))]
-    console.print(
-        f"\n{indent}[bold]📋 Sample output ({len(shown)} of {len(report.transformed)} "
-        f"records):[/bold]"
-    )
-    budget = 500 if opts.verbose == 0 else 5000
-    for i, record in enumerate(shown, 1):
-        rendered = json.dumps(record, default=str, indent=2)[:budget]
-        console.print(f"{indent}  [dim]Record {i}:[/dim]")
-        for line in rendered.splitlines():
-            console.print(f"{indent}    {line}")
-
-
-def render_params(params: Dict[str, Any], opts: TestOptions, indent: str = "") -> None:
-    """Under -v, show the flat runtime_params the chain actually ran with."""
-    if opts.verbose < 1:
-        return
-    console.print(f"\n{indent}[bold]🔧 runtime_params:[/bold]")
-    for key in sorted(params):
-        console.print(f"{indent}  [dim]{key}[/dim] = {params[key]!r}")
-
-
-# ---------------------------------------------------------------------------
-# Execution
-# ---------------------------------------------------------------------------
 
 
 def _send_job(
@@ -422,210 +159,6 @@ def run_batch(
         elif exc.records_in:
             report.fetched = exc.records_in
     return report
-
-
-def report_batch(report: BatchReport, opts: TestOptions, indent: str = "") -> None:
-    """Render one batch's outcome."""
-    if report.error is not None and report.fetched == 0 and not report.applied:
-        render_failure(report.error, opts, indent)
-        return
-
-    for reason in report.jobs_dropped:
-        console.print(f"{indent}[yellow]⏭️  Job dropped by pipeline (SkipJob): {reason}[/yellow]")
-    console.print(f"{indent}[green]✓ Fetched {report.fetched} records[/green]")
-    if report.fetched == 0:
-        if report.jobs_dropped:
-            return
-        console.print(f"{indent}[yellow]⚠️  No records returned from source[/yellow]")
-        return
-
-    render_steps(report, opts, indent)
-    if report.error is not None:
-        render_failure(report.error, opts, indent)
-        return
-    render_records(report, opts, indent)
-
-
-def build_flat_params(pipeline: "AbstractPipeline[Any]", params: Dict[str, Any]) -> Dict[str, Any]:
-    """The flat runtime_params a run starts from (mirrors the local executor)."""
-    return preview_runtime_params(pipeline.name, params)
-
-
-# ---------------------------------------------------------------------------
-# Pipeline + parameter resolution
-# ---------------------------------------------------------------------------
-
-
-def load_from_path(path: Path) -> None:
-    """Import a single pipeline file, triggering metaclass registration."""
-    spec = importlib.util.spec_from_file_location("test_pipeline_module", str(path))
-    if spec is None or spec.loader is None:
-        console.print(f"[red]❌ Cannot load: {path}[/red]")
-        raise typer.Exit(1)
-    try:
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-    except Exception as exc:
-        console.print(f"[red]❌ Error loading pipeline file: {exc}[/red]")
-        raise typer.Exit(1)
-
-
-def resolve_pipeline(target: str, no_input: bool) -> "AbstractPipeline[Any]":
-    """Find the pipeline named (or filed at) ``target``.
-
-    A name is tried first, because every other part of reflowfy — the API, the
-    scheduler, the job payload — keys on the pipeline name. A path still works.
-    """
-    from reflowfy.core.registry import pipeline_registry
-
-    path = Path(target)
-    if path.suffix == ".py" or path.exists():
-        if not path.exists():
-            console.print(f"[red]❌ File not found: {target}[/red]")
-            raise typer.Exit(1)
-        load_from_path(path.resolve())
-    else:
-        from reflowfy.core.pipeline_discovery import discover_and_load_pipelines
-
-        discover_and_load_pipelines()
-        pipeline = pipeline_registry.get(target)
-        if pipeline is not None:
-            return pipeline
-        console.print(
-            f"[red]❌ No pipeline named '{target}'"
-            f"{pipeline_registry.describe_missing(target)}[/red]"
-        )
-        known = pipeline_registry.list_names()
-        if known:
-            console.print(f"[dim]Registered pipelines: {', '.join(sorted(known))}[/dim]")
-        raise typer.Exit(1)
-
-    pipelines = pipeline_registry.list_all()
-    if not pipelines:
-        console.print(
-            "[red]❌ No pipelines found in the file. A pipeline registers itself when "
-            "its class defines a `name`; if its __init__ raised, it was skipped.[/red]"
-        )
-        raise typer.Exit(1)
-
-    if len(pipelines) == 1:
-        return pipelines[0]
-
-    if no_input:
-        console.print(
-            f"[red]❌ {len(pipelines)} pipelines in that file; name the one you want.[/red]"
-        )
-        console.print(f"[dim]Found: {', '.join(p.name for p in pipelines)}[/dim]")
-        raise typer.Exit(1)
-
-    from rich.prompt import Prompt
-
-    console.print("\n[bold]Found multiple pipelines:[/bold]")
-    for i, p in enumerate(pipelines, 1):
-        console.print(f"  {i}. {p.name}")
-    choice = Prompt.ask("Select pipeline number", default="1")
-    try:
-        return pipelines[int(choice) - 1]
-    except (ValueError, IndexError):
-        console.print("[red]Invalid choice[/red]")
-        raise typer.Exit(1)
-
-
-def parse_param_flags(values: Sequence[str]) -> Dict[str, str]:
-    """Turn ``--param key=value`` repeats into a dict."""
-    parsed: Dict[str, str] = {}
-    for raw in values:
-        key, sep, value = raw.partition("=")
-        if not sep or not key:
-            console.print(f"[red]❌ --param expects key=value, got '{raw}'[/red]")
-            raise typer.Exit(2)
-        parsed[key.strip()] = value
-    return parsed
-
-
-def collect_params(
-    pipeline: "AbstractPipeline[Any]", supplied: Dict[str, str], no_input: bool
-) -> Dict[str, Any]:
-    """Resolve the pipeline's declared parameters from flags, defaults, prompts."""
-    from rich.prompt import Confirm, Prompt
-
-    params: Dict[str, Any] = {}
-    parameters = pipeline.get_all_parameters()
-
-    if not parameters:
-        if supplied:
-            console.print(
-                f"[yellow]⚠️  Pipeline declares no parameters; passing "
-                f"{', '.join(supplied)} through anyway[/yellow]"
-            )
-            params.update(supplied)
-        else:
-            console.print("\n[dim]No parameters needed for this pipeline.[/dim]")
-        return params
-
-    console.print("\n[bold]📝 Pipeline parameters:[/bold]")
-    for param in parameters:
-        # 1. Given on the command line.
-        if param.name in supplied:
-            params[param.name] = param.coerce(supplied[param.name])
-            console.print(
-                f"  [dim]{param.name}[/dim] = {params[param.name]!r} [dim](--param)[/dim]"
-            )
-            continue
-
-        hints = [param.type_name]
-        if param.choices:
-            hints.append(f"choices: {param.choices}")
-        if param.required:
-            hints.append("required")
-        label = f"  {param.name}"
-        if param.description:
-            label += f" [dim]({param.description})[/dim]"
-
-        # 2. Non-interactive: default, or fail.
-        if no_input:
-            if param.required and param.default is None:
-                console.print(
-                    f"[red]❌ Required parameter '{param.name}' not supplied "
-                    f"(--param {param.name}=...) and --no-input is set[/red]"
-                )
-                raise typer.Exit(2)
-            if param.default is not None:
-                params[param.name] = param.default
-                console.print(f"  [dim]{param.name}[/dim] = {param.default!r} [dim](default)[/dim]")
-            continue
-
-        # 3. Prompt.
-        console.print(f"{label}  [dim]{', '.join(hints)}[/dim]")
-        default_val = param.default
-        if param.param_type is bool:
-            value = (
-                Confirm.ask(f"    → {param.name}", default=bool(default_val))
-                if default_val is not None
-                else Confirm.ask(f"    → {param.name}")
-            )
-        else:
-            if default_val is not None:
-                default_str: Any = str(default_val)
-            elif not param.required:
-                default_str = ""
-            else:
-                default_str = ...
-            raw = Prompt.ask(f"    → {param.name}", default=default_str)
-            value = param.coerce(raw)
-
-        if param.choices and value not in param.choices:
-            console.print(
-                f"[yellow]⚠️  '{value}' not in choices {param.choices}, using anyway[/yellow]"
-            )
-        params[param.name] = value
-
-    return params
-
-
-# ---------------------------------------------------------------------------
-# Command
-# ---------------------------------------------------------------------------
 
 
 def register(app: typer.Typer) -> None:
@@ -818,16 +351,6 @@ def register(app: typer.Typer) -> None:
         console.print(f"\n[bold green]✅ Test complete: {total_records} {outcome}[/bold green]")
 
 
-# ---------------------------------------------------------------------------
-# Fixtures (reflowfy.testing)
-# ---------------------------------------------------------------------------
-
-
-def split_fields(values: Sequence[str]) -> List[str]:
-    """``--redact a,b --redact c`` -> ``["a", "b", "c"]``."""
-    return [name.strip() for value in values for name in value.split(",") if name.strip()]
-
-
 def record_fixture_file(
     pipeline: "AbstractPipeline[Any]",
     params: Dict[str, Any],
@@ -879,7 +402,9 @@ def record_fixture_file(
         "[yellow]⚠️  It contains real data. Review it before committing "
         "(--redact masks fields).[/yellow]"
     )
-    console.print(f"[dim]Replay it offline: pytest, or reflowfy test {pipeline.name} --fixture {path}[/dim]")
+    console.print(
+        f"[dim]Replay it offline: pytest, or reflowfy test {pipeline.name} --fixture {path}[/dim]"
+    )
 
 
 def replay_fixture_file(pipeline: "AbstractPipeline[Any]", path: Path, update: bool) -> None:

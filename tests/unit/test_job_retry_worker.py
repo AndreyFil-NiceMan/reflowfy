@@ -15,7 +15,9 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+import reflowfy.reflow_manager.drive_loop as loop_mod
 import reflowfy.reflow_manager.pipeline_runner as runner_mod
+import reflowfy.reflow_manager.recovery as recovery_mod
 from reflowfy.core.job_retry import JobRetryConfig
 from reflowfy.core.registry import pipeline_registry
 from reflowfy.core.exceptions import DestinationError
@@ -26,7 +28,8 @@ from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
 from reflowfy.store.models import Base, Execution, Job
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner
 from reflowfy.reflow_manager.rate_limiter import RateLimiter
-from reflowfy.worker.executor import JobStats, WorkerExecutor
+from reflowfy.worker.executor import WorkerExecutor
+from reflowfy.worker.job_stats import JobStats
 
 
 @pytest.fixture(autouse=True)
@@ -395,7 +398,7 @@ class _FlakyLocalDispatcher(LocalDispatcher):
 def test_local_mode_retries_a_job_and_the_execution_waits_for_it(db, db_file, monkeypatch):
     """End to end in local mode: the job fails, is retried by the drive loop once due,
     succeeds, and only then does the execution complete."""
-    monkeypatch.setattr(runner_mod, "CHECKPOINT_POLL_INTERVAL", 0.05)
+    monkeypatch.setattr(loop_mod, "CHECKPOINT_POLL_INTERVAL", 0.05)
     destination = _Destination([ConnectionResetError("reset")])
     _register(monkeypatch, destination)
     db.query(Job).update(
@@ -432,7 +435,7 @@ def test_local_mode_sends_nothing_while_the_backoff_runs(db, monkeypatch):
 
     runner = PipelineRunner(ExecutionManager(db), JobManager(db), _Recorder(RateLimiter(db)))
     track = {"finished": -1.0, "progress_at": 0.0, "warned_at": 0.0, "lease_checked_at": 0.0}
-    monkeypatch.setattr(runner_mod, "CHECKPOINT_POLL_INTERVAL", 0)
+    monkeypatch.setattr(loop_mod, "CHECKPOINT_POLL_INTERVAL", 0)
     runner.execution_manager.claim_driver("e", "me", 60)
     for _ in range(3):
         assert asyncio.run(runner._drive_step("e", PIPE, None, "k", "me", track)) is None

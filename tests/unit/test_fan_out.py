@@ -17,7 +17,7 @@ from reflowfy.destinations.fan_out import FanOut, as_destination, fan_out
 from reflowfy.destinations.record import RecordDestination, RecordDestinationError
 from reflowfy.execution.job_runner import ROUTE_MODE, run_job_records_async
 from reflowfy.sources.static import StaticSource
-from reflowfy.worker.executor import JobStats
+from reflowfy.worker.job_stats import JobStats
 from test_record_destination import (  # type: ignore[import-not-found]
     Sink,
     _records,

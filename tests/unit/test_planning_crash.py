@@ -18,7 +18,9 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+import reflowfy.reflow_manager.drive_loop as loop_mod
 import reflowfy.reflow_manager.pipeline_runner as runner_mod
+import reflowfy.reflow_manager.recovery as recovery_mod
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
 from reflowfy.store.models import Base, Execution, Job
@@ -101,8 +103,8 @@ def _fast(monkeypatch):
     from reflowfy.core.registry import pipeline_registry
 
     monkeypatch.setattr(pipeline_registry, "get", lambda name: SimpleNamespace(rate_limit=None))
-    monkeypatch.setattr(runner_mod, "CHECKPOINT_POLL_INTERVAL", 0.01)
-    monkeypatch.setattr(runner_mod, "DRIVER_RETRY_SECONDS", 0.01)
+    monkeypatch.setattr(loop_mod, "CHECKPOINT_POLL_INTERVAL", 0.01)
+    monkeypatch.setattr(loop_mod, "DRIVER_RETRY_SECONDS", 0.01)
 
 
 def _state(db: Session) -> Execution:
@@ -162,7 +164,7 @@ def test_a_live_planner_is_waited_for_not_failed(db, monkeypatch):
             db.commit()
         real_sleep(0)
 
-    monkeypatch.setattr(runner_mod.time, "sleep", sleeper)
+    monkeypatch.setattr(recovery_mod.time, "sleep", sleeper)
 
     _runner(db).resume_execution("e")
 
@@ -184,7 +186,7 @@ def test_planner_that_finishes_while_we_wait_is_resumed_not_failed(db, monkeypat
             )
             db.commit()
 
-    monkeypatch.setattr(runner_mod.time, "sleep", sleeper)
+    monkeypatch.setattr(recovery_mod.time, "sleep", sleeper)
 
     runner.resume_execution("e")
 
@@ -195,7 +197,7 @@ def test_planner_that_finishes_while_we_wait_is_resumed_not_failed(db, monkeypat
 def test_a_just_created_execution_is_not_mistaken_for_an_orphan(db, monkeypatch):
     """Created 1s ago and not yet owned (the planner has not claimed its lease): wait
     until it is older than a lease before calling it abandoned."""
-    monkeypatch.setattr(runner_mod, "DRIVER_LEASE_SECONDS", 2.0)
+    monkeypatch.setattr(loop_mod, "DRIVER_LEASE_SECONDS", 2.0)
     # Taken before the row exists: setup time (slow under coverage) must not count
     # against the wait, which is measured from created_at, not from the call.
     before_insert = time.time()

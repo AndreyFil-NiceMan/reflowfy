@@ -14,8 +14,10 @@ from typer.testing import CliRunner
 from reflowfy.core.planning import PlannedJob
 from reflowfy.cli.commands import init_cmd
 from reflowfy.cli.commands import test as test_cmd
-from reflowfy.cli.commands.test import BatchReport
-from reflowfy.cli.commands.test import TestOptions as Opts
+from reflowfy.cli.commands import preview_report as report_mod
+from reflowfy.cli.commands import preview_inputs as inputs_mod
+from reflowfy.cli.commands.preview_report import BatchReport
+from reflowfy.cli.commands.preview_report import TestOptions as Opts
 from reflowfy.cli.main import app
 from reflowfy.cli.utils import console
 from reflowfy.core.exceptions import PipelineError
@@ -165,7 +167,7 @@ class TestRenderSteps:
     def test_a_step_that_adds_records_shows_the_growth_and_timing(self) -> None:
         report = BatchReport(applied=[AppliedStep("explode_rows", 0.0012, 2, 5)])
 
-        text = _render(test_cmd.render_steps, report, Opts(verbose=1))
+        text = _render(report_mod.render_steps, report, Opts(verbose=1))
 
         assert "explode_rows  2 → 5 records  (+3)  1.2ms" in text
         assert "total transform time: 1.2ms" in text
@@ -175,7 +177,7 @@ class TestRenderSteps:
             "enrich", 0.5, 10, 7, "per_record", 8, {"user inactive": 2, "no email": 1}
         )
 
-        text = _render(test_cmd.render_steps, BatchReport(applied=[step]), Opts(verbose=1))
+        text = _render(report_mod.render_steps, BatchReport(applied=[step]), Opts(verbose=1))
 
         assert "enrich  10 → 7 records  (-3)  500.0ms, per_record ×8" in text
         assert text.index("skipped 2: user inactive") < text.index("skipped 1: no email")
@@ -195,7 +197,7 @@ class TestRenderFailure:
             )
         )
 
-        text = _render(test_cmd.render_failure, exc, Opts())
+        text = _render(report_mod.render_failure, exc, Opts())
 
         assert "Transformation #1 failed: enrich" in text
         assert "received" not in text  # records_in unknown
@@ -205,13 +207,13 @@ class TestRenderFailure:
     def test_a_key_error_without_a_culprit_hints_at_nested_values(self) -> None:
         exc = _raised(TransformationError("flatten", "boom", KeyError("city"), records_in=3))
 
-        text = _render(test_cmd.render_failure, exc, Opts())
+        text = _render(report_mod.render_failure, exc, Opts())
 
         assert "received 3 records" in text
         assert "no single record identified" in text
 
     def test_an_error_without_a_traceback_has_no_where_section(self) -> None:
-        text = _render(test_cmd.render_failure, RuntimeError("never raised"), Opts())
+        text = _render(report_mod.render_failure, RuntimeError("never raised"), Opts())
 
         assert "❌ Failed" in text
         assert "RuntimeError: never raised" in text
@@ -228,7 +230,7 @@ class TestRenderFailure:
         except ValueError as exc:
             error: BaseException = exc
 
-        text = _render(test_cmd.render_failure, error, Opts())
+        text = _render(report_mod.render_failure, error, Opts())
 
         assert text.count(" in level") == 3
         assert "(-v for the full traceback)" in text
@@ -245,7 +247,7 @@ class TestRenderFailure:
         except ValueError as exc:
             error: BaseException = exc
 
-        text = _render(test_cmd.render_failure, error, Opts())
+        text = _render(report_mod.render_failure, error, Opts())
 
         assert "gone.py:2 in f" in text
 
@@ -254,13 +256,13 @@ class TestReportBatch:
     def test_a_failure_before_anything_was_fetched_shows_only_the_card(self) -> None:
         report = BatchReport(error=PipelineError("source unreachable"))
 
-        text = _render(test_cmd.report_batch, report, Opts())
+        text = _render(report_mod.report_batch, report, Opts())
 
         assert "Pipeline step failed" in text
         assert "Fetched" not in text
 
     def test_an_empty_source_is_called_out(self) -> None:
-        text = _render(test_cmd.report_batch, BatchReport(), Opts())
+        text = _render(report_mod.report_batch, BatchReport(), Opts())
 
         assert "Fetched 0 records" in text
         assert "No records returned from source" in text
@@ -385,7 +387,7 @@ class TestRunBatchRealRuns:
 
         report = test_cmd.run_batch(self._pipeline([]), Dropping([1]), {}, Opts(dry_run=True))
         assert report.ok and report.fetched == 0 and report.jobs_dropped == ["closed today"]
-        text = _render(test_cmd.report_batch, report, Opts())
+        text = _render(report_mod.report_batch, report, Opts())
         assert "closed today" in text and "No records returned" not in text
 
     def test_inside_a_test_session_the_preview_uses_it(self) -> None:
@@ -414,7 +416,7 @@ def test_a_file_that_cannot_be_loaded_as_a_module_exits(
     monkeypatch.setattr(console, "print", lambda msg, *a, **k: printed.append(str(msg)))
 
     with pytest.raises(typer.Exit):
-        test_cmd.load_from_path(tmp_path / "p.py")
+        inputs_mod.load_from_path(tmp_path / "p.py")
     assert printed == [f"[red]❌ Cannot load: {tmp_path / 'p.py'}[/red]"]
 
 

@@ -19,7 +19,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 import reflowfy.reflow_manager.app as app_module
+import reflowfy.reflow_manager.drive_loop as loop_mod
 import reflowfy.reflow_manager.pipeline_runner as runner_mod
+import reflowfy.reflow_manager.recovery as recovery_mod
 from reflowfy.core.abstract_pipeline import AbstractPipeline
 from reflowfy.core.runtime_params import RuntimeParams
 from reflowfy.execution.job_runner import job
@@ -127,7 +129,7 @@ def test_a_cancelled_execution_is_not_dispatched_and_stays_cancelled(db, monkeyp
     from reflowfy.core.registry import pipeline_registry
 
     monkeypatch.setattr(pipeline_registry, "get", lambda name: SimpleNamespace(rate_limit=None))
-    monkeypatch.setattr(runner_mod, "CHECKPOINT_POLL_INTERVAL", 0.01)
+    monkeypatch.setattr(loop_mod, "CHECKPOINT_POLL_INTERVAL", 0.01)
     _execution(db)
     _jobs(db, pending=4)
     ReflowManager(db, execution_mode="local").cancel_execution("e")

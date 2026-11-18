@@ -1,4 +1,4 @@
-from reflowfy.reflow_manager.pipeline_runner import _finished_count
+from reflowfy.reflow_manager.drive_loop import _finished_count
 
 
 def test_finished_includes_deduplicated():

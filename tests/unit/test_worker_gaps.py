@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-import reflowfy.worker.executor as executor_mod
+import reflowfy.worker.job_store as executor_mod
 from test_worker_executor_paths import (  # type: ignore[import-not-found]  # noqa: F401
     FakeDest,
     FakePipeline,

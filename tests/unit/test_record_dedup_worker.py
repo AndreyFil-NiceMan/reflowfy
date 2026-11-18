@@ -14,7 +14,8 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from reflowfy.core.abstract_pipeline import AbstractPipeline
 from reflowfy.core.runtime_params import RuntimeParams
 from reflowfy.transformations.base import BaseTransformation
-from reflowfy.worker.executor import JobStats, WorkerExecutor
+from reflowfy.worker.executor import WorkerExecutor
+from reflowfy.worker.job_stats import JobStats
 from reflowfy.store.models import Base
 from test_worker_executor_paths import (  # type: ignore[import-not-found]
     FakeDest,

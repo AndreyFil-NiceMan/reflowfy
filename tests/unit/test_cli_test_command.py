@@ -24,6 +24,7 @@ from reflowfy import (
     pipeline_registry,
 )
 from reflowfy.cli.commands import test as test_cmd
+from reflowfy.cli.commands import preview_report as report_mod
 from reflowfy.cli.main import app
 from reflowfy.cli.utils import console
 from reflowfy.sources.mock import MockSource
@@ -630,17 +631,17 @@ class TestIdBatches:
 class TestHelpers:
     def test_summarize_truncates_unless_verbose(self):
         long = "x" * 500
-        short = test_cmd.summarize(long, verbose=0)
+        short = report_mod.summarize(long, verbose=0)
         assert len(short) < 300
         assert "-v for full" in short
-        assert test_cmd.summarize(long, verbose=1) == repr(long)
+        assert report_mod.summarize(long, verbose=1) == repr(long)
 
     def test_describe_error_includes_wrapped_cause(self):
         err = PipelineError("step failed", original_error=ValueError("root"))
-        info = test_cmd.describe_error(err)
+        info = report_mod.describe_error(err)
         assert info["type"] == "PipelineError"
         assert info["cause"] == "ValueError: root"
-        assert test_cmd.root_cause(err).args == ("root",)
+        assert report_mod.root_cause(err).args == ("root",)
 
     def test_user_frames_without_traceback_is_empty(self):
-        assert test_cmd.user_frames(ValueError("no tb")) == []
+        assert report_mod.user_frames(ValueError("no tb")) == []

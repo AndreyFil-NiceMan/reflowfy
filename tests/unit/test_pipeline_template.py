@@ -10,7 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 from reflowfy import pipeline_registry
-from reflowfy.cli.commands.test import TestOptions as Opts
+from reflowfy.cli.commands.preview_report import TestOptions as Opts
 from reflowfy.cli.commands.test import run_single
 from reflowfy.cli.main import app
 from reflowfy.cli.utils import get_package_path

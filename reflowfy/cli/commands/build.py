@@ -27,7 +27,6 @@ def _build_images(
         Panel(f"Building images for registry: [bold cyan]{registry}[/bold cyan]{cache_msg}")
     )
 
-
     build_context = Path(".")
     check_uv_project(build_context)
 

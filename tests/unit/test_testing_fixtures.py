@@ -22,6 +22,7 @@ from reflowfy import (
     transformation,
 )
 from reflowfy.cli.commands import test as test_cmd
+from reflowfy.cli.commands import preview_inputs as inputs_mod
 from reflowfy.cli.main import app
 from reflowfy.cli.utils import console
 from reflowfy.sources.mock import MockSource
@@ -595,4 +596,4 @@ class TestCli:
         assert alone.exit_code == 2 and "--update-fixture needs --fixture" in alone.output
 
     def test_split_fields(self):
-        assert test_cmd.split_fields(["a, b", "c", " ", ""]) == ["a", "b", "c"]
+        assert inputs_mod.split_fields(["a, b", "c", " ", ""]) == ["a", "b", "c"]
