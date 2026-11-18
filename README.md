@@ -12,6 +12,8 @@ Reflowfy enables you to build pipelines that fetch data from sources, apply cust
 - **Kubernetes-Native**: KEDA autoscaling from 0 to N workers based on queue lag.
 - **Order-Independent**: Maximum parallelism without coordination overhead.
 - **Two Execution Modes**: Local testing and distributed production execution.
+- **Reliable by default**: job leases and redelivery checks, opt-in automatic retries, per-record deduplication, and executions you can pause, resume, cancel and retry.
+- **Testable**: `reflowfy test` and `reflowfy.testing` run a pipeline exactly as a worker would, with no Docker and no network.
 
 ## 🏗 Architecture
 
@@ -484,22 +486,76 @@ The original exception stays reachable as `err.original_error`. Also available: 
 > **A pipeline that fails to construct is not registered.** If your `__init__` raises, the pipeline can't be built, so it won't appear — but the traceback is logged at ERROR on startup, and the later lookup tells you why:
 > `Pipeline 'user_sync' not found in registry (it failed to register: KeyError: 'ELASTIC_URL')`
 
-### 5. Execute Pipelines
+### 5. Run and Control Executions
 
-Trigger pipelines locally or in production via HTTP:
+Every pipeline gets a run route on the API (port 8000): `POST /pipelines/<name>/run`, or
+`POST /pipelines/<folder>/<name>/run` for a pipeline in a subfolder of `pipelines/`:
 
 ```bash
-# Production Execution (Distributed via Kafka)
-curl -X POST http://localhost:8001/run \
-  -H "Content-Type: application/json" \
-  -d '{
-    "pipeline_name": "user_sync_pipeline",
-    "runtime_params": {}
-  }'
-
-# Dry Run (Preview without side effects)
-curl -X POST http://localhost:8001/run ... -d '{..., "dry_run": true}'
+curl -X POST "http://localhost:8000/pipelines/user_sync_pipeline/run?mode=distributed&rate_limit=600&env=prod" \
+  -H "Content-Type: application/json" -d '{}'
 ```
+
+Scalar pipeline parameters (`env=prod`) are query parameters; list and dict ones (an ID-based
+pipeline's `input_ids`) go in the JSON body. Swagger at `/docs` shows each pipeline's route.
+
+The ReflowManager (port 8001) takes the same run directly, and controls it afterwards:
+
+```bash
+curl -X POST http://localhost:8001/run -H "Content-Type: application/json" \
+  -d '{"pipeline_name": "user_sync_pipeline", "runtime_params": {}, "mode": "distributed"}'
+# -> {"execution_id": "...", ...}
+
+GET  /executions/{id}/status        # state and job counts
+GET  /executions/{id}/stats         # records, skips, retries, hooks, timings
+GET  /executions/{id}/jobs          # every job with its stats JSON
+GET  /executions/{id}/errors        # failed jobs and their errors
+POST /executions/{id}/pause         # stop dispatching; jobs in flight finish
+POST /executions/{id}/resume
+POST /executions/{id}/cancel        # jobs not yet started are cancelled
+POST /executions/{id}/retry-failed  # requeue failed jobs (optionally ?error_contains=...)
+```
+
+`mode` is `local` (in-process, no workers) or `distributed` (Kafka and the worker pool);
+`rate_limit` is jobs per minute. Set `REFLOWFY_API_TOKEN` on the API and the manager and every
+route but `/health` and `/metrics` requires `Authorization: Bearer <token>`.
+
+### 6. Pipeline Behaviour
+
+All of these are opt-in and set on the pipeline class.
+
+**Dropping records and jobs.** Inside a per-record transformation, return `None` to drop a record
+silently or `raise SkipRecord("why")` to drop it with a reason; `raise SkipJob("why")` anywhere in
+a job drops the whole job without failing it. Both are counted on the job's stats and in metrics.
+
+**Retries.** A worker that disappears has its job re-run automatically (leases). To retry jobs
+that *fail*, set `job_retry`; bad data and bugs (`KeyError`, validation errors, HTTP 4xx) are
+never retried:
+
+```python
+from reflowfy import JobRetryConfig
+
+class UserSyncPipeline(AbstractPipeline[RuntimeParams]):
+    name = "user_sync_pipeline"
+    job_retry = JobRetryConfig(max_retries=2, backoff_seconds=30)
+```
+
+**Rate limit.** `rate_limit = 600` (jobs per minute), or compute it in
+`define_rate_limit(params)`; `?rate_limit=` on the run overrides both. Nothing set means unlimited.
+
+**Deduplication.** `enable_duplicate_jobs = False` makes workers skip records already sent to the
+same destination (across executions, for 24 h). `dedup_key = "order_id"` decides what identifies a
+record.
+
+**Validating records.** `record_type = TypedRecord[Order]` checks every fetched record against a
+TypedDict (`on_invalid_record = "skip"` drops bad ones instead of failing the job), and
+`validate_steps = True` checks each step's output against its return annotation.
+
+**Schedules.** `schedules = [ScheduledRun(name="nightly", cron="0 2 * * *", params={...})]`.
+
+**Lifecycle hooks and chaining.** `on_execution_complete(summary, params)`,
+`on_execution_failed(...)` and `on_execution_cancelled(...)` run once when an execution ends;
+`run_pipeline("next_pipeline", params)` inside a hook starts a follow-up run linked to this one.
 
 ---
 
@@ -507,10 +563,18 @@ curl -X POST http://localhost:8001/run ... -d '{..., "dry_run": true}'
 
 ### Sources
 
-- **Elasticsearch**: Scroll-based pagination with parameter injection
-- **SQL**: ID range and offset-based pagination (PostgreSQL, MySQL, etc.)
-- **HTTP API**: Offset/cursor pagination with various auth strategies
-- **S3**: Efficient distributed bucket processing (prefix splitting)
+- **Elasticsearch** (`elastic_source`): `docs_per_job=N` plans one job per N documents over a point
+  in time; `window_mode="range"` gives each job its own range of the first sort key, for long
+  runs that must survive an Elasticsearch restart.
+- **SQL** (`sql_source`): every `{{ value }}` in the query is a bind parameter, written unquoted
+  (`WHERE day >= {{ day }}`); table and column names go through `{{ name | ident }}`. Split by ID
+  range.
+- **HTTP API** (`id_based_api_source`): fetches IDs in batches, with offset/cursor pagination and
+  several auth strategies.
+- **S3** (`s3_source`, needs `boto3`): splits a bucket by prefix.
+
+Keep credentials out of job messages with `secret("ENV_VAR")`: the worker reads the variable
+from its own environment.
 
 A source of your own subclasses `BaseSource` (`fetch` may return a list or `yield`
 its records) or `AsyncSource` (`async def fetch_async`, awaited on the worker):
@@ -529,30 +593,33 @@ class Users(AsyncSource):
 
 ### Destinations
 
-- **Kafka**: High-throughput batching and compression
-- **HTTP**: Flexible webhooks with retry capabilities
-- **Console**: Structured output for local debugging
+- **Kafka** (`kafka_destination`): one message per record, sent as one batch per job; per-record
+  `key=` and `headers=` (templates or functions), `value_field=`.
+- **HTTP** (`api_destination`): one request per job with a body you build, or `per_record=True`
+  for one request per record with `{field}` URL, query and header templates. 4xx is not retried;
+  5xx, 429 and connection errors are, honouring `Retry-After`.
+- **Console** (`console_destination`): structured output for local debugging.
+
+Return a list (or `fan_out(a, b, optional=[b])`) from `define_destination` to send every record
+to several destinations, or a `@destination(per_record=True)` function to choose one per record.
 
 ## ⚙️ Configuration
 
-Control behavior via Environment Variables:
+Services are configured with environment variables. The ones you are most likely to set:
 
-**API Service:**
-
-```bash
-API_HOST=0.0.0.0
-API_PORT=8000
-KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-KAFKA_TOPIC=reflow.jobs
-```
-
-**Worker Service:**
-
-```bash
-KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-KAFKA_TOPIC=reflow.jobs
-KAFKA_GROUP_ID=reflowfy-workers
-```
+| Variable | Used by | Default | What |
+|---|---|---|---|
+| `DATABASE_URL` | manager, worker | — | PostgreSQL connection |
+| `KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_TOPIC` | manager, worker | `reflow.jobs` topic | Kafka (plus `KAFKA_SECURITY_PROTOCOL`, `KAFKA_SASL_*`) |
+| `KAFKA_GROUP_ID` | worker | `reflowfy-workers` | consumer group |
+| `EXECUTION_MODE` | manager | `distributed` | `local` runs jobs in-process, without Kafka |
+| `PIPELINE_MODULE` | all | `pipelines` | where pipelines are discovered |
+| `REFLOWFY_API_TOKEN` | API, manager | unset | bearer token required on every route but `/health`, `/metrics` |
+| `TRANSFORM_CONCURRENCY` | worker | `16` | default records in flight for per-record steps and destinations |
+| `MAX_IN_FLIGHT_JOBS` | manager | `1000` | jobs dispatched but not finished, per execution |
+| `JOB_HEARTBEAT_SECONDS`, `JOB_RUNNING_LEASE_SECONDS`, `JOB_MAX_ATTEMPTS` | worker, manager | `30`, `300`, `3` | when a job whose worker disappeared is re-run |
+| `LOG_LEVEL`, `LOG_JSON`, `LOG_DESTINATION` | all | `INFO`, `true`, `stdout` | logging (`elastic` / `both` ship to Elasticsearch) |
+| `API_HOST`, `API_PORT` | API | `0.0.0.0`, `8000` | where the API listens |
 
 ## 🐳 Kubernetes Deployment
 
@@ -569,6 +636,18 @@ Reflowfy natively supports OpenShift/Kubernetes via `reflowfy deploy`.
    reflowfy deploy
    ```
    Creates the API, Manager, auto-scaled KEDA Workers, and (optionally) PostgreSQL, dynamically injecting your pipeline code into the containers.
+
+## 🧪 Developing Reflowfy
+
+```bash
+uv sync --all-extras
+uv run pytest tests/unit --cov            # unit tests (CI requires 99% coverage)
+uv run ruff check reflowfy/ && uv run pyright
+./scripts/run_e2e_tests.sh                # end to end on a Docker stack (local mode)
+```
+
+`tests/e2e_distributed/` runs the same kind of tests over Kafka and real workers, against a
+deployment or the local Docker stack; see its README.
 
 ## 📝 License
 
