@@ -113,7 +113,6 @@ class ReflowManager:
         runtime_params: Optional[Dict[str, Any]] = None,
         rate_limit: Optional[float] = None,
         parent_execution_id: Optional[str] = None,
-        callback_url: Optional[str] = None,
     ) -> Execution:
         return self.execution_manager.create_execution(
             execution_id,
@@ -121,7 +120,6 @@ class ReflowManager:
             runtime_params,
             rate_limit,
             parent_execution_id=parent_execution_id,
-            callback_url=callback_url,
         )
 
     def get_execution(self, execution_id: str) -> Optional[Execution]:
@@ -215,7 +213,7 @@ class ReflowManager:
             "runtime_params": execution.runtime_params,
             "rate_limit": execution.rate_limit,
             "parent_execution_id": execution.parent_execution_id,
-            # Lifecycle hooks + callback: when they fired (once the execution ended) and
+            # Lifecycle hooks: when they fired (once the execution ended) and
             # what failed in them. Never part of the execution's own state.
             "hooks": {
                 "fired_at": (

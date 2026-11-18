@@ -1,4 +1,4 @@
-"""Lifecycle hooks, the /run callback and chaining, against a real (SQLite) database."""
+"""Lifecycle hooks and chaining, against a real (SQLite) database."""
 
 import logging
 import threading
@@ -6,7 +6,6 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-import httpx
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -267,57 +266,6 @@ def test_a_hook_that_runs_too_long_is_reported(db, engine, monkeypatch) -> None:
     assert _row(db).hook_error == "on_execution_complete timed out after 0.05s"
 
 
-# ----- callback ----------------------------------------------------------------------------
-
-
-class _Response:
-    def __init__(self, status: int) -> None:
-        self.status_code = status
-        self.request = httpx.Request("POST", "http://cb")
-
-
-def test_the_callback_gets_the_summary_after_the_hook(db, engine, monkeypatch, caplog) -> None:
-    caplog.set_level("INFO", logger="reflowfy")
-    posted: List[Any] = []
-
-    def post(url: str, json: Any, timeout: float) -> _Response:
-        posted.append((url, json, timeout, len(CALLS.calls)))
-        return _Response(204)
-
-    monkeypatch.setattr(httpx, "post", post)
-    _execution(db, "completed", callback_url="https://hooks.example/done?token=secret")
-
-    lifecycle.fire_execution_hooks(engine, "e")
-
-    [(url, body, timeout, hooks_before)] = posted
-    assert url.endswith("token=secret") and timeout == 10.0
-    assert body["execution_id"] == "e" and body["state"] == "completed"
-    assert hooks_before == 1  # the hook ran first
-    assert _row(db).hook_error is None
-    assert "token" not in caplog.text  # only the host is logged
-    assert "hooks.example" in caplog.text
-
-
-def test_a_failed_callback_is_stored(db, engine, monkeypatch) -> None:
-    monkeypatch.setattr(httpx, "post", lambda *a, **k: _Response(500))
-    _execution(db, "completed", pipeline=_NoHooksPipeline.name, callback_url="http://cb/x")
-    lifecycle.fire_execution_hooks(engine, "e")
-    assert _row(db).hook_error == "callback to cb failed: HTTP 500"
-
-
-def test_an_unreachable_callback_and_a_failed_hook_are_both_stored(db, engine, monkeypatch):
-    def post(*args: Any, **kwargs: Any) -> Any:
-        raise httpx.ConnectError("refused")
-
-    monkeypatch.setattr(httpx, "post", post)
-    CALLS.raise_error = ValueError("bad")
-    _execution(db, "failed", callback_url="http://cb/x")
-    lifecycle.fire_execution_hooks(engine, "e")
-    assert _row(db).hook_error == (
-        "on_execution_failed raised ValueError: bad; callback to cb failed: ConnectError"
-    )
-
-
 # ----- every terminal transition fires them ------------------------------------------------
 
 
@@ -454,13 +402,12 @@ def test_run_pipeline_outside_a_hook_uses_the_manager_database(engine, monkeypat
 
     eid = lifecycle.run_pipeline(
         PIPE, {"x": 1}, parent_execution_id="p", rate_limit=5, execution_id="c1",
-        callback_url="http://cb",
     )
 
     assert eid == "c1"
     with Session(bind=engine) as db:
         row = db.query(Execution).one()
-        assert (row.parent_execution_id, row.rate_limit, row.callback_url) == ("p", 5, "http://cb")
+        assert (row.parent_execution_id, row.rate_limit) == ("p", 5)
 
 
 def test_drive_child_runs_the_plan_and_fails_the_execution_on_error(db, engine, monkeypatch):
@@ -517,56 +464,21 @@ def test_make_manager_reads_the_environment(db, monkeypatch) -> None:
 # ----- service wiring ---------------------------------------------------------------------------
 
 
-def test_run_accepts_and_persists_a_callback_url(engine, monkeypatch) -> None:
-    from fastapi.testclient import TestClient
-
-    from reflowfy.reflow_manager.database import get_db
-
-    factory = sessionmaker(bind=engine)
-    monkeypatch.setenv("EXECUTION_MODE", "local")
-    monkeypatch.setattr(app_module, "_dispatch_pipeline_jobs", lambda **kw: None)
-    monkeypatch.setattr(app_module, "get_pipeline_scheduler", lambda: None)
-
-    def db_override() -> Any:
-        session = factory()
-        try:
-            yield session
-        finally:
-            session.close()
-
-    app_module.app.dependency_overrides[get_db] = db_override
-    try:
-        client = TestClient(app_module.app)
-        bad = client.post(
-            "/run", json={"pipeline_name": PIPE, "callback_url": "ftp://x/y"}
-        )
-        assert bad.status_code == 422
-        ok = client.post(
-            "/run",
-            json={"pipeline_name": PIPE, "execution_id": "r", "callback_url": "https://cb/x"},
-        )
-        assert ok.status_code == 202
-    finally:
-        app_module.app.dependency_overrides.clear()
-    with Session(bind=engine) as db:
-        assert db.query(Execution).one().callback_url == "https://cb/x"
-
-
 def test_execution_stats_report_the_hooks(db) -> None:
     _execution(db, "failed", rate_limit=30.0, parent_execution_id="p")
     _job(db, "a", "pending", next_attempt_at=_now() + timedelta(minutes=1))
     ExecutionManager(db).claim_hooks("e")
-    ExecutionManager(db).set_hook_error("e", "callback to cb failed: HTTP 500")
+    ExecutionManager(db).set_hook_error("e", "on_execution_failed raised ValueError: bad")
 
     stats = ReflowManager(db, execution_mode="local").get_execution_stats("e")
 
     assert stats is not None
-    assert stats["hooks"]["error"] == "callback to cb failed: HTTP 500"
+    assert stats["hooks"]["error"] == "on_execution_failed raised ValueError: bad"
     assert stats["hooks"]["fired_at"] is not None
     assert (stats["rate_limit"], stats["parent_execution_id"]) == (30.0, "p")
     assert stats["jobs_retry_scheduled"] == 1
     as_dict = _row(db).to_dict()
-    assert as_dict["hook_error"] and "callback_url" not in as_dict
+    assert as_dict["hook_error"]
 
 
 async def test_startup_installs_the_hooks_and_warns_about_max_jobs_per_minute(
