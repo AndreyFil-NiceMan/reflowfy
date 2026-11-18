@@ -34,7 +34,6 @@ and is deprecated.
 """
 
 import inspect
-import warnings
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -191,15 +190,9 @@ def record_transformation(
 ) -> Callable[["RecordTransformFn"], "type[DecoratedTransformation]"]:
     """Deprecated: ``@transformation(name, per_record=True, ...)`` does the same.
 
-    Kept so existing pipelines run unchanged; it warns (``DeprecationWarning``) where
-    it is used. It now also accepts a plain ``def``, as the new spelling does.
+    Kept so existing pipelines run unchanged, without a warning. It now also accepts
+    a plain ``def``, as the new spelling does.
     """
-    warnings.warn(
-        "@record_transformation is deprecated: use "
-        f"@transformation({name!r}, per_record=True, ...) instead",
-        DeprecationWarning,
-        stacklevel=2,
-    )
     return transformation(
         name, per_record=True, concurrency=concurrency, timeout=timeout, on_error=on_error
     )

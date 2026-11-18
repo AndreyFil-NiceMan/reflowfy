@@ -227,7 +227,7 @@ decoration (per-record knobs on a batch step; `concurrency`/`timeout` on a per-r
   required option raises there. `Transformations` is `Sequence[BaseTransformation |
   type[BaseTransformation]]`. Any new consumer of `define_transformations` output must go through
   `as_transformations`.
-- **Deprecated, still working, `DeprecationWarning` at the caller's line:** `@record_transformation`
+- **Deprecated in docs only — still working, no runtime warning (by decision, 2026-11):** `@record_transformation`
   (now also accepts `def`), `@record_destination` (both delegate to the new path), and
   `@source("x")` / `@destination("x")` without `per_record` — factory registries
   (`source_registry`/`destination_registry`) nothing reads; a plain function does the same.

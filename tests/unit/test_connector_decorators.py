@@ -1,7 +1,7 @@
 """The deprecated @source("x") / @destination("x") factory registries, and MockSource.
 
-Both decorators still work and warn (tests/unit/test_decorator_api.py checks the
-warning); this file checks they keep their old behaviour meanwhile.
+Both are deprecated in the docs only and still work without a warning; this file
+checks they keep their old behaviour.
 """
 
 from typing import Any, Dict, Iterator
@@ -13,9 +13,6 @@ from reflowfy.destinations.console import ConsoleDestination, console_destinatio
 from reflowfy.destinations.decorators import DestinationRegistry
 from reflowfy.sources.decorators import SourceRegistry
 from reflowfy.sources.mock import MockSource, generate_sample_data, mock_source
-
-
-pytestmark = pytest.mark.filterwarnings("ignore:@(source|destination)\\(:DeprecationWarning")
 
 
 @pytest.fixture

@@ -162,7 +162,7 @@ __all__ = [
     "destination",
     "RecordDestination",
     "SyncRecordTransformation",
-    # Deprecated spellings, kept working (they warn): @record_transformation /
+    # Deprecated spellings, kept working (no warning): @record_transformation /
     # @record_destination (now per_record=True), and the @source("x") /
     # @destination("x") factory registries nothing reads.
     "record_transformation",

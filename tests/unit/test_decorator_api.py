@@ -7,12 +7,14 @@
   thread, with every per-record rule (None, lists, SkipRecord, on_error, contract).
 - Knobs that cannot apply fail at decoration, saying why.
 - ``@record_transformation``, ``@record_destination``, ``@source("x")`` and
-  ``@destination("x")`` keep working and warn.
+  ``@destination("x")`` are deprecated in the docs only: they keep working and
+  emit no warning.
 """
 
 import threading
 import warnings
-from typing import Any, Dict, List, Optional
+from contextlib import contextmanager
+from typing import Any, Dict, Iterator, List, Optional
 
 import pytest
 from typing_extensions import TypedDict
@@ -390,13 +392,21 @@ class TestDestination:
 
 
 # ---------------------------------------------------------------------------
-# Deprecated spellings: still work, and warn
+# Deprecated spellings: still work, silently (deprecated in the docs only)
 # ---------------------------------------------------------------------------
 
 
+@contextmanager
+def no_warnings() -> Iterator[None]:
+    """Any warning raised inside fails the test."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        yield
+
+
 class TestDeprecated:
-    def test_record_transformation_warns_and_builds_the_same_step(self):
-        with pytest.warns(DeprecationWarning, match=r"@transformation\('ut_dx_old_rt'"):
+    def test_record_transformation_builds_the_same_step_silently(self):
+        with no_warnings():
 
             @record_transformation("ut_dx_old_rt", concurrency=2)
             async def old(record: Any, runtime_params: Any) -> Any:
@@ -407,7 +417,7 @@ class TestDeprecated:
         assert step.name == "ut_dx_old_rt"
 
     def test_record_transformation_now_accepts_a_plain_def(self):
-        with pytest.warns(DeprecationWarning):
+        with no_warnings():
 
             @record_transformation("ut_dx_old_rt_sync")
             def old_sync(record: Any, runtime_params: Any) -> Any:
@@ -415,8 +425,8 @@ class TestDeprecated:
 
         assert isinstance(old_sync(), SyncRecordTransformation)
 
-    def test_record_destination_warns_and_builds_the_same_destination(self):
-        with pytest.warns(DeprecationWarning, match=r"@destination\('ut_dx_old_rd'"):
+    def test_record_destination_builds_the_same_destination_silently(self):
+        with no_warnings():
 
             @record_destination("ut_dx_old_rd", on_error="skip")
             def old(record: Any, runtime_params: Any) -> Any:
@@ -425,13 +435,11 @@ class TestDeprecated:
         assert issubclass(old, RecordDestination) and old.on_error == "skip"
 
     def test_record_destination_still_checks_its_knobs(self):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            with pytest.raises(ValueError, match="on_error must be"):
-                record_destination("x", on_error="ignore")  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="on_error must be"):
+            record_destination("x", on_error="ignore")  # type: ignore[arg-type]
 
-    def test_named_destination_warns_and_still_registers(self):
-        with pytest.warns(DeprecationWarning, match="plain function"):
+    def test_named_destination_still_registers_silently(self):
+        with no_warnings():
 
             @destination("ut_dx_legacy_dest")
             def factory(**overrides: Any) -> Any:
@@ -440,17 +448,11 @@ class TestDeprecated:
         assert factory() is not None
         assert destination_registry.get("ut_dx_legacy_dest") is factory
 
-    def test_named_source_warns_and_returns_the_function(self):
-        with pytest.warns(DeprecationWarning, match="plain function"):
+    def test_named_source_returns_the_function_silently(self):
+        with no_warnings():
 
             @source("ut_dx_legacy_source")
             def factory(**overrides: Any) -> Any:
                 return MockSource(data=[])
 
         assert isinstance(factory(), MockSource)
-
-    def test_the_warning_points_at_the_callers_line(self):
-        with pytest.warns(DeprecationWarning) as caught:
-            record_transformation("ut_dx_where")
-            destination("ut_dx_where_dest")
-        assert {w.filename for w in caught} == {__file__}

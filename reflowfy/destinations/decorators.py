@@ -16,7 +16,6 @@ returns ``kafka_destination(...)`` does it. ``@destination("name")`` without
 
 import inspect
 import logging
-import warnings
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, TypeVar, overload
 
 if TYPE_CHECKING:
@@ -152,13 +151,6 @@ def _legacy_destination(
         raise TypeError(
             f"destination {name!r}: on_error, concurrency and timeout need per_record=True"
         )
-    warnings.warn(
-        f"@destination({name!r}) without per_record is deprecated: it only registered the "
-        "function in a registry nothing reads. Drop the decorator — a plain function "
-        "returning a destination does the same.",
-        DeprecationWarning,
-        stacklevel=3,
-    )
 
     def decorator(func: F) -> F:
         destination_registry.register(name, func)
@@ -175,15 +167,8 @@ def record_destination(
 ) -> Callable[["RecordDestinationFn"], "type[RecordDestination]"]:
     """Deprecated: ``@destination(name, per_record=True, ...)`` does the same.
 
-    Kept so existing pipelines run unchanged; it warns (``DeprecationWarning``) where
-    it is used.
+    Kept so existing pipelines run unchanged, without a warning.
     """
-    warnings.warn(
-        "@record_destination is deprecated: use "
-        f"@destination({name!r}, per_record=True, ...) instead",
-        DeprecationWarning,
-        stacklevel=2,
-    )
     _check_route_knobs(f"record_destination {name!r}", on_error, concurrency, timeout)
 
     def decorator(func: "RecordDestinationFn") -> "type[RecordDestination]":
