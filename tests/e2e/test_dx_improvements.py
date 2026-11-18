@@ -281,7 +281,7 @@ class TestAsyncSyncBridging:
 
         try:
             import importlib
-            import reflowfy.reflow_manager.pipeline_runner as pr_module
+            import reflowfy.reflow_manager.drive_loop as pr_module
             importlib.reload(pr_module)
             # _run_async should still work — uses ThreadPoolExecutor fallback
             result = pr_module._run_async(_identity_coro(42))
