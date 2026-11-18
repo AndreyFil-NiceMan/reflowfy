@@ -93,7 +93,8 @@ class TestSkipRecordThenSkipJob:
         assert dropped_stats["record_skip_reasons"] == {"odd": 3}
         assert dropped_stats["records_skipped"] == 3
         others = [j for j in jobs if j is not dropped[0]]
-        assert all(j["stats"]["record_skip_reasons"] == {"odd": 2} for j in others)
+        # The odd ids outside the first job (7, 9, 11, 13, 15, 17, 19) were skipped too.
+        assert _skip_totals(others) == {"odd": 7}
 
 
 class TestRemovals:
