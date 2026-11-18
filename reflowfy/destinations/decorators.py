@@ -2,11 +2,11 @@
 
 Example:
     @destination(per_record=True, on_error="skip")
-    def by_engine(record, runtime_params):
-        return kafka_destination(bootstrap_servers=..., topic=f"stt-{record['engine']}")
+    def by_region(record, runtime_params):
+        return kafka_destination(bootstrap_servers=..., topic=f"orders-{record['region']}")
 
     def define_destination(self, records, runtime_params):
-        return by_engine            # or by_engine(option=...) when it takes options
+        return by_region            # or by_region(option=...) when it takes options
 
 A reusable destination *configuration* needs no decorator: a plain function that
 returns ``kafka_destination(...)`` does it. ``@destination("name")`` without
@@ -112,12 +112,11 @@ def destination(
 
     Example:
         @destination(per_record=True, on_error="skip")
-        def stt_engines(record, runtime_params):
-            topic = Settings.KAFKA.topics[record["engine"]][runtime_params["env"]]
-            return kafka_destination(bootstrap_servers=..., topic=topic.name)
+        def by_region(record, runtime_params):
+            return kafka_destination(bootstrap_servers=..., topic=f"orders-{record['region']}")
 
         def define_destination(self, records, runtime_params):
-            return stt_engines
+            return by_region
     """
     if callable(name) and not isinstance(name, str):
         raise TypeError(

@@ -4,13 +4,12 @@
 calls a function once per record and sends each record to the destination it returned, so
 one job can write to many topics, clusters or URLs::
 
-    @destination("stt_engines", per_record=True, on_error="skip")
-    def stt_engines(record, runtime_params):
-        topic = Settings.KAFKA.topics[record["engine"]][runtime_params["env"]]
-        return kafka_destination(bootstrap_servers=..., topic=topic.name, ...)
+    @destination(per_record=True, on_error="skip")
+    def by_region(record, runtime_params):
+        return kafka_destination(bootstrap_servers=..., topic=f"orders-{record['region']}")
 
     def define_destination(self, records, runtime_params):
-        return stt_engines  # or stt_engines(option=...) with options
+        return by_region  # or by_region(option=...) with options
 
 How a job runs (``execution/job_runner.py`` calls :meth:`RecordDestination.route`
 right after ``define_destination``):
@@ -556,7 +555,7 @@ def make_record_destination(
     """The :class:`RecordDestination` subclass ``@destination(per_record=True)`` builds for ``func``.
 
     Instances take keyword options, passed on to every call:
-    ``stt_engines(region="eu")`` calls ``func(record, runtime_params, region="eu")``.
+    ``by_region(env="prod")`` calls ``func(record, runtime_params, env="prod")``.
     """
     if inspect.iscoroutinefunction(func):
 
