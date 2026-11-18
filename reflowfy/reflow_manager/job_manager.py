@@ -298,16 +298,8 @@ class JobManager:
             Job.execution_id == execution_id
         ).group_by(Job.state).all()
 
-        counts = {
-            "total": 0,
-            "pending": 0,
-            "dispatched": 0,
-            "running": 0,
-            "completed": 0,
-            "failed": 0,
-            "deduplicated": 0,
-            "cancelled": 0,
-        }
+        # Every state, so a new one is counted (as 0) without touching this.
+        counts = {"total": 0, **{state: 0 for state in JobState.ALL}}
 
         total = 0
         for state, count in rows:

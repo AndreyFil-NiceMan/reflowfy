@@ -8,7 +8,7 @@ from sqlalchemy import func, case, desc
 
 from reflowfy.reflow_manager.database import get_db
 from reflowfy.store.models import Execution, Job, DLQJob, DLQJobArchive
-from reflowfy.store.states import JobState, ExecutionState
+from reflowfy.store.states import DLQStatus, ExecutionState, JobState
 from reflowfy.core.secrets import mask_url_passwords_in_text
 
 router = APIRouter(prefix="/stats", tags=["Stats"])
@@ -57,8 +57,8 @@ async def get_overview_stats(db: Session = Depends(get_db)):
         total_jobs += count
 
     # Success rate
-    completed_jobs = jobs_by_state.get("completed", 0)
-    failed_jobs = jobs_by_state.get("failed", 0)
+    completed_jobs = jobs_by_state.get(JobState.COMPLETED, 0)
+    failed_jobs = jobs_by_state.get(JobState.FAILED, 0)
     finished = completed_jobs + failed_jobs
     success_rate = round((completed_jobs / finished) * 100, 2) if finished > 0 else 100.0
 
@@ -393,7 +393,7 @@ async def get_dlq_stats(
         DLQJob.status,
         func.count(DLQJob.id).label("count"),
         func.avg(DLQJob.retry_count).label("avg_retry_count"),
-        func.min(case((DLQJob.status == "pending", DLQJob.created_at), else_=None)).label(
+        func.min(case((DLQJob.status == DLQStatus.PENDING, DLQJob.created_at), else_=None)).label(
             "oldest_pending_at"
         ),
     )
@@ -414,10 +414,7 @@ async def get_dlq_stats(
         if pname not in pipeline_map:
             pipeline_map[pname] = {
                 "pipeline_name": pname,
-                "pending": 0,
-                "processing": 0,
-                "completed": 0,
-                "failed": 0,
+                **{dlq_status: 0 for dlq_status in DLQStatus.ALL},
                 "archived": 0,
                 "avg_retry_count": 0.0,
                 "oldest_pending_at": None,
@@ -430,7 +427,7 @@ async def get_dlq_stats(
             totals[0] += float(avg_retry) * count
             totals[1] += count
             p["avg_retry_count"] = round(totals[0] / totals[1], 1) if totals[1] else 0.0
-        if dlq_status == "pending" and oldest:
+        if dlq_status == DLQStatus.PENDING and oldest:
             p["oldest_pending_at"] = oldest.isoformat()
 
     # Add archived counts per pipeline
@@ -452,10 +449,7 @@ async def get_dlq_stats(
         else:
             pipeline_map[pname] = {
                 "pipeline_name": pname,
-                "pending": 0,
-                "processing": 0,
-                "completed": 0,
-                "failed": 0,
+                **{dlq_status: 0 for dlq_status in DLQStatus.ALL},
                 "archived": count,
                 "avg_retry_count": 0.0,
                 "oldest_pending_at": None,

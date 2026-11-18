@@ -438,7 +438,14 @@ state; and the cancel route reads without a lock, so a cancel racing the poll wa
 for the poll's commit and then overwrites `completed` with `cancelled` for a job whose
 execution already started.
 
-### F5. States as bare strings outside `store/states.py`
+### F5. States as bare strings outside `store/states.py` — fixed
+
+**Fixed:** `DLQStatus` and `ScheduleEnabled` sit beside `JobState`/`ExecutionState`;
+job counts are built from `JobState.ALL`; the routes, the drive loop, the lifecycle
+summary and the models use the constants. `/stats/dlq` reports a count per
+`DLQStatus` (the never-written `processing`/`failed` keys are gone). The one literal
+left is `ExecutionSummary.succeeded` in `core/`, which may not import `store`.
+As found:
 
 `ExecutionState`/`JobState` exist, but these still compare or write literals:
 `app.py` (`"failed"`/`"cancelled"` in the PATCH route's 422 check, `"pending"` in the `/run` answer),

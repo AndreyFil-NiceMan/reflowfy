@@ -356,7 +356,7 @@ class PipelineRunner:
 
         # Nothing unfinished: settle the final state from the job rows.
         counts = self.job_manager.get_job_counts(execution_id)
-        unfinished = counts["pending"] + counts["dispatched"] + counts["running"]
+        unfinished = counts[JobState.PENDING] + counts[JobState.DISPATCHED] + counts[JobState.RUNNING]
         if unfinished == 0:
             logger.info(
                 "Execution has no unfinished jobs, syncing state",
@@ -397,12 +397,12 @@ class PipelineRunner:
 
         logger.info(
             "Resuming execution: %d pending, %d in flight",
-            counts["pending"],
-            counts["dispatched"] + counts["running"],
+            counts[JobState.PENDING],
+            counts[JobState.DISPATCHED] + counts[JobState.RUNNING],
             extra={
                 "event": "execution_resume",
-                "jobs_pending": counts["pending"],
-                "jobs_in_flight": counts["dispatched"] + counts["running"],
+                "jobs_pending": counts[JobState.PENDING],
+                "jobs_in_flight": counts[JobState.DISPATCHED] + counts[JobState.RUNNING],
             },
         )
         dispatched, completed, failed = self._drive_execution(
@@ -846,13 +846,13 @@ class PipelineRunner:
             track["lease_checked_at"] = now
 
         counts = self.job_manager.get_job_counts(execution_id)
-        in_flight = counts["dispatched"] + counts["running"]
-        if counts["pending"] == 0 and in_flight == 0:
+        in_flight = counts[JobState.DISPATCHED] + counts[JobState.RUNNING]
+        if counts[JobState.PENDING] == 0 and in_flight == 0:
             return self._finalize_execution_state(
                 execution_id, counts["total"], self._sync_counts_from_db(execution_id)
             )
 
-        finished = _finished_count(counts["completed"], counts["failed"], counts["deduplicated"])
+        finished = _finished_count(counts[JobState.COMPLETED], counts[JobState.FAILED], counts[JobState.DEDUPLICATED])
         if finished != track["finished"]:
             track["finished"], track["progress_at"] = finished, now
         elif now - max(track["progress_at"], track["warned_at"]) >= STALL_WARN_SECONDS:
@@ -863,13 +863,13 @@ class PipelineRunner:
                 "and %d pending (%d waiting to be retried) — are workers running?",
                 (now - track["progress_at"]) / 60,
                 in_flight,
-                counts["pending"],
+                counts[JobState.PENDING],
                 retrying,
                 extra={
                     "event": "dispatch_stalled",
                     "stalled_minutes": round((now - track["progress_at"]) / 60),
                     "jobs_in_flight": in_flight,
-                    "jobs_pending": counts["pending"],
+                    "jobs_pending": counts[JobState.PENDING],
                     "jobs_retry_scheduled": retrying,
                 },
             )
@@ -877,7 +877,7 @@ class PipelineRunner:
 
         free_slots = MAX_IN_FLIGHT_JOBS - in_flight
         sent = 0
-        if counts["pending"] and free_slots > 0:
+        if counts[JobState.PENDING] and free_slots > 0:
             jobs = self.job_manager.get_pending_jobs(
                 execution_id, limit=min(free_slots, DISPATCH_FETCH_LIMIT)
             )
@@ -964,16 +964,16 @@ class PipelineRunner:
                 "lost-message jobs, failed %d out of attempts",
                 result["requeued_running"],
                 result["requeued_dispatched"],
-                result["failed"],
+                result[JobState.FAILED],
                 extra={
                     "event": "lease_expired",
                     "jobs_requeued_running": result["requeued_running"],
                     "jobs_requeued_dispatched": result["requeued_dispatched"],
-                    "jobs_failed": result["failed"],
+                    "jobs_failed": result[JobState.FAILED],
                 },
             )
-        if result["failed"]:
-            metrics.count_job(pipeline_name, metrics.JobOutcome.LEASE_EXPIRED, result["failed"])
+        if result[JobState.FAILED]:
+            metrics.count_job(pipeline_name, metrics.JobOutcome.LEASE_EXPIRED, result[JobState.FAILED])
 
     @bind_log_context("execution_id")
     def _recover_plan(self, execution_id: str) -> bool:
@@ -1066,9 +1066,9 @@ class PipelineRunner:
             dispatched, completed, failed = self._sync_counts_from_db(execution_id)
             counts = self.job_manager.get_job_counts(execution_id)
             total_finished = _finished_count(
-                counts.get("completed", 0),
-                counts.get("failed", 0),
-                counts.get("deduplicated", 0),
+                counts.get(JobState.COMPLETED, 0),
+                counts.get(JobState.FAILED, 0),
+                counts.get(JobState.DEDUPLICATED, 0),
             )
         except Exception:
             logger.warning(

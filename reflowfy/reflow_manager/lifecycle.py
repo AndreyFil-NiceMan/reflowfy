@@ -55,9 +55,9 @@ from reflowfy.reflow_manager.start import check_runnable, drive_execution
 logger = logging.getLogger(__name__)
 
 HOOK_NAMES: Dict[str, str] = {
-    "completed": "on_execution_complete",
-    "failed": "on_execution_failed",
-    "cancelled": "on_execution_cancelled",
+    ExecutionState.COMPLETED: "on_execution_complete",
+    ExecutionState.FAILED: "on_execution_failed",
+    ExecutionState.CANCELLED: "on_execution_cancelled",
 }
 FIRST_ERRORS_MAX = 5
 FIRST_ERROR_CHARS = 300
@@ -112,7 +112,7 @@ def build_summary(db: Session, execution: Execution) -> ExecutionSummary:
         totals["records_skipped"] += int(job_stats.get("records_skipped") or 0)
         totals["records_deduplicated"] += int(job_stats.get("records_deduplicated") or 0)
         totals["retries"] += int(job_stats.get("retry_count") or 0)
-        if state == "completed":
+        if state == JobState.COMPLETED:
             totals["records_out"] += int(processed or 0)
             if job_stats.get("skip_reason"):
                 totals["jobs_skipped"] += 1
@@ -136,10 +136,10 @@ def build_summary(db: Session, execution: Execution) -> ExecutionSummary:
         pipeline_name=execution.pipeline_name,
         state=execution.state,
         jobs_total=counts["total"],
-        jobs_completed=counts["completed"],
-        jobs_failed=counts["failed"],
-        jobs_deduplicated=counts["deduplicated"],
-        jobs_cancelled=counts["cancelled"],
+        jobs_completed=counts[JobState.COMPLETED],
+        jobs_failed=counts[JobState.FAILED],
+        jobs_deduplicated=counts[JobState.DEDUPLICATED],
+        jobs_cancelled=counts[JobState.CANCELLED],
         jobs_skipped=totals["jobs_skipped"],
         records_in=totals["records_in"],
         records_out=totals["records_out"],

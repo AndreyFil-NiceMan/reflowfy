@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     Text,
 )
+from reflowfy.store.states import DLQStatus, ScheduleEnabled
 from sqlalchemy.orm import declarative_base, Mapped, mapped_column, relationship
 
 Base = declarative_base()
@@ -219,7 +220,7 @@ class DLQJob(Base):
     pipeline_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     scheduled_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     delay_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
-    status: Mapped[str] = mapped_column(String(50), default="pending", index=True)
+    status: Mapped[str] = mapped_column(String(50), default=DLQStatus.PENDING, index=True)
     retry_count: Mapped[int] = mapped_column(Integer, default=0)
     max_retries: Mapped[int] = mapped_column(Integer, default=5)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -340,7 +341,7 @@ class PipelineSchedule(Base):
     last_triggered_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     last_execution_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     # Stored as string to avoid SQLAlchemy Boolean portability quirks
-    enabled: Mapped[str] = mapped_column(String(10), default="true", nullable=False)
+    enabled: Mapped[str] = mapped_column(String(10), default=ScheduleEnabled.TRUE, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
@@ -365,7 +366,7 @@ class PipelineSchedule(Base):
                 self.last_triggered_at.isoformat() if self.last_triggered_at else None
             ),
             "last_execution_id": self.last_execution_id,
-            "enabled": self.enabled == "true",
+            "enabled": self.enabled == ScheduleEnabled.TRUE,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

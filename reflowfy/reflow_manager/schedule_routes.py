@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from reflowfy.reflow_manager.redaction import public_row
 from reflowfy.reflow_manager.database import get_db
 from reflowfy.store.models import DLQJobArchive, Execution, PipelineSchedule
+from reflowfy.store.states import ExecutionState, ScheduleEnabled
 
 router = APIRouter()
 
@@ -84,7 +85,7 @@ def get_schedule_stats(pipeline_name: str, db: Session = Depends(get_db)):
                 "schedule_name": row.schedule_name,
                 "cron_expression": row.cron_expression,
                 "next_run_at": row.next_run_at.isoformat() if row.next_run_at else None,
-                "enabled": row.enabled == "true",
+                "enabled": row.enabled == ScheduleEnabled.TRUE,
                 "last_execution_id": row.last_execution_id,
                 "last_execution_state": last_exec_state,
                 "last_triggered_at": (
@@ -96,10 +97,10 @@ def get_schedule_stats(pipeline_name: str, db: Session = Depends(get_db)):
     return {
         "pipeline_name": pipeline_name,
         "total_executions": total,
-        "completed_executions": by_state.get("completed", 0),
-        "failed_executions": by_state.get("failed", 0),
-        "running_executions": by_state.get("running", 0),
-        "pending_executions": by_state.get("pending", 0),
+        "completed_executions": by_state.get(ExecutionState.COMPLETED, 0),
+        "failed_executions": by_state.get(ExecutionState.FAILED, 0),
+        "running_executions": by_state.get(ExecutionState.RUNNING, 0),
+        "pending_executions": by_state.get(ExecutionState.PENDING, 0),
         "schedules": schedules,
     }
 

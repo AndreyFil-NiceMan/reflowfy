@@ -203,7 +203,7 @@ async def update_execution_state(
             status_code=422,  # Unprocessable Content
             detail=f"Unknown state '{request.state}'; states are {list(ExecutionManager.STATES)}",
         )
-    if request.state not in ("failed", "cancelled"):
+    if request.state not in (ExecutionState.FAILED, ExecutionState.CANCELLED):
         raise HTTPException(
             status_code=422,  # Unprocessable Content
             detail=(
@@ -507,7 +507,7 @@ async def run_pipeline(
         accepted: Dict[str, Any] = {
             "execution_id": execution_id,
             "pipeline_name": request.pipeline_name,
-            "state": "pending",  # Will become "running" once background task starts
+            "state": ExecutionState.PENDING,  # "running" once the background task starts
             "message": "Pipeline execution accepted. Jobs are being dispatched in background.",
             "status_url": f"/executions/{execution_id}/stats",
         }
