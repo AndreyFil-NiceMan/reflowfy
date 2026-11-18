@@ -187,6 +187,7 @@ def test_the_hook_for_the_state_runs_once_with_the_summary_and_params(db, engine
     assert params == {"day": "mon"}
     row = _row(db)
     assert row.hooks_fired_at is not None and row.hook_error is None
+    assert row.hooks_finished_at is not None
     assert row.state == "completed"
     assert "hook_fired" in [getattr(r, "event", None) for r in caplog.records]
 
@@ -324,10 +325,11 @@ def test_cancel_fires_after_the_jobs_are_cancelled(db) -> None:
 def test_retry_failed_reopens_the_hooks(db, engine) -> None:
     _execution(db, "failed")
     lifecycle.fire_execution_hooks(engine, "e")
-    ExecutionManager(db).set_hook_error("e", "x")
+    ExecutionManager(db).finish_hooks("e", "x")
     ExecutionManager(db).reopen_execution("e")
     row = _row(db)
     assert row.hooks_fired_at is None and row.hook_error is None
+    assert row.hooks_finished_at is None
 
 
 def test_a_listener_that_raises_does_not_break_the_transition(db, caplog) -> None:
@@ -484,7 +486,7 @@ def test_execution_stats_report_the_hooks(db) -> None:
     _execution(db, "failed", rate_limit=30.0, parent_execution_id="p")
     _job(db, "a", "pending", next_attempt_at=_now() + timedelta(minutes=1))
     ExecutionManager(db).claim_hooks("e")
-    ExecutionManager(db).set_hook_error("e", "on_execution_failed raised ValueError: bad")
+    ExecutionManager(db).finish_hooks("e", "on_execution_failed raised ValueError: bad")
 
     stats = ReflowManager(db, execution_mode="local").get_execution_stats("e")
 
@@ -532,3 +534,82 @@ async def test_shutdown_waits_for_hooks_in_flight(monkeypatch, caplog) -> None:
     monkeypatch.setattr(lifecycle, "wait_for_hooks", lambda timeout=None: False)
     await app_module._shutdown()
     assert "lifecycle hooks still running" in caplog.text
+
+
+# ----- lost hooks (F3) ----------------------------------------------------------------
+
+
+def test_the_sweep_fires_hooks_a_dead_manager_never_claimed(db, engine, caplog) -> None:
+    """The manager died between the terminal commit and the claim."""
+    caplog.set_level("INFO", logger="reflowfy")
+    _execution(db, "completed", completed_at=_now() - timedelta(minutes=5))
+    _execution(db, "completed", eid="fresh", completed_at=_now())  # its own thread's job
+    _execution(db, "completed", eid="old", completed_at=_now() - timedelta(days=3))
+    _execution(db, "running", eid="open")
+
+    assert lifecycle.sweep_lost_hooks(engine) == (1, 0)
+
+    assert [(kind, summary.execution_id) for kind, summary, _ in CALLS.calls] == [
+        ("complete", "e")
+    ]
+    assert _row(db).hooks_finished_at is not None
+    assert _row(db, "fresh").hooks_fired_at is None
+    assert _row(db, "old").hooks_fired_at is None  # outside the window
+    assert "hook_recovered" in [getattr(r, "event", None) for r in caplog.records]
+    assert lifecycle.sweep_lost_hooks(engine) == (0, 0)  # never twice
+
+
+def test_the_sweep_reports_a_hook_cut_short_and_does_not_rerun_it(db, engine, caplog) -> None:
+    """The manager died while the hook ran: claimed, never finished."""
+    long_ago = _now() - timedelta(minutes=10)
+    _execution(db, "completed", completed_at=long_ago, hooks_fired_at=long_ago)
+    _execution(db, "completed", eid="running_hook", completed_at=_now(), hooks_fired_at=_now())
+    _execution(
+        db, "failed", eid="done", completed_at=long_ago, hooks_fired_at=long_ago,
+        hooks_finished_at=long_ago,
+    )
+
+    assert lifecycle.sweep_lost_hooks(engine) == (0, 1)
+
+    assert CALLS.calls == []
+    row = _row(db)
+    assert row.hook_error == lifecycle.LOST_HOOK_ERROR and row.hooks_finished_at is not None
+    assert _row(db, "running_hook").hooks_finished_at is None  # may still be running
+    assert _row(db, "done").hook_error is None
+    assert "hook_lost" in [getattr(r, "event", None) for r in caplog.records]
+    assert lifecycle.sweep_lost_hooks(engine) == (0, 0)
+
+
+def test_a_failing_recovery_does_not_stop_the_sweep(db, engine, monkeypatch, caplog) -> None:
+    for eid in ("a", "b"):
+        _execution(db, "completed", eid=eid, completed_at=_now() - timedelta(minutes=5))
+    real = lifecycle.fire_execution_hooks
+
+    def flaky(bind: Any, execution_id: str) -> bool:
+        if execution_id == "a":
+            raise RuntimeError("db hiccup")
+        return real(bind, execution_id)
+
+    monkeypatch.setattr(lifecycle, "fire_execution_hooks", flaky)
+    assert lifecycle.sweep_lost_hooks(engine) == (1, 0)
+    assert "hook_failed" in [getattr(r, "event", None) for r in caplog.records]
+
+
+def test_the_hook_sweeper_runs_on_its_interval(engine, monkeypatch) -> None:
+    ticks: List[Any] = []
+    done = threading.Event()
+
+    def sweep(bind: Any, now: Any = None) -> Any:
+        ticks.append(bind)
+        done.set()
+        return (0, 0)
+
+    monkeypatch.setattr(lifecycle, "sweep_lost_hooks", sweep)
+    sweeper = lifecycle.init_hook_sweeper(engine)
+    try:
+        assert done.wait(5)
+        assert sweeper.interval_seconds == lifecycle.HOOK_SWEEP_INTERVAL_SECONDS
+    finally:
+        lifecycle.stop_hook_sweeper()
+    lifecycle.stop_hook_sweeper()  # idempotent
+    assert ticks == [engine]

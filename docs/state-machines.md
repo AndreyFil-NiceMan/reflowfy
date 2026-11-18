@@ -7,7 +7,7 @@ them, the guard that makes each transition safe (or the lack of one), and the ga
 
 Surveyed 2026-11-11 against `claude/reflowfy-implicit-state-machines-rst3ad`.
 
-**Status.** F1 and F2 are fixed, and F3's state check: execution transitions are now
+**Status.** F1–F6 are fixed (2026-11-18: F3's sweep, F4, F5, F6). Execution transitions are
 compare-and-set against `ExecutionState.FROM`, and a worker's writes to a job are fenced
 by the token its claim writes to `jobs.claimed_by` (regression tests:
 `tests/unit/test_state_transitions.py`). The tables below show the guards as they are
@@ -395,10 +395,12 @@ Suggested fix: make the claim return a fencing token (the new `attempts` value, 
 heartbeat, the final write and the retry write. A write that matches no row means
 another delivery owns the job: log it and count it as `redelivered`.
 
-### F3. Lifecycle hooks are at-most-once, not exactly-once — partly fixed
+### F3. Lifecycle hooks are at-most-once, not exactly-once — fixed
 
-**Fixed:** `claim_hooks` requires a terminal state in the same statement. **Still open:**
-no sweep re-fires hooks lost to a crash; CLAUDE.md now says "at most once".
+**Fixed:** `claim_hooks` requires a terminal state in the same statement, and
+`lifecycle.HookSweeper` fires hooks never claimed (crash before the claim) and marks a
+hook claimed but never finished (`hooks_finished_at`) with a `hook_error` saying it was
+cut short. That one is deliberately not re-run: at most once is kept.
 
 `claim_hooks` sets `hooks_fired_at` before the hook runs, and the hook runs on a thread
 started after the terminal commit. A manager that dies between the commit and the

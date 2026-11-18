@@ -23,7 +23,7 @@ from reflowfy.core.secrets import mask_url_passwords_in_text  # noqa: E402
 from reflowfy.reflow_manager.redaction import public_row, redact_row  # noqa: E402
 from reflowfy.observability.context import bind_log_context  # noqa: E402
 from reflowfy.observability.logging import setup_logging  # noqa: E402
-from reflowfy.reflow_manager.database import get_db, init_db, SessionLocal  # noqa: E402
+from reflowfy.reflow_manager.database import get_db, init_db, engine, SessionLocal  # noqa: E402
 from reflowfy.reflow_manager.manager import ReflowManager  # noqa: E402
 from reflowfy.reflow_manager.execution import ExecutionManager  # noqa: E402
 from reflowfy.reflow_manager import lifecycle  # noqa: E402
@@ -649,6 +649,7 @@ async def _startup() -> None:
     _start_component("DLQ Scheduler", lambda: init_dlq_scheduler(_pipeline_runner_factory))
     _start_component("Pipeline Scheduler", _start_pipeline_scheduler)
     _start_component("Content Dedup Sweeper", init_content_dedup_scheduler)
+    _start_component("Hook Sweeper", lambda: lifecycle.init_hook_sweeper(engine))
 
 
 def _start_component(name: str, start: Callable[[], Any]) -> None:
@@ -749,6 +750,7 @@ async def _shutdown() -> None:
     stop_pipeline_scheduler()
     stop_dlq_scheduler()
     stop_content_dedup_scheduler()
+    lifecycle.stop_hook_sweeper()
     # Let lifecycle hooks in flight finish (each is bounded by HOOK_TIMEOUT_SECONDS).
     if not lifecycle.wait_for_hooks(timeout=lifecycle.hook_timeout_seconds() + 5):
         logger.warning(

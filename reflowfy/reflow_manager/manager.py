@@ -219,6 +219,11 @@ class ReflowManager:
                 "fired_at": (
                     execution.hooks_fired_at.isoformat() if execution.hooks_fired_at else None
                 ),
+                "finished_at": (
+                    execution.hooks_finished_at.isoformat()
+                    if execution.hooks_finished_at
+                    else None
+                ),
                 "error": execution.hook_error,
             },
             "checkpoints": checkpoints,

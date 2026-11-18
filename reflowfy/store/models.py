@@ -63,6 +63,7 @@ class Execution(Base):
     # setting this), and what went wrong in them. Never changes `state`.
     hooks_fired_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     hook_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    hooks_finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     # The execution whose hook started this one (run_pipeline from a hook), if any.
     parent_execution_id: Mapped[Optional[str]] = mapped_column(
         String(255), nullable=True, index=True
@@ -93,6 +94,9 @@ class Execution(Base):
             "parent_execution_id": self.parent_execution_id,
             "hooks_fired_at": self.hooks_fired_at.isoformat() if self.hooks_fired_at else None,
             "hook_error": self.hook_error,
+            "hooks_finished_at": (
+                self.hooks_finished_at.isoformat() if self.hooks_finished_at else None
+            ),
         }
 
 

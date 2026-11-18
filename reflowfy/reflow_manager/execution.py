@@ -249,10 +249,12 @@ class ExecutionManager:
         self.db.commit()
         return claimed == 1
 
-    def set_hook_error(self, execution_id: str, error: Optional[str]) -> None:
-        """Record what failed in a hook (never touches ``state``)."""
+    def finish_hooks(self, execution_id: str, error: Optional[str]) -> None:
+        """Record that the claimed hooks returned, with what failed in them, if
+        anything (never touches ``state``)."""
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         self.db.query(Execution).filter(Execution.execution_id == execution_id).update(
-            {"hook_error": error}, synchronize_session=False
+            {"hook_error": error, "hooks_finished_at": now}, synchronize_session=False
         )
         self.db.commit()
 
@@ -317,6 +319,7 @@ class ExecutionManager:
                     # Its next end fires the hooks again (they reported the run before
                     # the retry).
                     "hooks_fired_at": None,
+                    "hooks_finished_at": None,
                     "hook_error": None,
                     "updated_at": now,
                 },
