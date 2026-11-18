@@ -9,78 +9,24 @@ Example:
         return by_region            # or by_region(option=...) when it takes options
 
 A reusable destination *configuration* needs no decorator: a plain function that
-returns ``kafka_destination(...)`` does it. ``@destination("name")`` without
-``per_record`` (which registered such a function in a registry nothing reads) and
-``@record_destination`` (the old spelling of ``per_record=True``) are deprecated.
+returns ``kafka_destination(...)`` does it.
 """
 
 import inspect
-import logging
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, TypeVar, overload
+from typing import TYPE_CHECKING, Callable, Optional, cast
 
 if TYPE_CHECKING:
     from reflowfy.destinations.record import OnError, RecordDestination, RecordDestinationFn
 
-logger = logging.getLogger(__name__)
 
-F = TypeVar("F", bound=Callable[..., Any])
-
-
-class DestinationRegistry:
-    """Registry of destination factories by name. Deprecated: nothing in the framework reads it."""
-
-    _destinations: Dict[str, Callable[..., Any]] = {}
-
-    @classmethod
-    def register(cls, name: str, factory: Callable[..., Any]) -> None:
-        """Register a destination factory function."""
-        cls._destinations[name] = factory
-        logger.debug(
-            "Registered reusable destination: %s", name, extra={"event": "destination_registered"}
-        )
-
-    @classmethod
-    def get(cls, name: str) -> Optional[Callable[..., Any]]:
-        """Get a destination factory by name."""
-        return cls._destinations.get(name)
-
-    @classmethod
-    def list_all(cls) -> List[str]:
-        """List all registered destination names."""
-        return list(cls._destinations.keys())
-
-    @classmethod
-    def clear(cls) -> None:
-        """Clear all registered destinations (for testing)."""
-        cls._destinations.clear()
-
-
-destination_registry = DestinationRegistry()
-
-
-@overload
-def destination(name: str, /) -> Callable[[F], F]: ...
-
-
-@overload
 def destination(
     name: Optional[str] = None,
     *,
-    per_record: Literal[True],
+    per_record: bool = False,
     on_error: "OnError" = "fail",
     concurrency: Optional[int] = None,
     timeout: Optional[float] = None,
-) -> Callable[["RecordDestinationFn"], "type[RecordDestination]"]: ...
-
-
-def destination(
-    name: Any = None,
-    *,
-    per_record: Optional[bool] = None,
-    on_error: "OnError" = "fail",
-    concurrency: Optional[int] = None,
-    timeout: Optional[float] = None,
-) -> Any:
+) -> Callable[["RecordDestinationFn"], "type[RecordDestination]"]:
     """
     Decorator for a destination chosen per record (``per_record=True``).
 
@@ -98,8 +44,7 @@ def destination(
     Args:
         name: Reported as the step that routed and skipped records; defaults to the
             function's name.
-        per_record: Must be ``True``. (Without it, ``@destination("name")`` is the
-            deprecated registry of destination factories: use a plain function.)
+        per_record: Must be ``True``: a destination decorator only exists per record.
         on_error: ``"fail"`` (default) fails the job when the function raises on a
             record, naming the record's position; ``"skip"`` skips that record with
             the exception's type name as the reason. ``raise SkipRecord("why")``
@@ -117,16 +62,15 @@ def destination(
         def define_destination(self, records, runtime_params):
             return by_region
     """
-    if callable(name) and not isinstance(name, str):
+    raw_name = cast(object, name)  # checked at run time: a bare `@destination` passes the function
+    if callable(raw_name) and not isinstance(raw_name, str):
         raise TypeError(
             "@destination needs per_record=True: @destination(per_record=True) routes "
             "each record. A reusable destination configuration is a plain function "
             "returning kafka_destination(...) — no decorator."
         )
-    if name is not None and not isinstance(name, str):
-        raise TypeError(f"destination: name must be a string, got {type(name).__name__}")
-    if per_record is None and isinstance(name, str):
-        return _legacy_destination(name, on_error, concurrency, timeout)
+    if raw_name is not None and not isinstance(raw_name, str):
+        raise TypeError(f"destination: name must be a string, got {type(raw_name).__name__}")
     if not per_record:
         raise TypeError(
             "@destination only exists per record: pass per_record=True. A reusable "
@@ -140,39 +84,6 @@ def destination(
         return _record_destination_class(
             func, name or func.__name__, on_error, concurrency, timeout
         )
-
-    return decorator
-
-
-def _legacy_destination(
-    name: str, on_error: object, concurrency: Optional[int], timeout: Optional[float]
-) -> Callable[[F], F]:
-    if (on_error, concurrency, timeout) != ("fail", None, None):
-        raise TypeError(
-            f"destination {name!r}: on_error, concurrency and timeout need per_record=True"
-        )
-
-    def decorator(func: F) -> F:
-        destination_registry.register(name, func)
-        return func
-
-    return decorator
-
-
-def record_destination(
-    name: str,
-    on_error: "OnError" = "fail",
-    concurrency: Optional[int] = None,
-    timeout: Optional[float] = None,
-) -> Callable[["RecordDestinationFn"], "type[RecordDestination]"]:
-    """Deprecated: ``@destination(name, per_record=True, ...)`` does the same.
-
-    Kept so existing pipelines run unchanged, without a warning.
-    """
-    _check_route_knobs(f"record_destination {name!r}", on_error, concurrency, timeout)
-
-    def decorator(func: "RecordDestinationFn") -> "type[RecordDestination]":
-        return _record_destination_class(func, name, on_error, concurrency, timeout)
 
     return decorator
 
@@ -205,6 +116,4 @@ def _record_destination_class(
             f"destination {name!r}: timeout needs an `async def` function; "
             "a running sync function cannot be interrupted"
         )
-    cls = make_record_destination(func, name, on_error, concurrency, timeout)
-    destination_registry.register(name, cls)
-    return cls
+    return make_record_destination(func, name, on_error, concurrency, timeout)

@@ -4,8 +4,6 @@ and @transformation.
 """
 
 import pytest
-from reflowfy.sources.decorators import source_registry
-from reflowfy.destinations.decorators import destination_registry
 from tests.e2e.test_pipelines.shared_sources import e2e_elastic, e2e_mock
 from tests.e2e.test_pipelines.shared_destinations import e2e_http, e2e_console
 
@@ -14,8 +12,6 @@ pytestmark = [pytest.mark.e2e]
 
 def test_shared_factories_are_plain_functions():
     """Reusable sources/destinations are plain functions: no registry, no decorator."""
-    assert source_registry.get("e2e_elastic") is None
-    assert destination_registry.get("e2e_http") is None
     assert callable(e2e_elastic) and callable(e2e_mock)
     assert callable(e2e_http) and callable(e2e_console)
 

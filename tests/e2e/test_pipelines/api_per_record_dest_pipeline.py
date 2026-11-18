@@ -5,7 +5,7 @@ Every record goes in its own ``PUT /items/<run>/<id>`` to the mock webhook serve
 the record's ``id`` fills the URL placeholder, and the record (or only its ``payload``
 with ``use_body_field``) is the body. A plain ``api_destination`` keeps up to 16
 requests in flight per job (the default); ``concurrency`` instead wraps it in a
-``@record_destination`` with that limit, which is how a pipeline sets one. The mock
+``@destination(per_record=True)`` with that limit, which is how a pipeline sets one. The mock
 holds each request for ``delay_ms`` and counts how many of a job's requests were open
 at once (the job is tagged by its first record id), so a test can check the cap.
 """
@@ -44,7 +44,7 @@ class ApiPerRecordParams(RuntimeParams, total=False):
     batch_size: Annotated[NotRequired[int], Param("Records per job", default=20)]
     concurrency: Annotated[
         NotRequired[int],
-        Param("Requests in flight per job via @record_destination (0: the default, 16)", default=0),
+        Param("Requests in flight per job via @destination(per_record=True) (0: the default, 16)", default=0),
     ]
     delay_ms: Annotated[NotRequired[int], Param("Mock holds each request this long", default=0)]
     fail_id: Annotated[NotRequired[str], Param("Mock answers 503 for this id", default="")]
@@ -84,7 +84,7 @@ def _routed(record: Record, runtime_params: ApiPerRecordParams, job: str = "") -
     return _items_destination(runtime_params, job)
 
 
-# A @record_destination's limit is fixed where it is declared: one per value tested.
+# A @destination(per_record=True)'s limit is fixed where it is declared: one per value tested.
 LIMITED: Dict[int, "type[RecordDestination]"] = {
     n: destination(f"e2e_api_per_record_c{n}", per_record=True, concurrency=n)(_routed)
     for n in (1, 4, 8, 10)

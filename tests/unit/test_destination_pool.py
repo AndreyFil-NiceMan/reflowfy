@@ -1,4 +1,4 @@
-"""Shared connections for a job's destinations (ConnectionPool), as @record_destination
+"""Shared connections for a job's destinations (ConnectionPool), as @destination(per_record=True)
 uses them: one Kafka producer per cluster, one HTTP client per host, one health check
 per cluster or host, one request budget for the job — and per-record API headers.
 

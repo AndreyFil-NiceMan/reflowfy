@@ -111,7 +111,7 @@ HTTP POST /run → API (FastAPI) ──┐
 - **`reflowfy/core/`** — the user-facing pipeline model and the bottom of the import stack. `abstract_pipeline.py` defines `AbstractPipeline` (with `define_source` / `define_transformations` / `define_destination` / `define_parameters` hooks). `id_based_pipeline.py` is a specialization for ID-range sharding. `execution_context.py` carries runtime params/metadata through a run. Also the shared pieces everything above uses: the error hierarchy (`exceptions.py`, including `SourceError`/`DestinationError`/`TransformationError`, re-exported from their old modules), `record_steps.py` (record concurrency, skip-reason counting), `kafka_settings.py` (the one builder of aiokafka connection arguments + `KafkaSettings.from_env()`), `planning.py` (`chunk`).
 - **Import direction** (`tests/unit/test_layering.py`): `core` imports no connector or service; `sources`/`destinations`/`transformations` import no service and not each other; `store` imports no connector or service; `execution` and `worker` never import `reflow_manager`. There are no exceptions; a new upward import fails that test.
 - **`reflowfy/cli/`** — `typer` app (`main.py`); each subcommand registers itself from `commands/` (`init`, `new`, `run`, `build`, `check`, `deploy`, `test`).
-- **`reflowfy/sources/`, `destinations/`, `transformations/`** — built-in connectors plus the `@transformation` and `@destination(per_record=True)` decorators (see "Decorators" below; `@source`/`@record_*` are deprecated). `factories/` builds connector instances from serialized config.
+- **`reflowfy/sources/`, `destinations/`, `transformations/`** — built-in connectors plus the `@transformation` and `@destination(per_record=True)` decorators (see "Decorators" below). `factories/` builds connector instances from serialized config.
 - **`reflowfy/execution/`** — the per-job core shared by the worker and `reflowfy test` (`job_runner.py`, `transformation_runner.py`), content dedup, and `DistributedExecutor` (the API's one client for the manager's `/run`: every route shares it and each call names its `mode`; `local` makes the manager use `LocalDispatcher`; its result is an `ExecutionStatus` with `store.states` string states).
 - **`reflowfy/helm/`** — packaged Helm charts (api / reflow-manager / worker) used by `reflowfy deploy` for OpenShift/Kubernetes (KEDA-autoscaled workers).
 
@@ -227,11 +227,10 @@ decoration (per-record knobs on a batch step; `concurrency`/`timeout` on a per-r
   required option raises there. `Transformations` is `Sequence[BaseTransformation |
   type[BaseTransformation]]`. Any new consumer of `define_transformations` output must go through
   `as_transformations`.
-- **Deprecated in docs only — still working, no runtime warning (by decision, 2026-11):** `@record_transformation`
-  (now also accepts `def`), `@record_destination` (both delegate to the new path), and
-  `@source("x")` / `@destination("x")` without `per_record` — factory registries
-  (`source_registry`/`destination_registry`) nothing reads; a plain function does the same.
-  Scaffolding (`reflowfy init`/`new`) writes plain functions. Removal is for 2.0.
+- **Removed (2026-11), no deprecation period:** `@record_transformation`, `@record_destination`,
+  `@source("x")`, `@destination("x")` without `per_record`, `source_registry`/`destination_registry`
+  and `reflowfy/sources/decorators.py`. A reusable source/destination config is a plain function;
+  `@destination` without `per_record=True` raises `TypeError`. Scaffolding writes plain functions.
 - No new job state or metric: a pure API change. Tests: `tests/unit/test_decorator_api.py`.
 
 ### Async transformations
@@ -478,7 +477,7 @@ missing-field modes of `e2e_kafka_headers_test`, topic `e2e-kafka-headers`).
 ### A destination per record: `@destination(per_record=True)`
 
 `define_destination` runs once per job; `@destination(name=None, per_record=True,
-on_error="fail"|"skip", concurrency=None, timeout=None)` (old spelling `@record_destination`) turns a function `(record, runtime_params, **options) -> BaseDestination`
+on_error="fail"|"skip", concurrency=None, timeout=None)` turns a function `(record, runtime_params, **options) -> BaseDestination`
 (sync or `async def`) into a `RecordDestination` subclass (`destinations/record.py`) that
 `define_destination` returns (`return by_region`, or `by_region(env=...)`; kwargs become `options`). It is for
 records of one job going to different topics/clusters/credentials. Options are bound

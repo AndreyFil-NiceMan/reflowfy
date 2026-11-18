@@ -47,15 +47,10 @@ from reflowfy.destinations.kafka import kafka_destination
 from reflowfy.destinations.api import api_destination
 from reflowfy.destinations.console import console_destination
 
-# Decorators for reusable components
-from reflowfy.sources.decorators import source, source_registry
-from reflowfy.destinations.decorators import (
-    destination,
-    destination_registry,
-    record_destination,
-)
+# Decorators
+from reflowfy.destinations.decorators import destination
 from reflowfy.destinations.record import RecordDestination, RecordDestinationError
-from reflowfy.transformations.decorators import record_transformation, transformation
+from reflowfy.transformations.decorators import transformation
 
 if TYPE_CHECKING:
     from reflowfy.reflow_manager.lifecycle import run_pipeline
@@ -162,12 +157,4 @@ __all__ = [
     "destination",
     "RecordDestination",
     "SyncRecordTransformation",
-    # Deprecated spellings, kept working (no warning): @record_transformation /
-    # @record_destination (now per_record=True), and the @source("x") /
-    # @destination("x") factory registries nothing reads.
-    "record_transformation",
-    "record_destination",
-    "source",
-    "source_registry",
-    "destination_registry",
 ]

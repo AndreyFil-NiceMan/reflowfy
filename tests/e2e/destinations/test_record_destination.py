@@ -1,5 +1,5 @@
 """
-E2E tests for ``@record_destination`` against a real broker.
+E2E tests for ``@destination(per_record=True)`` against a real broker.
 
 Runs ``e2e_record_destination_test``, whose jobs each write to three topics (one per
 ``region``), and consumes all three: every record of this test's ``run`` must land

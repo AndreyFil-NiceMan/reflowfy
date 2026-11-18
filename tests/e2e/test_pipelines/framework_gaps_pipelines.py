@@ -150,7 +150,7 @@ class GapsTransformPipeline(AbstractPipeline[TransformParams]):
 
 
 # ---------------------------------------------------------------------------
-# Destinations: fan_out (+ optional), multicast @record_destination, a permanent
+# Destinations: fan_out (+ optional), multicast @destination(per_record=True), a permanent
 # 4xx is not retried, Retry-After is honoured
 # ---------------------------------------------------------------------------
 

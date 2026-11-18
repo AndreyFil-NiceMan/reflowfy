@@ -1,4 +1,4 @@
-"""@record_destination: a destination chosen per record.
+"""@destination(per_record=True): a destination chosen per record.
 
 The function is called once per record and returns that record's destination;
 records whose destinations have the same class and config share one. Covered:
@@ -18,7 +18,6 @@ from sqlalchemy.ext.asyncio import create_async_engine
 import reflowfy
 from reflowfy import SkipJob, SkipRecord
 from reflowfy.destinations.base import BaseDestination, DestinationError, RetryConfig
-from reflowfy.destinations.decorators import destination_registry, record_destination
 from reflowfy.destinations.kafka import kafka_destination
 from reflowfy.destinations.record import RecordDestination, RecordDestinationError
 from reflowfy.execution.job_runner import ROUTE_MODE, run_job_records_async
@@ -126,15 +125,14 @@ async def _route_and_send(dest: RecordDestination, records: List[Any], params: A
 
 
 class TestDecorator:
-    def test_builds_a_registered_destination_class(self):
+    def test_builds_a_destination_class(self):
         assert issubclass(by_topic, RecordDestination)
         assert by_topic.name == "rd_by_topic"
         assert by_topic.on_error == "fail"
-        assert destination_registry.get("rd_by_topic") is by_topic
         assert isinstance(by_topic(), BaseDestination)
 
     def test_is_exported_from_the_package(self):
-        assert reflowfy.record_destination is record_destination
+        assert reflowfy.destination is destination
         assert reflowfy.RecordDestination is RecordDestination
         assert reflowfy.RecordDestinationError is RecordDestinationError
 

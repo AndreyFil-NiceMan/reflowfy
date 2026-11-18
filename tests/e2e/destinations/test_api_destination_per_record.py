@@ -1,6 +1,6 @@
 """
 E2E tests for ``api_destination(per_record=True)``: 16 requests in flight per job by
-default, or a ``@record_destination``'s ``concurrency``.
+default, or a ``@destination(per_record=True)``'s ``concurrency``.
 
 Runs ``e2e_api_per_record_test`` and checks, on the mock webhook server, what each
 record's request looked like: one ``PUT /items/<run>/<id>`` per record, the record's id

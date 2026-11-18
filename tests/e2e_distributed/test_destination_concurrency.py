@@ -1,4 +1,4 @@
-"""Per-record ``api_destination`` (16 in flight by default, or a ``@record_destination``'s
+"""Per-record ``api_destination`` (16 in flight by default, or a ``@destination(per_record=True)``'s
 ``concurrency``), over Kafka and a real worker pool.
 
 ``dist_per_record`` is ``dist_abstract`` delivered one ``PUT <sink>/record/<run>/<id>`` per

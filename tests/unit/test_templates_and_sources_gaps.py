@@ -10,10 +10,8 @@ import pytest
 from reflowfy import PipelineError
 from reflowfy.cli.utils import get_package_path
 from reflowfy.core.registry import pipeline_registry
-from reflowfy.destinations.decorators import destination_registry
 from reflowfy.destinations.kafka import KafkaDestination
 from reflowfy.factories.source_factory import SourceFactory
-from reflowfy.sources.decorators import source_registry
 from reflowfy.sources.elastic import ElasticSource
 from reflowfy.sources.static import StaticSource
 from reflowfy.transformations.registry import transformation_registry
@@ -23,16 +21,10 @@ TEMPLATES = get_package_path() / "templates"
 
 @pytest.fixture
 def isolated_component_registries() -> Iterator[None]:
-    saved_sources = dict(source_registry._sources)
-    saved_destinations = dict(destination_registry._destinations)
     saved_tx = dict(transformation_registry._transformations)
     try:
         yield
     finally:
-        source_registry._sources.clear()
-        source_registry._sources.update(saved_sources)
-        destination_registry._destinations.clear()
-        destination_registry._destinations.update(saved_destinations)
         transformation_registry._transformations.clear()
         transformation_registry._transformations.update(saved_tx)
 
@@ -54,7 +46,6 @@ class TestSourceTemplate:
         monkeypatch.setenv("ELASTICSEARCH_URL", "http://es.internal:9200")
         module = _import("source_template.py")
 
-        assert source_registry.get("example_elastic") is None  # no deprecated decorator
         src = module.example_elastic(index="orders-*", size=50)
         assert isinstance(src, ElasticSource)
         assert src.config["url"] == "http://es.internal:9200"
@@ -72,7 +63,6 @@ class TestDestinationTemplate:
         monkeypatch.setenv("KAFKA_BOOTSTRAP_SERVERS", "ignored:9092")
         module = _import("destination_template.py")
 
-        assert destination_registry.get("example_kafka") is None  # no deprecated decorator
         dest = module.example_kafka(topic="out-topic")
         assert isinstance(dest, KafkaDestination)
         assert dest.config["topic"] == "out-topic"

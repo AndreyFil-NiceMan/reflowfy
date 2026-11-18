@@ -584,7 +584,7 @@ def make_record_destination(
             "timeout": timeout,
             "destination_for_record": method,
             "_destination_fn": staticmethod(func),
-            "_bind_options": staticmethod(option_binder(func, f"record_destination {name!r}")),
+            "_bind_options": staticmethod(option_binder(func, f"destination {name!r}")),
             "__doc__": func.__doc__ or f"Record destination: {name}",
             "__module__": func.__module__,
         },

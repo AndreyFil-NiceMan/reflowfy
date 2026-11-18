@@ -1,5 +1,5 @@
 """Several destinations: a list or fan_out(...) from define_destination, and a
-@record_destination function that returns several (a per-record multicast).
+@destination(per_record=True) function that returns several (a per-record multicast).
 
 Built on RecordDestination: every record joins each of its destinations' groups, each
 group is sent and retried on its own, an optional one may fail without failing the job
