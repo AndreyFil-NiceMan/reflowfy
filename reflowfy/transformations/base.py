@@ -363,10 +363,15 @@ class RecordTransformation(AsyncTransformation):
         ]
         try:
             await asyncio.gather(*workers)
-        except BaseException:
+        except BaseException as exc:
             for task in workers:
                 task.cancel()
             await asyncio.gather(*workers, return_exceptions=True)
+            if isinstance(exc, SkipJob):
+                # Records already skipped in this step are still reported beside the drop.
+                for result in results:
+                    if isinstance(result, _Skipped):
+                        count_skip_reason(exc.step_skip_reasons, result.reason)
             raise
         return results
 
