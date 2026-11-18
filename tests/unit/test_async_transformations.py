@@ -28,7 +28,7 @@ from reflowfy.execution.transformation_runner import (
     apply_transformations_iteratively_async,
 )
 from reflowfy.sources.static import StaticSource
-from reflowfy.transformations.base import (
+from reflowfy.core.record_steps import (
     MAX_SKIP_REASON_LENGTH,
     MAX_SKIP_REASONS,
     OTHER_SKIP_REASON,

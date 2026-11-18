@@ -12,7 +12,7 @@ from elastic_transport import ConnectionError as TransportConnectionError
 from elasticsearch import ApiError
 
 import reflowfy.sources.elastic as elastic_mod
-from reflowfy.sources.base import SourceError
+from reflowfy.core.exceptions import SourceError
 from reflowfy.sources.elastic import ElasticSource, _composite_path, _first_sort_key
 
 LOGGER = elastic_mod.logger.name  # get_logger prefixes "reflowfy."

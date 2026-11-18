@@ -17,7 +17,8 @@ def test_every_exported_name_resolves() -> None:
 def test_new_exports_are_the_real_objects() -> None:
     from reflowfy.core.job_retry import JobRetryConfig
     from reflowfy.core.secrets import secret
-    from reflowfy.destinations.base import PermanentDestinationError, RetryConfig
+    from reflowfy.destinations.base import RetryConfig
+    from reflowfy.core.exceptions import PermanentDestinationError
     from reflowfy.destinations.fan_out import fan_out
     from reflowfy.reflow_manager.lifecycle import run_pipeline
     from reflowfy.sources.s3 import s3_source

@@ -17,7 +17,8 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 import reflowfy
 from reflowfy import SkipJob, SkipRecord
-from reflowfy.destinations.base import BaseDestination, DestinationError, RetryConfig
+from reflowfy.destinations.base import BaseDestination, RetryConfig
+from reflowfy.core.exceptions import DestinationError
 from reflowfy.destinations.kafka import kafka_destination
 from reflowfy.destinations.record import RecordDestination, RecordDestinationError
 from reflowfy.execution.job_runner import ROUTE_MODE, run_job_records_async

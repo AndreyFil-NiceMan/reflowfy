@@ -12,7 +12,7 @@ import httpx
 import pytest
 
 from reflowfy.sources.api import IDBasedAPISource, id_based_api_source
-from reflowfy.sources.base import SourceError
+from reflowfy.core.exceptions import SourceError
 
 Handler = Callable[[httpx.Request], httpx.Response]
 

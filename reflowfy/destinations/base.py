@@ -12,10 +12,7 @@ from tenacity import (
 
 from reflowfy.core.secrets import redact_config
 from reflowfy.destinations.pool import ConnectionPool, loop_pool
-from reflowfy.core.exceptions import (  # their old home
-    DestinationError as DestinationError,
-    PermanentDestinationError as PermanentDestinationError,
-)
+from reflowfy.core.exceptions import DestinationError, PermanentDestinationError
 
 __all__ = [
     "BaseDestination",

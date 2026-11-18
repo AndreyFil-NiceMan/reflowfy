@@ -38,7 +38,8 @@ from reflowfy.execution.job_runner import preview_runtime_params
 from reflowfy.execution.transformation_runner import SKIPPED_MODE, AppliedStep
 from reflowfy.sources.static import StaticSource
 from reflowfy.observability.logging import get_logger, setup_logging
-from reflowfy.transformations.base import TransformationError, top_skip_reasons
+from reflowfy.core.exceptions import TransformationError
+from reflowfy.core.record_steps import top_skip_reasons
 
 logger = get_logger("cli.test")
 

@@ -637,13 +637,6 @@ async def _startup() -> None:
         extra={"event": "service_config"},
     )
     JobLeases.from_env().warn_if_inconsistent(logger)
-    if os.getenv("MAX_JOBS_PER_MINUTE"):
-        logger.warning(
-            "MAX_JOBS_PER_MINUTE is no longer applied: a pipeline without a rate limit is "
-            "unlimited. Set rate_limit / define_rate_limit on the pipeline, or rate_limit "
-            "on /run.",
-            extra={"event": "config_ignored", "setting": "MAX_JOBS_PER_MINUTE"},
-        )
 
     # Lifecycle hooks fire on every terminal transition from here on
     # (before recovery, which can settle executions).

@@ -14,7 +14,7 @@ from sqlalchemy import create_engine as real_create_engine
 import reflowfy.sources.sql as sql_module
 
 from reflowfy.factories.source_factory import SourceFactory
-from reflowfy.sources.base import SourceError
+from reflowfy.core.exceptions import SourceError
 from reflowfy.sources.sql import SqlSource, sql_source
 
 
@@ -64,7 +64,7 @@ def _ids(records: List[Dict[str, Any]]) -> List[int]:
 
 
 def test_fetch_resolves_template_params(db_url: str) -> None:
-    src = sql_source(db_url, "SELECT * FROM events WHERE status = '{{ status }}' ORDER BY id")
+    src = sql_source(db_url, "SELECT * FROM events WHERE status = {{ status }} ORDER BY id")
 
     records = src.fetch({"status": "active"})
 
@@ -135,7 +135,7 @@ def test_split_without_id_column_is_one_job(db_url: str) -> None:
 def test_split_respects_template_params(db_url: str) -> None:
     src = sql_source(
         db_url,
-        "SELECT * FROM events WHERE status = '{{ status }}'",
+        "SELECT * FROM events WHERE status = {{ status }}",
         id_column="id",
         batch_size=100,
     )

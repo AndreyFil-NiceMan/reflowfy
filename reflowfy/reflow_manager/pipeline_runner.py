@@ -22,7 +22,7 @@ from reflowfy.factories.source_factory import SourceFactory
 from reflowfy.observability import metrics
 from reflowfy.observability.context import bind_log_context
 from reflowfy.observability.tracing import inject_trace_context
-from reflowfy.reflow_manager.dispatcher import JobDispatcher
+from reflowfy.reflow_manager.dispatcher import BaseDispatcher
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
 from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
@@ -276,14 +276,14 @@ class PipelineRunner:
     Coordinates between:
     - ExecutionManager for execution records
     - JobManager for job payload and checkpoint tracking (unified)
-    - JobDispatcher for Kafka dispatch
+    - BaseDispatcher (Kafka or local) for dispatch
     """
 
     def __init__(
         self,
         execution_manager: ExecutionManager,
         job_manager: JobManager,
-        dispatcher: JobDispatcher,
+        dispatcher: BaseDispatcher,
     ):
         """
         Initialize pipeline runner.
@@ -291,7 +291,7 @@ class PipelineRunner:
         Args:
             execution_manager: ExecutionManager instance
             job_manager: JobManager instance (includes checkpoint functionality)
-            dispatcher: JobDispatcher instance
+            dispatcher: BaseDispatcher instance
         """
         self.execution_manager = execution_manager
         self.job_manager = job_manager

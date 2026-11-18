@@ -19,7 +19,7 @@ from botocore import UNSIGNED  # noqa: E402
 from botocore.config import Config  # noqa: E402
 from botocore.stub import ANY, Stubber  # noqa: E402
 
-from reflowfy.sources.base import SourceError  # noqa: E402
+from reflowfy.core.exceptions import SourceError  # noqa: E402
 from reflowfy.sources.s3 import S3Source, s3_source  # noqa: E402
 
 _WHEN = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)

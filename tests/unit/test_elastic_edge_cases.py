@@ -12,7 +12,7 @@ import pytest
 from elastic_transport import ApiResponseMeta, HttpHeaders, NodeConfig
 from elasticsearch import NotFoundError
 
-from reflowfy.sources.base import SourceError
+from reflowfy.core.exceptions import SourceError
 from reflowfy.sources.elastic import ElasticSource, elastic_source
 from test_elastic_range_windows import _FakeEs  # type: ignore[import-not-found]
 

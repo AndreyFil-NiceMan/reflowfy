@@ -28,6 +28,6 @@ SELECT
     status,
     created_at
 FROM events
-WHERE created_at >= '{{ start_time }}'::timestamp
-  AND created_at <= '{{ end_time }}'::timestamp
+WHERE created_at >= {{ start_time }}::timestamp
+  AND created_at <= {{ end_time }}::timestamp
 ORDER BY created_at DESC;

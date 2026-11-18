@@ -24,13 +24,8 @@ from reflowfy.core.http_errors import (
     retry_after_seconds,
 )
 from reflowfy.destinations.api import api_destination
-from reflowfy.destinations.base import (
-    BaseDestination,
-    DestinationError,
-    PermanentDestinationError,
-    RetryConfig,
-    is_retryable,
-)
+from reflowfy.destinations.base import BaseDestination, RetryConfig, is_retryable
+from reflowfy.core.exceptions import DestinationError, PermanentDestinationError
 from reflowfy.destinations.pool import loop_pool_scope
 
 Handler = Callable[[httpx.Request], httpx.Response]
@@ -300,7 +295,7 @@ class TestHealth:
 def test_source_errors_carry_no_body(monkeypatch: pytest.MonkeyPatch):
     from reflowfy.sources import id_based_api_source
     from reflowfy.sources.api import logger as source_logger
-    from reflowfy.sources.base import SourceError
+    from reflowfy.core.exceptions import SourceError
     from test_worker_executor_paths import capture_logs  # type: ignore[import-not-found]
 
     real = httpx.Client

@@ -14,11 +14,7 @@ from reflowfy.reflow_manager.manager import ReflowManager
 
 
 def manager_config_from_env() -> Dict[str, Any]:
-    """Kafka/execution configuration from environment variables (including SASL).
-
-    ``MAX_JOBS_PER_MINUTE`` is no longer read: a pipeline without a rate limit is
-    unlimited (see ``pipeline_runner.resolve_rate_limit``).
-    """
+    """Kafka/execution configuration from environment variables (including SASL)."""
     kafka = KafkaSettings.from_env()
     return {
         "kafka_bootstrap_servers": kafka.bootstrap_servers,

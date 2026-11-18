@@ -20,7 +20,8 @@ from sqlalchemy.sql.elements import BindParameter, TextClause
 
 from reflowfy.core.execution_context import parameter_resolver
 from reflowfy.core.types import Records, wrap_as_record
-from reflowfy.sources.base import BaseSource, SourceError
+from reflowfy.sources.base import BaseSource
+from reflowfy.core.exceptions import SourceError
 from reflowfy.core.health import log_unhealthy
 from reflowfy.observability.logging import get_logger
 
@@ -204,18 +205,11 @@ class _BindPlacer:
             self.out.append(ch)
             return i + 1, "quote"
         literal = "".join(self.out[self.literal_start :]) + "'"
-        whole = _SENTINEL.fullmatch(literal[1:-1])
-        if whole:
-            # '{{ value }}' on its own: bind the value in place of the literal.
-            del self.out[self.literal_start :]
-            token = self._placeholder(int(whole.group(1)))
-            self.out.append(token + " " if _needs_space(sql, i + 1) else token)
-            return i + 1, "code"
         if _SENTINEL.search(literal):
             raise SqlTemplateError(
                 f"{{{{ … }}}} inside the string literal {_described(literal)}: values are "
-                "bound as parameters, so they cannot be part of a literal. Bind the whole "
-                "value ('{{ x }}' on its own, or build the string in the parameter) or "
+                "bound as parameters, so they cannot be part of a literal. Write the value "
+                "unquoted ({{ x }}, not '{{ x }}'), build the string in the parameter, or "
                 "concatenate in SQL ('%' || {{ x }} || '%')."
             )
         self.out.append(ch)
@@ -248,8 +242,8 @@ def render_sql_template(
 ) -> Tuple[str, Dict[str, Any]]:
     """Render a query template to ``(sql, binds)``: every ``{{ expr }}`` value is bound.
 
-    A value quoted on its own (``'{{ day }}'``) loses the quotes: it is bound, which is
-    what the quotes meant. A list or tuple value is an expanding bind
+    Values are written unquoted (``d >= {{ day }}``); a quoted one (``'{{ day }}'``) raises,
+    like any value inside a string literal. A list or tuple value is an expanding bind
     (``id IN {{ ids }}`` or ``id IN ({{ ids }})``). ``{{ name | ident }}`` splices a
     validated identifier. A value in identifier position, inside a longer string
     literal or inside ``"…"`` raises :class:`SqlTemplateError`.

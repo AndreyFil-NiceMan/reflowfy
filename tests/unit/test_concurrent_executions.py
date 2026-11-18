@@ -18,7 +18,8 @@ from sqlalchemy.orm import sessionmaker
 
 from reflowfy.core.abstract_pipeline import AbstractPipeline
 from reflowfy.core.runtime_params import RuntimeParams
-from reflowfy.execution.job_runner import chunk, job
+from reflowfy.execution.job_runner import job
+from reflowfy.core.planning import chunk
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
 from reflowfy.store.models import Base, Execution, Job

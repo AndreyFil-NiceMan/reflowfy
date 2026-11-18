@@ -10,7 +10,7 @@ import pytest
 
 from reflowfy.core.async_utils import for_each_concurrently
 from reflowfy.destinations.api import api_destination
-from reflowfy.destinations.base import DestinationError
+from reflowfy.core.exceptions import DestinationError
 from reflowfy.destinations.kafka import kafka_destination
 from reflowfy.destinations.base import ConnectionPool
 from reflowfy.execution.content_dedup import destination_identity
@@ -87,11 +87,6 @@ class TestForEachConcurrently:
 
 
 # ---------------------------------------------------------------- removed knobs
-
-
-def test_kafka_concurrency_was_removed():
-    with pytest.raises(TypeError, match="concurrency= was removed"):
-        kafka_destination(bootstrap_servers="k:9092", topic="t", concurrency=4)
 
 
 def test_api_concurrency_was_removed():

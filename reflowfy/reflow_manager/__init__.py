@@ -1,11 +1,11 @@
 """ReflowManager - Rate limiting and pipeline state management service."""
 
 from reflowfy.reflow_manager.manager import ReflowManager
-from reflowfy.store.models import Execution, Checkpoint, RateLimitState
+from reflowfy.store.models import Execution, Job, RateLimitState
 
 __all__ = [
     "ReflowManager",
     "Execution",
-    "Checkpoint",
+    "Job",
     "RateLimitState",
 ]

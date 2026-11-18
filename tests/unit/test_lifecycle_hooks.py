@@ -481,12 +481,11 @@ def test_execution_stats_report_the_hooks(db) -> None:
     assert as_dict["hook_error"]
 
 
-async def test_startup_installs_the_hooks_and_warns_about_max_jobs_per_minute(
+async def test_startup_installs_the_hooks(
     monkeypatch, caplog
 ) -> None:
     from reflowfy.reflow_manager.execution import _terminal_listeners
 
-    monkeypatch.setenv("MAX_JOBS_PER_MINUTE", "6000")
     monkeypatch.setattr(app_module, "init_db", lambda: None)
     monkeypatch.setattr(app_module, "setup_logging", lambda **kw: None)
     monkeypatch.setattr(
@@ -506,7 +505,6 @@ async def test_startup_installs_the_hooks_and_warns_about_max_jobs_per_minute(
     await app_module._startup()
 
     assert lifecycle.on_terminal in _terminal_listeners
-    assert "MAX_JOBS_PER_MINUTE is no longer applied" in caplog.text
 
 
 async def test_shutdown_waits_for_hooks_in_flight(monkeypatch, caplog) -> None:

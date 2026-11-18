@@ -1,6 +1,7 @@
 """Source connectors with job splitting strategies."""
 
-from reflowfy.sources.base import BaseSource, SourceJob, SourceError
+from reflowfy.sources.base import BaseSource, SourceJob
+from reflowfy.core.exceptions import SourceError
 
 # API sources (httpx is a core dependency)
 from reflowfy.sources.api import (

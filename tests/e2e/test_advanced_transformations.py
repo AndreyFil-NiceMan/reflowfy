@@ -235,7 +235,7 @@ class TestTransformationErrors:
         TransformationError must expose transformation_name, message, and
         original_error as instance attributes.
         """
-        from reflowfy.transformations.base import TransformationError
+        from reflowfy.core.exceptions import TransformationError
 
         sentinel = ValueError("original")
         exc = TransformationError("my_transform", "something went wrong", sentinel)

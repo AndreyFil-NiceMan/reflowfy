@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from reflowfy.sources.base import SourceError
+from reflowfy.core.exceptions import SourceError
 from reflowfy.sources.elastic import ElasticSource
 from reflowfy.sources.s3 import S3Source
 

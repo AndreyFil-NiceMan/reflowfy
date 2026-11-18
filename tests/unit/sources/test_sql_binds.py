@@ -63,11 +63,15 @@ class TestRender:
         assert sql == "SELECT * FROM t WHERE a = :reflowfy_p0 AND b > :reflowfy_p1"
         assert binds == {"reflowfy_p0": "x", "reflowfy_p1": 2}
 
-    def test_quoted_value_on_its_own_loses_the_quotes(self) -> None:
-        sql, binds = render_sql_template("WHERE d >= '{{ day }}'::timestamp", {"day": "2026"})
+    def test_a_cast_after_a_value_keeps_the_bind_name(self) -> None:
+        sql, binds = render_sql_template("WHERE d >= {{ day }}::timestamp", {"day": "2026"})
         # a space keeps `::` from swallowing the bind name
         assert sql == "WHERE d >= :reflowfy_p0 ::timestamp"
         assert binds == {"reflowfy_p0": "2026"}
+
+    def test_a_quoted_value_fails_saying_to_unquote_it(self) -> None:
+        with pytest.raises(SqlTemplateError, match=r"not '\{\{ x \}\}'"):
+            render_sql_template("WHERE d >= '{{ day }}'::timestamp", {"day": "2026"})
 
     def test_value_inside_a_longer_literal_fails(self) -> None:
         with pytest.raises(SqlTemplateError, match=r"string literal '%\{\{ … \}\}%'"):
@@ -123,8 +127,6 @@ class TestRender:
     def test_missing_parameter_fails(self) -> None:
         with pytest.raises(SqlTemplateError, match="no runtime parameter 'nope'"):
             render_sql_template("SELECT {{ nope }}", {})
-        with pytest.raises(SqlTemplateError, match="no runtime parameter 'nope'"):
-            render_sql_template("WHERE a = '{{ nope }}'", {})
 
     def test_values_in_comments_are_dropped(self) -> None:
         sql, binds = render_sql_template(
@@ -203,7 +205,7 @@ class TestSplit:
     def test_slices_carry_bound_sql_and_rebuild_on_the_worker(self, db_url: str) -> None:
         src = sql_source(
             db_url,
-            "SELECT * FROM {{ t | ident }} WHERE status = '{{ status }}';",
+            "SELECT * FROM {{ t | ident }} WHERE status = {{ status }};",
             id_column="id",
             batch_size=4,
         )

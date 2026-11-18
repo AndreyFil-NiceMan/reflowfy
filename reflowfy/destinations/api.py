@@ -15,12 +15,8 @@ from reflowfy.core.http_errors import (
     retry_after_seconds,
 )
 from reflowfy.core.record_templates import fill, fill_value, has_placeholders
-from reflowfy.destinations.base import (
-    BaseDestination,
-    DestinationError,
-    PermanentDestinationError,
-    RetryConfig,
-)
+from reflowfy.destinations.base import BaseDestination, RetryConfig
+from reflowfy.core.exceptions import DestinationError, PermanentDestinationError
 from reflowfy.http_auth import build_auth_headers
 from reflowfy.observability.logging import get_logger
 from reflowfy.core.record_steps import default_record_concurrency

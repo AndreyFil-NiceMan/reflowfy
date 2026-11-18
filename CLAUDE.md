@@ -436,8 +436,8 @@ partition is kept — aiokafka mutes a partition while its batch is in flight
 (`aiokafka/producer/sender.py`). A message refused on hand-over stops the loop; every future
 already handed over is still awaited; the error names `record N of M`. Measured on a local
 broker (1000 messages, 3 topics): 27–38 ms batched vs 259–725 ms at the old default of one
-ack at a time, and faster than the old `concurrency=16` (42–46 ms). Passing `concurrency=`
-raises a `TypeError` saying so (it would otherwise fall into `**producer_config`). A
+ack at a time, and faster than the old `concurrency=16` (42–46 ms). There is no guard for
+the old `concurrency=` argument any more: it falls into `**producer_config`. A
 per-record `api_destination` keeps `send_concurrency` requests in flight — set by a
 `@destination(per_record=True)`, else `default_record_concurrency()` (`TRANSFORM_CONCURRENCY`, 16) —
 through `core/async_utils.for_each_concurrently`, so requests may land out of order. Tests:
@@ -673,8 +673,9 @@ Tests: `tests/unit/test_custom_sources.py`; E2E `tests/e2e/test_custom_source.py
 
 `sql_source` query templates are rendered by `render_sql_template` (`sources/sql.py`), not the
 generic resolver: every `{{ expr }}` **value is a bind parameter** (`:reflowfy_p0`…), never
-spliced into the SQL. `'{{ x }}'` quoted on its own is bound in place of the literal (old
-templates keep working; a space keeps `::timestamp` after it parseable); a list/tuple is an
+spliced into the SQL. Values are written unquoted (`d >= {{ day }}::timestamp`; a space keeps
+the `::` cast parseable); a quoted `'{{ x }}'` raises like any value in a literal (the old
+quoted form was removed, 2026-11); a list/tuple is an
 expanding bind (`id IN {{ ids }}` or `IN ({{ ids }})`); a value in a comment is dropped; a
 missing parameter fails. **Identifiers need `{{ name | ident }}`** (validated
 `[A-Za-z_][A-Za-z0-9_.]*`): a plain `{{ }}` after `FROM`/`JOIN`/`INTO`/`UPDATE`/`TABLE`/`BY`/`AS`,
@@ -746,7 +747,7 @@ On SIGTERM the worker **drains**: it stops taking messages, lets the job in prog
 
 **Retrying failures by hand.** Without `job_retry` nothing retries a `failed` job by itself (the DLQ is not a failure sink). `POST /executions/{id}/retry-failed[?error_contains=text]` requeues the execution's failed jobs (attempts reset, error cleared), reopens the execution and restarts its loop; a retried job runs from scratch, so one that failed after a partial write sends those records again unless the run used `enable_duplicate_jobs=false`. A paused execution answers 409; a running one just picks the requeued jobs up. The route requeues first and then reopens (CAS from terminal), starting a loop only when the reopen won.
 
-**Rate limit.** `pipeline_runner.resolve_rate_limit`: the `/run` `rate_limit` override > the rate persisted on the execution > `pipeline.define_rate_limit(params)` > the `rate_limit` attribute (`define_rate_limit` returning None falls through). Nothing set = **unlimited** — there is no global default any more: `MAX_JOBS_PER_MINUTE` is ignored (startup warns if it is set; the chart, compose files and env example no longer set it). The result is persisted on the execution (`executions.rate_limit`) at planning and reused when a restarted manager resumes it. The token bucket is **per execution** (`rate_limit_state` row keyed `execution_bucket_key(pipeline, execution_id)` = `<pipeline>:<execution_id>`), so concurrent runs of one pipeline don't overwrite each other's rate; an unlimited execution writes no row, and the row is deleted when the execution ends (drive loop `finally`, and the terminal listener). Tests: `tests/unit/test_rate_limit_resolution.py`.
+**Rate limit.** `pipeline_runner.resolve_rate_limit`: the `/run` `rate_limit` override > the rate persisted on the execution > `pipeline.define_rate_limit(params)` > the `rate_limit` attribute (`define_rate_limit` returning None falls through). Nothing set = **unlimited**: there is no global default. The result is persisted on the execution (`executions.rate_limit`) at planning and reused when a restarted manager resumes it. The token bucket is **per execution** (`rate_limit_state` row keyed `execution_bucket_key(pipeline, execution_id)` = `<pipeline>:<execution_id>`), so concurrent runs of one pipeline don't overwrite each other's rate; an unlimited execution writes no row, and the row is deleted when the execution ends (drive loop `finally`, and the terminal listener). Tests: `tests/unit/test_rate_limit_resolution.py`.
 
 ### Lifecycle hooks
 

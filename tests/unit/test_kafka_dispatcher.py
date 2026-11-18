@@ -19,7 +19,6 @@ import reflowfy.reflow_manager.dispatcher as dispatcher_mod
 from reflowfy.reflow_manager.dispatcher import (
     TOKEN_WAIT_SECONDS,
     BaseDispatcher,
-    JobDispatcher,
     KafkaDispatcher,
 )
 
@@ -131,10 +130,6 @@ class TestConstruction:
 
     def test_single_server_kept(self):
         assert _dispatcher().kafka_bootstrap_servers == "k:9092"
-
-    def test_backward_compat_alias(self):
-        assert JobDispatcher is BaseDispatcher
-        assert isinstance(_dispatcher(), JobDispatcher)
 
 
 # ---------------------------------------------------------------- producer

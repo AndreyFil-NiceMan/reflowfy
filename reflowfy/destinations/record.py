@@ -68,7 +68,8 @@ from typing_extensions import Concatenate
 from reflowfy.core.async_utils import for_each_concurrently
 from reflowfy.core.options import option_binder
 from reflowfy.core.exceptions import PipelineError, SkipJob, SkipRecord
-from reflowfy.destinations.base import BaseDestination, ConnectionPool, DestinationError
+from reflowfy.destinations.base import BaseDestination, ConnectionPool
+from reflowfy.core.exceptions import DestinationError
 from reflowfy.observability.logging import get_logger
 from reflowfy.core.record_steps import count_skip_reason, default_record_concurrency
 

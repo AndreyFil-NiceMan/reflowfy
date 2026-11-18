@@ -23,7 +23,7 @@ from reflowfy import (
     pipeline_registry,
     transformation,
 )
-from reflowfy.destinations.base import DestinationError
+from reflowfy.core.exceptions import DestinationError
 from reflowfy.sources.mock import MockSource
 from reflowfy.sources.static import StaticSource
 from reflowfy.testing import (

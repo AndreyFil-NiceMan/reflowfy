@@ -22,7 +22,7 @@ from reflowfy.execution.content_dedup import (
     record_identity,
     release_record_hashes,
 )
-from reflowfy.destinations.base import DestinationError
+from reflowfy.core.exceptions import DestinationError
 from reflowfy.destinations.fan_out import as_destination
 from reflowfy.destinations.record import RecordDestination
 from reflowfy.execution.job_runner import (
