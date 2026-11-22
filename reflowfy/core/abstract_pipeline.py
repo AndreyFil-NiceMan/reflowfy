@@ -163,6 +163,16 @@ class PipelineMeta(ABCMeta):
                     cls._params_type = params_type  # type: ignore[attr-defined]
                     break
 
+            # `schedule = "0 * * * *"` (singular) is the old API: nothing reads it, so the
+            # pipeline would run fine and never be scheduled, with no log line anywhere.
+            legacy = namespace.get("schedule")
+            if isinstance(legacy, (str, ScheduledRun, list, tuple)):
+                raise TypeError(
+                    f"Pipeline '{namespace.get('name', name)}' sets `schedule`, which is "
+                    f'not read: declare `schedules = [ScheduledRun(name="default", '
+                    f"cron=...)]` instead (from reflowfy import ScheduledRun)."
+                )
+
             # Validate schedules at class-definition time (before instantiation)
             _validate_schedules(namespace.get("schedules") or [], namespace.get("name", name))
 

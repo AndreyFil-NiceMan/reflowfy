@@ -127,3 +127,46 @@ def test_schedules_empty_in_to_dict_for_unscheduled():
     d = p.to_dict()
     assert d["schedules"] == []
     assert d["is_scheduled"] is False
+
+
+@pytest.mark.parametrize(
+    "legacy",
+    ["0 * * * *", ScheduledRun(name="default", cron="0 * * * *"), ["0 * * * *"]],
+)
+def test_singular_schedule_attribute_raises_at_class_definition(legacy):
+    """`schedule = ...` used to be silently ignored: the pipeline ran, never scheduled."""
+    with pytest.raises(TypeError, match=r"sets `schedule`, which is not read.*schedules = "):
+
+        class _LegacyScheduled(AbstractPipeline):
+            name = "test_legacy_schedule_attr_unit"
+            schedule = legacy
+
+            def define_source(self, runtime_params):
+                return MagicMock()
+
+            def define_destination(self, records, runtime_params):
+                return MagicMock()
+
+            def define_transformations(self, records, runtime_params):
+                return []
+
+    assert pipeline_registry.get("test_legacy_schedule_attr_unit") is None
+
+
+def test_schedule_method_is_not_mistaken_for_the_old_attribute():
+    class _HasScheduleMethod(AbstractPipeline):
+        name = "test_schedule_method_unit"
+
+        def schedule(self):
+            return "unrelated helper"
+
+        def define_source(self, runtime_params):
+            return MagicMock()
+
+        def define_destination(self, records, runtime_params):
+            return MagicMock()
+
+        def define_transformations(self, records, runtime_params):
+            return []
+
+    assert pipeline_registry.get("test_schedule_method_unit") is not None
