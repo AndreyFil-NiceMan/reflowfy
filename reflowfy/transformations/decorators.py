@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 
     from typing_extensions import Concatenate
 
+    from reflowfy.core.retry import RetryConfig
     from reflowfy.transformations.base import OnError
 
     TransformFn = Callable[Concatenate[Any, Any, ...], Any]
@@ -83,7 +84,10 @@ def transformation(name: "TransformFn", /) -> "type[DecoratedTransformation]": .
 
 @overload
 def transformation(
-    name: Optional[str] = None, *, per_record: Literal[False] = False
+    name: Optional[str] = None,
+    *,
+    per_record: Literal[False] = False,
+    retry: "Optional[RetryConfig]" = None,
 ) -> Callable[["TransformFn"], "type[DecoratedTransformation]"]: ...
 
 
@@ -95,6 +99,7 @@ def transformation(
     concurrency: Optional[int] = None,
     timeout: Optional[float] = None,
     on_error: "OnError" = "fail",
+    retry: "Optional[RetryConfig]" = None,
 ) -> Callable[["RecordTransformFn"], "type[DecoratedTransformation]"]: ...
 
 
@@ -105,6 +110,7 @@ def transformation(
     concurrency: Optional[int] = None,
     timeout: Optional[float] = None,
     on_error: "OnError" = "fail",
+    retry: "Optional[RetryConfig]" = None,
 ) -> Any:
     """
     Turn a function into a transformation step.
@@ -128,6 +134,13 @@ def transformation(
         on_error: Per record only. ``"fail"`` (default) fails the job when a record's
             call raises, naming its index; ``"skip"`` drops that record, its exception
             type as the skip reason. A wrong return type fails the job either way.
+        retry: A :class:`RetryConfig`: retry a failed call inside the job. A batch step
+            is called again with the batch; a per-record step retries only the record
+            that failed (each attempt gets the full ``timeout``), and ``on_error``
+            applies once its attempts run out. Default ``retry_on``: timeouts,
+            connection errors, ``SourceError``/``DestinationError``; never ``KeyError``,
+            ``TypeError``, ``ValueError``, ``SkipRecord`` or ``SkipJob``. A step that
+            changes records in place is retried on the records as it left them.
 
     Example:
         @transformation
@@ -148,6 +161,7 @@ def transformation(
     if name is not None and not isinstance(name, str):
         raise TypeError(f"transformation: name must be a string, got {type(name).__name__}")
     owner = f"transformation {name!r}" if name else "transformation"
+    _check_retry(owner, retry)
     if not per_record:
         given = [
             knob
@@ -174,9 +188,17 @@ def transformation(
             concurrency=concurrency,
             timeout=timeout,
             on_error=on_error,
+            retry=retry,
         )
 
     return decorator
+
+
+def _check_retry(owner: str, retry: object) -> None:
+    from reflowfy.core.retry import RetryConfig
+
+    if retry is not None and not isinstance(retry, RetryConfig):
+        raise TypeError(f"{owner}: retry must be a RetryConfig or None, got {type(retry).__name__}")
 
 
 def _check_record_knobs(
@@ -199,6 +221,7 @@ def _decorate(
     concurrency: Optional[int] = None,
     timeout: Optional[float] = None,
     on_error: "OnError" = "fail",
+    retry: "Optional[RetryConfig]" = None,
 ) -> "type[DecoratedTransformation]":
     from reflowfy.transformations.base import (
         AsyncTransformation,
@@ -249,7 +272,7 @@ def _decorate(
 
         base = SyncRecordTransformation
         methods = {"apply_record_sync": apply_record_sync, "on_error": on_error}
-    return _make_class(func, name, base, methods)
+    return _make_class(func, name, base, {**methods, "retry": retry})
 
 
 def _make_class(

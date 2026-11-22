@@ -47,6 +47,7 @@ Every log line is one ECS-shaped JSON object (`LOG_JSON=false` gives text with t
 - `destinations/decorators.py`: `destination_registered`
 - `destinations/kafka.py`: `kafka_batch_sent`, `kafka_lag_check_error`, `kafka_lag_high`, `producer_setting_ignored`
 - `destinations/pool.py`: `pool_closed`, `pool_config_invalid`, `pool_connection_close_error`, `pool_connection_created`, `pool_connection_evicted`, `pool_connection_reused`, `pool_opened`
+- `core/retry.py`: `step_retry`
 - `destinations/record.py`: `destination_optional_failed`, `destination_optional_unhealthy`, `destination_per_record`, `records_all_skipped`, `records_routed`, `records_skipped`
 - `execution/distributed_executor.py`: `execution_submit`, `execution_submit_error`, `execution_submit_rejected`, `execution_submitted`
 - `execution/job_runner.py`: `job_dropped`, `records_skipped`, `skipjob_raised`

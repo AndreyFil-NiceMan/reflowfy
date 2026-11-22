@@ -22,6 +22,7 @@ from reflowfy.core.execution_context import ExecutionContext
 from reflowfy.core.exceptions import RecordValidationError, SkipJob, pipeline_step
 from reflowfy.core.planning import PlannedJob
 from reflowfy.core.record_validation import describe_invalid, find_invalid_records
+from reflowfy.core.retry import retry_async
 from reflowfy.core.serialization import to_json_safe
 from reflowfy.destinations.fan_out import as_destination
 from reflowfy.destinations.record import RecordDestination
@@ -188,7 +189,11 @@ def plan_slices(jobs: Any, runtime_params: Dict[str, Any]) -> Iterator[PlannedJo
 
     split = getattr(jobs, "split", None)
     if split is not None:
+        retry = getattr(jobs, "retry", None)
         for narrowed in split(runtime_params):
+            # A slice is a new instance: it keeps the retry set on the source it came from.
+            if retry is not None and getattr(narrowed, "retry", None) is None:
+                narrowed.retry = retry
             yield PlannedJob(narrowed)
         return
 
@@ -221,15 +226,28 @@ async def fetch_records(source: Any, runtime_params: Dict[str, Any]) -> List[Any
     An :class:`AsyncSource` is awaited on this loop; any other source's ``fetch`` runs
     in a thread, and what it returned — a list, or a generator — is consumed there.
     Normalizing runs in a thread either way: a large slice must not stall the loop.
+
+    A source with a ``retry`` (:class:`RetryConfig`) has its fetch — consuming what
+    it returned included, since a generator fails while it is read — called again
+    when it raises a retryable error.
     """
     from reflowfy.sources.base import AsyncSource, materialize_fetch
 
+    retry = getattr(source, "retry", None)
+    step = f"source:{type(source).__name__}"
     if isinstance(source, AsyncSource):
-        raw = materialize_fetch(await source.fetch_async(runtime_params), source)
+
+        async def fetch_async() -> List[Any]:
+            return materialize_fetch(await source.fetch_async(runtime_params), source)
+
+        raw = await retry_async(fetch_async, retry, step=step)
         return await asyncio.to_thread(to_json_safe, raw)
-    return await asyncio.to_thread(
-        lambda: to_json_safe(materialize_fetch(source.fetch(runtime_params), source))
-    )
+
+    def fetch() -> List[Any]:
+        return materialize_fetch(source.fetch(runtime_params), source)
+
+    raw = await retry_async(lambda: asyncio.to_thread(fetch), retry, step=step)
+    return await asyncio.to_thread(to_json_safe, raw)
 
 
 def run_job_records(

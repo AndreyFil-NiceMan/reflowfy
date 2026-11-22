@@ -1,15 +1,9 @@
 """Base destination interface with retry logic."""
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, List, Optional, TypeVar
-from tenacity import (
-    RetryCallState,
-    retry_if_exception,
-    stop_after_attempt,
-    wait_exponential,
-)
 
+from reflowfy.core.retry import RetryConfig, destination_defaults, retry_async
 from reflowfy.core.secrets import redact_config
 from reflowfy.destinations.pool import ConnectionPool, loop_pool
 from reflowfy.core.exceptions import DestinationError, PermanentDestinationError
@@ -23,16 +17,6 @@ __all__ = [
 ]
 
 T = TypeVar("T")
-
-
-@dataclass
-class RetryConfig:
-    """Configuration for retry behavior."""
-
-    max_attempts: int = 3
-    min_wait_seconds: float = 1.0
-    max_wait_seconds: float = 60.0
-    multiplier: float = 2.0
 
 
 class BaseDestination(ABC):
@@ -156,39 +140,22 @@ class BaseDestination(ABC):
         Send records with automatic retry and exponential backoff.
 
         A :class:`DestinationError` is retried, except a
-        :class:`PermanentDestinationError` (retrying cannot fix it). A ``retry_after``
-        on the error replaces the backoff, capped at ``max_wait_seconds``.
+        :class:`PermanentDestinationError` (retrying cannot fix it); ``retry_on`` /
+        ``never_retry`` on the :class:`RetryConfig` replace those defaults. A
+        ``retry_after`` on the error replaces the backoff, capped at
+        ``max_wait_seconds``. Each retry is logged (``step_retry``) and counted on the
+        job as ``destination:<class name>``.
 
         Args:
             records: Records to send
             metadata: Optional metadata
         """
-        from tenacity import AsyncRetrying
-
-        config = self.retry_config
-        backoff = wait_exponential(
-            multiplier=config.multiplier,
-            min=config.min_wait_seconds,
-            max=config.max_wait_seconds,
+        await retry_async(
+            lambda: self.send(records, metadata),
+            self.retry_config,
+            step=f"destination:{type(self).__name__}",
+            defaults=destination_defaults,
         )
-
-        def wait(state: RetryCallState) -> float:
-            # A server that said when to come back (Retry-After) is believed, up to
-            # max_wait_seconds; otherwise exponential backoff.
-            error = state.outcome.exception() if state.outcome is not None else None
-            retry_after = getattr(error, "retry_after", None)
-            if isinstance(retry_after, (int, float)):
-                return min(max(float(retry_after), 0.0), config.max_wait_seconds)
-            return backoff(state)
-
-        async for attempt in AsyncRetrying(
-            stop=stop_after_attempt(config.max_attempts),
-            wait=wait,
-            retry=retry_if_exception(is_retryable),
-            reraise=True,
-        ):
-            with attempt:
-                await self.send(records, metadata)
 
     def __repr__(self) -> str:
         # Shown in logs and tracebacks: credentials (sasl_password, auth_token,
@@ -205,10 +172,6 @@ def check_concurrency(destination_type: str, concurrency: object) -> int:
     if isinstance(concurrency, bool) or not isinstance(concurrency, int) or concurrency < 1:
         raise ValueError(f"{destination_type}: concurrency must be an integer >= 1")
     return concurrency
-
-
-
-
 
 
 def is_retryable(error: BaseException) -> bool:

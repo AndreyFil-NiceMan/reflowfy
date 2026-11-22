@@ -10,6 +10,7 @@ from botocore.exceptions import ClientError
 from reflowfy.core.types import Records, wrap_as_record
 from reflowfy.sources.base import BaseSource
 from reflowfy.core.exceptions import SourceError
+from reflowfy.core.retry import RetryConfig
 from reflowfy.core.health import log_unhealthy
 from reflowfy.observability.logging import get_logger
 
@@ -255,6 +256,7 @@ def s3_source(
     aws_secret_access_key: Optional[str] = None,
     region_name: str = "us-east-1",
     endpoint_url: Optional[str] = None,
+    retry: Optional[RetryConfig] = None,
     **kwargs: Any,
 ) -> S3Source:
     """
@@ -269,6 +271,8 @@ def s3_source(
         ...     read_content=True,
         ...     content_type="json"
         ... )
+
+    ``retry`` (a :class:`RetryConfig`) retries a failed fetch inside the job.
     """
     return S3Source(
         bucket=bucket,
@@ -282,4 +286,4 @@ def s3_source(
         region_name=region_name,
         endpoint_url=endpoint_url,
         **kwargs,
-    )
+    ).with_retry(retry)

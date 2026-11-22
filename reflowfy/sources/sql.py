@@ -22,6 +22,7 @@ from reflowfy.core.execution_context import parameter_resolver
 from reflowfy.core.types import Records, wrap_as_record
 from reflowfy.sources.base import BaseSource
 from reflowfy.core.exceptions import SourceError
+from reflowfy.core.retry import RetryConfig
 from reflowfy.core.health import log_unhealthy
 from reflowfy.observability.logging import get_logger
 
@@ -482,6 +483,7 @@ def sql_source(
     time_column: Optional[str] = None,
     batch_size: int = 1000,
     params: Optional[Dict[str, Any]] = None,
+    retry: Optional[RetryConfig] = None,
     **engine_kwargs: Any,
 ) -> SqlSource:
     """
@@ -496,6 +498,8 @@ def sql_source(
         ...     id_column="id",
         ...     batch_size=1000
         ... )
+
+    ``retry`` (a :class:`RetryConfig`) retries a failed fetch inside the job.
     """
     return SqlSource(
         connection_url=connection_url,
@@ -505,4 +509,4 @@ def sql_source(
         batch_size=batch_size,
         params=params,
         **engine_kwargs,
-    )
+    ).with_retry(retry)

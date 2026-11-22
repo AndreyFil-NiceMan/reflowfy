@@ -12,6 +12,7 @@ from reflowfy.core.types import Record, Records, wrap_as_record
 from reflowfy.observability.logging import get_logger
 from reflowfy.sources.base import BaseSource
 from reflowfy.core.exceptions import SourceError
+from reflowfy.core.retry import RetryConfig
 from reflowfy.core.health import log_unhealthy
 
 # The manager opens a PIT while planning; workers search it later, as the
@@ -796,6 +797,7 @@ def elastic_source(
     max_slices: int = 1024,
     pit_keep_alive: str = DEFAULT_PIT_KEEP_ALIVE,
     window_mode: str = WINDOW_SNAPSHOT,
+    retry: Optional[RetryConfig] = None,
     **kwargs: Any,
 ) -> ElasticSource:
     """
@@ -873,6 +875,8 @@ def elastic_source(
         result sets that is a very large number of jobs (each its own Kafka
         message, DB row, and ES query) — use a larger ``docs_per_job`` unless
         per-document isolation is truly required.
+
+    ``retry`` (a :class:`RetryConfig`) retries a failed fetch inside the job.
     """
     return ElasticSource(
         url=url,
@@ -887,4 +891,4 @@ def elastic_source(
         pit_keep_alive=pit_keep_alive,
         window_mode=window_mode,
         **kwargs,
-    )
+    ).with_retry(retry)
