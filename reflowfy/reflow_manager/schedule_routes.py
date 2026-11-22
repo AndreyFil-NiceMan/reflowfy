@@ -9,19 +9,20 @@ from sqlalchemy.orm import Session
 from reflowfy.reflow_manager.redaction import public_row
 from reflowfy.reflow_manager.database import get_db
 from reflowfy.store.models import DLQJobArchive, Execution, PipelineSchedule
+from reflowfy.store.states import ExecutionState, ScheduleEnabled
 
 router = APIRouter()
 
 
 @router.get("/schedules")
-def list_schedules(db: Session = Depends(get_db)):
+def list_schedules(db: Session = Depends(get_db)) -> Dict[str, Any]:
     """List all pipeline schedule entries."""
     rows = db.query(PipelineSchedule).order_by(PipelineSchedule.pipeline_name).all()
     return {"schedules": [public_row(r) for r in rows], "total": len(rows)}
 
 
 @router.get("/schedules/{pipeline_name}")
-def get_schedule(pipeline_name: str, db: Session = Depends(get_db)):
+def get_schedule(pipeline_name: str, db: Session = Depends(get_db)) -> Dict[str, Any]:
     """Get all named schedules for a pipeline, each with last-execution enrichment."""
     rows = (
         db.query(PipelineSchedule)
@@ -49,7 +50,7 @@ def get_schedule(pipeline_name: str, db: Session = Depends(get_db)):
 
 
 @router.get("/schedules/{pipeline_name}/stats")
-def get_schedule_stats(pipeline_name: str, db: Session = Depends(get_db)):
+def get_schedule_stats(pipeline_name: str, db: Session = Depends(get_db)) -> Dict[str, Any]:
     """Execution history stats for a scheduled pipeline, across all its named schedules."""
     rows = (
         db.query(PipelineSchedule)
@@ -84,7 +85,7 @@ def get_schedule_stats(pipeline_name: str, db: Session = Depends(get_db)):
                 "schedule_name": row.schedule_name,
                 "cron_expression": row.cron_expression,
                 "next_run_at": row.next_run_at.isoformat() if row.next_run_at else None,
-                "enabled": row.enabled == "true",
+                "enabled": row.enabled == ScheduleEnabled.TRUE,
                 "last_execution_id": row.last_execution_id,
                 "last_execution_state": last_exec_state,
                 "last_triggered_at": (
@@ -96,10 +97,10 @@ def get_schedule_stats(pipeline_name: str, db: Session = Depends(get_db)):
     return {
         "pipeline_name": pipeline_name,
         "total_executions": total,
-        "completed_executions": by_state.get("completed", 0),
-        "failed_executions": by_state.get("failed", 0),
-        "running_executions": by_state.get("running", 0),
-        "pending_executions": by_state.get("pending", 0),
+        "completed_executions": by_state.get(ExecutionState.COMPLETED, 0),
+        "failed_executions": by_state.get(ExecutionState.FAILED, 0),
+        "running_executions": by_state.get(ExecutionState.RUNNING, 0),
+        "pending_executions": by_state.get(ExecutionState.PENDING, 0),
         "schedules": schedules,
     }
 
@@ -110,7 +111,7 @@ def list_archived_jobs(
     limit: int = 100,
     offset: int = 0,
     db: Session = Depends(get_db),
-):
+) -> Dict[str, Any]:
     """List permanently failed DLQ jobs from the archive (exceeded max_retries)."""
     limit = min(limit, 500)
     query = db.query(DLQJobArchive)
@@ -127,7 +128,7 @@ def list_archived_jobs(
 
 
 @router.get("/archive/jobs/{job_id}")
-def get_archived_job(job_id: int, db: Session = Depends(get_db)):
+def get_archived_job(job_id: int, db: Session = Depends(get_db)) -> Dict[str, Any]:
     """Get a single archived (permanently failed) DLQ job by ID."""
     job = db.query(DLQJobArchive).filter(DLQJobArchive.id == job_id).first()
     if not job:

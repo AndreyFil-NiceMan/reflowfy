@@ -18,7 +18,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 import reflowfy.reflow_manager.app as app_module
+import reflowfy.reflow_manager.drive_loop as loop_mod
 import reflowfy.reflow_manager.pipeline_runner as runner_mod
+import reflowfy.reflow_manager.recovery as recovery_mod
 from reflowfy.store.models import Base, Execution, Job
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner
 
@@ -261,7 +263,7 @@ def test_resume_fails_an_execution_whose_pipeline_is_gone(db, monkeypatch):
 
 def test_resume_fails_a_plan_whose_planner_is_gone(db, registry):
     """Planning lease stale and the execution older than one lease: the planner died."""
-    old = _now() - timedelta(seconds=runner_mod.DRIVER_LEASE_SECONDS * 3)
+    old = _now() - timedelta(seconds=loop_mod.DRIVER_LEASE_SECONDS * 3)
     _execution(
         db,
         "e",
@@ -298,11 +300,11 @@ def test_resume_leaves_a_plan_with_a_live_planner_alone(db, registry, monkeypatc
         waits.append(seconds)
         raise _StopWaiting  # end the wait loop after its first round
 
-    monkeypatch.setattr(runner_mod, "time", SimpleNamespace(sleep=sleep, monotonic=time.monotonic))
+    monkeypatch.setattr(recovery_mod, "time", SimpleNamespace(sleep=sleep, monotonic=time.monotonic))
     monkeypatch.setattr(
         PipelineRunner, "_drive_execution", lambda *a: pytest.fail("partial plan dispatched")
     )
-    old = _now() - timedelta(seconds=runner_mod.DRIVER_LEASE_SECONDS * 3)
+    old = _now() - timedelta(seconds=loop_mod.DRIVER_LEASE_SECONDS * 3)
     _execution(
         db,
         "e",
@@ -315,7 +317,7 @@ def test_resume_leaves_a_plan_with_a_live_planner_alone(db, registry, monkeypatc
 
     app_module._resume_execution_sync("e")  # logs the interruption, does not raise
 
-    assert waits == [runner_mod.DRIVER_RETRY_SECONDS]  # it was waiting on the lease
+    assert waits == [loop_mod.DRIVER_RETRY_SECONDS]  # it was waiting on the lease
     execution = _row(db, "e")
     assert execution.state == "pending" and execution.error_message is None
     assert execution.driver_id == "plan:live-pod:1:bbbb"  # lease untouched

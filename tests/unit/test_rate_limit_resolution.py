@@ -17,7 +17,8 @@ from reflowfy.reflow_manager.dispatcher import KafkaDispatcher
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
 from reflowfy.store.models import Base, Execution, Job, RateLimitState
-from reflowfy.reflow_manager.pipeline_runner import PipelineRunner, resolve_rate_limit
+from reflowfy.reflow_manager.pipeline_runner import PipelineRunner
+from reflowfy.reflow_manager.rate_limiter import resolve_rate_limit
 from reflowfy.reflow_manager.rate_limiter import RateLimiter, execution_bucket_key
 from reflowfy.sources.static import StaticSource
 

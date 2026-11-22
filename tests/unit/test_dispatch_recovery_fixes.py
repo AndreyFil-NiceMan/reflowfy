@@ -24,7 +24,9 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+import reflowfy.reflow_manager.drive_loop as loop_mod
 import reflowfy.reflow_manager.pipeline_runner as runner_mod
+import reflowfy.reflow_manager.recovery as recovery_mod
 from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
 from reflowfy.store.models import Base, Execution, Job
@@ -110,7 +112,7 @@ def _runner(db: Session, dispatcher: Any) -> PipelineRunner:
 
 @pytest.fixture(autouse=True)
 def _fast_loop(monkeypatch):
-    monkeypatch.setattr(runner_mod, "CHECKPOINT_POLL_INTERVAL", 0.01)
+    monkeypatch.setattr(loop_mod, "CHECKPOINT_POLL_INTERVAL", 0.01)
 
 
 def test_only_sent_jobs_are_marked_dispatched(db):
@@ -153,7 +155,7 @@ def test_drive_loop_retries_jobs_a_failed_send_left_pending(db):
 
 
 def test_in_flight_window_caps_how_many_are_fetched(db, monkeypatch):
-    monkeypatch.setattr(runner_mod, "MAX_IN_FLIGHT_JOBS", 3)
+    monkeypatch.setattr(loop_mod, "MAX_IN_FLIGHT_JOBS", 3)
     running = _add_jobs(db, 2, state="running", updated_at=_now())
     _add_jobs(db, 5)
     runner = _runner(db, _FakeDispatcher(db))
@@ -293,7 +295,7 @@ def _register(monkeypatch, destination: Any) -> None:
 
 
 async def test_claim_released_when_job_cancelled(monkeypatch):
-    import reflowfy.worker.executor as executor_mod
+    import reflowfy.worker.job_store as executor_mod
 
     _register(monkeypatch, _CancellingDest())
     monkeypatch.setattr(
@@ -384,7 +386,7 @@ def test_drive_loop_survives_a_database_outage(db, monkeypatch):
         return None
 
     monkeypatch.setattr(runner.job_manager, "get_job_counts", flaky)
-    monkeypatch.setattr(runner_mod.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(loop_mod.asyncio, "sleep", no_sleep)
 
     runner._drive_execution("e", "p", None)
 
@@ -422,7 +424,7 @@ def test_drive_loop_stands_by_then_takes_over_a_dead_loop(db, monkeypatch):
     _add_jobs(db, 2)
     db.query(Execution).update({"driver_id": "dead-pod", "driver_heartbeat_at": _now()})
     db.commit()
-    monkeypatch.setattr(runner_mod, "DRIVER_RETRY_SECONDS", 0.01)
+    monkeypatch.setattr(loop_mod, "DRIVER_RETRY_SECONDS", 0.01)
     real_sleep = asyncio.sleep
     waits = {"n": 0}
 
@@ -435,7 +437,7 @@ def test_drive_loop_stands_by_then_takes_over_a_dead_loop(db, monkeypatch):
             db.commit()
         await real_sleep(0)
 
-    monkeypatch.setattr(runner_mod.asyncio, "sleep", sleep_and_age)
+    monkeypatch.setattr(loop_mod.asyncio, "sleep", sleep_and_age)
 
     _runner(db, _FakeDispatcher(db))._drive_execution("e", "p", None)
 
@@ -480,6 +482,26 @@ def test_release_drivers_on_host_frees_only_that_hosts_leases(db):
     db.expire_all()
     owners = {e.execution_id: e.driver_id for e in db.query(Execution).all()}
     assert owners == {"e": None, "e2": "pod-b:7:ef01"}
+
+
+def test_release_drivers_on_host_frees_planner_and_recovery_leases_too(db):
+    """A planner killed by a container restart left its lease to expire, so recovery
+    waited DRIVER_LEASE_SECONDS for nothing."""
+    for eid, owner in (("e", "plan:pod-a:12:ab"), ("e2", "recover:pod-a:3:cd"),
+                       ("e3", "plan:pod-b:1:ef"), ("e4", "pod-a2:9:aa")):
+        if eid != "e":
+            db.add(Execution(execution_id=eid, pipeline_name="p", state="pending"))
+        db.commit()
+        db.query(Execution).filter(Execution.execution_id == eid).update(
+            {"driver_id": owner, "driver_heartbeat_at": _now()}
+        )
+    db.commit()
+
+    assert ExecutionManager(db).release_drivers_on_host("pod-a") == 2
+
+    db.expire_all()
+    owners = {e.execution_id: e.driver_id for e in db.query(Execution).all()}
+    assert owners == {"e": None, "e2": None, "e3": "plan:pod-b:1:ef", "e4": "pod-a2:9:aa"}
 
 
 # ----- worker heartbeat ----------------------------------------------------------

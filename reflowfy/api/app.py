@@ -79,12 +79,12 @@ def create_app() -> FastAPI:
 
     # Health check endpoint
     @app.get("/health")
-    async def health_check():
+    async def health_check() -> Dict[str, Any]:
         return {"status": "healthy", "service": "reflowfy-api", "version": __version__}
 
     # List all pipelines
     @app.get("/pipelines")
-    async def list_pipelines():
+    async def list_pipelines() -> Dict[str, Any]:
         pipelines = pipeline_registry.list_all()
         return {
             "pipelines": [
@@ -195,7 +195,7 @@ def setup_pipeline_routes(app: FastAPI) -> None:
     logger.info("Routes configured", extra={"event": "routes_ready"})
 
 
-def main():
+def main() -> None:
     """Application entry point."""
     import uvicorn
 

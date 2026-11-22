@@ -24,7 +24,8 @@ from reflowfy.destinations.record import RecordDestination, RecordDestinationErr
 from reflowfy.execution.job_runner import ROUTE_MODE, run_job_records_async
 from reflowfy.store.models import Base
 from reflowfy.sources.static import StaticSource
-from reflowfy.worker.executor import JobStats, WorkerExecutor
+from reflowfy.worker.executor import WorkerExecutor
+from reflowfy.worker.job_stats import JobStats
 from test_worker_executor_paths import (  # type: ignore[import-not-found]
     _payload,
     capture_logs,

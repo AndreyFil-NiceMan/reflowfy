@@ -13,9 +13,11 @@ from sqlalchemy import (
     String,
     Text,
 )
-from sqlalchemy.orm import declarative_base, Mapped, mapped_column, relationship
+from reflowfy.store.states import DLQStatus, ScheduleEnabled
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-Base = declarative_base()
+class Base(DeclarativeBase):
+    """The declarative base every table derives from."""
 
 
 class Execution(Base):
@@ -63,6 +65,7 @@ class Execution(Base):
     # setting this), and what went wrong in them. Never changes `state`.
     hooks_fired_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     hook_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    hooks_finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     # The execution whose hook started this one (run_pipeline from a hook), if any.
     parent_execution_id: Mapped[Optional[str]] = mapped_column(
         String(255), nullable=True, index=True
@@ -93,6 +96,9 @@ class Execution(Base):
             "parent_execution_id": self.parent_execution_id,
             "hooks_fired_at": self.hooks_fired_at.isoformat() if self.hooks_fired_at else None,
             "hook_error": self.hook_error,
+            "hooks_finished_at": (
+                self.hooks_finished_at.isoformat() if self.hooks_finished_at else None
+            ),
         }
 
 
@@ -215,7 +221,7 @@ class DLQJob(Base):
     pipeline_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     scheduled_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     delay_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
-    status: Mapped[str] = mapped_column(String(50), default="pending", index=True)
+    status: Mapped[str] = mapped_column(String(50), default=DLQStatus.PENDING, index=True)
     retry_count: Mapped[int] = mapped_column(Integer, default=0)
     max_retries: Mapped[int] = mapped_column(Integer, default=5)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -290,7 +296,7 @@ class DLQJobArchive(Base):
         }
 
 
-class ProcessedRecord(Base):  # type: ignore[valid-type,misc]  # untyped Base
+class ProcessedRecord(Base):
     """Per-record ledger for worker-side deduplication.
 
     One row per record sent with enable_duplicate_jobs=False, keyed by the raw
@@ -336,7 +342,7 @@ class PipelineSchedule(Base):
     last_triggered_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     last_execution_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     # Stored as string to avoid SQLAlchemy Boolean portability quirks
-    enabled: Mapped[str] = mapped_column(String(10), default="true", nullable=False)
+    enabled: Mapped[str] = mapped_column(String(10), default=ScheduleEnabled.TRUE, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
@@ -361,7 +367,7 @@ class PipelineSchedule(Base):
                 self.last_triggered_at.isoformat() if self.last_triggered_at else None
             ),
             "last_execution_id": self.last_execution_id,
-            "enabled": self.enabled == "true",
+            "enabled": self.enabled == ScheduleEnabled.TRUE,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

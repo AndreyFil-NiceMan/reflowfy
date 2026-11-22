@@ -51,7 +51,11 @@ Pipelines: `dist_abstract`, `dist_abstract_es`, `dist_async`, `dist_per_record`,
    Without a reachable deployment the whole suite **skips**, saying why, so `pytest tests/` stays green.
 
 **Elasticsearch tests** (`needs_es`): `export E2E_DIST_ES=1` with an index `docs` holding documents
-`seq = 1..N` (N ≥ 20000) reachable from the workers at `E2E_DIST_ES_INTERNAL_URL`.
+`seq = 1..N` (N ≥ 20000) reachable from the workers at `E2E_DIST_ES_INTERNAL_URL`
+(`python scripts/seed_es_docs.py --url <es as you see it>` creates it).
+
+**Nightly.** `.github/workflows/e2e-nightly.yml` runs this suite (ES and chaos included) on the local
+Docker stack every night and on `workflow_dispatch`.
 
 **Chaos tests** (`chaos`) kill pods, so run them on their own, not beside other tests. They need to be told how:
 ```bash

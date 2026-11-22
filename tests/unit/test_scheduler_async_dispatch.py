@@ -1,8 +1,8 @@
 """Unit tests: the pipeline scheduler dispatches runs asynchronously.
 
-A scheduled trigger must create the execution record and advance the
-schedule timer synchronously, then run the actual jobs on a background
-thread — so a slow/long-running execution never blocks the poll loop
+A scheduled trigger stages the execution record and advances the schedule
+timer in the poll's transaction; once that commits, the actual jobs run on a
+background thread — so a slow/long-running execution never blocks the poll loop
 (and therefore never stalls the cron cadence). Overlap is allowed: a
 new tick fires even while a previous run of the same pipeline is still
 in flight.
@@ -12,7 +12,9 @@ import threading
 import time
 from datetime import datetime
 
+import reflowfy.reflow_manager.pipeline_scheduler as ps_mod
 from reflowfy.reflow_manager.pipeline_scheduler import PipelineScheduler
+from reflowfy.reflow_manager.start import start_in_background
 from reflowfy import AbstractPipeline, RuntimeParams, pipeline_registry
 from typing import Any
 import pytest
@@ -49,6 +51,9 @@ class _FakeDB:
 
     def commit(self):
         self.committed = True
+
+    def rollback(self):
+        pass
 
     def close(self):
         self.closed = True
@@ -107,19 +112,32 @@ class _FakeScheduleDB:
         pass
 
 
-def test_trigger_does_not_block_on_a_slow_run():
-    rec = _Recorder(threading.Event())
+@pytest.fixture
+def rec(monkeypatch) -> _Recorder:
+    r = _Recorder(threading.Event())
+    monkeypatch.setattr(
+        ps_mod, "stage_execution", lambda db, eid, name, params: r.created.append(eid)
+    )
+    return r
+
+
+def _trigger_and_start(sched: PipelineScheduler, schedule: _FakeSchedule) -> None:
+    run = sched._trigger_pipeline(_FakeScheduleDB(), schedule, datetime.now())
+    assert run is not None
+    start_in_background(sched.pipeline_runner_factory, *run)  # what the poll does after commit
+
+
+def test_trigger_does_not_block_on_a_slow_run(rec):
     sched = PipelineScheduler(pipeline_runner_factory=_factory(rec))
     schedule = _FakeSchedule()
-    db = _FakeScheduleDB()
 
     start = time.time()
-    sched._trigger_pipeline(db, schedule, datetime.now())
+    _trigger_and_start(sched, schedule)
     elapsed = time.time() - start
 
     # Returned promptly even though the run is still blocked on the gate.
-    assert elapsed < 1.0, f"_trigger_pipeline blocked for {elapsed:.2f}s"
-    # Execution created synchronously; timer advanced.
+    assert elapsed < 1.0, f"trigger and start blocked for {elapsed:.2f}s"
+    # Execution staged synchronously; timer advanced.
     assert rec.created == [schedule.last_execution_id]
     assert schedule.last_execution_id is not None
     assert schedule.next_run_at is not None
@@ -135,16 +153,14 @@ def test_trigger_does_not_block_on_a_slow_run():
     assert rec.ran == [schedule.last_execution_id]
 
 
-def test_overlapping_ticks_both_run():
-    rec = _Recorder(threading.Event())
+def test_overlapping_ticks_both_run(rec):
     sched = PipelineScheduler(pipeline_runner_factory=_factory(rec))
     s1 = _FakeSchedule()
     s2 = _FakeSchedule()
-    db = _FakeScheduleDB()
 
     # Fire a second tick while the first is still blocked — overlap allowed.
-    sched._trigger_pipeline(db, s1, datetime.now())
-    sched._trigger_pipeline(db, s2, datetime.now())
+    _trigger_and_start(sched, s1)
+    _trigger_and_start(sched, s2)
 
     assert len(rec.created) == 2
     assert s1.last_execution_id is not None

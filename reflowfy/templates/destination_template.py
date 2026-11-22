@@ -8,12 +8,12 @@ pipeline. No decorator needed. (To send each record to its own destination, use
 
 from typing import Any
 import os
-from reflowfy import kafka_destination, get_logger
+from reflowfy import BaseDestination, get_logger, kafka_destination
 
 logger = get_logger(__name__)
 
 
-def example_kafka(**overrides: Any):
+def example_kafka(**overrides: Any) -> BaseDestination:
     """
     Example Kafka destination configuration.
 

@@ -1,7 +1,7 @@
 """Local job dispatcher for ReflowManager."""
 
 import logging
-from typing import Dict, Any, List, Optional
+from typing import TYPE_CHECKING, Dict, Any, List, Optional
 
 
 from reflowfy.destinations.pool import close_loop_pool, open_loop_pool
@@ -12,6 +12,9 @@ from reflowfy.reflow_manager.dispatcher import (
     ShouldStop,
 )
 from reflowfy.reflow_manager.rate_limiter import RateLimiter
+
+if TYPE_CHECKING:
+    from reflowfy.worker.executor import WorkerExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +38,7 @@ class LocalDispatcher(BaseDispatcher):
     def __init__(self, rate_limiter: RateLimiter, db_session: Any = None):
         super().__init__(rate_limiter)
 
-    def _create_executor(self):
+    def _create_executor(self) -> "WorkerExecutor":
         """Create a fresh WorkerExecutor instance."""
         from reflowfy.worker.executor import WorkerExecutor
 

@@ -77,7 +77,7 @@ class KafkaDispatcher(BaseDispatcher):
 
         # Handle comma-separated string
         if isinstance(kafka_bootstrap_servers, str) and "," in kafka_bootstrap_servers:
-            self.kafka_bootstrap_servers = [
+            self.kafka_bootstrap_servers: Union[str, List[str]] = [
                 s.strip() for s in kafka_bootstrap_servers.split(",") if s.strip()
             ]
         else:

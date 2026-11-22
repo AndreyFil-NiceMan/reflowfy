@@ -11,7 +11,6 @@ import reflowfy
 from reflowfy.cli.utils import console, get_helm_chart_path
 from reflowfy.cli.project import RELEASE, image_repository, require_registry
 
-
 _SECRET_KEY_MARKERS = ("password", "secret", "token")
 
 
@@ -32,38 +31,151 @@ def _masked(cmd: List[str]) -> List[str]:
     return shown
 
 
-def register(app: typer.Typer):
+def register(app: typer.Typer) -> None:
     """Register the deploy command."""
 
     @app.command()
     def deploy(
-        registry: Optional[str] = typer.Option(None, envvar="REGISTRY", help="Registry where images are stored (or set REGISTRY in .env)"),
-        project: Optional[str] = typer.Option(None, envvar="PROJECT", help="Project/Namespace for image tags (or set PROJECT in .env)"),
-        kafka: Optional[str] = typer.Option(None, envvar="KAFKA_BOOTSTRAP_SERVERS", help="External Kafka Broker (or set KAFKA_BOOTSTRAP_SERVERS in .env)"),
-        kafka_sasl: bool = typer.Option(True, "--kafka-sasl/--no-kafka-sasl", envvar="KAFKA_SASL_ENABLED", help="Enable Kafka SASL authentication"),
-        kafka_username: Optional[str] = typer.Option(None, "--kafka-username", envvar="KAFKA_SASL_USERNAME", help="Kafka SASL username (or set KAFKA_SASL_USERNAME in .env)"),
-        kafka_password: Optional[str] = typer.Option(None, "--kafka-password", envvar="KAFKA_SASL_PASSWORD", help="Kafka SASL password (or set KAFKA_SASL_PASSWORD in .env)"),
-        kafka_existing_secret: Optional[str] = typer.Option(None, "--kafka-existing-secret", envvar="KAFKA_SASL_EXISTING_SECRET", help="Name of an existing K8s secret holding Kafka username/password (skips the chart-generated secret)"),
-        busybox_image: str = typer.Option("busybox:1.36", envvar="BUSYBOX_IMAGE", help="Busybox image for init containers"),
-        namespace: str = typer.Option(None, envvar="NAMESPACE", help="Kubernetes namespace (or set NAMESPACE in .env)"),
-        image_pull_secret: Optional[str] = typer.Option(None, envvar="IMAGE_PULL_SECRET", help="Name of imagePullSecret for private registry"),
-        deploy_postgres: bool = typer.Option(True, envvar="DEPLOY_POSTGRES", help="Deploy PostgreSQL (set to False to use external DB)"),
-        postgres_image: Optional[str] = typer.Option(None, envvar="POSTGRES_IMAGE", help="Custom PostgreSQL image (e.g. myrepo/postgres:14)"),
-        pg_route: bool = typer.Option(False, "--pg-route/--no-pg-route", envvar="POSTGRES_ROUTE_ENABLED", help="Expose PostgreSQL via an OpenShift passthrough Route for external clients like desktop pgAdmin; requires --postgres-password (or set POSTGRES_ROUTE_ENABLED in .env)"),
-        postgres_password: Optional[str] = typer.Option(None, "--postgres-password", envvar="POSTGRES_PASSWORD", help="PostgreSQL password for the reflowfy user and superuser; required with --pg-route since the chart default is public (or set POSTGRES_PASSWORD in .env)"),
-        keda: bool = typer.Option(False, "--keda/--no-keda", envvar="KEDA_ENABLED", help="Enable KEDA autoscaling for workers (or set KEDA_ENABLED in .env)"),
-        keda_min: int = typer.Option(0, "--keda-min", envvar="KEDA_MIN_REPLICAS", help="KEDA minimum replicas (or set KEDA_MIN_REPLICAS in .env)"),
-        keda_max: int = typer.Option(100, "--keda-max", envvar="KEDA_MAX_REPLICAS", help="KEDA maximum replicas (or set KEDA_MAX_REPLICAS in .env)"),
-        keda_lag_threshold: int = typer.Option(10, "--keda-lag-threshold", envvar="KEDA_LAG_THRESHOLD", help="Kafka consumer lag per replica that triggers scale-up (or set KEDA_LAG_THRESHOLD in .env)"),
-        kafka_topic: Optional[str] = typer.Option(None, "--kafka-topic", envvar="KAFKA_TOPIC", help="Kafka topic name (or set KAFKA_TOPIC in .env)"),
-        kafka_group_id: Optional[str] = typer.Option(None, "--kafka-group-id", envvar="KAFKA_GROUP_ID", help="Kafka consumer group ID for workers (or set KAFKA_GROUP_ID in .env)"),
-        workers: int = typer.Option(1, "--workers", envvar="WORKERS", help="Worker replicas when KEDA disabled (or set WORKERS in .env)"),
-        tag: Optional[str] = typer.Option(None, "--tag", "-t", envvar="IMAGE_TAG", help="Specific tag for the Reflowfy images (overrides default version)"),
-        log_destination: Optional[str] = typer.Option(None, "--log-destination", envvar="LOG_DESTINATION", help="Where logs go: stdout|elastic|both (or set LOG_DESTINATION in .env)"),
-        elastic_log_url: Optional[str] = typer.Option(None, "--elastic-log-url", envvar="ELASTIC_LOG_URL", help="Elasticsearch URL for log shipping (or set ELASTIC_LOG_URL in .env)"),
-        elastic_log_username: Optional[str] = typer.Option(None, "--elastic-log-username", envvar="ELASTIC_LOG_USERNAME", help="Elasticsearch username (or set ELASTIC_LOG_USERNAME in .env)"),
-        elastic_log_password: Optional[str] = typer.Option(None, "--elastic-log-password", envvar="ELASTIC_LOG_PASSWORD", help="Elasticsearch password (or set ELASTIC_LOG_PASSWORD in .env)"),
-    ):
+        registry: Optional[str] = typer.Option(
+            None,
+            envvar="REGISTRY",
+            help="Registry where images are stored (or set REGISTRY in .env)",
+        ),
+        project: Optional[str] = typer.Option(
+            None, envvar="PROJECT", help="Project/Namespace for image tags (or set PROJECT in .env)"
+        ),
+        kafka: Optional[str] = typer.Option(
+            None,
+            envvar="KAFKA_BOOTSTRAP_SERVERS",
+            help="External Kafka Broker (or set KAFKA_BOOTSTRAP_SERVERS in .env)",
+        ),
+        kafka_sasl: bool = typer.Option(
+            True,
+            "--kafka-sasl/--no-kafka-sasl",
+            envvar="KAFKA_SASL_ENABLED",
+            help="Enable Kafka SASL authentication",
+        ),
+        kafka_username: Optional[str] = typer.Option(
+            None,
+            "--kafka-username",
+            envvar="KAFKA_SASL_USERNAME",
+            help="Kafka SASL username (or set KAFKA_SASL_USERNAME in .env)",
+        ),
+        kafka_password: Optional[str] = typer.Option(
+            None,
+            "--kafka-password",
+            envvar="KAFKA_SASL_PASSWORD",
+            help="Kafka SASL password (or set KAFKA_SASL_PASSWORD in .env)",
+        ),
+        kafka_existing_secret: Optional[str] = typer.Option(
+            None,
+            "--kafka-existing-secret",
+            envvar="KAFKA_SASL_EXISTING_SECRET",
+            help="Name of an existing K8s secret holding Kafka username/password (skips the chart-generated secret)",
+        ),
+        busybox_image: str = typer.Option(
+            "busybox:1.36", envvar="BUSYBOX_IMAGE", help="Busybox image for init containers"
+        ),
+        namespace: str = typer.Option(
+            None, envvar="NAMESPACE", help="Kubernetes namespace (or set NAMESPACE in .env)"
+        ),
+        image_pull_secret: Optional[str] = typer.Option(
+            None, envvar="IMAGE_PULL_SECRET", help="Name of imagePullSecret for private registry"
+        ),
+        deploy_postgres: bool = typer.Option(
+            True,
+            envvar="DEPLOY_POSTGRES",
+            help="Deploy PostgreSQL (set to False to use external DB)",
+        ),
+        postgres_image: Optional[str] = typer.Option(
+            None, envvar="POSTGRES_IMAGE", help="Custom PostgreSQL image (e.g. myrepo/postgres:14)"
+        ),
+        pg_route: bool = typer.Option(
+            False,
+            "--pg-route/--no-pg-route",
+            envvar="POSTGRES_ROUTE_ENABLED",
+            help="Expose PostgreSQL via an OpenShift passthrough Route for external clients like desktop pgAdmin; requires --postgres-password (or set POSTGRES_ROUTE_ENABLED in .env)",
+        ),
+        postgres_password: Optional[str] = typer.Option(
+            None,
+            "--postgres-password",
+            envvar="POSTGRES_PASSWORD",
+            help="PostgreSQL password for the reflowfy user and superuser; required with --pg-route since the chart default is public (or set POSTGRES_PASSWORD in .env)",
+        ),
+        keda: bool = typer.Option(
+            False,
+            "--keda/--no-keda",
+            envvar="KEDA_ENABLED",
+            help="Enable KEDA autoscaling for workers (or set KEDA_ENABLED in .env)",
+        ),
+        keda_min: int = typer.Option(
+            0,
+            "--keda-min",
+            envvar="KEDA_MIN_REPLICAS",
+            help="KEDA minimum replicas (or set KEDA_MIN_REPLICAS in .env)",
+        ),
+        keda_max: int = typer.Option(
+            100,
+            "--keda-max",
+            envvar="KEDA_MAX_REPLICAS",
+            help="KEDA maximum replicas (or set KEDA_MAX_REPLICAS in .env)",
+        ),
+        keda_lag_threshold: int = typer.Option(
+            10,
+            "--keda-lag-threshold",
+            envvar="KEDA_LAG_THRESHOLD",
+            help="Kafka consumer lag per replica that triggers scale-up (or set KEDA_LAG_THRESHOLD in .env)",
+        ),
+        kafka_topic: Optional[str] = typer.Option(
+            None,
+            "--kafka-topic",
+            envvar="KAFKA_TOPIC",
+            help="Kafka topic name (or set KAFKA_TOPIC in .env)",
+        ),
+        kafka_group_id: Optional[str] = typer.Option(
+            None,
+            "--kafka-group-id",
+            envvar="KAFKA_GROUP_ID",
+            help="Kafka consumer group ID for workers (or set KAFKA_GROUP_ID in .env)",
+        ),
+        workers: int = typer.Option(
+            1,
+            "--workers",
+            envvar="WORKERS",
+            help="Worker replicas when KEDA disabled (or set WORKERS in .env)",
+        ),
+        tag: Optional[str] = typer.Option(
+            None,
+            "--tag",
+            "-t",
+            envvar="IMAGE_TAG",
+            help="Specific tag for the Reflowfy images (overrides default version)",
+        ),
+        log_destination: Optional[str] = typer.Option(
+            None,
+            "--log-destination",
+            envvar="LOG_DESTINATION",
+            help="Where logs go: stdout|elastic|both (or set LOG_DESTINATION in .env)",
+        ),
+        elastic_log_url: Optional[str] = typer.Option(
+            None,
+            "--elastic-log-url",
+            envvar="ELASTIC_LOG_URL",
+            help="Elasticsearch URL for log shipping (or set ELASTIC_LOG_URL in .env)",
+        ),
+        elastic_log_username: Optional[str] = typer.Option(
+            None,
+            "--elastic-log-username",
+            envvar="ELASTIC_LOG_USERNAME",
+            help="Elasticsearch username (or set ELASTIC_LOG_USERNAME in .env)",
+        ),
+        elastic_log_password: Optional[str] = typer.Option(
+            None,
+            "--elastic-log-password",
+            envvar="ELASTIC_LOG_PASSWORD",
+            help="Elasticsearch password (or set ELASTIC_LOG_PASSWORD in .env)",
+        ),
+    ) -> None:
         """
         Deploy Reflowfy to Kubernetes/OpenShift using Helm.
 
@@ -79,7 +191,9 @@ def register(app: typer.Typer):
         registry = require_registry(registry)
 
         if not kafka:
-            console.print("❌ Kafka is required. Set --kafka or KAFKA_BOOTSTRAP_SERVERS in .env", style="red")
+            console.print(
+                "❌ Kafka is required. Set --kafka or KAFKA_BOOTSTRAP_SERVERS in .env", style="red"
+            )
             raise typer.Exit(code=1)
 
         # Kafka SASL: when enabled and not using an existing secret, the chart needs a password
@@ -94,7 +208,11 @@ def register(app: typer.Typer):
 
         image_tag = tag or getattr(reflowfy, "__version__", "latest")
 
-        console.print(Panel(f"🚀 Deploying Reflowfy (tag: {image_tag}) to namespace: [bold cyan]{namespace}[/bold cyan]"))
+        console.print(
+            Panel(
+                f"🚀 Deploying Reflowfy (tag: {image_tag}) to namespace: [bold cyan]{namespace}[/bold cyan]"
+            )
+        )
 
         try:
             chart_path = get_helm_chart_path()
@@ -105,27 +223,49 @@ def register(app: typer.Typer):
 
         # Construct Helm command
         cmd = [
-            "helm", "upgrade", "--install", RELEASE, str(chart_path),
-            "--namespace", namespace,
-            "--set", f"api.image.repository={image_repository(registry, project, 'api')}",
-            "--set", f"reflowManager.image.repository={image_repository(registry, project, 'reflow-manager')}",
-            "--set", f"worker.image.repository={image_repository(registry, project, 'worker')}",
-            "--set", f"api.image.tag={image_tag}",
-            "--set", f"reflowManager.image.tag={image_tag}",
-            "--set", f"worker.image.tag={image_tag}",
-            "--set", "api.image.pullPolicy=Always",
-            "--set", "reflowManager.image.pullPolicy=Always",
-            "--set", "worker.image.pullPolicy=Always",
+            "helm",
+            "upgrade",
+            "--install",
+            RELEASE,
+            str(chart_path),
+            "--namespace",
+            namespace,
+            "--set",
+            f"api.image.repository={image_repository(registry, project, 'api')}",
+            "--set",
+            f"reflowManager.image.repository={image_repository(registry, project, 'reflow-manager')}",
+            "--set",
+            f"worker.image.repository={image_repository(registry, project, 'worker')}",
+            "--set",
+            f"api.image.tag={image_tag}",
+            "--set",
+            f"reflowManager.image.tag={image_tag}",
+            "--set",
+            f"worker.image.tag={image_tag}",
+            "--set",
+            "api.image.pullPolicy=Always",
+            "--set",
+            "reflowManager.image.pullPolicy=Always",
+            "--set",
+            "worker.image.pullPolicy=Always",
             # Fresh timestamp on every deploy mutates the pod template so K8s rolls
             # the deployments even when the image tag is unchanged (pulls latest image).
-            "--set", f"deployTimestamp={datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
-            "--set", "kafka.external.bootstrapServers=" + kafka.replace(",", "\\,"),
-            "--set", f"kafka.topic={kafka_topic}",
-            "--set", f"kafka.groupId={kafka_group_id}",
-            "--set", f"kafka.sasl.enabled={'true' if kafka_sasl else 'false'}",
-            "--set", f"busybox.image={busybox_image}",
-            "--set", "api.service.type=ClusterIP",
-            "--set", "reflowManager.service.type=ClusterIP",
+            "--set",
+            f"deployTimestamp={datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
+            "--set",
+            "kafka.external.bootstrapServers=" + kafka.replace(",", "\\,"),
+            "--set",
+            f"kafka.topic={kafka_topic}",
+            "--set",
+            f"kafka.groupId={kafka_group_id}",
+            "--set",
+            f"kafka.sasl.enabled={'true' if kafka_sasl else 'false'}",
+            "--set",
+            f"busybox.image={busybox_image}",
+            "--set",
+            "api.service.type=ClusterIP",
+            "--set",
+            "reflowManager.service.type=ClusterIP",
         ]
 
         # Image pull secret
@@ -149,7 +289,10 @@ def register(app: typer.Typer):
                 if ":" in postgres_image:
                     repo, tag = postgres_image.rsplit(":", 1)
                 else:
-                    repo, tag = postgres_image, "latest" # or None/empty if we want to rely on chart default, but chart default is usually set in values.yaml
+                    repo, tag = (
+                        postgres_image,
+                        "latest",
+                    )  # or None/empty if we want to rely on chart default, but chart default is usually set in values.yaml
 
                 cmd.extend(["--set", f"postgresql.image.repository={repo}"])
                 cmd.extend(["--set", f"postgresql.image.tag={tag}"])
@@ -193,37 +336,60 @@ def register(app: typer.Typer):
         else:
             db_url = os.getenv("DATABASE_URL")
             if not db_url:
-                 console.print("❌ DATABASE_URL is required when DEPLOY_POSTGRES is false.", style="red")
-                 raise typer.Exit(code=1)
+                console.print(
+                    "❌ DATABASE_URL is required when DEPLOY_POSTGRES is false.", style="red"
+                )
+                raise typer.Exit(code=1)
 
             try:
                 url = urlparse(db_url)
-                console.print(f"🔗 Configuring external PostgreSQL: {url.hostname}:{url.port or 5432}", style="blue")
-                cmd.extend([
-                    "--set", "postgresql.enabled=false",
-                    "--set", f"postgresql.external.host={url.hostname}",
-                    "--set", f"postgresql.external.port={url.port or 5432}",
-                    "--set", f"postgresql.external.database={url.path.lstrip('/')}",
-                    "--set", f"postgresql.external.username={url.username}",
-                    "--set", f"postgresql.external.password={url.password or ''}",
-                ])
+                console.print(
+                    f"🔗 Configuring external PostgreSQL: {url.hostname}:{url.port or 5432}",
+                    style="blue",
+                )
+                cmd.extend(
+                    [
+                        "--set",
+                        "postgresql.enabled=false",
+                        "--set",
+                        f"postgresql.external.host={url.hostname}",
+                        "--set",
+                        f"postgresql.external.port={url.port or 5432}",
+                        "--set",
+                        f"postgresql.external.database={url.path.lstrip('/')}",
+                        "--set",
+                        f"postgresql.external.username={url.username}",
+                        "--set",
+                        f"postgresql.external.password={url.password or ''}",
+                    ]
+                )
             except Exception as e:
                 console.print(f"❌ Failed to parse DATABASE_URL: {e}", style="red")
                 raise typer.Exit(code=1)
 
         # KEDA configuration
         if keda:
-            cmd.extend([
-                "--set", "worker.keda.enabled=true",
-                "--set", f"worker.keda.minReplicaCount={keda_min}",
-                "--set", f"worker.keda.maxReplicaCount={keda_max}",
-                "--set", f"worker.keda.lagThreshold={keda_lag_threshold}",
-            ])
+            cmd.extend(
+                [
+                    "--set",
+                    "worker.keda.enabled=true",
+                    "--set",
+                    f"worker.keda.minReplicaCount={keda_min}",
+                    "--set",
+                    f"worker.keda.maxReplicaCount={keda_max}",
+                    "--set",
+                    f"worker.keda.lagThreshold={keda_lag_threshold}",
+                ]
+            )
         else:
-            cmd.extend([
-                "--set", "worker.keda.enabled=false",
-                "--set", f"worker.replicaCount={workers}",
-            ])
+            cmd.extend(
+                [
+                    "--set",
+                    "worker.keda.enabled=false",
+                    "--set",
+                    f"worker.replicaCount={workers}",
+                ]
+            )
 
         # Observability — forward log-shipping config from .env so prod ships to
         # Elasticsearch. Without these the chart falls back to values.yaml defaults.
@@ -273,7 +439,9 @@ def register(app: typer.Typer):
         except FileNotFoundError:
             console.print("⚠️ 'oc' command not found. Skipping route creation.", style="yellow")
 
-        console.print(Panel(f"""
+        console.print(
+            Panel(
+                f"""
 🎉 Deployment Complete!
 
 📋 Check status:
@@ -282,4 +450,7 @@ def register(app: typer.Typer):
 
 📊 KEDA status (if enabled):
    oc get scaledobject -n {namespace}
-""", style="bold green"))
+""",
+                style="bold green",
+            )
+        )

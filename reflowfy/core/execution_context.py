@@ -42,7 +42,7 @@ class ExecutionContext:
     retry_count: int = 0
     is_retry: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Initialize batch_id if not provided."""
         if self.batch_id is None:
             self.batch_id = str(uuid.uuid4())
@@ -150,7 +150,7 @@ class ParameterResolver:
         >>> # Result: {"range": {"timestamp": {"gte": "2024-01-01"}}}
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.env = Environment(loader=BaseLoader())
 
     def resolve(self, obj: Any, params: Dict[str, Any]) -> Any:

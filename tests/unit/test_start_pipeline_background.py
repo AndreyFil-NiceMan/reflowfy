@@ -1,4 +1,5 @@
-"""PipelineRunner.start_pipeline: create the execution now, drive it on its own thread.
+"""start.stage_execution + start_in_background: the execution is written in the
+caller's transaction, and driven on a thread of its own once that commits.
 
 The DLQ used to drive each run to the end inside its poll, holding the poll's
 ``FOR UPDATE`` row locks: one long run stalled every other due DLQ job.
@@ -20,6 +21,7 @@ from reflowfy.reflow_manager.execution import ExecutionManager
 from reflowfy.reflow_manager.job_manager import JobManager
 from reflowfy.store.models import Base, DLQJob, Execution
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner
+from reflowfy.reflow_manager.start import stage_execution, start_in_background
 
 PIPE = "start_pipeline_bg_test"
 
@@ -105,9 +107,15 @@ def _execution(sessions: sessionmaker[Session], execution_id: str) -> Execution:
         return row
 
 
+def _start(sessions: sessionmaker[Session], pipeline: str, params: Dict[str, Any], eid: str) -> None:
+    with sessions() as db:
+        stage_execution(db, eid, pipeline, params)
+        db.commit()
+    start_in_background(_runner_factory(sessions), eid, pipeline, params)
+
+
 def test_returns_before_the_run_finishes(sessions, gate):
-    make = _runner_factory(sessions)
-    make().start_pipeline(PIPE, {"day": "2026-01-01"}, "e1", background_runner=make)
+    _start(sessions, PIPE, {"day": "2026-01-01"}, "e1")
 
     assert gate.started.wait(5)
     assert _execution(sessions, "e1").state == "pending"  # created, still running
@@ -117,28 +125,33 @@ def test_returns_before_the_run_finishes(sessions, gate):
     assert gate.ran == [{"execution_id": "e1", "params": {"day": "2026-01-01"}}]
 
 
+def test_staging_does_not_commit(sessions):
+    with sessions() as db:
+        stage_execution(db, "e0", PIPE, {"day": "d"})
+        db.rollback()
+    with sessions() as db:
+        assert db.query(Execution).count() == 0  # a rollback drops it: nothing was committed
+
+
 def test_an_unregistered_pipeline_raises_and_creates_nothing(sessions, gate):
-    make = _runner_factory(sessions)
     with pytest.raises(ValueError, match="not found in registry"):
-        make().start_pipeline("nope", {}, "e2", background_runner=make)
+        _start(sessions, "nope", {}, "e2")
     with sessions() as db:
         assert db.query(Execution).count() == 0
     assert not gate.started.is_set()
 
 
 def test_invalid_params_raise_and_create_nothing(sessions, gate):
-    make = _runner_factory(sessions)
     with pytest.raises(ValueError, match="Invalid parameters"):
-        make().start_pipeline(PIPE, {}, "e3", background_runner=make)
+        _start(sessions, PIPE, {}, "e3")
     with sessions() as db:
         assert db.query(Execution).count() == 0
 
 
 def test_a_failure_in_the_background_marks_the_execution_failed(sessions, gate):
-    make = _runner_factory(sessions)
     gate.error = RuntimeError("source unreachable")
     gate.release.set()
-    make().start_pipeline(PIPE, {"day": "d"}, "e4", background_runner=make)
+    _start(sessions, PIPE, {"day": "d"}, "e4")
 
     assert gate.finished.wait(5)
     for _ in range(100):  # the state is written just after run_pipeline_jobs raises

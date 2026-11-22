@@ -90,6 +90,12 @@ def test_update_job_state_to_failed_keeps_the_error(db):
     assert job.processed_records == 0  # not touched when not given
 
 
+def test_update_job_state_to_deduplicated_sets_the_completion_time(db):
+    _job(db, "j")
+    job = JobManager(db).update_job_state("j", "deduplicated")
+    assert job.completed_at is not None  # finished, like completed and failed
+
+
 def test_update_job_state_to_a_non_terminal_state_sets_no_completion_time(db):
     _job(db, "j")
     job = JobManager(db).update_job_state("j", "running")

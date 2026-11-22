@@ -134,6 +134,12 @@ warn_unused_configs = true
 # (disable_error_code, not warn_redundant_casts — `strict = true` overrides the latter.)
 disable_error_code = ["redundant-cast"]
 
+# aiokafka and nest_asyncio ship no type information (pyright suppresses the same
+# per file, see CLAUDE.md); everything else is checked.
+[[tool.mypy.overrides]]
+module = ["aiokafka", "aiokafka.*", "nest_asyncio"]
+ignore_missing_imports = true
+
 [tool.pyright]
 include = ["reflowfy", "reflowfy_pytest", "tests/e2e/test_pipelines", "pipelines"]
 exclude = [

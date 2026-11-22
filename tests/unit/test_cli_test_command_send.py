@@ -8,7 +8,8 @@ not one send for the whole batch merged together.
 
 from unittest.mock import AsyncMock
 
-from reflowfy.cli.commands.test import TestOptions, run_single
+from reflowfy.cli.commands.preview_report import TestOptions
+from reflowfy.cli.commands.test import run_single
 from reflowfy.core.abstract_pipeline import AbstractPipeline
 from reflowfy.sources.mock import MockSource
 

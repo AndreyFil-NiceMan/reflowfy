@@ -10,7 +10,7 @@ This is a slim coordinator that composes the following modules:
 """
 
 import logging
-from typing import Any, Dict, List, NamedTuple, Optional
+from typing import Any, Dict, List, NamedTuple, Optional, Union
 from sqlalchemy.orm import Session
 
 from reflowfy.store.models import Execution
@@ -20,7 +20,7 @@ from reflowfy.reflow_manager.rate_limiter import RateLimiter
 from reflowfy.reflow_manager.dispatcher import KafkaDispatcher
 from reflowfy.reflow_manager.local_dispatcher import LocalDispatcher
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner
-from reflowfy.store.states import JobState, jobs_dispatched
+from reflowfy.store.states import ExecutionState, JobState, jobs_dispatched
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,9 @@ class ReflowManager:
                 "ReflowManager initialized in LOCAL mode (in-process dispatch)",
                 extra={"event": "manager_init"},
             )
-            self.dispatcher = LocalDispatcher(self.rate_limiter, db_session)
+            self.dispatcher: Union[LocalDispatcher, KafkaDispatcher] = LocalDispatcher(
+                self.rate_limiter, db_session
+            )
         else:
             logger.debug(
                 "ReflowManager initialized in DISTRIBUTED mode (Kafka: %s)",
@@ -146,7 +148,7 @@ class ReflowManager:
             return None
         cancelled = self.job_manager.cancel_unstarted_jobs(execution_id)
         # After the jobs: the lifecycle hooks' summary counts them as cancelled.
-        self.execution_manager.notify_terminal(execution_id, "cancelled")
+        self.execution_manager.notify_terminal(execution_id, ExecutionState.CANCELLED)
         return CancelResult(execution=execution, cancelled_jobs=cancelled)
 
     # ===== Pipeline Execution (delegated) =====
@@ -183,7 +185,7 @@ class ReflowManager:
         # Find current checkpoint (first non-completed batch)
         current_checkpoint = None
         for cp in checkpoints:
-            if cp["state"] != "completed":
+            if cp["state"] != JobState.COMPLETED:
                 current_checkpoint = cp["batch_number"]
                 break
 
@@ -197,13 +199,13 @@ class ReflowManager:
             "state": execution.state,
             "total_jobs": execution.total_jobs,
             "jobs_dispatched": jobs_dispatched(job_counts),
-            "jobs_pending": job_counts.get("pending", 0),
+            "jobs_pending": job_counts.get(JobState.PENDING, 0),
             # Pending, waiting for a job_retry backoff to pass (included in jobs_pending).
             "jobs_retry_scheduled": self.job_manager.count_scheduled_retries(execution_id),
-            "jobs_running": job_counts.get("running", 0),
-            "jobs_cancelled": job_counts.get("cancelled", 0),
-            "jobs_completed": job_counts.get("completed", 0),
-            "jobs_failed": job_counts.get("failed", 0),
+            "jobs_running": job_counts.get(JobState.RUNNING, 0),
+            "jobs_cancelled": job_counts.get(JobState.CANCELLED, 0),
+            "jobs_completed": job_counts.get(JobState.COMPLETED, 0),
+            "jobs_failed": job_counts.get(JobState.FAILED, 0),
             "deduplicated_jobs": execution.deduplicated_jobs or 0,
             "current_checkpoint": current_checkpoint,
             "created_at": execution.created_at.isoformat() if execution.created_at else None,
@@ -218,6 +220,11 @@ class ReflowManager:
             "hooks": {
                 "fired_at": (
                     execution.hooks_fired_at.isoformat() if execution.hooks_fired_at else None
+                ),
+                "finished_at": (
+                    execution.hooks_finished_at.isoformat()
+                    if execution.hooks_finished_at
+                    else None
                 ),
                 "error": execution.hook_error,
             },

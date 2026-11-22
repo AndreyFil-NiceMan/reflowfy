@@ -44,9 +44,14 @@ class ExecutionManager:
         runtime_params: Optional[Dict[str, Any]] = None,
         rate_limit: Optional[float] = None,
         parent_execution_id: Optional[str] = None,
+        commit: bool = True,
     ) -> Execution:
         """
         Create new execution record.
+
+        With ``commit=False`` the row is only flushed into the caller's transaction, so
+        it is saved together with whatever else that transaction writes (see
+        ``start.stage_execution``).
 
         Args:
             execution_id: Unique execution identifier
@@ -54,6 +59,7 @@ class ExecutionManager:
             runtime_params: Runtime parameters for the pipeline
             rate_limit: The request's rate_limit override, if any (jobs/min)
             parent_execution_id: The execution whose hook started this one, if any
+            commit: Commit now (default) or leave it to the caller
 
         Returns:
             Created Execution object
@@ -69,6 +75,9 @@ class ExecutionManager:
         )
 
         self.db.add(execution)
+        if not commit:
+            self.db.flush()
+            return execution
         self.db.commit()
         self.db.refresh(execution)
 
@@ -240,10 +249,12 @@ class ExecutionManager:
         self.db.commit()
         return claimed == 1
 
-    def set_hook_error(self, execution_id: str, error: Optional[str]) -> None:
-        """Record what failed in a hook (never touches ``state``)."""
+    def finish_hooks(self, execution_id: str, error: Optional[str]) -> None:
+        """Record that the claimed hooks returned, with what failed in them, if
+        anything (never touches ``state``)."""
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         self.db.query(Execution).filter(Execution.execution_id == execution_id).update(
-            {"hook_error": error}, synchronize_session=False
+            {"hook_error": error, "hooks_finished_at": now}, synchronize_session=False
         )
         self.db.commit()
 
@@ -308,6 +319,7 @@ class ExecutionManager:
                     # Its next end fires the hooks again (they reported the run before
                     # the retry).
                     "hooks_fired_at": None,
+                    "hooks_finished_at": None,
                     "hook_error": None,
                     "updated_at": now,
                 },
@@ -363,15 +375,24 @@ class ExecutionManager:
         return alive == 1
 
     def release_drivers_on_host(self, hostname: str) -> int:
-        """Free every lease whose driver ran on ``hostname`` (``<host>:<pid>:<rand>``).
+        """Free every lease held on ``hostname``: a dispatch loop's (``<host>:<pid>:<rand>``),
+        a planner's (``plan:<host>:…``) and a recovery's (``recover:<host>:…``).
 
-        Called once at manager startup: such drivers belonged to a previous process
+        Called once at manager startup: such holders belonged to a previous process
         on this host and are dead. Two live managers sharing a hostname would only
         hand an execution over — the old loop's next heartbeat fails and it stops.
+        A planner lease used to be left to expire, so an execution whose planning
+        the restart cut short waited ``DRIVER_LEASE_SECONDS`` before recovery failed it.
         """
         released = (
             self.db.query(Execution)
-            .filter(Execution.driver_id.like(f"{hostname}:%"))
+            .filter(
+                or_(
+                    Execution.driver_id.like(f"{hostname}:%"),
+                    Execution.driver_id.like(f"plan:{hostname}:%"),
+                    Execution.driver_id.like(f"recover:{hostname}:%"),
+                )
+            )
             .update({"driver_id": None, "driver_heartbeat_at": None}, synchronize_session=False)
         )
         self.db.commit()

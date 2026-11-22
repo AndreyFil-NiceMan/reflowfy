@@ -27,7 +27,6 @@ def _build_images(
         Panel(f"Building images for registry: [bold cyan]{registry}[/bold cyan]{cache_msg}")
     )
 
-
     build_context = Path(".")
     check_uv_project(build_context)
 
@@ -91,7 +90,7 @@ def _build_images(
     console.print(Panel("🎉 Build & Push Complete!", style="bold green"))
 
 
-def register(app: typer.Typer):
+def register(app: typer.Typer) -> None:
     """Register the build command."""
 
     @app.command()
@@ -110,7 +109,7 @@ def register(app: typer.Typer):
             "-t",
             help="Specific tag for the image (overrides default version tagging)",
         ),
-    ):
+    ) -> None:
         """
         Build and push Reflowfy images to a private registry (OpenShift Ready).
         """

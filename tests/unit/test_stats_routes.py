@@ -126,7 +126,7 @@ def mixed(db: Session) -> Session:
     _jobs(db, "b2", failed=1)
     _dlq(db, "alpha", "pending", 0, minutes=10)
     _dlq(db, "alpha", "pending", 0, minutes=5)
-    _dlq(db, "alpha", "failed", 3)
+    _dlq(db, "alpha", "cancelled", 3)
     _dlq(db, "beta", "completed", 1)
     _archive(db, "alpha")
     _archive(db, "gamma")
@@ -175,7 +175,7 @@ def test_overview_counts_every_state(client, mixed):
     assert body["total_jobs"] == sum(body["jobs_by_state"].values()) == 14
     # cancelled / deduplicated jobs do not count as finished for the success rate
     assert body["success_rate"] == round(5 / 9 * 100, 2)
-    assert body["dlq"] == {"pending": 2, "failed": 1, "completed": 1}
+    assert body["dlq"] == {"pending": 2, "cancelled": 1, "completed": 1}
 
 
 # ----- /stats/pipelines -------------------------------------------------------------
@@ -315,13 +315,14 @@ def test_dlq_stats_across_pipelines(client, mixed):
     body = client.get("/stats/dlq").json()
 
     assert body["total_dlq_jobs"] == 4
-    assert body["jobs_by_status"] == {"pending": 2, "failed": 1, "completed": 1}
+    assert body["jobs_by_status"] == {"pending": 2, "cancelled": 1, "completed": 1}
     assert body["total_archived"] == 2
     pipelines = _by_name(body["pipelines"])
     assert set(pipelines) == {"alpha", "beta", "gamma"}
 
     alpha = pipelines["alpha"]
-    assert (alpha["pending"], alpha["failed"], alpha["completed"]) == (2, 1, 0)
+    assert (alpha["pending"], alpha["cancelled"], alpha["completed"]) == (2, 1, 0)
+    assert "processing" not in alpha and "failed" not in alpha  # never-written statuses
     assert alpha["archived"] == 1
     assert alpha["oldest_pending_at"] == (T0 + timedelta(minutes=5)).isoformat()
 
@@ -336,7 +337,7 @@ def test_dlq_stats_filtered_by_pipeline(client, mixed):
     body = client.get("/stats/dlq", params={"pipeline_name": "alpha"}).json()
 
     assert body["total_dlq_jobs"] == 3
-    assert body["jobs_by_status"] == {"pending": 2, "failed": 1}
+    assert body["jobs_by_status"] == {"pending": 2, "cancelled": 1}
     assert body["total_archived"] == 1
     assert [p["pipeline_name"] for p in body["pipelines"]] == ["alpha"]
 

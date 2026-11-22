@@ -23,7 +23,8 @@ from reflowfy.reflow_manager.job_manager import JobManager
 from reflowfy.reflow_manager.pipeline_runner import PipelineRunner
 from reflowfy.store.models import Base, Execution, Job
 from reflowfy.store.states import ExecutionState, JobState
-from reflowfy.worker.executor import JobStats, WorkerExecutor
+from reflowfy.worker.executor import WorkerExecutor
+from reflowfy.worker.job_stats import JobStats
 
 # The worker tests below claim jobs in a real (SQLite) database.
 pytestmark = pytest.mark.real_claim

@@ -36,7 +36,8 @@ from reflowfy.core.record_steps import (
     default_record_concurrency,
     top_skip_reasons,
 )
-from reflowfy.worker.executor import JobStats, WorkerExecutor
+from reflowfy.worker.executor import WorkerExecutor
+from reflowfy.worker.job_stats import JobStats
 
 
 def apply_transformations_iteratively(*args, **kwargs):

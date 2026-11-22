@@ -8,17 +8,23 @@ import logging
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from collections import defaultdict
 
 from sqlalchemy.orm import Session
 
 from reflowfy.observability import metrics
 from reflowfy.store.models import DLQJob, DLQJobArchive
+from reflowfy.store.states import DLQStatus
 from reflowfy.reflow_manager.database import SessionLocal
 from reflowfy.reflow_manager.periodic import PeriodicTask
+from reflowfy.reflow_manager.start import stage_execution, start_in_background
 
 logger = logging.getLogger(__name__)
+
+# A run staged in the current transaction: (execution_id, pipeline_name, runtime_params).
+# Started only once that transaction has committed.
+Staged = Tuple[str, str, Dict[str, Any]]
 
 # Configuration from environment variables
 DLQ_POLL_INTERVAL_SECONDS = int(os.getenv("DLQ_POLL_INTERVAL_SECONDS", "900"))  # 15 minutes
@@ -59,18 +65,18 @@ class DLQScheduler(PeriodicTask):
     def tick(self) -> None:
         self._poll_and_process()
 
-    def _poll_and_process(self):
+    def _poll_and_process(self) -> None:
         """Poll for due jobs and process them."""
         db = SessionLocal()
         try:
             # Publish current DLQ depth (all pending jobs) for dashboards.
-            metrics.dlq_depth.set(db.query(DLQJob).filter(DLQJob.status == "pending").count())
+            metrics.dlq_depth.set(db.query(DLQJob).filter(DLQJob.status == DLQStatus.PENDING).count())
 
             # Find all pending jobs whose scheduled_at has passed
             now = datetime.now(timezone.utc).replace(tzinfo=None)
             due_jobs = (
                 db.query(DLQJob)
-                .filter(DLQJob.status == "pending", DLQJob.scheduled_at <= now)
+                .filter(DLQJob.status == DLQStatus.PENDING, DLQJob.scheduled_at <= now)
                 .with_for_update(skip_locked=True)
                 .all()
             )
@@ -101,11 +107,14 @@ class DLQScheduler(PeriodicTask):
             for job in due_jobs:
                 jobs_by_pipeline[job.pipeline_name].append(job)
 
-            # Process each pipeline group
+            staged: List[Staged] = []
             for pipeline_name, jobs in jobs_by_pipeline.items():
-                self._process_pipeline_jobs(db, pipeline_name, jobs)
+                staged += self._process_pipeline_jobs(db, pipeline_name, jobs)
 
+            # The executions and the DLQ jobs marked completed are one commit; the runs
+            # start after it (see start.stage_execution).
             db.commit()
+            self._start(staged)
 
         except Exception:
             db.rollback()
@@ -114,9 +123,11 @@ class DLQScheduler(PeriodicTask):
         finally:
             db.close()
 
-    def _process_pipeline_jobs(self, db: Session, pipeline_name: str, jobs: List[DLQJob]):
+    def _process_pipeline_jobs(
+        self, db: Session, pipeline_name: str, jobs: List[DLQJob]
+    ) -> List[Staged]:
         """
-        Process a batch of DLQ jobs for a single pipeline.
+        Stage the runs for a batch of DLQ jobs of one pipeline (started after commit).
 
         Jobs scheduled with the same params share one execution; each distinct set
         of params gets its own, so no job is marked completed without having run
@@ -133,14 +144,10 @@ class DLQScheduler(PeriodicTask):
             },
         )
 
-        # Mark jobs as processing
-        for job in jobs:
-            job.status = "processing"
-        db.flush()
-
+        staged: List[Staged] = []
         for group in _group_by_params(jobs):
             try:
-                execution_id = self._dispatch_jobs(db, pipeline_name, group)
+                run = self._stage_run(db, pipeline_name, group)
             except Exception as e:
                 error_msg = str(e)
                 logger.error(
@@ -159,6 +166,8 @@ class DLQScheduler(PeriodicTask):
                     self._handle_job_failure(db, job, error_msg)
                 continue
 
+            staged.append(run)
+            execution_id = run[0]
             _mark_completed(group, execution_id)
             logger.info(
                 "DLQ jobs dispatched to execution: %s",
@@ -171,13 +180,15 @@ class DLQScheduler(PeriodicTask):
                     "trigger": "scheduler",
                 },
             )
+        return staged
 
-    def _dispatch_jobs(self, db: Session, pipeline_name: str, jobs: List[DLQJob]) -> str:
+    def _stage_run(self, db: Session, pipeline_name: str, jobs: List[DLQJob]) -> Staged:
         """
-        Dispatch DLQ jobs by creating an execution.
+        Add the execution for a group of DLQ jobs to ``db``'s transaction.
 
-        Returns:
-            execution_id of the created execution
+        A missing pipeline or bad params raise here, so the jobs take the
+        retry/archive path. Nothing runs until the caller commits and calls
+        :meth:`_start`.
         """
         if not self.pipeline_runner_factory:
             raise RuntimeError("Pipeline runner factory not configured")
@@ -195,26 +206,20 @@ class DLQScheduler(PeriodicTask):
             "_dlq_job_ids": [job.id for job in jobs],
         }
 
-        # Validated and created here, so a missing pipeline or bad params still
-        # takes the retry/archive path below. The run itself goes on a thread of
-        # its own: driven inline it held this poll's row locks and stalled every
-        # other due job for as long as it ran. A run that fails later ends its
-        # execution `failed`; the DLQ job has done its work (started it).
+        stage_execution(db, execution_id, pipeline_name, runtime_params)
+        return execution_id, pipeline_name, runtime_params
+
+    def _start(self, staged: List[Staged]) -> None:
+        """Start committed runs, each on a thread of its own: driven inline a run would
+        hold the poll for as long as it ran. A run that fails later ends its execution
+        ``failed``; the DLQ job has done its work (started it)."""
         factory = self.pipeline_runner_factory
-        runner = factory()
-        try:
-            runner.start_pipeline(
-                pipeline_name=pipeline_name,
-                runtime_params=runtime_params,
-                execution_id=execution_id,
-                background_runner=factory,
-            )
-        finally:
-            runner.execution_manager.db.close()
+        if factory is None:  # _stage_run refused already; nothing was staged
+            return
+        for execution_id, pipeline_name, runtime_params in staged:
+            start_in_background(factory, execution_id, pipeline_name, runtime_params, log=logger)
 
-        return execution_id
-
-    def _handle_job_failure(self, db: Session, job: DLQJob, error_msg: str):
+    def _handle_job_failure(self, db: Session, job: DLQJob, error_msg: str) -> None:
         """Handle a failed DLQ job - retry or archive."""
         job.retry_count += 1
         job.error_message = error_msg
@@ -238,7 +243,7 @@ class DLQScheduler(PeriodicTask):
             job.scheduled_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
                 minutes=backoff_minutes
             )
-            job.status = "pending"
+            job.status = DLQStatus.PENDING
             logger.info(
                 "DLQ job %s rescheduled (retry %d/%d)",
                 job.id,
@@ -259,9 +264,9 @@ class DLQScheduler(PeriodicTask):
 
         Backoff: 5, 10, 20, 40, 80 minutes for retries 1-5
         """
-        return 5 * (2 ** (retry_count - 1))
+        return int(5 * 2 ** (retry_count - 1))
 
-    def _archive_job(self, db: Session, job: DLQJob):
+    def _archive_job(self, db: Session, job: DLQJob) -> None:
         """Move a permanently failed job to the archive table."""
         archive = DLQJobArchive(
             id=job.id,
@@ -293,31 +298,14 @@ class DLQScheduler(PeriodicTask):
         if not job:
             return None
 
-        if job.status != "pending":
+        if job.status != DLQStatus.PENDING:
             raise ValueError(f"Job {job_id} is not pending (status: {job.status})")
 
-        job.status = "processing"
-        db.flush()
-
+        pipeline_name = job.pipeline_name
         try:
-            execution_id = self._dispatch_jobs(db, job.pipeline_name, [job])
-            job.status = "completed"
-            job.processed_at = datetime.now(timezone.utc).replace(tzinfo=None)
-            job.execution_id = execution_id
+            run = self._stage_run(db, pipeline_name, [job])
+            _mark_completed([job], run[0])
             db.commit()
-            logger.info(
-                "DLQ job dispatched to execution: %s",
-                execution_id,
-                extra={
-                    "event": "dlq_dispatched",
-                    "execution_id": execution_id,
-                    "pipeline_name": job.pipeline_name,
-                    "dlq_job_id": job_id,
-                    "jobs_due": 1,
-                    "trigger": "manual",
-                },
-            )
-            return execution_id
         except Exception as e:
             db.rollback()
             logger.error(
@@ -326,14 +314,32 @@ class DLQScheduler(PeriodicTask):
                 exc_info=True,
                 extra={
                     "event": "dlq_dispatch_error",
-                    "pipeline_name": job.pipeline_name,
+                    "pipeline_name": pipeline_name,
                     "dlq_job_id": job_id,
                     "trigger": "manual",
                 },
             )
-            self._handle_job_failure(db, job, str(e))
+            # The rollback released the row: take it again before charging a retry.
+            locked = db.query(DLQJob).filter(DLQJob.id == job_id).with_for_update().first()
+            if locked is not None and locked.status == DLQStatus.PENDING:
+                self._handle_job_failure(db, locked, str(e))
             db.commit()
             raise
+        self._start([run])
+        execution_id = run[0]
+        logger.info(
+            "DLQ job dispatched to execution: %s",
+            execution_id,
+            extra={
+                "event": "dlq_dispatched",
+                "execution_id": execution_id,
+                "pipeline_name": pipeline_name,
+                "dlq_job_id": job_id,
+                "jobs_due": 1,
+                "trigger": "manual",
+            },
+        )
+        return execution_id
 
     def process_pipeline_immediately(
         self, db: Session, pipeline_name: str
@@ -353,7 +359,7 @@ class DLQScheduler(PeriodicTask):
         # Lock rows to prevent concurrent processing by another RM pod
         jobs = (
             db.query(DLQJob)
-            .filter(DLQJob.pipeline_name == pipeline_name, DLQJob.status == "pending")
+            .filter(DLQJob.pipeline_name == pipeline_name, DLQJob.status == DLQStatus.PENDING)
             .with_for_update(skip_locked=True)
             .all()
         )
@@ -361,15 +367,12 @@ class DLQScheduler(PeriodicTask):
         if not jobs:
             return 0, []
 
-        for job in jobs:
-            job.status = "processing"
-        db.flush()
-
         execution_ids: List[str] = []
+        staged: List[Staged] = []
         last_error: Optional[Exception] = None
         for group in _group_by_params(jobs):
             try:
-                execution_id = self._dispatch_jobs(db, pipeline_name, group)
+                run = self._stage_run(db, pipeline_name, group)
             except Exception as e:
                 # Only this group's jobs go to the retry path; the others still run,
                 # as in _process_pipeline_jobs.
@@ -389,6 +392,8 @@ class DLQScheduler(PeriodicTask):
                 for job in group:
                     self._handle_job_failure(db, job, str(e))
                 continue
+            staged.append(run)
+            execution_id = run[0]
             _mark_completed(group, execution_id)
             execution_ids.append(execution_id)
             logger.info(
@@ -403,9 +408,10 @@ class DLQScheduler(PeriodicTask):
                 },
             )
         db.commit()
+        self._start(staged)
         if last_error is not None and not execution_ids:
             raise last_error
-        dispatched = sum(1 for job in jobs if job.status == "completed")
+        dispatched = sum(1 for job in jobs if job.status == DLQStatus.COMPLETED)
         return dispatched, execution_ids
 
 
@@ -421,7 +427,7 @@ def _group_by_params(jobs: List[DLQJob]) -> List[List[DLQJob]]:
 def _mark_completed(jobs: List[DLQJob], execution_id: str) -> None:
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     for job in jobs:
-        job.status = "completed"
+        job.status = DLQStatus.COMPLETED
         job.processed_at = now
         job.execution_id = execution_id
 
@@ -443,7 +449,7 @@ def init_dlq_scheduler(pipeline_runner_factory: Callable[..., Any]) -> DLQSchedu
     return _scheduler
 
 
-def stop_dlq_scheduler():
+def stop_dlq_scheduler() -> None:
     """Stop the global DLQ scheduler."""
     global _scheduler
     if _scheduler:

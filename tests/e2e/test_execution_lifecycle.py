@@ -302,6 +302,12 @@ class TestCancelExecution:
     def test_cancel_a_running_execution(self, client):
         execution_id = _start_slow_pipeline(client)
         _wait_for_state(client, execution_id, "running", max_wait=30)
+        # "running" starts with planning: wait until jobs are saved, or a cancel that
+        # lands first (a loaded stack) rightly cancels none.
+        deadline = time.time() + 30
+        while client.get(f"/executions/{execution_id}/stats").json()["jobs_pending"] == 0:
+            assert time.time() < deadline, "no job was planned within 30s"
+            time.sleep(POLL_INTERVAL)
 
         response = client.post(f"/executions/{execution_id}/cancel")
 

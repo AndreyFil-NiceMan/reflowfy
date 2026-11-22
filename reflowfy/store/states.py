@@ -66,6 +66,25 @@ class ExecutionState:
     }
 
 
+class DLQStatus:
+    """A DLQ job (``dlq_jobs.status``): ``pending → completed`` when its run starts, or
+    ``pending → cancelled``. A start that fails reschedules it (still ``pending``) or,
+    out of retries, moves the row to ``dlq_jobs_archive``."""
+
+    PENDING = "pending"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+    ALL: Tuple[str, ...] = (PENDING, COMPLETED, CANCELLED)
+
+
+class ScheduleEnabled:
+    """``pipeline_schedules.enabled`` holds a string, not a boolean."""
+
+    TRUE = "true"
+    FALSE = "false"
+
+
 def jobs_dispatched(counts: Mapping[str, int]) -> int:
     """Jobs that have left the manager: sent, running or finished (from a count per
     job state)."""

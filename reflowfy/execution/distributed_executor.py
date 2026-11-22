@@ -199,7 +199,41 @@ class DistributedExecutor:
             return status
 
         except httpx.HTTPError as e:
+            # Unreachable, timed out or a 5xx: the manager failed, not the caller's
+            # input. But a timeout or a dropped connection can come after the manager
+            # committed the execution, and a 5xx after it too: reporting `failed` then
+            # made callers retry and run it twice. Ask the manager before saying so.
+            upstream = isinstance(e, httpx.TransportError) or (
+                isinstance(e, httpx.HTTPStatusError) and e.response.status_code >= 500
+            )
+            never_sent = isinstance(e, (httpx.ConnectError, httpx.ConnectTimeout))
+            accepted = (
+                self._was_accepted(execution_id) if upstream and not never_sent else False
+            )
+            if accepted:
+                logger.warning(
+                    "Execution %s: /run answered %s, but the manager has the execution; "
+                    "reporting it as accepted",
+                    execution_id,
+                    type(e).__name__,
+                    extra={
+                        "event": "execution_submit_confirmed",
+                        "execution_id": execution_id,
+                        "pipeline_name": pipeline.name,
+                        "error_type": type(e).__name__,
+                    },
+                )
+                status.metadata["reflow_manager_url"] = self.reflow_manager_url
+                status.metadata["confirmed_after_error"] = type(e).__name__
+                return status
+
             error_msg = f"ReflowManager HTTP error: {e}"
+            if accepted is None:
+                error_msg += (
+                    f"; the manager could not be asked whether execution '{execution_id}' "
+                    f"started: check GET /executions/{execution_id}/status before running "
+                    "it again"
+                )
             logger.error(
                 "Execution %s: %s",
                 execution_id,
@@ -213,12 +247,10 @@ class DistributedExecutor:
 
             status.state = ExecutionState.FAILED
             status.error_message = error_msg
-            # Unreachable, timed out or a 5xx: the manager failed, not the caller's
-            # input. The API answers 502 for these instead of 422.
-            if isinstance(e, httpx.TransportError) or (
-                isinstance(e, httpx.HTTPStatusError) and e.response.status_code >= 500
-            ):
-                status.metadata["upstream_error"] = True
+            if upstream:
+                status.metadata["upstream_error"] = True  # the API answers 502, not 422
+            if accepted is None:
+                status.metadata["outcome_unknown"] = True
 
             return status
 
@@ -239,7 +271,21 @@ class DistributedExecutor:
 
             return status
 
-    def close(self):
+    def _was_accepted(self, execution_id: str) -> Optional[bool]:
+        """Whether the manager has this execution: True, False, or None (could not ask)."""
+        try:
+            response = self._get_client().get(
+                f"{self.reflow_manager_url}/executions/{execution_id}/stats"
+            )
+        except httpx.HTTPError:
+            return None
+        if response.status_code == 200:
+            return True
+        if response.status_code == 404:
+            return False
+        return None
+
+    def close(self) -> None:
         """Close HTTP client."""
         if self._client:
             self._client.close()

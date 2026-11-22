@@ -6,14 +6,14 @@ import typer
 from reflowfy.cli.utils import check_uv_project, console
 
 
-def register(app: typer.Typer):
+def register(app: typer.Typer) -> None:
     """Register the run command."""
 
     @app.command()
     def run(
         build: bool = typer.Option(False, "--build", "-b", help="Rebuild images before starting"),
         detach: bool = typer.Option(False, "--detach", "-d", help="Run in background"),
-    ):
+    ) -> None:
         """
         Run locally using Docker Compose (Dev Mode).
         """

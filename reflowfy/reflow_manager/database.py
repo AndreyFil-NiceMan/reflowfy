@@ -100,6 +100,9 @@ def _apply_column_migrations() -> None:
         # Lifecycle hooks: fired exactly once (claimed by setting hooks_fired_at), errors kept
         "ALTER TABLE executions ADD COLUMN IF NOT EXISTS hooks_fired_at TIMESTAMP",
         "ALTER TABLE executions ADD COLUMN IF NOT EXISTS hook_error TEXT",
+        # The claimed hook returned (or failed): a claim without it is a hook lost to a
+        # manager that died while it ran (lifecycle.sweep_lost_hooks)
+        "ALTER TABLE executions ADD COLUMN IF NOT EXISTS hooks_finished_at TIMESTAMP",
         # Chaining: the execution whose hook started this one
         "ALTER TABLE executions ADD COLUMN IF NOT EXISTS parent_execution_id VARCHAR(255)",
         "CREATE INDEX IF NOT EXISTS idx_executions_parent_execution_id "
@@ -117,6 +120,15 @@ def _apply_column_migrations() -> None:
         "autovacuum_analyze_scale_factor = 0.02)",
     ]
 
+    # Run in the same transaction as the ADD COLUMN, and only when it added the column:
+    # rows from before it existed have nothing to recover.
+    backfills = {
+        ("executions", "hooks_finished_at"): (
+            "UPDATE executions SET hooks_finished_at = hooks_fired_at "
+            "WHERE hooks_fired_at IS NOT NULL"
+        ),
+    }
+
     inspector = inspect(engine)
     existing = {
         table: {column["name"] for column in inspector.get_columns(table)}
@@ -130,6 +142,10 @@ def _apply_column_migrations() -> None:
             with engine.begin() as conn:
                 conn.execute(text(f"SET LOCAL lock_timeout = '{MIGRATION_LOCK_TIMEOUT}'"))
                 conn.execute(text(stmt))
+                if add_column:
+                    backfill = backfills.get((add_column.group(1), add_column.group(2)))
+                    if backfill:
+                        conn.execute(text(backfill))
         except OperationalError:
             if add_column:
                 raise  # a column the code needs is missing: init_db retries, then fails loudly

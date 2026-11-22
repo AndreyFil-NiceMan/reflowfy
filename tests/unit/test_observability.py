@@ -402,7 +402,8 @@ def test_metrics_endpoint_exposes_counter():
 
 
 def test_record_job_metrics_increments():
-    from reflowfy.worker.executor import JobStats, WorkerExecutor
+    from reflowfy.worker.executor import WorkerExecutor
+    from reflowfy.worker.job_stats import JobStats
 
     before = m.jobs_processed_total.labels(pipeline="p1", status="completed")._value.get()
     stats = JobStats()
@@ -415,7 +416,8 @@ def test_record_job_metrics_increments():
 
 def test_record_job_metrics_skips_records_on_failure():
     """A failed job must not inflate records_processed_total."""
-    from reflowfy.worker.executor import JobStats, WorkerExecutor
+    from reflowfy.worker.executor import WorkerExecutor
+    from reflowfy.worker.job_stats import JobStats
 
     before = m.records_processed_total.labels(pipeline="pf")._value.get()
     stats = JobStats()

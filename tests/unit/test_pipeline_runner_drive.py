@@ -28,7 +28,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
+import reflowfy.reflow_manager.drive_loop as loop_mod
 import reflowfy.reflow_manager.pipeline_runner as runner_mod
+import reflowfy.reflow_manager.recovery as recovery_mod
 from reflowfy.core.abstract_pipeline import AbstractPipeline
 from reflowfy.core.registry import pipeline_registry
 from reflowfy.core.runtime_params import RuntimeParams
@@ -169,8 +171,8 @@ def _runner(db: Session, dispatcher: Any = None) -> PipelineRunner:
 
 @pytest.fixture(autouse=True)
 def _fast(monkeypatch):
-    monkeypatch.setattr(runner_mod, "CHECKPOINT_POLL_INTERVAL", 0)
-    monkeypatch.setattr(runner_mod, "DRIVER_RETRY_SECONDS", 0)
+    monkeypatch.setattr(loop_mod, "CHECKPOINT_POLL_INTERVAL", 0)
+    monkeypatch.setattr(loop_mod, "DRIVER_RETRY_SECONDS", 0)
 
 
 @pytest.fixture
@@ -439,7 +441,7 @@ def test_a_fresh_lease_is_waited_on_until_the_execution_stops_running(db, monkey
         return real_state(execution_id)
 
     monkeypatch.setattr(runner, "_execution_state", state)
-    with caplog.at_level(logging.INFO, logger=runner_mod.__name__):
+    with caplog.at_level(logging.INFO, logger="reflowfy.reflow_manager"):
         assert _wait(runner) is False
 
     assert polls["n"] == 3  # stood by twice, then saw the pause
@@ -527,7 +529,7 @@ def test_database_errors_back_off_exponentially_and_reset_after_a_good_step(db, 
         raise RuntimeError("connection gone too")
 
     monkeypatch.setattr(runner, "_drive_step", step)
-    monkeypatch.setattr(runner_mod.asyncio, "sleep", record_sleep)
+    monkeypatch.setattr(loop_mod.asyncio, "sleep", record_sleep)
     monkeypatch.setattr(runner.job_manager.db, "rollback", broken_rollback)
 
     result = asyncio.run(runner._drive_async("e", "p", None, "me"))
@@ -547,7 +549,7 @@ def test_a_dispatcher_that_fails_to_close_does_not_lose_the_result(db, monkeypat
 
     dispatcher.close = broken_close  # type: ignore[method-assign]
 
-    with caplog.at_level(logging.WARNING, logger=runner_mod.__name__):
+    with caplog.at_level(logging.WARNING, logger="reflowfy.reflow_manager"):
         result = _runner(db, dispatcher)._drive_execution("e", "p", None)
 
     assert result == (2, 2, 0)
@@ -564,7 +566,7 @@ def test_a_lease_that_cannot_be_released_does_not_fail_the_run(db, monkeypatch, 
         raise _db_error()
 
     monkeypatch.setattr(runner.execution_manager, "release_driver", broken_release)
-    with caplog.at_level(logging.WARNING, logger=runner_mod.__name__):
+    with caplog.at_level(logging.WARNING, logger="reflowfy.reflow_manager"):
         assert runner._drive_execution("e", "p", None) == (1, 1, 0)
 
     assert _exec(db).state == "completed"
@@ -575,7 +577,7 @@ def test_a_lease_that_cannot_be_released_does_not_fail_the_run(db, monkeypatch, 
 
 
 def test_drive_step_tops_the_in_flight_window_up_as_jobs_finish(db, monkeypatch):
-    monkeypatch.setattr(runner_mod, "MAX_IN_FLIGHT_JOBS", 4)
+    monkeypatch.setattr(loop_mod, "MAX_IN_FLIGHT_JOBS", 4)
     _execution(db, driver_id="me", driver_heartbeat_at=_now())
     running = _add_jobs(db, 3, state="running", updated_at=_now())
     pending = _add_jobs(db, 5)
@@ -601,7 +603,7 @@ def test_drive_step_tops_the_in_flight_window_up_as_jobs_finish(db, monkeypatch)
 
 
 def test_drive_step_fetches_at_most_one_page_of_payloads(db, monkeypatch):
-    monkeypatch.setattr(runner_mod, "DISPATCH_FETCH_LIMIT", 2)
+    monkeypatch.setattr(loop_mod, "DISPATCH_FETCH_LIMIT", 2)
     _execution(db, driver_id="me", driver_heartbeat_at=_now())
     pending = _add_jobs(db, 5)
     dispatcher = _Dispatcher(db, complete=False)
@@ -632,7 +634,7 @@ def test_drive_step_stops_when_it_lost_the_lease(db):
 
 def test_drive_step_sweeps_expired_leases_once_per_interval(db, monkeypatch, caplog):
     clock = _Clock()
-    monkeypatch.setattr(runner_mod, "time", clock)
+    monkeypatch.setattr(loop_mod, "time", clock)
     _execution(db, driver_id="me", driver_heartbeat_at=_now())
     old = _now() - timedelta(hours=2)
     lost_worker = _add_jobs(db, 1, state="running", updated_at=old, attempts=1)
@@ -643,9 +645,9 @@ def test_drive_step_sweeps_expired_leases_once_per_interval(db, monkeypatch, cap
     counter = metrics.jobs_processed_total.labels(pipeline="p", status="lease_expired")
     before = counter._value.get()
     track = _track(clock.now)
-    track["lease_checked_at"] = clock.now - runner_mod.LEASE_CHECK_INTERVAL
+    track["lease_checked_at"] = clock.now - loop_mod.LEASE_CHECK_INTERVAL
 
-    with caplog.at_level(logging.WARNING, logger=runner_mod.__name__):
+    with caplog.at_level(logging.WARNING, logger="reflowfy.reflow_manager"):
         _step(runner, track)
 
     states = _states(db)
@@ -661,7 +663,7 @@ def test_drive_step_sweeps_expired_leases_once_per_interval(db, monkeypatch, cap
     # Within the interval no second sweep runs, even with another stale job.
     db.query(Job).filter(Job.job_id == alive[0]).update({"updated_at": old, "attempts": 3})
     db.commit()
-    clock.now += runner_mod.LEASE_CHECK_INTERVAL - 1
+    clock.now += loop_mod.LEASE_CHECK_INTERVAL - 1
     _step(runner, track)
     assert _states(db)[alive[0]] == "running"
     clock.now += 1
@@ -672,7 +674,7 @@ def test_drive_step_sweeps_expired_leases_once_per_interval(db, monkeypatch, cap
 
 def test_drive_step_warns_after_ten_minutes_without_progress(db, monkeypatch, caplog):
     clock = _Clock()
-    monkeypatch.setattr(runner_mod, "time", clock)
+    monkeypatch.setattr(loop_mod, "time", clock)
     _execution(db, driver_id="me", driver_heartbeat_at=_now())
     running = _add_jobs(db, 2, state="running", updated_at=_now())
     _add_jobs(db, 1, state="completed")
@@ -684,25 +686,25 @@ def test_drive_step_warns_after_ten_minutes_without_progress(db, monkeypatch, ca
     def warnings() -> List[str]:
         return [r.getMessage() for r in caplog.records if "o job finished" in r.getMessage()]
 
-    with caplog.at_level(logging.WARNING, logger=runner_mod.__name__):
+    with caplog.at_level(logging.WARNING, logger="reflowfy.reflow_manager"):
         _step(runner, track)  # first pass records the finished count as progress
         assert track["finished"] == 1 and track["progress_at"] == start
 
-        clock.now = start + runner_mod.STALL_WARN_SECONDS - 1
+        clock.now = start + loop_mod.STALL_WARN_SECONDS - 1
         _step(runner, track)
         assert warnings() == []
 
-        clock.now = start + runner_mod.STALL_WARN_SECONDS
+        clock.now = start + loop_mod.STALL_WARN_SECONDS
         _step(runner, track)
         assert len(warnings()) == 1
         assert "No job finished for 10 min with 2 in flight and 0 pending" in warnings()[0]
         assert track["warned_at"] == clock.now
 
-        clock.now += runner_mod.STALL_WARN_SECONDS / 2
+        clock.now += loop_mod.STALL_WARN_SECONDS / 2
         _step(runner, track)
         assert len(warnings()) == 1  # not again until another full interval
 
-        clock.now = start + 2 * runner_mod.STALL_WARN_SECONDS
+        clock.now = start + 2 * loop_mod.STALL_WARN_SECONDS
         _step(runner, track)
         assert len(warnings()) == 2
         assert "for 20 min" in warnings()[1]
@@ -710,7 +712,7 @@ def test_drive_step_warns_after_ten_minutes_without_progress(db, monkeypatch, ca
         # A job finishing is progress: the clock restarts and nothing is warned.
         db.query(Job).filter(Job.job_id == running[0]).update({"state": "completed"})
         db.commit()
-        clock.now += runner_mod.STALL_WARN_SECONDS
+        clock.now += loop_mod.STALL_WARN_SECONDS
         _step(runner, track)
         assert track["finished"] == 2 and track["progress_at"] == clock.now
         assert len(warnings()) == 2
@@ -718,7 +720,7 @@ def test_drive_step_warns_after_ten_minutes_without_progress(db, monkeypatch, ca
 
 def test_send_jobs_hands_control_back_when_the_chunk_runs_out(db, monkeypatch):
     """A spent token (chunk=False) is still sent; the chunk running out stops the rest."""
-    monkeypatch.setattr(runner_mod, "DISPATCH_CHUNK_SECONDS", 0)
+    monkeypatch.setattr(loop_mod, "DISPATCH_CHUNK_SECONDS", 0)
     _execution(db, driver_id="me", driver_heartbeat_at=_now())
     _add_jobs(db, 2)
     answers: List[bool] = []
@@ -775,7 +777,7 @@ def test_finalize_fails_an_execution_with_jobs_missing(db, caplog):
     _execution(db)
     _add_jobs(db, 2, state="completed")  # the third planned job has no row
 
-    with caplog.at_level(logging.WARNING, logger=runner_mod.__name__):
+    with caplog.at_level(logging.WARNING, logger="reflowfy.reflow_manager"):
         assert _runner(db)._finalize_execution_state("e", 3, (0, 0, 0)) == (2, 2, 0)
 
     assert _exec(db).state == "failed"
@@ -891,7 +893,7 @@ def test_plan_lease_keeps_beating_through_errors_and_survives_a_failed_release(
     monkeypatch.setattr(ExecutionManager, "heartbeat_driver", broken_beat)
     monkeypatch.setattr(ExecutionManager, "release_driver", broken_release)
 
-    with caplog.at_level(logging.WARNING, logger=runner_mod.__name__):
+    with caplog.at_level(logging.WARNING, logger="reflowfy.reflow_manager"):
         lease = _PlanLease(engine, "e")
         lease.start()
         deadline = time.monotonic() + 2
@@ -915,12 +917,12 @@ async def _answer() -> int:
 
 
 def test_run_async_without_a_running_loop():
-    assert runner_mod._run_async(_answer()) == 42
+    assert loop_mod._run_async(_answer()) == 42
 
 
 async def test_run_async_inside_a_running_loop_without_nest_asyncio(monkeypatch):
     monkeypatch.setitem(sys.modules, "nest_asyncio", None)  # import -> ImportError
-    assert runner_mod._run_async(_answer()) == 42
+    assert loop_mod._run_async(_answer()) == 42
 
 
 async def test_run_async_inside_a_uvloop_that_nest_asyncio_cannot_patch(monkeypatch):
@@ -931,4 +933,4 @@ async def test_run_async_inside_a_uvloop_that_nest_asyncio_cannot_patch(monkeypa
 
     fake.apply = refuse  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "nest_asyncio", fake)
-    assert runner_mod._run_async(_answer()) == 42
+    assert loop_mod._run_async(_answer()) == 42

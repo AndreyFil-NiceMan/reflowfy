@@ -103,7 +103,8 @@ def test_skipped_job_is_its_own_metric_status():
     """A dropped job must not be counted as an ordinary completed one."""
     from prometheus_client import REGISTRY
 
-    from reflowfy.worker.executor import JobStats, WorkerExecutor
+    from reflowfy.worker.executor import WorkerExecutor
+    from reflowfy.worker.job_stats import JobStats
 
     stats = JobStats()
     stats.success = True

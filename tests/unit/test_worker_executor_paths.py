@@ -20,13 +20,14 @@ import pytest
 from prometheus_client import REGISTRY
 from sqlalchemy.ext.asyncio import create_async_engine
 
-import reflowfy.worker.executor as executor_mod
+import reflowfy.worker.job_store as executor_mod
 from reflowfy.core.exceptions import SkipJob
 from reflowfy.core.registry import pipeline_registry
 from reflowfy.core.exceptions import DestinationError
 from reflowfy.store.models import Base, Execution, Job
 from reflowfy.transformations.base import BaseTransformation
-from reflowfy.worker.executor import JobStats, WorkerExecutor
+from reflowfy.worker.executor import WorkerExecutor
+from reflowfy.worker.job_stats import JobStats
 
 EXECUTOR_LOGGER = "reflowfy.worker.executor"
 
@@ -698,7 +699,7 @@ class TestEndToEndOnSqlite:
 
 
 async def test_a_failed_claim_release_is_logged(monkeypatch):
-    import reflowfy.worker.executor as executor_mod
+    import reflowfy.worker.job_store as executor_mod
 
     async def broken(*args: Any, **kwargs: Any) -> None:
         raise ConnectionError("postgres down")

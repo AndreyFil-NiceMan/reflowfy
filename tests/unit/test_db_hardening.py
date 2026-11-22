@@ -83,7 +83,7 @@ def _patch(monkeypatch, engine: _FakeEngine, missing: str = "") -> None:
         "jobs": ["job_id", "error_traceback", "attempts", "next_attempt_at", "claimed_by"],
         "executions": [
             "execution_id", "deduplicated_jobs", "rate_limit", "driver_id",
-            "driver_heartbeat_at", "plan_complete", "hooks_fired_at", "hook_error",
+            "driver_heartbeat_at", "plan_complete", "hooks_fired_at", "hook_error", "hooks_finished_at",
             "parent_execution_id",
         ],
     }
@@ -120,6 +120,27 @@ def test_a_missing_column_is_added_with_a_lock_timeout(monkeypatch):
     adds = [i for i, s in enumerate(engine.statements) if "plan_complete" in s]
     assert len(adds) == 1
     assert "lock_timeout" in engine.statements[adds[0] - 1]  # set in the same transaction
+
+
+def test_adding_hooks_finished_at_backfills_it_in_the_same_transaction(monkeypatch):
+    """Rows from before the column must not look like hooks cut short (F3 sweep)."""
+    engine = _FakeEngine()
+    _patch(monkeypatch, engine, missing="hooks_finished_at")
+
+    database._apply_column_migrations()
+
+    add = next(i for i, s in enumerate(engine.statements) if "ADD COLUMN IF NOT EXISTS hooks_finished_at" in s)
+    assert engine.statements[add + 1].startswith("UPDATE executions SET hooks_finished_at")
+    assert sum("UPDATE executions" in s for s in engine.statements) == 1
+
+
+def test_no_backfill_when_hooks_finished_at_exists(monkeypatch):
+    engine = _FakeEngine()
+    _patch(monkeypatch, engine)
+
+    database._apply_column_migrations()
+
+    assert not [s for s in engine.statements if s.startswith("UPDATE")]
 
 
 def test_optional_migrations_give_up_quietly_when_the_table_is_locked(monkeypatch):

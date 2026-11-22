@@ -16,8 +16,16 @@ The work then runs in a thread, off the caller (an HTTP request, the drive loop)
    own thread with ``HOOK_TIMEOUT_SECONDS`` (60) to finish.
 
 A hook that fails or times out is logged (``hook_failed``) and stored in ``executions.hook_error``; it never changes the
-execution's state. ``POST /executions/{id}/retry-failed`` clears ``hooks_fired_at``, so
-the retried run's end fires them again.
+execution's state. ``hooks_finished_at`` is set once the hook returned (or there was none
+to run). ``POST /executions/{id}/retry-failed`` clears both, so the retried run's end
+fires them again.
+
+A manager that dies between the terminal commit and the claim, or while the hook runs,
+used to lose the hook silently. :class:`HookSweeper` (every ``HOOK_SWEEP_INTERVAL_SECONDS``,
+300) finds both: an ended execution never claimed is fired now (the claim still makes
+it at most once), and one claimed but never finished gets a ``hook_error`` saying the
+hook was cut short (``hook_lost``). That one is not run again: it may have done its work
+before the crash, and a hook that chains a run must not chain two.
 """
 
 import contextvars
@@ -26,8 +34,8 @@ import os
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Optional, Set, Tuple, cast
+from datetime import datetime, timedelta, timezone
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, cast
 
 from sqlalchemy.orm import Session
 
@@ -38,17 +46,18 @@ from reflowfy.reflow_manager.execution import (
     remove_terminal_listener,
 )
 from reflowfy.reflow_manager.job_manager import JobManager
+from reflowfy.reflow_manager.periodic import PeriodicTask
 from reflowfy.store.models import Execution, Job
 from reflowfy.reflow_manager.rate_limiter import RateLimiter, execution_bucket_key
-from reflowfy.store.states import JobState
+from reflowfy.store.states import ExecutionState, JobState
 from reflowfy.reflow_manager.start import check_runnable, drive_execution
 
 logger = logging.getLogger(__name__)
 
 HOOK_NAMES: Dict[str, str] = {
-    "completed": "on_execution_complete",
-    "failed": "on_execution_failed",
-    "cancelled": "on_execution_cancelled",
+    ExecutionState.COMPLETED: "on_execution_complete",
+    ExecutionState.FAILED: "on_execution_failed",
+    ExecutionState.CANCELLED: "on_execution_cancelled",
 }
 FIRST_ERRORS_MAX = 5
 FIRST_ERROR_CHARS = 300
@@ -103,7 +112,7 @@ def build_summary(db: Session, execution: Execution) -> ExecutionSummary:
         totals["records_skipped"] += int(job_stats.get("records_skipped") or 0)
         totals["records_deduplicated"] += int(job_stats.get("records_deduplicated") or 0)
         totals["retries"] += int(job_stats.get("retry_count") or 0)
-        if state == "completed":
+        if state == JobState.COMPLETED:
             totals["records_out"] += int(processed or 0)
             if job_stats.get("skip_reason"):
                 totals["jobs_skipped"] += 1
@@ -127,10 +136,10 @@ def build_summary(db: Session, execution: Execution) -> ExecutionSummary:
         pipeline_name=execution.pipeline_name,
         state=execution.state,
         jobs_total=counts["total"],
-        jobs_completed=counts["completed"],
-        jobs_failed=counts["failed"],
-        jobs_deduplicated=counts["deduplicated"],
-        jobs_cancelled=counts["cancelled"],
+        jobs_completed=counts[JobState.COMPLETED],
+        jobs_failed=counts[JobState.FAILED],
+        jobs_deduplicated=counts[JobState.DEDUPLICATED],
+        jobs_cancelled=counts[JobState.CANCELLED],
         jobs_skipped=totals["jobs_skipped"],
         records_in=totals["records_in"],
         records_out=totals["records_out"],
@@ -249,7 +258,8 @@ def fire_execution_hooks(bind: Any, execution_id: str) -> bool:
         pipeline = pipeline_registry.get(execution.pipeline_name)
         hook = _overridden_hook(pipeline, execution.state)
         if hook is None:
-            return True  # nothing to run: the claim only marks it done
+            manager.finish_hooks(execution_id, None)  # nothing to run
+            return True
 
         summary = build_summary(db, execution)
         runtime_params = dict(execution.runtime_params or {})
@@ -260,8 +270,7 @@ def fire_execution_hooks(bind: Any, execution_id: str) -> bool:
         if callable(apply_defaults):
             params = cast(Dict[str, Any], apply_defaults(params))
         error = _run_hook(hook, HOOK_NAMES[state], summary, params, bind)
-        if error:
-            manager.set_hook_error(execution_id, _short(error, HOOK_ERROR_CHARS))
+        manager.finish_hooks(execution_id, _short(error, HOOK_ERROR_CHARS) if error else None)
         return True
 
 
@@ -334,6 +343,124 @@ def wait_for_hooks(timeout: Optional[float] = None) -> bool:
             if deadline is not None and time.time() >= deadline:
                 with _running_lock:
                     return not _running
+
+
+# ----- lost hooks ------------------------------------------------------------------
+
+HOOK_SWEEP_INTERVAL_SECONDS = int(os.getenv("HOOK_SWEEP_INTERVAL_SECONDS", "300"))
+# An ended execution younger than this is left to its own on_terminal thread.
+HOOK_SWEEP_GRACE_SECONDS = 60
+# Executions that ended longer ago than this are not looked at (bounds the scan).
+HOOK_SWEEP_WINDOW_HOURS = int(os.getenv("HOOK_SWEEP_WINDOW_HOURS", "24"))
+LOST_HOOK_ERROR = (
+    "The manager stopped while this hook was running; it was not run again "
+    "(it may have done part of its work)."
+)
+
+
+def sweep_lost_hooks(bind: Any, now: Optional[datetime] = None) -> Tuple[int, int]:
+    """Fire hooks never claimed, and report hooks cut short. Returns (fired, lost).
+
+    Never raises for one execution: a failure is logged and the sweep goes on.
+    """
+    now = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    window_start = now - timedelta(hours=HOOK_SWEEP_WINDOW_HOURS)
+    with Session(bind=bind) as db:
+        unclaimed: List[str] = [
+            row.execution_id
+            for row in db.query(Execution.execution_id).filter(
+                Execution.state.in_(ExecutionState.TERMINAL),
+                Execution.hooks_fired_at.is_(None),
+                Execution.completed_at.isnot(None),
+                Execution.completed_at < now - timedelta(seconds=HOOK_SWEEP_GRACE_SECONDS),
+                Execution.completed_at >= window_start,
+            )
+        ]
+        # A running hook finishes or times out within hook_timeout_seconds().
+        cut_off = now - timedelta(seconds=hook_timeout_seconds() + HOOK_SWEEP_GRACE_SECONDS)
+        candidates = [
+            row.execution_id
+            for row in db.query(Execution.execution_id).filter(
+                Execution.hooks_fired_at.isnot(None),
+                Execution.hooks_finished_at.is_(None),
+                Execution.hooks_fired_at < cut_off,
+                Execution.hooks_fired_at >= window_start,
+                Execution.state.in_(ExecutionState.TERMINAL),
+            )
+        ]
+        lost_ids: List[str] = []
+        for execution_id in candidates:
+            # Conditional: a hook that returned meanwhile keeps its own outcome.
+            marked = (
+                db.query(Execution)
+                .filter(
+                    Execution.execution_id == execution_id,
+                    Execution.hooks_finished_at.is_(None),
+                )
+                .update(
+                    {"hooks_finished_at": now, "hook_error": LOST_HOOK_ERROR},
+                    synchronize_session=False,
+                )
+            )
+            if marked:
+                lost_ids.append(execution_id)
+        db.commit()
+    for execution_id in lost_ids:
+        logger.warning(
+            "A lifecycle hook was cut short by a manager that stopped; not run again",
+            extra={"event": "hook_lost", "execution_id": execution_id},
+        )
+    fired = 0
+    for execution_id in unclaimed:
+        try:
+            if fire_execution_hooks(bind, execution_id):
+                fired += 1
+                logger.info(
+                    "Fired lifecycle hooks missed by a manager that stopped",
+                    extra={"event": "hook_recovered", "execution_id": execution_id},
+                )
+        except Exception:
+            logger.exception(
+                "Lifecycle hooks could not be fired",
+                extra={"event": "hook_failed", "execution_id": execution_id},
+            )
+    return fired, len(lost_ids)
+
+
+class HookSweeper(PeriodicTask):
+    """Runs :func:`sweep_lost_hooks` every ``HOOK_SWEEP_INTERVAL_SECONDS``."""
+
+    label = "Hook Sweeper"
+    error_event = "hook_sweep_error"
+
+    def __init__(self, bind: Any, interval: float = HOOK_SWEEP_INTERVAL_SECONDS) -> None:
+        super().__init__()
+        self.bind = bind
+        self.interval = interval
+
+    @property
+    def interval_seconds(self) -> float:
+        return self.interval
+
+    def tick(self) -> None:
+        sweep_lost_hooks(self.bind)
+
+
+_sweeper: Optional[HookSweeper] = None
+
+
+def init_hook_sweeper(bind: Any) -> HookSweeper:
+    global _sweeper
+    _sweeper = HookSweeper(bind)
+    _sweeper.start()
+    return _sweeper
+
+
+def stop_hook_sweeper() -> None:
+    global _sweeper
+    if _sweeper:
+        _sweeper.stop()
+        _sweeper = None
 
 
 # ----- chaining --------------------------------------------------------------------

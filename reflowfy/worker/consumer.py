@@ -59,7 +59,9 @@ class KafkaJobConsumer:
         """
         # Handle comma-separated string for bootstrap_servers
         if isinstance(bootstrap_servers, str) and "," in bootstrap_servers:
-            self.bootstrap_servers = [s.strip() for s in bootstrap_servers.split(",") if s.strip()]
+            self.bootstrap_servers: Union[str, List[str]] = [
+                s.strip() for s in bootstrap_servers.split(",") if s.strip()
+            ]
         else:
             self.bootstrap_servers = bootstrap_servers
 
@@ -78,7 +80,7 @@ class KafkaJobConsumer:
         self._running = False
         self._stop_requested = False
 
-    async def start(self):
+    async def start(self) -> None:
         """Start consuming and processing jobs asynchronously."""
         consumer_kwargs: dict[str, Any] = {
             "bootstrap_servers": self.bootstrap_servers,
@@ -235,8 +237,9 @@ class KafkaJobConsumer:
             success = await self.executor.execute_job(job_payload)
 
             # Commit whether the job succeeded or failed. Kafka does not own
-            # retries here — the failure is already recorded in Postgres and the
-            # DLQ (POST /dlq/schedule) owns re-runs. Not committing would not
+            # retries here — the failure is already recorded in Postgres, and a
+            # re-run is the pipeline's job_retry (scheduled by this worker) or
+            # POST /executions/{id}/retry-failed. Not committing would not
             # actually retry: arg-less commit() advances the whole partition, so
             # the next successful message commits past this offset regardless,
             # while risking a duplicate reprocess of a deterministic failure on

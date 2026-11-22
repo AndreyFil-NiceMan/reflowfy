@@ -88,15 +88,75 @@ class TestExecute:
         assert str(code) in status.error_message
         assert status.total_jobs == 0
 
-    def test_timeout_fails_the_execution(self):
+    def test_timeout_without_an_answer_from_the_manager_is_reported_as_unknown(self):
         def timeout(request: httpx.Request) -> httpx.Response:
             raise httpx.ReadTimeout("timed out", request=request)
 
-        ex, _ = _executor(timeout)
-        status = ex.execute(PIPELINE, {})
+        ex, requests = _executor(timeout)
+        status = ex.execute(PIPELINE, {}, execution_id="e9")
+
+        assert status.state == ExecutionState.FAILED
+        assert (status.error_message or "").startswith("ReflowManager HTTP error: timed out;")
+        assert "GET /executions/e9/status" in (status.error_message or "")
+        assert status.metadata["upstream_error"] and status.metadata["outcome_unknown"]
+        assert [r.method for r in requests] == ["POST", "GET"]
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            lambda r: httpx.ReadTimeout("timed out", request=r),
+            lambda r: httpx.RemoteProtocolError("connection dropped", request=r),
+            lambda r: httpx.Response(502, text="bad gateway"),
+        ],
+        ids=["read-timeout", "dropped", "502"],
+    )
+    def test_a_run_the_manager_did_accept_is_not_reported_failed(self, error):
+        """F6: /run timed out (or the proxy answered 5xx) after the manager committed
+        the execution. Reporting it failed made callers retry and run it twice."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                assert request.url.path == "/executions/e1/stats"
+                return httpx.Response(200, json={"execution_id": "e1"})
+            result = error(request)
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        ex, _ = _executor(handler)
+        status = ex.execute(PIPELINE, {}, execution_id="e1")
+
+        assert status.state == ExecutionState.RUNNING
+        assert status.error_message is None
+        assert status.metadata["confirmed_after_error"]
+
+    def test_a_run_the_manager_does_not_have_is_failed(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                return httpx.Response(404, json={"detail": "not found"})
+            raise httpx.ReadTimeout("timed out", request=request)
+
+        ex, _ = _executor(handler)
+        status = ex.execute(PIPELINE, {}, execution_id="e2")
 
         assert status.state == ExecutionState.FAILED
         assert status.error_message == "ReflowManager HTTP error: timed out"
+        assert "outcome_unknown" not in status.metadata
+
+    def test_a_connection_never_made_is_not_probed(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("connection refused", request=request)
+
+        ex, requests = _executor(handler)
+        status = ex.execute(PIPELINE, {}, execution_id="e3")
+
+        assert status.state == ExecutionState.FAILED
+        assert [r.method for r in requests] == ["POST"]
+
+    def test_a_4xx_is_not_probed(self):
+        ex, requests = _executor(lambda r: httpx.Response(422, json={"detail": "bad"}))
+        ex.execute(PIPELINE, {}, execution_id="e4")
+        assert [r.method for r in requests] == ["POST"]
 
     def test_unreachable_manager_fails_the_execution(self):
         def refused(request: httpx.Request) -> httpx.Response:

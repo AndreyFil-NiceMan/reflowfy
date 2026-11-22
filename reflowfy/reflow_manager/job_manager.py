@@ -256,12 +256,12 @@ class JobManager:
 
         Commits immediately to ensure the update is persisted.
         """
-        update_data: Dict[str, Any] = {
+        update_data: Dict[Any, Any] = {
             "state": state,
             "updated_at": datetime.now(timezone.utc).replace(tzinfo=None),
         }
 
-        if state in (JobState.COMPLETED, JobState.FAILED):
+        if state in JobState.FINISHED:  # deduplicated is finished too
             update_data["completed_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
         if processed_records is not None:
             update_data["processed_records"] = processed_records
@@ -298,16 +298,8 @@ class JobManager:
             Job.execution_id == execution_id
         ).group_by(Job.state).all()
 
-        counts = {
-            "total": 0,
-            "pending": 0,
-            "dispatched": 0,
-            "running": 0,
-            "completed": 0,
-            "failed": 0,
-            "deduplicated": 0,
-            "cancelled": 0,
-        }
+        # Every state, so a new one is counted (as 0) without touching this.
+        counts = {"total": 0, **{state: 0 for state in JobState.ALL}}
 
         total = 0
         for state, count in rows:

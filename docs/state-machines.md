@@ -7,7 +7,7 @@ them, the guard that makes each transition safe (or the lack of one), and the ga
 
 Surveyed 2026-11-11 against `claude/reflowfy-implicit-state-machines-rst3ad`.
 
-**Status.** F1 and F2 are fixed, and F3's state check: execution transitions are now
+**Status.** F1–F6 are fixed (2026-11-18: F3's sweep, F4, F5, F6). Execution transitions are
 compare-and-set against `ExecutionState.FROM`, and a worker's writes to a job are fenced
 by the token its claim writes to `jobs.claimed_by` (regression tests:
 `tests/unit/test_state_transitions.py`). The tables below show the guards as they are
@@ -294,8 +294,8 @@ one clears the entry. Loop pool (10b): opened by the worker, `LocalDispatcher` a
 that `define_transformations` re-resolves after every step. States per position:
 unapplied → applied (`sync`/`async`/`per_record`) or declined (`skipped`). The loop ends
 when the re-resolved list is no longer than the cursor; `max_steps` caps runaway growth.
-The documented invariant (the list is append-only) is not checked: if re-resolution
-changes an already-applied position, nobody notices.
+The list is append-only, and `_check_append_only` enforces it: a re-resolution that
+drops or renames an already-applied position fails the job with a `TransformationError`.
 
 ## 12. SQL template scanner
 
@@ -315,7 +315,9 @@ which shutdown waits on.
 
 `execution/distributed_executor.py`: the API builds an `ExecutionStatus` in `running`
 before it posts `/run`, keeps `running` on a 2xx (the manager row is `pending` at that
-point), and turns it into `failed` on any HTTP error.
+point), and turns it into `failed` on an HTTP error — except that after a timeout, a
+dropped connection or a 5xx it first asks the manager whether the execution exists
+(`_was_accepted`), and reports it accepted if so.
 
 ---
 
@@ -395,10 +397,12 @@ Suggested fix: make the claim return a fencing token (the new `attempts` value, 
 heartbeat, the final write and the retry write. A write that matches no row means
 another delivery owns the job: log it and count it as `redelivered`.
 
-### F3. Lifecycle hooks are at-most-once, not exactly-once — partly fixed
+### F3. Lifecycle hooks are at-most-once, not exactly-once — fixed
 
-**Fixed:** `claim_hooks` requires a terminal state in the same statement. **Still open:**
-no sweep re-fires hooks lost to a crash; CLAUDE.md now says "at most once".
+**Fixed:** `claim_hooks` requires a terminal state in the same statement, and
+`lifecycle.HookSweeper` fires hooks never claimed (crash before the claim) and marks a
+hook claimed but never finished (`hooks_finished_at`) with a `hook_error` saying it was
+cut short. That one is deliberately not re-run: at most once is kept.
 
 `claim_hooks` sets `hooks_fired_at` before the hook runs, and the hook runs on a thread
 started after the terminal commit. A manager that dies between the commit and the
@@ -413,7 +417,14 @@ Suggested fix: claim with `AND state IN TERMINAL`, and if exactly-once matters, 
 startup sweep for terminal executions with `hooks_fired_at IS NULL` (for the
 crash-before-claim window).
 
-### F4. DLQ and cron start an execution before their own transaction commits
+### F4. DLQ and cron start an execution before their own transaction commits — fixed
+
+**Fixed:** both schedulers stage the execution in the poll's own transaction
+(`start.stage_execution`) and start it after the commit (`start_in_background`), so the
+execution and the DLQ job / schedule advance are saved together or not at all; one saved
+but never started is failed by startup recovery. The DLQ's phantom `processing` status is
+gone (`DLQStatus`), and the cancel route is a conditional `UPDATE … WHERE status =
+'pending'`. What follows is the bug as found.
 
 `DLQScheduler._dispatch_jobs` and `PipelineScheduler._trigger_pipeline` create the
 execution in a separate session, commit it and start its thread, then mark the DLQ job
@@ -427,7 +438,14 @@ state; and the cancel route reads without a lock, so a cancel racing the poll wa
 for the poll's commit and then overwrites `completed` with `cancelled` for a job whose
 execution already started.
 
-### F5. States as bare strings outside `store/states.py`
+### F5. States as bare strings outside `store/states.py` — fixed
+
+**Fixed:** `DLQStatus` and `ScheduleEnabled` sit beside `JobState`/`ExecutionState`;
+job counts are built from `JobState.ALL`; the routes, the drive loop, the lifecycle
+summary and the models use the constants. `/stats/dlq` reports a count per
+`DLQStatus` (the never-written `processing`/`failed` keys are gone). The one literal
+left is `ExecutionSummary.succeeded` in `core/`, which may not import `store`.
+As found:
 
 `ExecutionState`/`JobState` exist, but these still compare or write literals:
 `app.py` (`"failed"`/`"cancelled"` in the PATCH route's 422 check, `"pending"` in the `/run` answer),
@@ -436,7 +454,16 @@ execution already started.
 and the schedule `enabled` strings. A `DLQStatus` class beside the other two, and the
 counts dict built from `JobState.ALL`, would make a new state a one-place change.
 
-### F6. Smaller ones
+### F6. Smaller ones — fixed
+
+**Fixed (2026-11-18):** `completed_at` is set for every finished job state;
+`release_drivers_on_host` frees `plan:`/`recover:` leases too; the runner raises a
+`TransformationError` when re-resolution drops or replaces a step that already ran;
+the API asks the manager (`GET /executions/{id}/stats`) before reporting a `/run` that
+timed out or got a 5xx as failed (accepted → `running`, `confirmed_after_error`; no
+answer → 502 with `outcome_unknown` and a pointer to `/executions/{id}/status`); the
+consumer's comment names `job_retry` / `/retry-failed`. The duplicated `break` was
+already gone. As found:
 
 - `JobManager.update_job_state` is a generic, unguarded setter; its only caller is
   `on_unsendable` (`pending → failed`). It sets `completed_at` for `completed`/`failed`
