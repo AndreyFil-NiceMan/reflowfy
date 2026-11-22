@@ -22,7 +22,7 @@ automatically once APM Server ingests traces.
 
 ### Logs dashboard
 
-`kibana/` holds a ready-made **Reflowfy logs** dashboard (Kibana 8.11+):
+`kibana/` holds a ready-made **Reflowfy logs** dashboard (Kibana 8.8+; checked on 8.8.0 and 8.15.0):
 
 1. **Mappings, before logs arrive** (an existing daily index keeps its old mapping):
    `curl -X PUT "$ES/_index_template/reflowfy-logs" -H 'Content-Type: application/json' -d @kibana/index-template.json`
