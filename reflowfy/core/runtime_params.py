@@ -30,7 +30,7 @@ untyped behavior, which is why every existing pipeline still works.
 """
 
 from dataclasses import dataclass
-from typing import Any, List
+from typing import Any, Dict, List
 
 from typing_extensions import TypedDict, TypeVar
 
@@ -74,6 +74,8 @@ class RuntimeParams(TypedDict, total=False):
     # Written by the framework when a hook raises SkipJob: the reason the job
     # was dropped. Lands in the job's stats row and its worker log line.
     skip_reason: str
+    # Written with it: the SkipJob's `extra`, for the job's `job_dropped` log line.
+    skip_extra: Dict[str, Any]
     # Set by the DLQ scheduler on a replayed run.
     _dlq_source: bool
     _dlq_job_ids: List[Any]

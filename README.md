@@ -527,6 +527,15 @@ All of these are opt-in and set on the pipeline class.
 **Dropping records and jobs.** Inside a per-record transformation, return `None` to drop a record
 silently or `raise SkipRecord("why")` to drop it with a reason; `raise SkipJob("why")` anywhere in
 a job drops the whole job without failing it. Both are counted on the job's stats and in metrics.
+Both take `extra=`, the same fields a logger call takes, for what the reason must not hold:
+
+```python
+raise SkipRecord("user inactive", extra={"user_id": record["user_id"]})  # a record_skipped line
+raise SkipJob("tenant disabled", extra={"tenant": params["tenant"]})      # on the job_dropped line
+```
+
+A `SkipRecord` with `extra` gets an info line of its own (one per record); without it, skips are
+only counted. The fields go to logs only, never to stats or metric labels.
 
 **Retries.** A worker that disappears has its job re-run automatically (leases). To retry jobs
 that *fail*, set `job_retry`; bad data and bugs (`KeyError`, validation errors, HTTP 4xx) are

@@ -43,7 +43,8 @@ from reflowfy.testing.runner import (
 FIXTURE_VERSION = 1
 
 # Written by the framework per run; a recorded job must not bring its old ones back.
-_RESERVED_PARAMS = {"execution_id", "batch_id", "pipeline_name", "created_at", "skip_reason"}
+_RESERVED_PARAMS = {"execution_id", "batch_id", "pipeline_name", "created_at", "skip_reason",
+                    "skip_extra"}
 # The ones that differ from run to run. A fixture keeps the recorded values and a
 # replay runs with them, so a step that stamps `execution_id` into its records
 # produces the same records every time.

@@ -10,7 +10,7 @@ Import from the package root::
 """
 
 from contextlib import contextmanager
-from typing import Any, Dict, Generator, List, Optional
+from typing import Any, Dict, Generator, List, Mapping, Optional
 
 
 class PipelineError(Exception):
@@ -59,15 +59,32 @@ class SkipJob(PipelineError):
             if not [r for r in records if r["status"] == "ready"]:
                 raise SkipJob("nothing ready yet")
 
-    Attributes (filled in by the framework, not by the raiser):
-        applied_steps: The steps that ran before the job was dropped, so records
-            they skipped (``SkipRecord``) are still reported beside the drop.
-        step_skip_reasons: ``SkipRecord`` reasons of records that finished in the
-            per-record step the ``SkipJob`` came from, before it stopped that step.
+    ``extra`` adds fields to the ``job_dropped`` log line, as ``extra=`` does on a
+    reflowfy logger call (the job's execution_id/job_id/pipeline_name are already
+    bound)::
+
+        raise SkipJob("tenant disabled", extra={"tenant": params["tenant"]})
+
+    Attributes:
+        extra: Fields for the ``job_dropped`` log line (logs only: not stored on the
+            job's ``stats``, not a metric label).
+        applied_steps: Filled in by the framework: the steps that ran before the job
+            was dropped, so records they skipped (``SkipRecord``) are still reported
+            beside the drop.
+        step_skip_reasons: Filled in by the framework: ``SkipRecord`` reasons of
+            records that finished in the per-record step the ``SkipJob`` came from,
+            before it stopped that step.
     """
 
-    def __init__(self, message: str, original_error: Optional[Exception] = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        original_error: Optional[Exception] = None,
+        *,
+        extra: Optional[Mapping[str, Any]] = None,
+    ) -> None:
         super().__init__(message, original_error)
+        self.extra: Dict[str, Any] = dict(extra or {})
         self.applied_steps: List[Any] = []
         self.step_skip_reasons: Dict[str, int] = {}
 
@@ -91,7 +108,31 @@ class SkipRecord(PipelineError):
     reasons are counted, so ``"user inactive"`` groups and ``f"user {id} inactive"``
     does not. Only a per-record transformation can skip a record; anywhere else
     there is no single record to drop, and it fails the job saying so.
+
+    ``extra`` logs this one record's skip, with those fields, as ``extra=`` does on a
+    reflowfy logger call — the place for what varies per record::
+
+        raise SkipRecord("user inactive", extra={"user_id": record["user_id"]})
+
+    Without ``extra`` a skip is only counted in the step's ``records_skipped`` line;
+    with it, each such record also gets a ``record_skipped`` info line (one per
+    record: mind the volume). The fields go to logs only, never to the job's
+    ``stats`` or a metric label, so an ID is fine there. Don't put credentials or
+    whole records in them.
+
+    Attributes:
+        extra: Fields for the ``record_skipped`` log line.
     """
+
+    def __init__(
+        self,
+        message: str,
+        original_error: Optional[Exception] = None,
+        *,
+        extra: Optional[Mapping[str, Any]] = None,
+    ) -> None:
+        super().__init__(message, original_error)
+        self.extra: Dict[str, Any] = dict(extra or {})
 
 
 class RecordValidationError(PipelineError):

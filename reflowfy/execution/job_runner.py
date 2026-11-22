@@ -15,7 +15,7 @@ test/preview paths cannot drift from what the worker actually runs.
 import asyncio
 import time
 import uuid
-from typing import Any, Dict, Iterator, List, Optional, Tuple, cast
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Tuple, cast
 
 from reflowfy.core.async_utils import call_hook, run_coroutine_sync
 from reflowfy.core.execution_context import ExecutionContext
@@ -31,7 +31,7 @@ from reflowfy.execution.transformation_runner import (
     apply_transformations_iteratively_async,
 )
 from reflowfy.observability.logging import get_logger
-from reflowfy.core.record_steps import count_skip_reason, top_skip_reasons
+from reflowfy.core.record_steps import count_skip_reason, skip_log_extra, top_skip_reasons
 
 logger = get_logger("execution.job_runner")
 
@@ -88,13 +88,14 @@ def check_record_type(pipeline: Any, records: List[Any]) -> Tuple[List[Any], App
     return kept, step
 
 
-def log_job_dropped(log: Any, reason: str) -> None:
+def log_job_dropped(log: Any, reason: str, extra: Optional[Mapping[str, Any]] = None) -> None:
     """The ``job_dropped`` line for a job a pipeline dropped with ``SkipJob``: one
-    wording for the worker and ``reflowfy test`` (each passes its own logger)."""
+    wording for the worker and ``reflowfy test`` (each passes its own logger).
+    ``extra`` is the ``SkipJob``'s own (``SkipJob("why", extra={...})``)."""
     log.info(
         "Job dropped by pipeline (%s)",
         reason,
-        extra={"event": "job_dropped", "skip_reason": reason},
+        extra=skip_log_extra(extra, {"event": "job_dropped", "skip_reason": reason}),
     )
 
 
@@ -330,6 +331,8 @@ async def run_job_records_async(
         # Reason rides on runtime_params (a per-job dict) so the caller can put it
         # in the job's stats/metrics without run_job_records growing a 5th return.
         runtime_params["skip_reason"] = str(exc)
+        if exc.extra:
+            runtime_params["skip_extra"] = exc.extra
         logger.debug(
             "Pipeline '%s': job dropped (%s)",
             name,
