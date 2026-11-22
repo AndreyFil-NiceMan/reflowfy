@@ -645,3 +645,148 @@ class TestWorkerRecords:
         stats.success = True
         WorkerExecutor.record_job_metrics("ut_step_retry_metric", stats)
         assert value() == before + 3
+
+
+# ── a whole job through the worker ───────────────────────────────────────────
+
+
+def _payload(source: BaseSource, pipeline_name: str, job_id: str = "j") -> Dict[str, Any]:
+    """The job message the manager builds, through JSON as Kafka carries it."""
+    import json
+
+    from reflowfy.reflow_manager.pipeline_runner import build_job_payload
+
+    metadata = {"batch_id": "b", "created_at": "t", "runtime_params": {}}
+    payload = build_job_payload("e", job_id, pipeline_name, source, metadata)
+    return json.loads(json.dumps(payload))
+
+
+def _metric(name: str, **labels: str) -> float:
+    return REGISTRY.get_sample_value(name, labels) or 0.0
+
+
+class _WorkerPipeline:
+    """A per-record step and a destination that each fail once before working."""
+
+    def __init__(self, name: str, sink: List[Any], record_failures: int, send_failures: int):
+        self.name = name
+        self.sink = sink
+        self.calls = {"record": 0}
+        calls = self.calls
+
+        @transformation(f"{name}_lookup", per_record=True, retry=fast())
+        def lookup(record: Any, params: Any) -> Any:
+            calls["record"] += 1
+            if calls["record"] <= record_failures:
+                raise ConnectionError("lookup down")
+            return {**record, "looked_up": True}
+
+        self.lookup = lookup
+        self.send_failures = send_failures
+
+    def define_transformations(self, records: List[Any], params: Dict[str, Any]) -> List[Any]:
+        return [self.lookup]
+
+    def define_destination(self, records: List[Any], params: Dict[str, Any]) -> Any:
+        sink = self.sink
+        failures = self.send_failures
+
+        class Sink(FlakyDestination):
+            async def send(self, records: List[Any], metadata: Any = None) -> None:
+                await super().send(records, metadata)
+                sink.extend(records)
+
+        return Sink(DestinationError("sink", "busy"), failures, fast())
+
+
+class TestWorkerPath:
+    """``execute_job`` on a real job message: retries land on the stats it saves."""
+
+    @pytest.fixture
+    def worker(self, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
+        saved: List[Dict[str, Any]] = []
+
+        async def save(execution_id: str, job_id: str, stats: JobStats, retry_in: Any = None):
+            saved.append(stats.to_dict())
+            return True
+
+        # The database is unreachable: the claim fails open, the outcome is captured here.
+        executor = WorkerExecutor(database_url="postgresql://x/y")
+        monkeypatch.setattr(executor, "_update_job_in_db", save)
+        executor.saved = saved  # type: ignore[attr-defined]
+        yield executor
+
+    def _use(self, monkeypatch: pytest.MonkeyPatch, pipeline: Any) -> None:
+        from reflowfy.core.registry import pipeline_registry
+
+        monkeypatch.setattr(pipeline_registry, "get", lambda name: pipeline)
+
+    async def test_every_step_retries_and_the_job_completes(
+        self, worker: Any, monkeypatch: pytest.MonkeyPatch
+    ):
+        name = "ut_worker_step_retry"
+        sink: List[Any] = []
+        self._use(monkeypatch, _WorkerPipeline(name, sink, record_failures=1, send_failures=2))
+        source = FlakyRetrySource(failures=2, records=[{"id": 1}, {"id": 2}]).with_retry(fast())
+        steps = {
+            "source:FlakyRetrySource": 2,
+            f"{name}_lookup": 1,
+            "destination:Sink": 2,
+        }
+        before = {s: _metric("reflowfy_step_retries_total", pipeline=name, step=s) for s in steps}
+
+        assert await worker.execute_job(_payload(source, name)) is True
+
+        assert sink == [{"id": 1, "looked_up": True}, {"id": 2, "looked_up": True}]
+        stats = worker.saved[-1]
+        assert stats["success"] is True
+        assert stats["step_retries"] == steps
+        for step, retries in steps.items():
+            after = _metric("reflowfy_step_retries_total", pipeline=name, step=step)
+            assert after == before[step] + retries, step
+
+    async def test_source_retry_travels_in_the_job_message(
+        self, worker: Any, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Without the descriptor's ``retry`` the rebuilt source would not retry at all."""
+        name = "ut_worker_source_retry_wire"
+        self._use(monkeypatch, _WorkerPipeline(name, [], 0, 0))
+        payload = _payload(FlakyRetrySource(failures=1).with_retry(fast()), name)
+        assert payload["source"]["retry"]["max_attempts"] == 3
+        assert await worker.execute_job(payload) is True
+        assert worker.saved[-1]["step_retries"] == {"source:FlakyRetrySource": 1}
+
+    async def test_exhausted_retries_fail_the_job_and_are_kept(
+        self, worker: Any, monkeypatch: pytest.MonkeyPatch
+    ):
+        name = "ut_worker_step_retry_exhausted"
+        sink: List[Any] = []
+        self._use(monkeypatch, _WorkerPipeline(name, sink, 0, 0))
+        source = FlakyRetrySource(failures=9).with_retry(fast(3))
+
+        assert await worker.execute_job(_payload(source, name)) is False
+
+        assert FlakyRetrySource.calls == 3 and sink == []
+        stats = worker.saved[-1]
+        assert stats["success"] is False
+        assert "down" in stats["error"]
+        # Retried and still failed: not indistinguishable from a first-attempt failure.
+        assert stats["step_retries"] == {"source:FlakyRetrySource": 2}
+        # A final failure: counted as failed (the pipeline name is this test's own).
+        failed = _metric(
+            "reflowfy_jobs_failed_total", pipeline=name, error_type=stats["error_type"]
+        )
+        assert failed == 1
+
+    async def test_counts_do_not_leak_between_jobs(
+        self, worker: Any, monkeypatch: pytest.MonkeyPatch
+    ):
+        name = "ut_worker_step_retry_isolated"
+        self._use(monkeypatch, _WorkerPipeline(name, [], 0, 0))
+        flaky = FlakyRetrySource(failures=1).with_retry(fast())
+        assert await worker.execute_job(_payload(flaky, name, "j1")) is True
+        assert worker.saved[-1]["step_retries"] == {"source:FlakyRetrySource": 1}
+
+        steady = FlakyRetrySource(failures=0).with_retry(fast())
+        assert await worker.execute_job(_payload(steady, name, "j2")) is True
+        assert "step_retries" not in worker.saved[-1]
