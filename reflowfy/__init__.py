@@ -83,7 +83,7 @@ def __getattr__(name: str) -> Any:
     return value
 
 
-__version__ = "1.1.6"
+__version__ = "1.1.7"
 
 __all__ = [
     "load_query",
