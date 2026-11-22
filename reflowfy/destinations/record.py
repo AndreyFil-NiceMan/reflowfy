@@ -71,7 +71,11 @@ from reflowfy.core.exceptions import PipelineError, SkipJob, SkipRecord
 from reflowfy.destinations.base import BaseDestination, ConnectionPool
 from reflowfy.core.exceptions import DestinationError
 from reflowfy.observability.logging import get_logger
-from reflowfy.core.record_steps import count_skip_reason, default_record_concurrency
+from reflowfy.core.record_steps import (
+    count_skip_reason,
+    default_record_concurrency,
+    log_record_skipped,
+)
 
 logger = get_logger("destinations.record")
 
@@ -322,6 +326,7 @@ class RecordDestination(BaseDestination):
         if isinstance(exc, SkipJob):
             raise exc
         if isinstance(exc, SkipRecord):
+            log_record_skipped(logger, self.name, index, str(exc), exc.extra)
             return _Skipped(str(exc))
         if self.on_error == "skip":
             # The type, not the message: a message can carry record values, and

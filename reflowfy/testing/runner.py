@@ -245,7 +245,7 @@ def _log_job(job: JobResult, logger: Any = logger) -> None:
     for step in job.steps:
         log_skipped_records(logger, step)
     if job.skip_reason:
-        log_job_dropped(logger, str(job.skip_reason))
+        log_job_dropped(logger, str(job.skip_reason), job.params.get("skip_extra"))
 
 
 async def _send(target: BaseDestination, records: List[Any], params: Dict[str, Any]) -> None:

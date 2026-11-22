@@ -193,7 +193,7 @@ class WorkerExecutor(JobStore):
                 report_steps(applied, stats, pipeline_name)
                 stats.skip_reason = runtime_params.get("skip_reason")
                 if stats.skip_reason:
-                    log_job_dropped(logger, stats.skip_reason)
+                    log_job_dropped(logger, stats.skip_reason, runtime_params.get("skip_extra"))
                 else:
                     logger.info("No records to process", extra={"event": "job_empty"})
                 stats.success = True

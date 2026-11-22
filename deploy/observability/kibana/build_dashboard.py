@@ -1,4 +1,4 @@
-"""Build kibana-saved-objects.ndjson: the Reflowfy logs dashboard (Kibana 8.11+).
+"""Build kibana-saved-objects.ndjson: the Reflowfy logs dashboard (Kibana 8.8+).
 
     python deploy/observability/kibana/build_dashboard.py
 
@@ -14,6 +14,24 @@ from typing import Any, Dict, List, Optional
 DATA_VIEW = "reflowfy-logs"
 LAYER = "l1"
 KQL = "language"
+
+# The oldest Kibana the file imports into is 8.8.0. Each saved object is stamped
+# with the last migration Kibana 8.8 knows for its type: a newer stamp is refused
+# ("belongs to a more recent version of Kibana [8.9.0] when the last known
+# version is [8.6.0]"), and a newer Kibana runs its own migrations forward from
+# these on import, so one file serves 8.8 and later.
+CORE_VERSION = "8.8.0"
+TYPE_VERSIONS = {
+    "index-pattern": "8.0.0",
+    "search": "8.0.0",
+    "lens": "8.6.0",
+    "dashboard": "8.7.0",
+}
+PANEL_VERSION = "8.8.0"
+
+
+def _versions(obj_type: str) -> Dict[str, str]:
+    return {"coreMigrationVersion": CORE_VERSION, "typeMigrationVersion": TYPE_VERSIONS[obj_type]}
 
 
 def _col_count() -> Dict[str, Any]:
@@ -122,8 +140,7 @@ def _lens(
                 "name": f"indexpattern-datasource-layer-{LAYER}",
             }
         ],
-        "coreMigrationVersion": "8.8.0",
-        "typeMigrationVersion": "8.9.0",
+        **_versions("lens"),
     }
 
 
@@ -221,8 +238,7 @@ def build() -> List[Dict[str, Any]]:
             "id": DATA_VIEW,
             "attributes": {"title": "reflowfy-logs-*", "timeFieldName": "@timestamp", "name": "Reflowfy logs"},
             "references": [],
-            "coreMigrationVersion": "8.8.0",
-            "typeMigrationVersion": "8.0.0",
+            **_versions("index-pattern"),
         },
         {
             "type": "search",
@@ -244,8 +260,7 @@ def build() -> List[Dict[str, Any]]:
             "references": [
                 {"type": "index-pattern", "id": DATA_VIEW, "name": "kibanaSavedObjectMeta.searchSourceJSON.index"}
             ],
-            "coreMigrationVersion": "8.8.0",
-            "typeMigrationVersion": "8.0.0",
+            **_versions("search"),
         },
     ]
     panels: List[Dict[str, Any]] = []
@@ -259,7 +274,7 @@ def build() -> List[Dict[str, Any]]:
             objects.append({**p["obj"], "id": oid})
         panels.append(
             {
-                "version": "8.11.0",
+                "version": PANEL_VERSION,
                 "type": ptype,
                 "gridData": {"x": p["x"], "y": p["y"], "w": p["w"], "h": p["h"], "i": pid},
                 "panelIndex": pid,
@@ -286,8 +301,7 @@ def build() -> List[Dict[str, Any]]:
                 },
             },
             "references": refs,
-            "coreMigrationVersion": "8.8.0",
-            "typeMigrationVersion": "8.9.0",
+            **_versions("dashboard"),
         }
     )
     return objects

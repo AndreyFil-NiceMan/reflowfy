@@ -19,8 +19,15 @@ from typing import (
 
 from reflowfy.core.exceptions import SkipJob, SkipRecord
 from reflowfy.core.query_loader import QueryLoaderMixin
-from reflowfy.core.record_steps import count_skip_reason, default_record_concurrency
+from reflowfy.core.record_steps import (
+    count_skip_reason,
+    default_record_concurrency,
+    log_record_skipped,
+)
+from reflowfy.observability.logging import get_logger
 from reflowfy.transformations.registry import transformation_registry
+
+logger = get_logger("transformations")
 
 
 class TransformationMeta(ABCMeta):
@@ -338,6 +345,7 @@ class RecordTransformation(AsyncTransformation):
     def _raised(self, index: int, record: Any, exc: Exception) -> "_Skipped":
         """A record's call raised: skip it (``SkipRecord``, ``on_error="skip"``) or fail."""
         if isinstance(exc, SkipRecord):
+            log_record_skipped(logger, self.name, index, str(exc), exc.extra)
             return _Skipped(str(exc))
         if self.on_error == "skip":
             return _Skipped(type(exc).__name__)
@@ -478,7 +486,6 @@ class DecoratedTransformation(BaseTransformation):
         if bind_options is not None:
             bind_options(options)
         self.options = options
-
 
 
 

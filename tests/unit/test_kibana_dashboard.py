@@ -68,3 +68,20 @@ def test_index_template_is_valid_json_and_maps_strings_to_keyword():
     assert tpl["index_patterns"] == ["reflowfy-logs-*"]
     dyn = tpl["template"]["mappings"]["dynamic_templates"][0]["strings_as_keyword"]
     assert dyn["mapping"]["type"] == "keyword"
+
+
+def test_imports_into_kibana_8_8():
+    """Kibana refuses an object stamped newer than the last migration it knows for the
+    type ("belongs to a more recent version of Kibana [8.9.0] when the last known
+    version is [8.6.0]"), so nothing may be stamped past what 8.8.0 knows."""
+    known_in_8_8 = {"index-pattern": "8.0.0", "search": "8.0.0", "lens": "8.6.0", "dashboard": "8.7.0"}
+
+    def v(text):
+        return tuple(int(part) for part in text.split("."))
+
+    for obj in _build():
+        assert v(obj["typeMigrationVersion"]) <= v(known_in_8_8[obj["type"]]), obj["id"]
+        assert v(obj["coreMigrationVersion"]) <= (8, 8, 0), obj["id"]
+        if obj["type"] == "dashboard":
+            for panel in json.loads(obj["attributes"]["panelsJSON"]):
+                assert v(panel["version"]) <= (8, 8, 0), panel["panelIndex"]

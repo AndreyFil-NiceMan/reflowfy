@@ -342,7 +342,19 @@ records ('reason' xN, …)`, stores `records_skipped` and `record_skip_reasons` 
 because a record outcome has no place on the per-job `jobs_processed_total` and adding a label to
 `records_processed_total` would break its existing series. Reasons are counted, so they must be
 short fixed phrases: at most 20 distinct per step (the rest go to "(other reasons)"), 200
-characters each. `reflowfy test` shows them too (`--json`: `records_skipped` and `skip_reasons` per step). `reflowfy test` also logs both skips with the worker's events (`records_skipped`, `job_dropped`, plus `jobs_dropped` in `--json`), so `LOG_DESTINATION=elastic` ships them from a CLI run as `service.name: cli`. That works because `ElasticLogHandler` registers `close()` with `atexit` itself and drains its queue there: left to `logging.shutdown`, urllib3's own exit hooks emptied the client's pool first and a short process shipped nothing.
+characters each. `reflowfy test` shows them too (`--json`: `records_skipped` and `skip_reasons` per step).
+**`extra=` on both** (`SkipRecord("why", extra={"user_id": 7})`, `SkipJob("why", extra={...})`,
+keyword-only, kept as `.extra`): the place for per-record values the counted reason must not
+hold. A `SkipRecord` with `extra` also logs a `record_skipped` info line of its own
+(`log_record_skipped` in `core/record_steps.py`, called from `RecordTransformation._raised` and
+`RecordDestination._on_failure`: fields `transformation`, `record_index`, `skip_reason` + the
+extras, inside the job's `log_context`); without `extra` nothing changes (no per-record volume).
+A `SkipJob`'s extras ride on `runtime_params["skip_extra"]` (reserved, like `skip_reason`) to the
+worker's and `reflowfy test`'s `job_dropped` line. `skip_log_extra` merges them: framework
+fields keep their names, and a user key that clashes with one or with a `LogRecord` attribute
+(`message`, `name`…, which would make the log call raise and fail the job) becomes
+`labels.<key>`. Logs only — not in `stats`, not a metric label. Tests:
+`tests/unit/test_skip_extra_logging.py`. `reflowfy test` also logs both skips with the worker's events (`records_skipped`, `job_dropped`, plus `jobs_dropped` in `--json`), so `LOG_DESTINATION=elastic` ships them from a CLI run as `service.name: cli`. That works because `ElasticLogHandler` registers `close()` with `atexit` itself and drains its queue there: left to `logging.shutdown`, urllib3's own exit hooks emptied the client's pool first and a short process shipped nothing.
 
 ### Testing user pipelines (`reflowfy.testing`)
 
