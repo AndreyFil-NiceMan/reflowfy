@@ -15,6 +15,7 @@ from reflowfy.core.async_utils import call_hook
 from reflowfy.core.exceptions import pipeline_step
 from reflowfy.core.execution_context import build_flat_runtime_params_from_metadata
 from reflowfy.core.registry import pipeline_registry
+from reflowfy.core.retry import count_retries
 from reflowfy.core.exceptions import DestinationError
 from reflowfy.destinations.fan_out import as_destination
 from reflowfy.destinations.record import RecordDestination
@@ -73,6 +74,8 @@ class WorkerExecutor(JobStore):
             metrics.records_deduplicated_total.labels(pipeline=pipeline).inc(
                 stats.records_deduplicated
             )
+        for step, retries in stats.step_retries.items():
+            metrics.step_retries_total.labels(pipeline=pipeline, step=step).inc(retries)
         if (
             not stats.success
             and stats.error_type
@@ -111,9 +114,11 @@ class WorkerExecutor(JobStore):
                 with trace.get_tracer("worker").start_as_current_span(
                     "process_job", context=parent
                 ):
-                    return await self._execute_job_inner(
-                        job_payload, stats, execution_id, job_id, pipeline_name
-                    )
+                    # Step retries made during the job land on its stats as they happen.
+                    with count_retries(stats.step_retries):
+                        return await self._execute_job_inner(
+                            job_payload, stats, execution_id, job_id, pipeline_name
+                        )
         finally:
             self.record_job_metrics(pipeline_name, stats)
 
@@ -165,7 +170,7 @@ class WorkerExecutor(JobStore):
             runtime_params = build_flat_runtime_params_from_metadata(metadata)
 
             # Rebuild the planned source slice the manager assigned to this job.
-            source = SourceFactory.create(source_descriptor["type"], source_descriptor["config"])
+            source = SourceFactory.from_descriptor(source_descriptor)
 
             # Pipeline is required to resolve transforms + destination dynamically.
             pipeline = pipeline_registry.get(pipeline_name)

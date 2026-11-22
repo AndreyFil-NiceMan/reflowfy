@@ -19,6 +19,7 @@ from reflowfy.core.abstract_pipeline import AbstractPipeline
 from reflowfy.core.async_utils import call_hook
 from reflowfy.core.exceptions import SkipJob, SkipRecord
 from reflowfy.core.record_validation import describe_invalid, find_invalid_records
+from reflowfy.core.retry import RetryConfig, retry_async
 from reflowfy.observability.logging import get_logger
 from reflowfy.transformations.output_type import step_output_type
 from reflowfy.transformations.base import (
@@ -34,6 +35,7 @@ from reflowfy.core.exceptions import StepOutputError, TransformationError
 logger = get_logger("execution.transformation_runner")
 
 DEFAULT_MAX_STEPS = 1000
+
 
 class StepMode:
     """Every value of ``AppliedStep.mode``: how a reported step ran.
@@ -143,6 +145,12 @@ async def _run_async_step(
         result = RecordResults(await transformation.apply_async(records, runtime_params), {})
     transformation.validate_output(result.records)
     return result
+
+
+def _step_retry(transformation: Any) -> Optional[RetryConfig]:
+    """A step's ``retry``; a duck-typed step (no ``BaseTransformation``) has none."""
+    retry = getattr(transformation, "retry", None)
+    return retry if isinstance(retry, RetryConfig) else None
 
 
 def _check_step_output(
@@ -365,14 +373,28 @@ async def _apply_steps(
                 )
             elif isinstance(transformation, AsyncTransformation):
                 mode = StepMode.ASYNC
+            # A per-record step retries each record itself; a batch step is
+            # retried here, on the batch it was given.
+            retry = None if mode == StepMode.PER_RECORD else _step_retry(transformation)
+            step_input = transformed
             if isinstance(transformation, AsyncTransformation):
-                result = await _run_async_step(transformation, transformed, runtime_params)
+                async_step = transformation
+                result = await retry_async(
+                    lambda: _run_async_step(async_step, step_input, runtime_params),
+                    retry,
+                    step=step_name(transformation),
+                )
                 transformed = result.records
                 if mode == StepMode.PER_RECORD:
                     skip_reasons = result.skip_reasons
             else:
-                transformed = await asyncio.to_thread(
-                    _run_sync_step, transformation, transformed, runtime_params
+                sync_step = transformation
+                transformed = await retry_async(
+                    lambda: asyncio.to_thread(
+                        _run_sync_step, sync_step, step_input, runtime_params
+                    ),
+                    retry,
+                    step=step_name(transformation),
                 )
             if getattr(pipeline, "validate_steps", False):
                 await asyncio.to_thread(

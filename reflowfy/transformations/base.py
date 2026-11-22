@@ -1,6 +1,7 @@
 """Base transformation class with automatic registration."""
 
 import asyncio
+import logging
 from abc import ABCMeta, abstractmethod
 from typing import (
     Any,
@@ -19,6 +20,7 @@ from typing import (
 
 from reflowfy.core.exceptions import SkipJob, SkipRecord
 from reflowfy.core.query_loader import QueryLoaderMixin
+from reflowfy.core.retry import RetryConfig, retry_async, retry_sync
 from reflowfy.core.record_steps import (
     count_skip_reason,
     default_record_concurrency,
@@ -42,6 +44,11 @@ class TransformationMeta(ABCMeta):
 
     def __new__(mcs, name: str, bases: Tuple[type, ...], namespace: Dict[str, Any]) -> type:
         cls = super().__new__(mcs, name, bases, namespace)
+        retry = namespace.get("retry")
+        if retry is not None and not isinstance(retry, RetryConfig):
+            raise TypeError(
+                f"{name}.retry must be a RetryConfig or None, got {type(retry).__name__}"
+            )
 
         # Only register concrete transformations (not the base class)
         if name != "BaseTransformation" and bases:
@@ -79,6 +86,11 @@ class BaseTransformation(QueryLoaderMixin, metaclass=TransformationMeta):
     # when the pipeline sets validate_steps. None = unchecked. A @transformation or
     # A @transformation function's return annotation is read instead.
     output_type: Any = None
+
+    # How a failed call is retried inside the job (a RetryConfig); None = not retried.
+    # A batch step re-runs on the whole batch; a per-record step retries only the
+    # record whose call failed, before on_error applies. @transformation(retry=...).
+    retry: ClassVar[Optional[RetryConfig]] = None
 
     @abstractmethod
     def apply(self, records: List[Any], runtime_params: Dict[str, Any]) -> List[Any]:
@@ -335,7 +347,14 @@ class RecordTransformation(AsyncTransformation):
 
     async def _apply_one(self, index: int, record: Any, runtime_params: Dict[str, Any]) -> Any:
         try:
-            result = await self._call_one(record, runtime_params)
+            # Each attempt gets the full timeout. Debug: a line per record is volume;
+            # the job's step_retries counts them.
+            result = await retry_async(
+                lambda: self._call_one(record, runtime_params),
+                self.retry,
+                step=self.name,
+                log_level=logging.DEBUG,
+            )
         except SkipJob:
             raise
         except Exception as exc:
@@ -459,7 +478,12 @@ class SyncRecordTransformation(RecordTransformation):
         results: List[Any] = []
         for index, record in enumerate(records):
             try:
-                result = self.apply_record_sync(record, runtime_params)
+                result = retry_sync(
+                    lambda: self.apply_record_sync(record, runtime_params),
+                    self.retry,
+                    step=self.name,
+                    log_level=logging.DEBUG,
+                )
             except SkipJob:
                 raise
             except Exception as exc:
@@ -486,6 +510,3 @@ class DecoratedTransformation(BaseTransformation):
         if bind_options is not None:
             bind_options(options)
         self.options = options
-
-
-

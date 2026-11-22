@@ -10,6 +10,7 @@ from reflowfy.http_auth import build_auth_headers
 from reflowfy.observability.logging import get_logger
 from reflowfy.sources.base import BaseSource
 from reflowfy.core.exceptions import SourceError
+from reflowfy.core.retry import RetryConfig
 from reflowfy.core.health import log_unhealthy
 
 logger = get_logger(__name__)
@@ -283,6 +284,7 @@ def id_based_api_source(
     body: Optional[Any] = None,
     params: Optional[Dict[str, Any]] = None,
     health_check_enabled: bool = True,
+    retry: Optional[RetryConfig] = None,
 ) -> IDBasedAPISource:
     """
     Factory for the ID-based API source.
@@ -304,6 +306,8 @@ def id_based_api_source(
         # per-ID GET (no body)
         id_based_api_source(base_url="...", endpoint_template="/users/{id}",
             ids=[1, 2, 3])
+
+    ``retry`` (a :class:`RetryConfig`) retries a failed fetch inside the job.
     """
     return IDBasedAPISource(
         base_url=base_url,
@@ -318,4 +322,4 @@ def id_based_api_source(
         body=body,
         params=params,
         health_check_enabled=health_check_enabled,
-    )
+    ).with_retry(retry)

@@ -9,8 +9,9 @@ the module on every service, and the worker looks the job's ``source.type`` up h
 import json
 import logging
 import threading
-from typing import Any, Dict, FrozenSet, Optional, Set, Tuple, Type
+from typing import Any, Dict, FrozenSet, Optional, Set, Tuple, Type, cast
 
+from reflowfy.core.retry import RetryConfig
 from reflowfy.core.secrets import (
     decode_secret_refs,
     encode_secret_refs,
@@ -74,6 +75,15 @@ class SourceFactory:
         return cls._registry[type_name].from_config(decode_secret_refs(config))
 
     @classmethod
+    def from_descriptor(cls, descriptor: Dict[str, Any]) -> BaseSource:
+        """Rebuild a source from :meth:`serialize`'s ``{type, config[, retry]}`` (the worker)."""
+        source = cls.create(descriptor["type"], descriptor["config"])
+        retry: Any = descriptor.get("retry")
+        if isinstance(retry, dict):
+            source.retry = RetryConfig.from_dict(cast(Dict[str, Any], retry))
+        return source
+
+    @classmethod
     def serialize(cls, source: BaseSource, pipeline_name: Optional[str] = None) -> Dict[str, Any]:
         """Serialize a source instance to a ``{type, config}`` descriptor.
 
@@ -86,6 +96,9 @@ class SourceFactory:
             "type": source.registry_type,
             "config": encode_secret_refs(source.config),
         }
+        if source.retry is not None:
+            # Beside config, not in it: the constructor does not take it.
+            descriptor["retry"] = source.retry.to_dict()
         cls.check_round_trip(source, descriptor)
         cls._warn_literal_secrets(source, descriptor, pipeline_name)
         return descriptor

@@ -48,6 +48,9 @@ class JobStats:
         # records to, and how many of its optional ones failed without failing the job.
         self.destinations: Optional[int] = None
         self.destinations_failed_optional: Optional[int] = None
+        # Step retries made inside this job (RetryConfig on a source, a transformation
+        # or a destination): step name -> retries. Filled live by core.retry.count_retries.
+        self.step_retries: Dict[str, int] = {}
         # job_retry (only for a pipeline that sets it): retries scheduled so far, and the
         # failures that led to them (type + short message, the last ERROR_HISTORY_MAX).
         self.retry_count: Optional[int] = None
@@ -129,6 +132,9 @@ class JobStats:
                 if self.destinations_failed_optional is not None
                 else {}
             ),
+            # Only when a step retried, so other jobs' stats keep their shape: a job that
+            # succeeded after retries must not look like a first-time success.
+            **({"step_retries": dict(self.step_retries)} if self.step_retries else {}),
             # Only with job_retry, so other jobs' stats keep their shape.
             **({"retry_count": self.retry_count} if self.retry_count is not None else {}),
             **({"error_history": self.error_history} if self.error_history is not None else {}),

@@ -66,6 +66,15 @@ records_skipped_total = Counter(
     ["pipeline", "transformation"],
 )
 
+# A step (source fetch, transformation, destination send) retried a failed call
+# in the job (its RetryConfig). step: "source:<Class>", the transformation's name,
+# or "destination:<Class>" — names from code, never values.
+step_retries_total = Counter(
+    "reflowfy_step_retries_total",
+    "Retries a step made inside a job after a failed call (RetryConfig)",
+    ["pipeline", "step"],
+)
+
 # Records dropped by enable_duplicate_jobs=False: another job already sent them
 records_deduplicated_total = Counter(
     "reflowfy_records_deduplicated_total",

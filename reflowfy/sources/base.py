@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Dict, Iterator, List, Optional, Tuple, Type, TypeVar, cast
 
 from reflowfy.core.execution_context import parameter_resolver
+from reflowfy.core.retry import RetryConfig
 from reflowfy.core.types import Records
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,12 @@ class BaseSource(ABC):
     # onto the wire, since it travels in the job message's metadata instead.
     job_params: Optional[Dict[str, Any]] = None
 
+    # How this source's fetch is retried inside the job when it fails (a
+    # ``RetryConfig``); None = not retried. Set as a class attribute on a custom
+    # source, or per instance with :meth:`with_retry` / a factory's ``retry=``. It
+    # travels in the job message beside ``config`` and is kept by ``split()``.
+    retry: Optional[RetryConfig] = None
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         if inspect.isabstract(cls):
@@ -86,6 +93,21 @@ class BaseSource(ABC):
         if [p.name for p in params] == ["config"]:
             return cls(config)  # __init__(self, config)
         return cls(**config)
+
+    def with_retry(self: _S, retry: Optional[RetryConfig]) -> _S:
+        """Retry this source's fetch per ``retry`` (None: don't); returns the source.
+
+        Only the fetch on the worker is retried, never ``split()`` (planning). The
+        default ``retry_on`` is ``job_retry``'s: a ``SourceError`` (what the built-in
+        sources raise when they cannot read), timeouts and connection errors.
+
+        Example:
+            >>> elastic_source(...).with_retry(RetryConfig(max_attempts=4))
+        """
+        if retry is not None and not isinstance(cast(object, retry), RetryConfig):
+            raise TypeError(f"retry must be a RetryConfig or None, got {type(retry).__name__}")
+        self.retry = retry
+        return self
 
     @property
     def registry_type(self) -> str:

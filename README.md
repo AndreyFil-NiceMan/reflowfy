@@ -549,6 +549,25 @@ class UserSyncPipeline(AbstractPipeline[RuntimeParams]):
     job_retry = JobRetryConfig(max_retries=2, backoff_seconds=30)
 ```
 
+That re-runs the whole job later. To retry just the call that failed, right away and inside the
+job, give the step a `RetryConfig` — sources, transformations and destinations take the same one:
+
+```python
+from reflowfy import RetryConfig
+
+elastic_source(..., retry=RetryConfig(max_attempts=4))               # or any_source.with_retry(...)
+
+@transformation(per_record=True, retry=RetryConfig(max_attempts=3))  # only the failing record
+async def enrich(record, runtime_params): ...
+
+kafka_destination(..., retry_config=RetryConfig(max_attempts=5))     # 3 attempts by default
+```
+
+Sources and transformations retry timeouts, connection errors and `SourceError`/`DestinationError`
+by default (never `KeyError`/`TypeError`/`ValueError`); destinations retry a `DestinationError`
+other than an HTTP 4xx. `retry_on=` / `never_retry=` change that. Retries show up as `step_retry`
+log lines, `step_retries` in the job's stats and `reflowfy_step_retries_total{pipeline, step}`.
+
 **Rate limit.** `rate_limit = 600` (jobs per minute), or compute it in
 `define_rate_limit(params)`; `?rate_limit=` on the run overrides both. Nothing set means unlimited.
 

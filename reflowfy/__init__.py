@@ -35,7 +35,7 @@ from reflowfy.core.exceptions import StepOutputError, TransformationError
 from reflowfy.sources.base import AsyncSource, BaseSource, SourceContractError
 from reflowfy.destinations.base import BaseDestination
 from reflowfy.core.exceptions import SourceError
-from reflowfy.destinations.base import RetryConfig
+from reflowfy.core.retry import RetryConfig
 from reflowfy.core.exceptions import DestinationError, PermanentDestinationError
 from reflowfy.factories.source_factory import SourceRoundTripError
 from reflowfy.sources.api import id_based_api_source
